@@ -10,6 +10,7 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_INIT_ARRAY: u32 = 14;
 const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
@@ -253,6 +254,13 @@ fn set_elf64_section_size(bytes: &mut [u8], index: usize, size: u64) {
     let section_header_size = usize::from(read_u16(bytes, 58));
     let section_base = section_table_offset + index * section_header_size;
     write_u64(bytes, section_base + 32, size);
+}
+
+fn set_elf64_section_entry_size(bytes: &mut [u8], index: usize, entry_size: u64) {
+    let section_table_offset = read_u64(bytes, 40) as usize;
+    let section_header_size = usize::from(read_u16(bytes, 58));
+    let section_base = section_table_offset + index * section_header_size;
+    write_u64(bytes, section_base + 56, entry_size);
 }
 
 fn elf64_image_with_pt_tls(machine: u16) -> Vec<u8> {
@@ -2125,6 +2133,55 @@ fn workload_manifest_identity_includes_elf_section_string_table_bytes() {
         .unwrap();
 
     assert_ne!(small_string.identity(), large_string.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_arrays() {
+    let mut baseline_elf = elf64_image_with_named_sections(243, &[".init_array"]);
+    set_elf64_section_kind_flags(&mut baseline_elf, 1, 1, 0);
+    set_elf64_section_size(&mut baseline_elf, 1, 24);
+    set_elf64_section_entry_size(&mut baseline_elf, 1, 8);
+    let mut array_elf = elf64_image_with_named_sections(243, &[".init_array"]);
+    set_elf64_section_kind_flags(&mut array_elf, 1, SHT_INIT_ARRAY, 0);
+    set_elf64_section_size(&mut array_elf, 1, 24);
+    set_elf64_section_entry_size(&mut array_elf, 1, 8);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let array_source = BootImage::from_elf64_le(&array_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), array_source.entry());
+    assert_eq!(baseline_source.segments(), array_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        array_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        baseline_source.elf_metadata().unwrap().section_storage(),
+        array_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_arrays()
+            .init_array_section_count(),
+        array_source
+            .elf_metadata()
+            .unwrap()
+            .section_arrays()
+            .init_array_section_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let array = WorkloadManifest::builder(id("same"), array_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), array.identity());
 }
 
 #[test]

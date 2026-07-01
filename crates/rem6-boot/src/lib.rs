@@ -18,6 +18,6 @@ pub use metadata::{
 };
 pub use metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
-    BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
+    BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionHeaderTable,
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
 };

@@ -3,7 +3,7 @@ use rem6_memory::Address;
 use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
-    BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
+    BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionHeaderTable,
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
     BootElfSymbolSummary,
 };
@@ -582,6 +582,7 @@ pub struct BootElfMetadata {
     section_flags: BootElfSectionFlags,
     section_storage: BootElfSectionStorage,
     section_relocations: BootElfSectionRelocations,
+    section_arrays: BootElfSectionArrays,
     section_address_range: BootElfSectionAddressRange,
     section_alignment: BootElfSectionAlignment,
 }
@@ -625,6 +626,7 @@ impl BootElfMetadata {
             section_flags: BootElfSectionFlags::new(0, 0, 0, 0),
             section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0, 0, 0),
             section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0),
+            section_arrays: BootElfSectionArrays::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
             section_alignment: BootElfSectionAlignment::new(0, 0, 0),
         }
@@ -640,52 +642,24 @@ impl BootElfMetadata {
         self
     }
 
-    pub(crate) const fn with_section_header_table(
+    pub(crate) const fn with_section_metadata(
         mut self,
-        table: BootElfSectionHeaderTable,
-    ) -> Self {
-        self.section_header_table = table;
-        self
-    }
-
-    pub(crate) const fn with_section_name_table(mut self, table: BootElfSectionNameTable) -> Self {
-        self.section_name_table = table;
-        self
-    }
-
-    pub(crate) const fn with_section_flags(mut self, section_flags: BootElfSectionFlags) -> Self {
-        self.section_flags = section_flags;
-        self
-    }
-
-    pub(crate) const fn with_section_storage(
-        mut self,
+        section_header_table: BootElfSectionHeaderTable,
+        section_name_table: BootElfSectionNameTable,
+        section_flags: BootElfSectionFlags,
         section_storage: BootElfSectionStorage,
-    ) -> Self {
-        self.section_storage = section_storage;
-        self
-    }
-
-    pub(crate) const fn with_section_relocations(
-        mut self,
         section_relocations: BootElfSectionRelocations,
-    ) -> Self {
-        self.section_relocations = section_relocations;
-        self
-    }
-
-    pub(crate) const fn with_section_address_range(
-        mut self,
+        section_arrays: BootElfSectionArrays,
         section_address_range: BootElfSectionAddressRange,
-    ) -> Self {
-        self.section_address_range = section_address_range;
-        self
-    }
-
-    pub(crate) const fn with_section_alignment(
-        mut self,
         section_alignment: BootElfSectionAlignment,
     ) -> Self {
+        self.section_header_table = section_header_table;
+        self.section_name_table = section_name_table;
+        self.section_flags = section_flags;
+        self.section_storage = section_storage;
+        self.section_relocations = section_relocations;
+        self.section_arrays = section_arrays;
+        self.section_address_range = section_address_range;
         self.section_alignment = section_alignment;
         self
     }
@@ -885,6 +859,10 @@ impl BootElfMetadata {
 
     pub const fn section_relocations(&self) -> BootElfSectionRelocations {
         self.section_relocations
+    }
+
+    pub const fn section_arrays(&self) -> BootElfSectionArrays {
+        self.section_arrays
     }
 
     pub const fn section_address_range(&self) -> BootElfSectionAddressRange {

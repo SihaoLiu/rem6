@@ -413,13 +413,16 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_symbol_summary(section_summary.symbol_summary())
         .with_load_segments(load_segment_summary.load_segments())
         .with_dynamic_table(dynamic_table)
-        .with_section_header_table(section_summary.section_header_table())
-        .with_section_name_table(section_summary.section_name_table())
-        .with_section_flags(section_summary.section_flags())
-        .with_section_storage(section_summary.section_storage())
-        .with_section_relocations(section_summary.section_relocations())
-        .with_section_address_range(section_summary.section_address_range())
-        .with_section_alignment(section_summary.section_alignment())
+        .with_section_metadata(
+            section_summary.section_header_table(),
+            section_summary.section_name_table(),
+            section_summary.section_flags(),
+            section_summary.section_storage(),
+            section_summary.section_relocations(),
+            section_summary.section_arrays(),
+            section_summary.section_address_range(),
+            section_summary.section_alignment(),
+        )
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,
@@ -626,13 +629,16 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_symbol_summary(section_summary.symbol_summary())
         .with_load_segments(load_segment_summary.load_segments())
         .with_dynamic_table(dynamic_table)
-        .with_section_header_table(section_summary.section_header_table())
-        .with_section_name_table(section_summary.section_name_table())
-        .with_section_flags(section_summary.section_flags())
-        .with_section_storage(section_summary.section_storage())
-        .with_section_relocations(section_summary.section_relocations())
-        .with_section_address_range(section_summary.section_address_range())
-        .with_section_alignment(section_summary.section_alignment())
+        .with_section_metadata(
+            section_summary.section_header_table(),
+            section_summary.section_name_table(),
+            section_summary.section_flags(),
+            section_summary.section_storage(),
+            section_summary.section_relocations(),
+            section_summary.section_arrays(),
+            section_summary.section_address_range(),
+            section_summary.section_alignment(),
+        )
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,

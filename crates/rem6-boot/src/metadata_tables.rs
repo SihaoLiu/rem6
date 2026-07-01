@@ -374,6 +374,81 @@ impl BootElfSectionRelocations {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionArrays {
+    init_array_section_count: u64,
+    init_array_bytes: u64,
+    init_array_entry_count: u64,
+    fini_array_section_count: u64,
+    fini_array_bytes: u64,
+    fini_array_entry_count: u64,
+    preinit_array_section_count: u64,
+    preinit_array_bytes: u64,
+    preinit_array_entry_count: u64,
+}
+
+impl BootElfSectionArrays {
+    pub const fn new(
+        init_array_section_count: u64,
+        init_array_bytes: u64,
+        init_array_entry_count: u64,
+        fini_array_section_count: u64,
+        fini_array_bytes: u64,
+        fini_array_entry_count: u64,
+        preinit_array_section_count: u64,
+        preinit_array_bytes: u64,
+        preinit_array_entry_count: u64,
+    ) -> Self {
+        Self {
+            init_array_section_count,
+            init_array_bytes,
+            init_array_entry_count,
+            fini_array_section_count,
+            fini_array_bytes,
+            fini_array_entry_count,
+            preinit_array_section_count,
+            preinit_array_bytes,
+            preinit_array_entry_count,
+        }
+    }
+
+    pub const fn init_array_section_count(self) -> u64 {
+        self.init_array_section_count
+    }
+
+    pub const fn init_array_bytes(self) -> u64 {
+        self.init_array_bytes
+    }
+
+    pub const fn init_array_entry_count(self) -> u64 {
+        self.init_array_entry_count
+    }
+
+    pub const fn fini_array_section_count(self) -> u64 {
+        self.fini_array_section_count
+    }
+
+    pub const fn fini_array_bytes(self) -> u64 {
+        self.fini_array_bytes
+    }
+
+    pub const fn fini_array_entry_count(self) -> u64 {
+        self.fini_array_entry_count
+    }
+
+    pub const fn preinit_array_section_count(self) -> u64 {
+        self.preinit_array_section_count
+    }
+
+    pub const fn preinit_array_bytes(self) -> u64 {
+        self.preinit_array_bytes
+    }
+
+    pub const fn preinit_array_entry_count(self) -> u64 {
+        self.preinit_array_entry_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionAddressRange {
     start_address: Option<Address>,
     end_address: Option<Address>,

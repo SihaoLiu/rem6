@@ -4,11 +4,14 @@ use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
-    BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionFlags,
+    BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
     BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionRelocations,
     BootElfSectionStorage, BootElfSymbolSummary,
 };
 
+const SHT_INIT_ARRAY: u32 = 14;
+const SHT_FINI_ARRAY: u32 = 15;
+const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
@@ -54,6 +57,15 @@ pub(crate) struct ElfSectionSummary {
     rela_entry_count: u64,
     rel_section_count: u64,
     rel_entry_count: u64,
+    init_array_section_count: u64,
+    init_array_bytes: u64,
+    init_array_entry_count: u64,
+    fini_array_section_count: u64,
+    fini_array_bytes: u64,
+    fini_array_entry_count: u64,
+    preinit_array_section_count: u64,
+    preinit_array_bytes: u64,
+    preinit_array_entry_count: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
     max_section_alignment: u64,
@@ -99,6 +111,20 @@ impl ElfSectionSummary {
             self.rela_entry_count,
             self.rel_section_count,
             self.rel_entry_count,
+        )
+    }
+
+    pub(crate) const fn section_arrays(self) -> BootElfSectionArrays {
+        BootElfSectionArrays::new(
+            self.init_array_section_count,
+            self.init_array_bytes,
+            self.init_array_entry_count,
+            self.fini_array_section_count,
+            self.fini_array_bytes,
+            self.fini_array_entry_count,
+            self.preinit_array_section_count,
+            self.preinit_array_bytes,
+            self.preinit_array_entry_count,
         )
     }
 
@@ -426,6 +452,7 @@ fn summarize_common_section(
         summary.string_table_count += 1;
         summary.string_table_bytes = summary.string_table_bytes.saturating_add(section.size);
     }
+    summarize_array_section(summary, section.kind, section.size, section.entry_size);
     if section.kind == SHT_NOTE {
         summary.note_section_count += 1;
         summary.note_section_file_size =
@@ -460,6 +487,32 @@ enum RelocationSectionKind {
     Rel,
 }
 
+fn summarize_array_section(summary: &mut ElfSectionSummary, kind: u32, size: u64, entry_size: u64) {
+    let entry_count = section_entry_count(size, entry_size);
+    match kind {
+        SHT_INIT_ARRAY => {
+            summary.init_array_section_count += 1;
+            summary.init_array_bytes = summary.init_array_bytes.saturating_add(size);
+            summary.init_array_entry_count =
+                summary.init_array_entry_count.saturating_add(entry_count);
+        }
+        SHT_FINI_ARRAY => {
+            summary.fini_array_section_count += 1;
+            summary.fini_array_bytes = summary.fini_array_bytes.saturating_add(size);
+            summary.fini_array_entry_count =
+                summary.fini_array_entry_count.saturating_add(entry_count);
+        }
+        SHT_PREINIT_ARRAY => {
+            summary.preinit_array_section_count += 1;
+            summary.preinit_array_bytes = summary.preinit_array_bytes.saturating_add(size);
+            summary.preinit_array_entry_count = summary
+                .preinit_array_entry_count
+                .saturating_add(entry_count);
+        }
+        _ => {}
+    }
+}
+
 fn summarize_relocation_section(
     summary: &mut ElfSectionSummary,
     size: u64,
@@ -469,11 +522,7 @@ fn summarize_relocation_section(
     summary.relocation_section_count += 1;
     summary.relocation_section_file_size =
         summary.relocation_section_file_size.saturating_add(size);
-    let entry_count = if entry_size == 0 {
-        0
-    } else {
-        size / entry_size
-    };
+    let entry_count = section_entry_count(size, entry_size);
     match kind {
         RelocationSectionKind::Rela => {
             summary.rela_section_count += 1;
@@ -483,6 +532,14 @@ fn summarize_relocation_section(
             summary.rel_section_count += 1;
             summary.rel_entry_count = summary.rel_entry_count.saturating_add(entry_count);
         }
+    }
+}
+
+fn section_entry_count(size: u64, entry_size: u64) -> u64 {
+    if entry_size == 0 {
+        0
+    } else {
+        size / entry_size
     }
 }
 

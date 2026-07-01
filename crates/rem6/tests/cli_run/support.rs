@@ -10,6 +10,9 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_INIT_ARRAY: u32 = 14;
+const SHT_FINI_ARRAY: u32 = 15;
+const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_RELA: u32 = 4;
 const SHT_REL: u32 = 9;
 const SHF_WRITE: u64 = 1;
@@ -840,6 +843,62 @@ pub(crate) fn riscv64_elf_with_relocation_sections(
     write_u32(&mut bytes, section_table_offset + 196, 3);
     write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_section_arrays(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let init_offset = bytes.len();
+    bytes.resize(init_offset + 24, 0);
+    let fini_offset = bytes.len();
+    bytes.resize(fini_offset + 16, 0);
+    let preinit_offset = bytes.len();
+    bytes.resize(preinit_offset + 8, 0);
+
+    let names = b"\0.init_array\0.fini_array\0.preinit_array\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 5);
+    write_u16(&mut bytes, 62, 4);
+    bytes.resize(section_table_offset + 5 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, SHT_INIT_ARRAY);
+    write_u64(&mut bytes, section_table_offset + 88, init_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 96, 24);
+    write_u64(&mut bytes, section_table_offset + 120, 8);
+
+    write_u32(&mut bytes, section_table_offset + 128, 13);
+    write_u32(&mut bytes, section_table_offset + 132, SHT_FINI_ARRAY);
+    write_u64(&mut bytes, section_table_offset + 152, fini_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, 16);
+    write_u64(&mut bytes, section_table_offset + 184, 8);
+
+    write_u32(&mut bytes, section_table_offset + 192, 25);
+    write_u32(&mut bytes, section_table_offset + 196, SHT_PREINIT_ARRAY);
+    write_u64(
+        &mut bytes,
+        section_table_offset + 216,
+        preinit_offset as u64,
+    );
+    write_u64(&mut bytes, section_table_offset + 224, 8);
+    write_u64(&mut bytes, section_table_offset + 248, 8);
+
+    write_u32(&mut bytes, section_table_offset + 256, 40);
+    write_u32(&mut bytes, section_table_offset + 260, 3);
+    write_u64(&mut bytes, section_table_offset + 280, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 288, names.len() as u64);
     bytes
 }
 

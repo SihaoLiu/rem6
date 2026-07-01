@@ -156,6 +156,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_flags_stats(stats, metadata)?;
     emit_elf_section_storage_stats(stats, metadata)?;
     emit_elf_section_relocation_stats(stats, metadata)?;
+    emit_elf_section_array_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_section_alignment_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
@@ -695,6 +696,63 @@ fn emit_elf_section_relocation_stats(
             "sim.elf.section_relocations.rel.entries",
             "Count",
             relocations.rel_entry_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_array_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let arrays = metadata.section_arrays();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_arrays.init.sections",
+            "Count",
+            arrays.init_array_section_count(),
+        ),
+        (
+            "sim.elf.section_arrays.init.bytes",
+            "Byte",
+            arrays.init_array_bytes(),
+        ),
+        (
+            "sim.elf.section_arrays.init.entries",
+            "Count",
+            arrays.init_array_entry_count(),
+        ),
+        (
+            "sim.elf.section_arrays.fini.sections",
+            "Count",
+            arrays.fini_array_section_count(),
+        ),
+        (
+            "sim.elf.section_arrays.fini.bytes",
+            "Byte",
+            arrays.fini_array_bytes(),
+        ),
+        (
+            "sim.elf.section_arrays.fini.entries",
+            "Count",
+            arrays.fini_array_entry_count(),
+        ),
+        (
+            "sim.elf.section_arrays.preinit.sections",
+            "Count",
+            arrays.preinit_array_section_count(),
+        ),
+        (
+            "sim.elf.section_arrays.preinit.bytes",
+            "Byte",
+            arrays.preinit_array_bytes(),
+        ),
+        (
+            "sim.elf.section_arrays.preinit.entries",
+            "Count",
+            arrays.preinit_array_entry_count(),
         ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;

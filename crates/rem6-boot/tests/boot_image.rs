@@ -22,6 +22,9 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_INIT_ARRAY: u32 = 14;
+const SHT_FINI_ARRAY: u32 = 15;
+const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
@@ -1227,6 +1230,61 @@ fn boot_image_records_elf_section_flags_summary() {
     assert_eq!(alignment.max_alignment(), 0x1000);
     assert_eq!(alignment.allocated_max_alignment(), 0x1000);
     assert_eq!(alignment.misaligned_allocated_count(), 1);
+}
+
+#[test]
+fn boot_image_records_elf_section_array_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".init_array",
+                kind: SHT_INIT_ARRAY,
+                data: &[0; 24],
+            },
+            ElfSectionSpec {
+                name: ".fini_array",
+                kind: SHT_FINI_ARRAY,
+                data: &[0; 16],
+            },
+            ElfSectionSpec {
+                name: ".preinit_array",
+                kind: SHT_PREINIT_ARRAY,
+                data: &[0; 8],
+            },
+        ],
+    );
+    let section_table_offset = read_u64(&elf, 40) as usize;
+    write_u64(&mut elf, section_table_offset + 64 + 56, 8);
+    write_u64(&mut elf, section_table_offset + 128 + 56, 8);
+    write_u64(&mut elf, section_table_offset + 192 + 56, 8);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let arrays = metadata.section_arrays();
+
+    assert_eq!(arrays.init_array_section_count(), 1);
+    assert_eq!(arrays.init_array_bytes(), 24);
+    assert_eq!(arrays.init_array_entry_count(), 3);
+    assert_eq!(arrays.fini_array_section_count(), 1);
+    assert_eq!(arrays.fini_array_bytes(), 16);
+    assert_eq!(arrays.fini_array_entry_count(), 2);
+    assert_eq!(arrays.preinit_array_section_count(), 1);
+    assert_eq!(arrays.preinit_array_bytes(), 8);
+    assert_eq!(arrays.preinit_array_entry_count(), 1);
 }
 
 #[test]

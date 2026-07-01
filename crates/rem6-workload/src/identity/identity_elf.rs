@@ -135,6 +135,28 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_alignment.allocated_max_alignment());
                 hash_u64(hash, section_alignment.misaligned_allocated_count());
             }
+            let section_arrays = metadata.section_arrays();
+            if section_arrays.init_array_section_count() != 0
+                || section_arrays.init_array_bytes() != 0
+                || section_arrays.init_array_entry_count() != 0
+                || section_arrays.fini_array_section_count() != 0
+                || section_arrays.fini_array_bytes() != 0
+                || section_arrays.fini_array_entry_count() != 0
+                || section_arrays.preinit_array_section_count() != 0
+                || section_arrays.preinit_array_bytes() != 0
+                || section_arrays.preinit_array_entry_count() != 0
+            {
+                hash_str(hash, "elf.section_arrays");
+                hash_u64(hash, section_arrays.init_array_section_count());
+                hash_u64(hash, section_arrays.init_array_bytes());
+                hash_u64(hash, section_arrays.init_array_entry_count());
+                hash_u64(hash, section_arrays.fini_array_section_count());
+                hash_u64(hash, section_arrays.fini_array_bytes());
+                hash_u64(hash, section_arrays.fini_array_entry_count());
+                hash_u64(hash, section_arrays.preinit_array_section_count());
+                hash_u64(hash, section_arrays.preinit_array_bytes());
+                hash_u64(hash, section_arrays.preinit_array_entry_count());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());

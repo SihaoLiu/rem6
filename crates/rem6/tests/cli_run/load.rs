@@ -1915,6 +1915,101 @@ fn rem6_run_loads_riscv32_elf_with_extended_program_header_count_metadata() {
 }
 
 #[test]
+fn rem6_run_reports_elf_section_array_metadata() {
+    let elf = riscv64_elf_with_section_arrays(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-section-arrays", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"section_arrays\":{\"init\":{\"sections\":1,\"bytes\":24,\"entries\":3},\"fini\":{\"sections\":1,\"bytes\":16,\"entries\":2},\"preinit\":{\"sections\":1,\"bytes\":8,\"entries\":1}}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.init.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.init.bytes",
+        "Byte",
+        24,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.init.entries",
+        "Count",
+        3,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.fini.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.fini.bytes",
+        "Byte",
+        16,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.fini.entries",
+        "Count",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.preinit.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.preinit.bytes",
+        "Byte",
+        8,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_arrays.preinit.entries",
+        "Count",
+        1,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_reports_elf_relocation_section_metadata() {
     let elf = riscv64_elf_with_relocation_sections(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv-run-relocation-sections", &elf);
