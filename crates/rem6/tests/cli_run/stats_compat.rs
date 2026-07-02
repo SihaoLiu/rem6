@@ -4757,6 +4757,60 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_e32_m4_full_register_grou
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_fault_only_e32_m8_full_register_group_memory() {
+    let normal_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-full-lmul8-load-store-fault-only-baseline",
+        &unit_stride_lmul8_vector_memory_program(),
+        520,
+    );
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-fault-only-e32-m8-full-load",
+        &fault_only_lmul8_vector_memory_program(),
+        520,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "no-fault e32/m8 fault-only-first vector load should move a full 128-byte register-group payload through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        stat_value(
+            &direct_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        stat_value(
+            &normal_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        "no-fault e32/m8 fault-only-first vector load should reuse normal e32/m8 vector LSU execute latency\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-fault-only-e32-m8-full-load",
+        &fault_only_lmul8_vector_memory_program(),
+        1800,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "no-fault e32/m8 fault-only-first vector load should move a full 128-byte register-group payload through the cache-backed top-level run path\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        stat_value(
+            &cache_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        stat_value(
+            &normal_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        "cache-backed no-fault e32/m8 fault-only-first vector load should reuse normal e32/m8 vector LSU execute latency\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_unit_stride_lmul2_register_group_memory() {
     const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
 
@@ -7400,18 +7454,30 @@ fn unit_stride_lmul4_vector_memory_program_with_load(load: u32) -> Vec<u8> {
 }
 
 fn unit_stride_lmul8_vector_memory_program() -> Vec<u8> {
+    unit_stride_lmul8_vector_memory_program_with_load(vector_unit_stride_load_type(
+        true, 0b110, 10, 8,
+    ))
+}
+
+fn fault_only_lmul8_vector_memory_program() -> Vec<u8> {
+    unit_stride_lmul8_vector_memory_program_with_load(vector_unit_stride_fault_only_load_type(
+        true, 0b110, 10, 8,
+    ))
+}
+
+fn unit_stride_lmul8_vector_memory_program_with_load(load: u32) -> Vec<u8> {
     const DATA_WORDS: usize = 32;
     const DATA_OFFSET_BYTES: i32 = 512;
     const VECTOR_BYTES: i32 = (DATA_WORDS * 4) as i32;
 
     let fail_instruction_index = 7 + DATA_WORDS as i32 * 3 + 1;
     let mut words = vec![
-        u_type(0, 10, 0x17),                               // auipc x10, 0
-        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),    // addi x10, x10, data
-        i_type(VECTOR_BYTES, 10, 0b000, 16, 0x13),         // addi x16, x10, dest
-        i_type(DATA_WORDS as i32, 0, 0b000, 11, 0x13),     // addi x11, x0, vl
-        vsetvli_type(0xd3, 11, 5),                         // vsetvli x5, x11, e32, m8, ta, ma
-        vector_unit_stride_load_type(true, 0b110, 10, 8),  // vle32.v v8, (x10)
+        u_type(0, 10, 0x17),                            // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(VECTOR_BYTES, 10, 0b000, 16, 0x13),      // addi x16, x10, dest
+        i_type(DATA_WORDS as i32, 0, 0b000, 11, 0x13),  // addi x11, x0, vl
+        vsetvli_type(0xd3, 11, 5),                      // vsetvli x5, x11, e32, m8, ta, ma
+        load,
         vector_unit_stride_store_type(true, 0b110, 16, 8), // vse32.v v8, (x16)
     ];
 
