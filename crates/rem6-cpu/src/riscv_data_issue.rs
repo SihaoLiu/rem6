@@ -1269,7 +1269,7 @@ fn sparse_e64_indexed_m1_vector_access(
         && width == MemoryWidth::Doubleword
         && matches!(
             index_width,
-            MemoryWidth::Halfword | MemoryWidth::Word | MemoryWidth::Doubleword
+            MemoryWidth::Byte | MemoryWidth::Halfword | MemoryWidth::Word | MemoryWidth::Doubleword
         )
         && offsets == [0, 24]
         && byte_len == 32
@@ -1464,6 +1464,25 @@ mod tests {
         ));
         assert!(supports_cross_line_data_access(
             &vector_store_indexed_e64_m1(0x8000, MemoryWidth::Halfword, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_sparse_indexed_e64_m1_with_e8_indices() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_indexed_e64_m1(0x8000, MemoryWidth::Byte, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_indexed_e64_m1(0x8000, MemoryWidth::Byte, 32),
             Address::new(0x8000),
             size,
             layout

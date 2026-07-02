@@ -41,6 +41,7 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
         16,
     ),
     (MemoryWidth::Doubleword, MemoryWidth::Word, &[0, 24], 32),
+    (MemoryWidth::Doubleword, MemoryWidth::Byte, &[0, 24], 32),
     (MemoryWidth::Doubleword, MemoryWidth::Halfword, &[0, 24], 32),
     (
         MemoryWidth::Doubleword,
