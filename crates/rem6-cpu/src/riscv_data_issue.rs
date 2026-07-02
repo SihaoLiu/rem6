@@ -1156,6 +1156,36 @@ pub(crate) fn supports_cross_line_data_access(
             group_registers,
             ..
         } => full_e32_register_group_vector_access(*width, data.len(), *group_registers, size),
+        MemoryAccessKind::VectorLoadStrided {
+            width,
+            stride,
+            element_count,
+            span_len,
+            group_registers,
+            ..
+        } => sparse_e64_strided_m1_vector_access(
+            *width,
+            *stride,
+            *element_count,
+            *span_len,
+            *group_registers,
+            size,
+        ),
+        MemoryAccessKind::VectorStoreStrided {
+            width,
+            stride,
+            element_count,
+            data,
+            group_registers,
+            ..
+        } => sparse_e64_strided_m1_vector_access(
+            *width,
+            *stride,
+            *element_count,
+            data.len(),
+            *group_registers,
+            size,
+        ),
         MemoryAccessKind::VectorLoadIndexed {
             width,
             index_width,
@@ -1202,6 +1232,25 @@ fn full_e32_register_group_vector_access(
     matches!(group_registers, 2 | 4 | 8)
         && width == MemoryWidth::Word
         && byte_len == group_registers * RISCV_VECTOR_REGISTER_BYTES
+        && size_bytes == byte_len
+}
+
+fn sparse_e64_strided_m1_vector_access(
+    width: MemoryWidth,
+    stride: usize,
+    element_count: usize,
+    byte_len: usize,
+    group_registers: usize,
+    size: AccessSize,
+) -> bool {
+    let Ok(size_bytes) = usize::try_from(size.bytes()) else {
+        return false;
+    };
+    group_registers == 1
+        && width == MemoryWidth::Doubleword
+        && stride == 24
+        && element_count == 2
+        && byte_len == 32
         && size_bytes == byte_len
 }
 
@@ -1381,6 +1430,25 @@ mod tests {
     }
 
     #[test]
+    fn cross_line_vector_access_accepts_aligned_sparse_strided_e64_m1() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_strided_e64_m1(0x8000, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_strided_e64_m1(0x8000, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
     fn cross_line_vector_access_rejects_unaligned_full_lmul2_group() {
         let layout = CacheLineLayout::new(16).unwrap();
         let size = AccessSize::new(32).unwrap();
@@ -1445,6 +1513,31 @@ mod tests {
             data: vec![0; byte_len],
             byte_mask: None,
             group_registers,
+        }
+    }
+
+    fn vector_load_strided_e64_m1(address: u64, span_len: usize) -> MemoryAccessKind {
+        MemoryAccessKind::VectorLoadStrided {
+            vd: VectorRegister::new(1).unwrap(),
+            address,
+            width: MemoryWidth::Doubleword,
+            stride: 24,
+            element_count: 2,
+            span_len,
+            byte_mask: None,
+            group_registers: 1,
+        }
+    }
+
+    fn vector_store_strided_e64_m1(address: u64, data_len: usize) -> MemoryAccessKind {
+        MemoryAccessKind::VectorStoreStrided {
+            address,
+            width: MemoryWidth::Doubleword,
+            stride: 24,
+            element_count: 2,
+            data: vec![0; data_len],
+            byte_mask: vec![true; data_len],
+            group_registers: 1,
         }
     }
 

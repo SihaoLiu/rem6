@@ -4830,6 +4830,33 @@ fn rem6_run_in_order_pipeline_models_vector_strided_e64_m1_memory() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_sparse_vector_strided_e64_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-strided-sparse-e64-m1-load-store",
+        &sparse_strided_e64_m1_vector_memory_program(),
+        400,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "sparse strided e64,m1 vector memory should preserve 64-bit interior gaps through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-strided-sparse-e64-m1-load-store",
+        &sparse_strided_e64_m1_vector_memory_program(),
+        980,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "cache-backed sparse strided e64,m1 vector memory should preserve 64-bit interior gaps through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_strided_e64_m1_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-strided-masked-e64-m1-load-store",
@@ -4853,6 +4880,33 @@ fn rem6_run_in_order_pipeline_models_masked_vector_strided_e64_m1_memory() {
         stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
         31,
         "cache-backed masked strided e64,m1 vector memory should preserve inactive 64-bit lanes through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_masked_sparse_vector_strided_e64_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-strided-masked-sparse-e64-m1-load-store",
+        &masked_sparse_strided_e64_m1_vector_memory_program(),
+        500,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        37,
+        "masked sparse strided e64,m1 vector memory should preserve inactive lanes and 64-bit interior gaps through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-strided-masked-sparse-e64-m1-load-store",
+        &masked_sparse_strided_e64_m1_vector_memory_program(),
+        1280,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        37,
+        "cache-backed masked sparse strided e64,m1 vector memory should preserve inactive lanes and 64-bit interior gaps through the top-level run path\nstats:\n{cache_stats}"
     );
 }
 
@@ -6173,6 +6227,90 @@ fn strided_e64_m1_vector_memory_program() -> Vec<u8> {
     program
 }
 
+fn sparse_strided_e64_m1_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 256;
+    const SOURCE_OFFSET_BYTES: i32 = 32;
+    const LOAD_RESULT_OFFSET_BYTES: i32 = 64;
+    const STORE_RESULT_OFFSET_BYTES: i32 = 96;
+    const EXPECTED_LOAD_OFFSET_BYTES: i32 = 128;
+    const EXPECTED_STORE_OFFSET_BYTES: i32 = 144;
+    const STRIDE_BYTES: i32 = 24;
+
+    let fail_instruction_index = 32;
+    let words = vec![
+        u_type(0, 10, 0x17),                                      // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),           // addi x10, x10, data
+        i_type(SOURCE_OFFSET_BYTES, 10, 0b000, 14, 0x13),         // addi x14, x10, source
+        i_type(LOAD_RESULT_OFFSET_BYTES, 10, 0b000, 15, 0x13),    // addi x15, x10, load result
+        i_type(STORE_RESULT_OFFSET_BYTES, 10, 0b000, 16, 0x13),   // addi x16, x10, store result
+        i_type(EXPECTED_LOAD_OFFSET_BYTES, 10, 0b000, 19, 0x13),  // addi x19, x10, expected load
+        i_type(EXPECTED_STORE_OFFSET_BYTES, 10, 0b000, 20, 0x13), // addi x20, x10, expected store
+        i_type(2, 0, 0b000, 11, 0x13),                            // addi x11, x0, vl
+        i_type(STRIDE_BYTES, 0, 0b000, 21, 0x13),                 // addi x21, x0, stride
+        vsetvli_type(0xd8, 11, 5), // vsetvli x5, x11, e64, m1, ta, ma
+        vector_strided_load_type(true, 0b111, 14, 21, 1), // vlse64.v v1, (x14), x21
+        vector_unit_stride_store_type(true, 0b111, 15, 1), // vse64.v v1, (x15)
+        vector_strided_store_type(true, 0b111, 16, 21, 1), // vsse64.v v1, (x16), x21
+        i_type(0, 15, 0b011, 17, 0x03), // ld x17, load result lane 0
+        i_type(0, 19, 0b011, 18, 0x03), // ld x18, expected lane 0
+        b_type((fail_instruction_index - 15) * 4, 18, 17, 0b001),
+        i_type(8, 15, 0b011, 17, 0x03), // ld x17, load result lane 1
+        i_type(8, 19, 0b011, 18, 0x03), // ld x18, expected lane 1
+        b_type((fail_instruction_index - 18) * 4, 18, 17, 0b001),
+        i_type(0, 16, 0b011, 17, 0x03), // ld x17, store result lane 0
+        i_type(0, 20, 0b011, 18, 0x03), // ld x18, expected store lane 0
+        b_type((fail_instruction_index - 21) * 4, 18, 17, 0b001),
+        i_type(8, 16, 0b011, 17, 0x03), // ld x17, store result gap
+        i_type(8, 20, 0b011, 18, 0x03), // ld x18, expected store gap
+        b_type((fail_instruction_index - 24) * 4, 18, 17, 0b001),
+        i_type(16, 16, 0b011, 17, 0x03), // ld x17, store result gap
+        i_type(16, 20, 0b011, 18, 0x03), // ld x18, expected store gap
+        b_type((fail_instruction_index - 27) * 4, 18, 17, 0b001),
+        i_type(24, 16, 0b011, 17, 0x03), // ld x17, store result lane 1
+        i_type(24, 20, 0b011, 18, 0x03), // ld x18, expected store lane 1
+        b_type((fail_instruction_index - 30) * 4, 18, 17, 0b001),
+        0x0000_0073, // ecall
+        0x0000_0000, // fail: invalid instruction
+    ];
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+
+    let mut program_words = words;
+    while program_words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        program_words.push(0);
+    }
+
+    let source_span = [
+        0xa1a2_a3a4_a5a6_a7a8,
+        0x5151_5151_5151_5151,
+        0x5252_5252_5252_5252,
+        0xb1b2_b3b4_b5b6_b7b8,
+    ];
+    let initial_store = [
+        0x1111_2222_3333_4444,
+        0x6161_6161_6161_6161,
+        0x6262_6262_6262_6262,
+        0x5555_6666_7777_8888,
+    ];
+    let expected_load = [source_span[0], source_span[3]];
+    let mut expected_store = initial_store;
+    expected_store[0] = expected_load[0];
+    expected_store[3] = expected_load[1];
+
+    let mut program = riscv64_program(&program_words);
+    for word in [0xeeee_eeee_eeee_eeee_u64; 4]
+        .into_iter()
+        .chain(source_span)
+        .chain([0_u64, 0])
+        .chain([0xeeee_eeee_eeee_eeee_u64; 2])
+        .chain(initial_store)
+        .chain(expected_load)
+        .chain(expected_store)
+    {
+        program.extend_from_slice(&word.to_le_bytes());
+    }
+    program
+}
+
 fn masked_strided_e64_m1_vector_memory_program() -> Vec<u8> {
     const DATA_OFFSET_BYTES: i32 = 256;
     const VECTOR_BYTES: i32 = 16;
@@ -6236,6 +6374,98 @@ fn masked_strided_e64_m1_vector_memory_program() -> Vec<u8> {
         for lane in block {
             program.extend_from_slice(&lane.to_le_bytes());
         }
+    }
+    program
+}
+
+fn masked_sparse_strided_e64_m1_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 256;
+    const MASK_OFFSET_BYTES: i32 = 0;
+    const INITIAL_OFFSET_BYTES: i32 = 16;
+    const SOURCE_OFFSET_BYTES: i32 = 32;
+    const LOAD_RESULT_OFFSET_BYTES: i32 = 64;
+    const STORE_RESULT_OFFSET_BYTES: i32 = 96;
+    const EXPECTED_LOAD_OFFSET_BYTES: i32 = 128;
+    const EXPECTED_STORE_OFFSET_BYTES: i32 = 144;
+    const STRIDE_BYTES: i32 = 24;
+
+    let fail_instruction_index = 37;
+    let words = vec![
+        u_type(0, 10, 0x17),                                      // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),           // addi x10, x10, data
+        i_type(MASK_OFFSET_BYTES, 10, 0b000, 12, 0x13),           // addi x12, x10, mask data
+        i_type(INITIAL_OFFSET_BYTES, 10, 0b000, 13, 0x13),        // addi x13, x10, initial vector
+        i_type(SOURCE_OFFSET_BYTES, 10, 0b000, 14, 0x13),         // addi x14, x10, source
+        i_type(LOAD_RESULT_OFFSET_BYTES, 10, 0b000, 15, 0x13),    // addi x15, x10, load result
+        i_type(STORE_RESULT_OFFSET_BYTES, 10, 0b000, 16, 0x13),   // addi x16, x10, store result
+        i_type(EXPECTED_LOAD_OFFSET_BYTES, 10, 0b000, 19, 0x13),  // addi x19, x10, expected load
+        i_type(EXPECTED_STORE_OFFSET_BYTES, 10, 0b000, 20, 0x13), // addi x20, x10, expected store
+        i_type(2, 0, 0b000, 11, 0x13),                            // addi x11, x0, vl
+        i_type(STRIDE_BYTES, 0, 0b000, 21, 0x13),                 // addi x21, x0, stride
+        vsetvli_type(0xd8, 11, 5), // vsetvli x5, x11, e64, m1, ta, ma
+        vector_unit_stride_load_type(true, 0b111, 12, 8), // vle64.v v8, (x12)
+        vector_vi_type(0b011000, 8, 0, 0), // vmseq.vi v0, v8, 0
+        vector_unit_stride_load_type(true, 0b111, 13, 1), // vle64.v v1, (x13)
+        vector_strided_load_type(false, 0b111, 14, 21, 1), // vlse64.v v1, (x14), x21, v0.t
+        vector_unit_stride_store_type(true, 0b111, 15, 1), // vse64.v v1, (x15)
+        vector_strided_store_type(false, 0b111, 16, 21, 1), // vsse64.v v1, (x16), x21, v0.t
+        i_type(0, 15, 0b011, 17, 0x03), // ld x17, load result lane 0
+        i_type(0, 19, 0b011, 18, 0x03), // ld x18, expected lane 0
+        b_type((fail_instruction_index - 20) * 4, 18, 17, 0b001),
+        i_type(8, 15, 0b011, 17, 0x03), // ld x17, load result lane 1
+        i_type(8, 19, 0b011, 18, 0x03), // ld x18, expected lane 1
+        b_type((fail_instruction_index - 23) * 4, 18, 17, 0b001),
+        i_type(0, 16, 0b011, 17, 0x03), // ld x17, store result lane 0
+        i_type(0, 20, 0b011, 18, 0x03), // ld x18, expected store lane 0
+        b_type((fail_instruction_index - 26) * 4, 18, 17, 0b001),
+        i_type(8, 16, 0b011, 17, 0x03), // ld x17, store result gap
+        i_type(8, 20, 0b011, 18, 0x03), // ld x18, expected store gap
+        b_type((fail_instruction_index - 29) * 4, 18, 17, 0b001),
+        i_type(16, 16, 0b011, 17, 0x03), // ld x17, store result gap
+        i_type(16, 20, 0b011, 18, 0x03), // ld x18, expected store gap
+        b_type((fail_instruction_index - 32) * 4, 18, 17, 0b001),
+        i_type(24, 16, 0b011, 17, 0x03), // ld x17, inactive store lane
+        i_type(24, 20, 0b011, 18, 0x03), // ld x18, expected inactive lane
+        b_type((fail_instruction_index - 35) * 4, 18, 17, 0b001),
+        0x0000_0073, // ecall
+        0x0000_0000, // fail: invalid instruction
+    ];
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+
+    let mut program_words = words;
+    while program_words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        program_words.push(0);
+    }
+
+    let initial = [0x1111_2222_3333_4444_u64, 0x5555_6666_7777_8888];
+    let source_span = [
+        0xa1a2_a3a4_a5a6_a7a8,
+        0x5151_5151_5151_5151,
+        0x5252_5252_5252_5252,
+        0xb1b2_b3b4_b5b6_b7b8,
+    ];
+    let initial_store = [
+        0x9999_aaaa_bbbb_cccc,
+        0x6161_6161_6161_6161,
+        0x6262_6262_6262_6262,
+        0xdddd_eeee_ffff_0001,
+    ];
+    let expected_load = [source_span[0], initial[1]];
+    let mut expected_store = initial_store;
+    expected_store[0] = expected_load[0];
+
+    let mut program = riscv64_program(&program_words);
+    for word in [0_u64, 1]
+        .into_iter()
+        .chain(initial)
+        .chain(source_span)
+        .chain([0_u64, 0])
+        .chain([0xeeee_eeee_eeee_eeee_u64; 2])
+        .chain(initial_store)
+        .chain(expected_load)
+        .chain(expected_store)
+    {
+        program.extend_from_slice(&word.to_le_bytes());
     }
     program
 }

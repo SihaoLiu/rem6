@@ -11,6 +11,7 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Word, 2, 12, 16),
     (MemoryWidth::Word, 3, 6, 16),
     (MemoryWidth::Doubleword, 2, 8, 16),
+    (MemoryWidth::Doubleword, 2, 24, 32),
 ];
 const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)] = &[
     (MemoryWidth::Word, MemoryWidth::Word, &[0, 4], 8),
@@ -312,15 +313,14 @@ fn strided_access_plan(
         return None;
     }
     let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
-    (element_count.checked_mul(element_bytes)? <= group_bytes && span_len <= group_bytes).then_some(
-        StridedAccessPlan {
+    (element_count.checked_mul(element_bytes)? <= group_bytes && span_len <= MAX_VECTOR_GROUP_BYTES)
+        .then_some(StridedAccessPlan {
             element_count,
             element_bytes,
             stride,
             span_len,
             group_registers,
-        },
-    )
+        })
 }
 
 fn supported_strided_m1_shape(
