@@ -7,7 +7,11 @@ use crate::{
     RiscvVectorMemoryInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
-const SUPPORTED_STRIDED_E32_M1_SHAPES: &[(usize, usize, usize)] = &[(2, 12, 16), (3, 6, 16)];
+const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
+    (MemoryWidth::Word, 2, 12, 16),
+    (MemoryWidth::Word, 3, 6, 16),
+    (MemoryWidth::Doubleword, 2, 8, 16),
+];
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -56,12 +60,6 @@ pub(crate) fn memory_access(
             let plan = strided_access_plan(hart, vd, width, rs2).ok_or(())?;
             if masked_load_overlaps_v0(mask, vd, plan.group_registers) {
                 return Err(());
-            }
-            if plan.element_count == 0 {
-                if mask.is_masked() {
-                    return Err(());
-                }
-                return Ok(None);
             }
             let byte_mask = strided_compact_byte_mask(hart, mask, &plan);
             if byte_mask
@@ -121,12 +119,6 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = strided_access_plan(hart, vs3, width, rs2).ok_or(())?;
-            if plan.element_count == 0 {
-                if mask.is_masked() {
-                    return Err(());
-                }
-                return Ok(None);
-            }
             let group = read_register_group(hart, vs3, plan.group_registers);
             let compact_byte_mask = strided_compact_byte_mask(hart, mask, &plan);
             if compact_byte_mask
@@ -199,9 +191,6 @@ fn strided_access_plan(
     width: MemoryWidth,
     stride_register: crate::Register,
 ) -> Option<StridedAccessPlan> {
-    if width != MemoryWidth::Word {
-        return None;
-    }
     let config = hart.vector_config();
     let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
@@ -218,13 +207,7 @@ fn strided_access_plan(
     let element_bytes = width.bytes();
     let stride = usize::try_from(hart.read(stride_register)).ok()?;
     if element_count == 0 {
-        return Some(StridedAccessPlan {
-            element_count,
-            element_bytes,
-            stride,
-            span_len: 0,
-            group_registers,
-        });
+        return None;
     }
     if stride < element_bytes {
         return None;
@@ -232,7 +215,7 @@ fn strided_access_plan(
     let span_len = (element_count - 1)
         .checked_mul(stride)?
         .checked_add(element_bytes)?;
-    if !supported_strided_e32_m1_shape(element_count, stride, span_len) {
+    if !supported_strided_m1_shape(width, element_count, stride, span_len) {
         return None;
     }
     let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
@@ -247,11 +230,16 @@ fn strided_access_plan(
     )
 }
 
-fn supported_strided_e32_m1_shape(element_count: usize, stride: usize, span_len: usize) -> bool {
-    SUPPORTED_STRIDED_E32_M1_SHAPES
+fn supported_strided_m1_shape(
+    width: MemoryWidth,
+    element_count: usize,
+    stride: usize,
+    span_len: usize,
+) -> bool {
+    SUPPORTED_STRIDED_M1_SHAPES
         .iter()
         .copied()
-        .any(|shape| shape == (element_count, stride, span_len))
+        .any(|shape| shape == (width, element_count, stride, span_len))
 }
 
 fn strided_compact_byte_mask(
