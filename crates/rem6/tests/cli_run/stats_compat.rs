@@ -4579,7 +4579,7 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_element_width
 }
 
 #[test]
-fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_e32_m1_load_memory() {
+fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_e32_e64_m1_load_memory() {
     const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
 
     let scalar_stats = in_order_pipeline_payload_stats(
@@ -4594,6 +4594,7 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_e32_m1_load_memory
         ("e8", 0xc0, 8, 0b000),
         ("e16", 0xc8, 4, 0b101),
         ("e32", 0xd0, 2, 0b110),
+        ("e64", 0xd8, 1, 0b111),
     ] {
         let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
             &format!("in-order-vector-fault-only-{name}-m1-load"),

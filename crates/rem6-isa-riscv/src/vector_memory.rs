@@ -75,13 +75,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
-            if mask != RiscvVectorMaskMode::Unmasked
-                || !matches!(
-                    width,
-                    MemoryWidth::Byte | MemoryWidth::Halfword | MemoryWidth::Word
-                )
-                || plan.group_registers != 1
-            {
+            if mask != RiscvVectorMaskMode::Unmasked || plan.group_registers != 1 {
                 return Err(());
             }
             unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
