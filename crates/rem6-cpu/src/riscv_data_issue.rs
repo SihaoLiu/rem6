@@ -1267,7 +1267,7 @@ fn sparse_e64_indexed_m1_vector_access(
     };
     group_registers == 1
         && width == MemoryWidth::Doubleword
-        && index_width == MemoryWidth::Doubleword
+        && matches!(index_width, MemoryWidth::Word | MemoryWidth::Doubleword)
         && offsets == [0, 24]
         && byte_len == 32
         && size_bytes == byte_len
@@ -1416,13 +1416,32 @@ mod tests {
         let size = AccessSize::new(32).unwrap();
 
         assert!(supports_cross_line_data_access(
-            &vector_load_indexed_e64_m1(0x8000, 32),
+            &vector_load_indexed_e64_m1(0x8000, MemoryWidth::Doubleword, 32),
             Address::new(0x8000),
             size,
             layout
         ));
         assert!(supports_cross_line_data_access(
-            &vector_store_indexed_e64_m1(0x8000, 32),
+            &vector_store_indexed_e64_m1(0x8000, MemoryWidth::Doubleword, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_sparse_indexed_e64_m1_with_e32_indices() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_indexed_e64_m1(0x8000, MemoryWidth::Word, 32),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_indexed_e64_m1(0x8000, MemoryWidth::Word, 32),
             Address::new(0x8000),
             size,
             layout
@@ -1541,12 +1560,16 @@ mod tests {
         }
     }
 
-    fn vector_load_indexed_e64_m1(address: u64, span_len: usize) -> MemoryAccessKind {
+    fn vector_load_indexed_e64_m1(
+        address: u64,
+        index_width: MemoryWidth,
+        span_len: usize,
+    ) -> MemoryAccessKind {
         MemoryAccessKind::VectorLoadIndexed {
             vd: VectorRegister::new(1).unwrap(),
             address,
             width: MemoryWidth::Doubleword,
-            index_width: MemoryWidth::Doubleword,
+            index_width,
             offsets: vec![0, 24],
             span_len,
             byte_mask: None,
@@ -1554,11 +1577,15 @@ mod tests {
         }
     }
 
-    fn vector_store_indexed_e64_m1(address: u64, data_len: usize) -> MemoryAccessKind {
+    fn vector_store_indexed_e64_m1(
+        address: u64,
+        index_width: MemoryWidth,
+        data_len: usize,
+    ) -> MemoryAccessKind {
         MemoryAccessKind::VectorStoreIndexed {
             address,
             width: MemoryWidth::Doubleword,
-            index_width: MemoryWidth::Doubleword,
+            index_width,
             offsets: vec![0, 24],
             data: vec![0; data_len],
             byte_mask: vec![true; data_len],
