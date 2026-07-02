@@ -18,6 +18,7 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
 const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)] = &[
     (MemoryWidth::Byte, MemoryWidth::Byte, &[0, 15], 16),
     (MemoryWidth::Halfword, MemoryWidth::Halfword, &[0, 14], 16),
+    (MemoryWidth::Halfword, MemoryWidth::Word, &[0, 14], 16),
     (MemoryWidth::Word, MemoryWidth::Word, &[0, 4], 8),
     (MemoryWidth::Word, MemoryWidth::Word, &[0, 12], 16),
     (MemoryWidth::Word, MemoryWidth::Word, &[4, 12], 16),
