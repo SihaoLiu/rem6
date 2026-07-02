@@ -12,9 +12,17 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Word, 3, 6, 16),
     (MemoryWidth::Doubleword, 2, 8, 16),
 ];
-const SUPPORTED_INDEXED_E32_M1_OFFSETS: &[usize] = &[0, 4];
-const SUPPORTED_INDEXED_E32_M1_SPARSE_OFFSETS: &[usize] = &[0, 12];
-const SUPPORTED_INDEXED_E64_M1_OFFSETS: &[usize] = &[0, 8];
+const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)] = &[
+    (MemoryWidth::Word, MemoryWidth::Word, &[0, 4], 8),
+    (MemoryWidth::Word, MemoryWidth::Word, &[0, 12], 16),
+    (MemoryWidth::Word, MemoryWidth::Word, &[4, 12], 16),
+    (
+        MemoryWidth::Doubleword,
+        MemoryWidth::Doubleword,
+        &[0, 8],
+        16,
+    ),
+];
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -407,14 +415,14 @@ fn supported_indexed_m1_shape(
     offsets: &[usize],
     span_len: usize,
 ) -> bool {
-    (width == MemoryWidth::Word
-        && index_width == MemoryWidth::Word
-        && ((offsets == SUPPORTED_INDEXED_E32_M1_OFFSETS && span_len == 8)
-            || (offsets == SUPPORTED_INDEXED_E32_M1_SPARSE_OFFSETS && span_len == 16)))
-        || (width == MemoryWidth::Doubleword
-            && index_width == MemoryWidth::Doubleword
-            && offsets == SUPPORTED_INDEXED_E64_M1_OFFSETS
-            && span_len == 16)
+    SUPPORTED_INDEXED_M1_SHAPES.iter().any(
+        |(supported_width, supported_index_width, supported_offsets, supported_span_len)| {
+            width == *supported_width
+                && index_width == *supported_index_width
+                && offsets == *supported_offsets
+                && span_len == *supported_span_len
+        },
+    )
 }
 
 fn strided_compact_byte_mask(
