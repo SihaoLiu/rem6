@@ -16,6 +16,7 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Doubleword, 2, 24, 32),
 ];
 const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)] = &[
+    (MemoryWidth::Byte, MemoryWidth::Byte, &[0, 15], 16),
     (MemoryWidth::Halfword, MemoryWidth::Halfword, &[0, 14], 16),
     (MemoryWidth::Word, MemoryWidth::Word, &[0, 4], 8),
     (MemoryWidth::Word, MemoryWidth::Word, &[0, 12], 16),
@@ -110,9 +111,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = indexed_access_plan(hart, vd, vs2, index_width).ok_or(())?;
-            if masked_indexed_unsupported(mask, &plan)
-                || masked_load_overlaps_v0(mask, vd, plan.group_registers)
-            {
+            if masked_load_overlaps_v0(mask, vd, plan.group_registers) {
                 return Err(());
             }
             let byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
@@ -203,9 +202,6 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = indexed_access_plan(hart, vs3, vs2, index_width).ok_or(())?;
-            if masked_indexed_unsupported(mask, &plan) {
-                return Err(());
-            }
             let group = read_register_group(hart, vs3, plan.group_registers);
             let compact_byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
             if compact_byte_mask
@@ -408,6 +404,7 @@ fn read_index_offset(
     let offset = element_index.checked_mul(index_width.bytes())?;
     let bytes = source.get(offset..offset + index_width.bytes())?;
     match index_width {
+        MemoryWidth::Byte => Some(bytes[0] as usize),
         MemoryWidth::Halfword => Some(u16::from_le_bytes([bytes[0], bytes[1]]) as usize),
         MemoryWidth::Word => {
             Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
@@ -416,7 +413,6 @@ fn read_index_offset(
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
         .ok(),
-        MemoryWidth::Byte => None,
     }
 }
 
@@ -474,14 +470,6 @@ fn indexed_compact_byte_mask(
         }
     }
     Some(byte_mask)
-}
-
-fn masked_indexed_unsupported(mask: RiscvVectorMaskMode, plan: &IndexedAccessPlan) -> bool {
-    mask.is_masked()
-        && !matches!(
-            plan.width,
-            MemoryWidth::Halfword | MemoryWidth::Word | MemoryWidth::Doubleword
-        )
 }
 
 fn indexed_active_span_len(

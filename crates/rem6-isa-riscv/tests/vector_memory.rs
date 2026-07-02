@@ -579,6 +579,119 @@ fn hart_builds_sparse_indexed_e64_m1_vector_memory_accesses() {
 }
 
 #[test]
+fn hart_builds_indexed_e8_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8420);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xc0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    let source = [0xa1, 0xb1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(true, 0b000, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Byte,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![0, 15],
+            span_len: 16,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(true, 0b000, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 16];
+    data[0] = source[0];
+    data[15] = source[1];
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Byte,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![0, 15],
+            data,
+            byte_mask: element_byte_mask(
+                &[
+                    true, false, false, false, false, false, false, false, false, false, false,
+                    false, false, false, false, true,
+                ],
+                1,
+            ),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_masked_indexed_e8_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8430);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xc0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = [0xa1, 0xb1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b000, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Byte,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![0, 15],
+            span_len: 1,
+            byte_mask: Some(element_byte_mask(&[true, false], 1)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b000, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Byte,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![0, 15],
+            data: source[0..1].to_vec(),
+            byte_mask: element_byte_mask(&[true], 1),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_indexed_e16_m1_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8400);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xc8));
