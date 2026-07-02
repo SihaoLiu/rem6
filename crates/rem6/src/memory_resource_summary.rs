@@ -1,6 +1,6 @@
 use crate::{
     data_cache_runtime::CliDataCacheSummary, transport_summary::Rem6MemoryTransportSummary,
-    Rem6DramSummary, Rem6DramTargetSummary, Rem6RunFabricSummary,
+    Rem6DramSummary, Rem6DramTargetSummary, Rem6RunFabricRouterActivity, Rem6RunFabricSummary,
 };
 use std::collections::BTreeSet;
 
@@ -91,6 +91,7 @@ pub(crate) struct Rem6FabricResourceSummary {
     pub(crate) active_virtual_networks: u64,
     pub(crate) active_links: u64,
     pub(crate) active_hops: u64,
+    pub(crate) active_routers: u64,
     pub(crate) bytes: u64,
     pub(crate) flits: u64,
     pub(crate) occupied_ticks: u64,
@@ -102,6 +103,7 @@ pub(crate) struct Rem6FabricResourceSummary {
     pub(crate) link_activities: Vec<FabricLinkActivity>,
     pub(crate) lane_activities: Vec<FabricLaneActivity>,
     pub(crate) hop_activities: Vec<FabricHopActivity>,
+    pub(crate) router_activities: Vec<Rem6RunFabricRouterActivity>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -325,6 +327,7 @@ impl Rem6FabricResourceSummary {
             active_virtual_networks: summary.active_virtual_networks(),
             active_links: summary.link_activities().len() as u64,
             active_hops: active_fabric_hop_count(summary.hop_activities()),
+            active_routers: summary.router_activities().len() as u64,
             bytes: summary.bytes(),
             flits: summary.flits(),
             occupied_ticks: summary.occupied_ticks(),
@@ -336,6 +339,7 @@ impl Rem6FabricResourceSummary {
             link_activities: summary.link_activities().to_vec(),
             lane_activities: summary.lane_activities().to_vec(),
             hop_activities: summary.hop_activities().to_vec(),
+            router_activities: summary.router_activities().to_vec(),
         }
     }
 
@@ -349,6 +353,10 @@ impl Rem6FabricResourceSummary {
 
     pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {
         &self.hop_activities
+    }
+
+    pub(crate) fn router_activities(&self) -> &[Rem6RunFabricRouterActivity] {
+        &self.router_activities
     }
 
     pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {

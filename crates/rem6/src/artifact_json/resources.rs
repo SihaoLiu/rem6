@@ -114,12 +114,13 @@ pub(super) fn dram_low_power_json(
 
 fn fabric_resource_json(summary: &Rem6FabricResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"active_links\":{},\"active_hops\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"active_links\":{},\"active_hops\":{},\"active_routers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_virtual_networks,
         summary.active_links,
         summary.active_hops,
+        summary.active_routers,
         summary.bytes,
         summary.flits,
         summary.occupied_ticks,
@@ -131,6 +132,7 @@ fn fabric_resource_json(summary: &Rem6FabricResourceSummary) -> String {
         fabric_resource_link_activities_json(summary),
         fabric_resource_lane_activities_json(summary),
         fabric_resource_hop_activities_json(summary),
+        fabric_resource_router_activities_json(summary),
     )
 }
 
@@ -229,6 +231,31 @@ fn fabric_resource_hop_router_json(activity: &FabricHopActivity) -> String {
         ),
         None => "null".to_string(),
     }
+}
+
+fn fabric_resource_router_activities_json(summary: &Rem6FabricResourceSummary) -> String {
+    summary
+        .router_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"latency_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.router()),
+                activity.input_port(),
+                activity.output_port(),
+                activity.virtual_channel(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.flit_count(),
+                activity.latency_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn transport_resource_json(summary: &Rem6TransportResourceSummary) -> String {

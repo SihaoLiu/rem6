@@ -9,7 +9,7 @@ use super::{
     dram::emit_dram_target_stats,
     fabric::{
         emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_link_stats,
-        emit_fabric_virtual_network_stats,
+        emit_fabric_router_stats, emit_fabric_virtual_network_stats,
     },
     increment_stat, Rem6CliError, Rem6ExecutionSummary,
 };
@@ -193,6 +193,7 @@ fn emit_fabric_resource_stats(
         ),
         ("active_links", "Count", summary.active_links),
         ("active_hops", "Count", summary.active_hops),
+        ("active_routers", "Count", summary.active_routers),
         ("bytes", "Byte", summary.bytes),
         ("flits", "Count", summary.flits),
         ("occupied_ticks", "Tick", summary.occupied_ticks),
@@ -221,7 +222,8 @@ fn emit_fabric_resource_stats(
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
     emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
-    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
+    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())?;
+    emit_fabric_router_stats(stats, prefix, summary.router_activities())
 }
 
 fn emit_transport_resource_stats(

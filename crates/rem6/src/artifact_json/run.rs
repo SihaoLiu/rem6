@@ -770,7 +770,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .map(|policy| format!("\"{}\"", policy.as_str()))
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -780,6 +780,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         qos_queue_policy,
         summary.active_lanes(),
         summary.active_virtual_networks(),
+        summary.router_activities().len(),
         summary.transfers(),
         summary.bytes(),
         summary.flits(),
@@ -792,6 +793,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         run_fabric_link_activities_json(summary),
         run_fabric_lane_activities_json(summary),
         run_fabric_hop_activities_json(summary),
+        run_fabric_router_activities_json(summary),
     )
 }
 
@@ -890,6 +892,31 @@ fn run_fabric_hop_router_json(activity: &FabricHopActivity) -> String {
         ),
         None => "null".to_string(),
     }
+}
+
+fn run_fabric_router_activities_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .router_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"latency_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.router()),
+                activity.input_port(),
+                activity.output_port(),
+                activity.virtual_channel(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.flit_count(),
+                activity.latency_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl Rem6LoadBlobSummary {

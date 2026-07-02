@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{
     FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
@@ -25,6 +25,35 @@ pub(crate) struct Rem6RunFabricSummary {
     link_activities: Vec<FabricLinkActivity>,
     lane_activities: Vec<FabricLaneActivity>,
     hop_activities: Vec<FabricHopActivity>,
+    router_activities: Vec<Rem6RunFabricRouterActivity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RunFabricRouterActivity {
+    router: String,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    transfer_count: u64,
+    byte_count: u64,
+    flit_count: u64,
+    latency_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    first_tick: u64,
+    last_tick: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Rem6RunFabricRouterActivityBuilder {
+    transfer_count: u64,
+    byte_count: u64,
+    flit_count: u64,
+    latency_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    first_tick: Option<u64>,
+    last_tick: Option<u64>,
 }
 
 impl Rem6RunFabricSummary {
@@ -39,6 +68,7 @@ impl Rem6RunFabricSummary {
         let lane_activities = transport.fabric_lane_activities().unwrap_or_default();
         let hop_activities = transport.fabric_hop_activities().unwrap_or_default();
         let profile = FabricActivityProfile::from_lanes(lane_activities.iter());
+        let router_activities = Rem6RunFabricRouterActivity::from_hops(&hop_activities);
         let active_virtual_networks = lane_activities
             .iter()
             .map(FabricLaneActivity::virtual_network)
@@ -60,6 +90,7 @@ impl Rem6RunFabricSummary {
             link_activities: FabricLinkActivity::from_lanes(lane_activities.iter()),
             lane_activities,
             hop_activities,
+            router_activities,
         }
     }
 
@@ -119,8 +150,125 @@ impl Rem6RunFabricSummary {
         &self.hop_activities
     }
 
+    pub(crate) fn router_activities(&self) -> &[Rem6RunFabricRouterActivity] {
+        &self.router_activities
+    }
+
     pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
         FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
+    }
+}
+
+impl Rem6RunFabricRouterActivity {
+    fn from_hops(hops: &[FabricHopActivity]) -> Vec<Self> {
+        let mut summaries =
+            BTreeMap::<(String, u32, u32, u16), Rem6RunFabricRouterActivityBuilder>::new();
+        for hop in hops {
+            let Some(router) = hop.router() else {
+                continue;
+            };
+            summaries
+                .entry((
+                    router.router().as_str().to_owned(),
+                    router.input_port(),
+                    router.output_port(),
+                    router.virtual_channel(),
+                ))
+                .or_default()
+                .record(hop);
+        }
+
+        summaries
+            .into_iter()
+            .map(
+                |((router, input_port, output_port, virtual_channel), summary)| Self {
+                    router,
+                    input_port,
+                    output_port,
+                    virtual_channel,
+                    transfer_count: summary.transfer_count,
+                    byte_count: summary.byte_count,
+                    flit_count: summary.flit_count,
+                    latency_ticks: summary.latency_ticks,
+                    queue_delay_ticks: summary.queue_delay_ticks,
+                    max_queue_delay_ticks: summary.max_queue_delay_ticks,
+                    first_tick: summary.first_tick.unwrap_or(0),
+                    last_tick: summary.last_tick.unwrap_or(0),
+                },
+            )
+            .collect()
+    }
+
+    pub(crate) fn router(&self) -> &str {
+        &self.router
+    }
+
+    pub(crate) const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub(crate) const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub(crate) const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub(crate) const fn transfer_count(&self) -> u64 {
+        self.transfer_count
+    }
+
+    pub(crate) const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
+
+    pub(crate) const fn flit_count(&self) -> u64 {
+        self.flit_count
+    }
+
+    pub(crate) const fn latency_ticks(&self) -> u64 {
+        self.latency_ticks
+    }
+
+    pub(crate) const fn queue_delay_ticks(&self) -> u64 {
+        self.queue_delay_ticks
+    }
+
+    pub(crate) const fn max_queue_delay_ticks(&self) -> u64 {
+        self.max_queue_delay_ticks
+    }
+
+    pub(crate) const fn first_tick(&self) -> u64 {
+        self.first_tick
+    }
+
+    pub(crate) const fn last_tick(&self) -> u64 {
+        self.last_tick
+    }
+}
+
+impl Rem6RunFabricRouterActivityBuilder {
+    fn record(&mut self, hop: &FabricHopActivity) {
+        let Some(router) = hop.router() else {
+            return;
+        };
+        self.transfer_count = self.transfer_count.saturating_add(1);
+        self.byte_count = self.byte_count.saturating_add(hop.bytes());
+        self.flit_count = self.flit_count.saturating_add(hop.flits());
+        self.latency_ticks = self.latency_ticks.saturating_add(router.latency_ticks());
+        self.queue_delay_ticks = self
+            .queue_delay_ticks
+            .saturating_add(router.queue_delay_ticks());
+        self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(router.queue_delay_ticks());
+        self.first_tick = Some(
+            self.first_tick
+                .map_or(router.ready_tick(), |tick| tick.min(router.ready_tick())),
+        );
+        self.last_tick = Some(
+            self.last_tick
+                .map_or(router.depart_tick(), |tick| tick.max(router.depart_tick())),
+        );
     }
 }
 

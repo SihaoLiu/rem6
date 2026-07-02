@@ -1601,6 +1601,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         })
         .collect::<BTreeSet<_>>()
         .len() as u64;
+    let fabric_active_routers = expected_fabric_router_stats(fabric).len() as u64;
     let router_hops = fabric
         .get("hop_activities")
         .and_then(Value::as_array)
@@ -1619,6 +1620,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             && router.get("virtual_channel").and_then(Value::as_u64) == Some(3)
             && router.get("latency_ticks").and_then(Value::as_u64) == Some(5)
     }));
+    assert_run_fabric_router_activity_json(fabric);
     let fabric_bytes = fabric
         .get("bytes")
         .and_then(Value::as_u64)
@@ -1768,6 +1770,12 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             .pointer("/fabric/active_hops")
             .and_then(Value::as_u64),
         Some(fabric_active_hops)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/active_routers")
+            .and_then(Value::as_u64),
+        Some(fabric_active_routers)
     );
     assert_eq!(
         memory_resources
@@ -1984,6 +1992,11 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         fabric.get("hop_activities"),
         "fabric resource hops should mirror run fabric hops"
     );
+    assert_eq!(
+        fabric_resources.pointer("/router_activities"),
+        fabric.get("router_activities"),
+        "fabric resource routers should mirror run fabric routers"
+    );
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.transfers",
@@ -2040,6 +2053,13 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.resources.fabric.active_hops",
         "Count",
         fabric_active_hops,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.active_routers",
+        "Count",
+        fabric_active_routers,
         "monotonic",
     );
     assert_stat(
@@ -2208,6 +2228,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     assert_run_fabric_link_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_hop_stats(&stdout, "sim.memory.fabric", fabric);
+    assert_run_fabric_router_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_virtual_network_stats(
         &stdout,
         "sim.memory.resources.fabric",
@@ -2223,6 +2244,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     assert_run_fabric_link_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
     assert_run_fabric_lane_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
     assert_run_fabric_hop_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
+    assert_run_fabric_router_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
 }
 
 #[test]
@@ -4909,6 +4931,179 @@ fn assert_run_fabric_hop_stats(stdout: &str, stat_prefix: &str, fabric: &Value) 
             &format!("{prefix}.max_router_queue_delay_ticks"),
             "Tick",
             summary.max_router_queue_delay_ticks,
+            "monotonic",
+        );
+    }
+}
+
+#[derive(Default)]
+struct ExpectedFabricRouterStats {
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    latency_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    first_tick: Option<u64>,
+    last_tick: Option<u64>,
+}
+
+fn expected_fabric_router_stats(
+    fabric: &Value,
+) -> BTreeMap<(String, u64, u64, u64), ExpectedFabricRouterStats> {
+    let hops = fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activities");
+    let mut summaries = BTreeMap::<(String, u64, u64, u64), ExpectedFabricRouterStats>::new();
+
+    for hop in hops {
+        let Some(router) = hop.get("router") else {
+            continue;
+        };
+        let router_id = router
+            .get("router")
+            .and_then(Value::as_str)
+            .expect("fabric router id")
+            .to_owned();
+        let input_port = router
+            .get("input_port")
+            .and_then(Value::as_u64)
+            .expect("fabric router input port");
+        let output_port = router
+            .get("output_port")
+            .and_then(Value::as_u64)
+            .expect("fabric router output port");
+        let virtual_channel = router
+            .get("virtual_channel")
+            .and_then(Value::as_u64)
+            .expect("fabric router virtual channel");
+        let summary = summaries
+            .entry((router_id, input_port, output_port, virtual_channel))
+            .or_default();
+        summary.transfers += 1;
+        summary.bytes += lane_u64(hop, "bytes");
+        summary.flits += lane_u64(hop, "flits");
+        summary.latency_ticks += lane_u64(router, "latency_ticks");
+        let queue_delay_ticks = lane_u64(router, "queue_delay_ticks");
+        summary.queue_delay_ticks += queue_delay_ticks;
+        summary.max_queue_delay_ticks = summary.max_queue_delay_ticks.max(queue_delay_ticks);
+        let first_tick = lane_u64(router, "ready_tick");
+        summary.first_tick = Some(
+            summary
+                .first_tick
+                .map_or(first_tick, |tick| tick.min(first_tick)),
+        );
+        let last_tick = lane_u64(router, "depart_tick");
+        summary.last_tick = Some(
+            summary
+                .last_tick
+                .map_or(last_tick, |tick| tick.max(last_tick)),
+        );
+    }
+
+    summaries
+}
+
+fn assert_run_fabric_router_activity_json(fabric: &Value) {
+    let expected = expected_fabric_router_stats(fabric);
+    assert!(
+        !expected.is_empty(),
+        "missing expected fabric router activity"
+    );
+    let routers = fabric
+        .get("router_activities")
+        .and_then(Value::as_array)
+        .expect("fabric router activities");
+    assert_eq!(
+        routers.len(),
+        expected.len(),
+        "fabric router activity count"
+    );
+
+    for activity in routers {
+        let router = activity
+            .get("router")
+            .and_then(Value::as_str)
+            .expect("fabric router activity id");
+        let input_port = lane_u64(activity, "input_port");
+        let output_port = lane_u64(activity, "output_port");
+        let virtual_channel = lane_u64(activity, "virtual_channel");
+        let expected = expected
+            .get(&(router.to_owned(), input_port, output_port, virtual_channel))
+            .expect("expected fabric router activity");
+        assert_eq!(lane_u64(activity, "transfer_count"), expected.transfers);
+        assert_eq!(lane_u64(activity, "byte_count"), expected.bytes);
+        assert_eq!(lane_u64(activity, "flit_count"), expected.flits);
+        assert_eq!(lane_u64(activity, "latency_ticks"), expected.latency_ticks);
+        assert_eq!(
+            lane_u64(activity, "queue_delay_ticks"),
+            expected.queue_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(activity, "max_queue_delay_ticks"),
+            expected.max_queue_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(activity, "first_tick"),
+            expected.first_tick.expect("expected first router tick")
+        );
+        assert_eq!(
+            lane_u64(activity, "last_tick"),
+            expected.last_tick.expect("expected last router tick")
+        );
+    }
+}
+
+fn assert_run_fabric_router_stats(stdout: &str, stat_prefix: &str, fabric: &Value) {
+    assert_run_fabric_router_activity_json(fabric);
+    for ((router, input_port, output_port, virtual_channel), summary) in
+        expected_fabric_router_stats(fabric)
+    {
+        let prefix = format!(
+            "{stat_prefix}.router.{}.in{input_port}.out{output_port}.vc{virtual_channel}",
+            stat_path_segment(&router)
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.transfers"),
+            "Count",
+            summary.transfers,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            summary.bytes,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.flits"),
+            "Count",
+            summary.flits,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.latency_ticks"),
+            "Tick",
+            summary.latency_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            summary.queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            summary.max_queue_delay_ticks,
             "monotonic",
         );
     }

@@ -5,7 +5,7 @@ use rem6_fabric::{
 };
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use crate::{Rem6CliError, Rem6RunFabricSummary};
+use crate::{Rem6CliError, Rem6RunFabricRouterActivity, Rem6RunFabricSummary};
 
 use super::{increment_stat, stat_path_segment};
 
@@ -94,7 +94,8 @@ pub(super) fn emit_run_fabric_stats(
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
     emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
-    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
+    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())?;
+    emit_fabric_router_stats(stats, prefix, summary.router_activities())
 }
 
 pub(super) fn emit_fabric_virtual_network_stats<I>(
@@ -391,6 +392,47 @@ pub(super) fn emit_fabric_hop_stats(
                 "max_router_queue_delay_ticks",
                 "Tick",
                 summary.max_router_queue_delay_ticks,
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn emit_fabric_router_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    activities: &[Rem6RunFabricRouterActivity],
+) -> Result<(), Rem6CliError> {
+    for activity in activities {
+        if activity.transfer_count() == 0 {
+            continue;
+        }
+        let prefix = format!(
+            "{prefix}.router.{}.in{}.out{}.vc{}",
+            stat_path_segment(activity.router()),
+            activity.input_port(),
+            activity.output_port(),
+            activity.virtual_channel(),
+        );
+        for (suffix, unit, value) in [
+            ("transfers", "Count", activity.transfer_count()),
+            ("bytes", "Byte", activity.byte_count()),
+            ("flits", "Count", activity.flit_count()),
+            ("latency_ticks", "Tick", activity.latency_ticks()),
+            ("queue_delay_ticks", "Tick", activity.queue_delay_ticks()),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                activity.max_queue_delay_ticks(),
             ),
         ] {
             increment_stat(
