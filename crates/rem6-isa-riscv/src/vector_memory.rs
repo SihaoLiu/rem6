@@ -76,7 +76,7 @@ pub(crate) fn memory_access(
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
             if mask != RiscvVectorMaskMode::Unmasked
-                || width != MemoryWidth::Byte
+                || !matches!(width, MemoryWidth::Byte | MemoryWidth::Halfword)
                 || plan.group_registers != 1
             {
                 return Err(());

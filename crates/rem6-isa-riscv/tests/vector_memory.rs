@@ -169,6 +169,20 @@ fn decoder_accepts_unmasked_vector_unit_stride_fault_only_memory() {
             mask: RiscvVectorMaskMode::Unmasked,
         })
     );
+    assert_eq!(
+        vector_unit_stride_fault_only_load_type(true, 0b101, 14, 2),
+        0x0307_5107
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vector_unit_stride_fault_only_load_type(true, 0b101, 14, 2))
+            .unwrap(),
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
+            vd: vreg(2),
+            rs1: reg(14),
+            width: MemoryWidth::Halfword,
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
 }
 
 #[test]
@@ -249,7 +263,7 @@ fn decoder_accepts_unmasked_vector_indexed_memory() {
 }
 
 #[test]
-fn hart_builds_fault_only_e8_m1_vector_memory_accesses() {
+fn hart_builds_fault_only_e8_e16_m1_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.set_vector_config(RiscvVectorConfig::new(4, 0xc0));
     hart.write(reg(14), 0x9000);
@@ -271,14 +285,36 @@ fn hart_builds_fault_only_e8_m1_vector_memory_accesses() {
             group_registers: 1,
         })
     );
+
+    let mut hart = RiscvHartState::new(0x8010);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    hart.write(reg(14), 0x9020);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_fault_only_load_type(true, 0b101, 14, 2))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadUnitStride {
+            vd: vreg(2),
+            address: 0x9020,
+            width: MemoryWidth::Halfword,
+            byte_len: 8,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
 }
 
 #[test]
-fn hart_rejects_fault_only_vector_memory_outside_supported_e8_m1_slice() {
+fn hart_rejects_fault_only_vector_memory_outside_supported_e8_e16_m1_slice() {
     assert_fault_only_memory_trap(
         0x8020,
-        0xc8,
-        vector_unit_stride_fault_only_load_type(true, 0b101, 14, 2),
+        0xd0,
+        vector_unit_stride_fault_only_load_type(true, 0b110, 14, 2),
     );
     assert_fault_only_memory_trap(
         0x8040,

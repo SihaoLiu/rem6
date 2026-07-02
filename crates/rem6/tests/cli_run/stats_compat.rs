@@ -4579,7 +4579,7 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_element_width
 }
 
 #[test]
-fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_m1_load_memory() {
+fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_m1_load_memory() {
     const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
 
     let scalar_stats = in_order_pipeline_payload_stats(
@@ -4590,55 +4590,57 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_m1_load_memory() {
         &scalar_stats,
         "sim.cpu0.pipeline.in_order.execute_wait_cycles",
     );
-    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
-        "in-order-vector-fault-only-e8-m1-load",
-        &unit_stride_vector_memory_program(
-            0xc0,
-            8,
-            vector_unit_stride_fault_only_load_type(true, 0b000, 10, 1),
-            vector_unit_stride_store_type(true, 0b000, 16, 1),
-        ),
-        100,
-    );
+    for (name, vtype, avl, width) in [("e8", 0xc0, 8, 0b000), ("e16", 0xc8, 4, 0b101)] {
+        let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+            &format!("in-order-vector-fault-only-{name}-m1-load"),
+            &unit_stride_vector_memory_program(
+                vtype,
+                avl,
+                vector_unit_stride_fault_only_load_type(true, width, 10, 1),
+                vector_unit_stride_store_type(true, width, 16, 1),
+            ),
+            100,
+        );
 
-    assert_eq!(
-        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
-        14,
-        "no-fault e8/m1 fault-only-first vector load should retire through the direct-memory top-level run path\nstats:\n{direct_stats}"
-    );
-    assert_eq!(
-        stat_value(
-            &direct_stats,
-            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
-        ) - scalar_execute_wait,
-        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
-        "no-fault e8/m1 fault-only-first vector load should add fixed vector LSU execute latency\nstats:\n{direct_stats}"
-    );
+        assert_eq!(
+            stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+            14,
+            "no-fault {name}/m1 fault-only-first vector load should retire through the direct-memory top-level run path\nstats:\n{direct_stats}"
+        );
+        assert_eq!(
+            stat_value(
+                &direct_stats,
+                "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+            ) - scalar_execute_wait,
+            EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+            "no-fault {name}/m1 fault-only-first vector load should add fixed vector LSU execute latency\nstats:\n{direct_stats}"
+        );
 
-    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
-        "in-order-cache-vector-fault-only-e8-m1-load",
-        &unit_stride_vector_memory_program(
-            0xc0,
-            8,
-            vector_unit_stride_fault_only_load_type(true, 0b000, 10, 1),
-            vector_unit_stride_store_type(true, 0b000, 16, 1),
-        ),
-        500,
-    );
+        let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+            &format!("in-order-cache-vector-fault-only-{name}-m1-load"),
+            &unit_stride_vector_memory_program(
+                vtype,
+                avl,
+                vector_unit_stride_fault_only_load_type(true, width, 10, 1),
+                vector_unit_stride_store_type(true, width, 16, 1),
+            ),
+            500,
+        );
 
-    assert_eq!(
-        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
-        14,
-        "no-fault e8/m1 fault-only-first vector load should retire through the cache-backed top-level run path\nstats:\n{cache_stats}"
-    );
-    assert_eq!(
-        stat_value(
-            &cache_stats,
-            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
-        ) - scalar_execute_wait,
-        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
-        "no-fault e8/m1 fault-only-first vector load should add fixed vector LSU execute latency through the cache-backed top-level run path\nstats:\n{cache_stats}"
-    );
+        assert_eq!(
+            stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+            14,
+            "no-fault {name}/m1 fault-only-first vector load should retire through the cache-backed top-level run path\nstats:\n{cache_stats}"
+        );
+        assert_eq!(
+            stat_value(
+                &cache_stats,
+                "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+            ) - scalar_execute_wait,
+            EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+            "no-fault {name}/m1 fault-only-first vector load should add fixed vector LSU execute latency through the cache-backed top-level run path\nstats:\n{cache_stats}"
+        );
+    }
 }
 
 #[test]
