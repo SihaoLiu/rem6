@@ -13,6 +13,7 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Doubleword, 2, 8, 16),
 ];
 const SUPPORTED_INDEXED_E32_M1_OFFSETS: &[usize] = &[0, 4];
+const SUPPORTED_INDEXED_E64_M1_OFFSETS: &[usize] = &[0, 8];
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -89,7 +90,9 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = indexed_access_plan(hart, vd, vs2, index_width).ok_or(())?;
-            if masked_load_overlaps_v0(mask, vd, plan.group_registers) {
+            if masked_indexed_unsupported(mask, &plan)
+                || masked_load_overlaps_v0(mask, vd, plan.group_registers)
+            {
                 return Err(());
             }
             let byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
@@ -104,7 +107,7 @@ pub(crate) fn memory_access(
             Ok(Some(MemoryAccessKind::VectorLoadIndexed {
                 vd,
                 address: hart.read(rs1),
-                width: MemoryWidth::Word,
+                width: plan.width,
                 index_width,
                 offsets: plan.offsets,
                 span_len,
@@ -180,6 +183,9 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = indexed_access_plan(hart, vs3, vs2, index_width).ok_or(())?;
+            if masked_indexed_unsupported(mask, &plan) {
+                return Err(());
+            }
             let group = read_register_group(hart, vs3, plan.group_registers);
             let compact_byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
             if compact_byte_mask
@@ -194,7 +200,7 @@ pub(crate) fn memory_access(
 
             Ok(Some(MemoryAccessKind::VectorStoreIndexed {
                 address: hart.read(rs1),
-                width: MemoryWidth::Word,
+                width: plan.width,
                 index_width,
                 offsets: plan.offsets,
                 data,
@@ -220,6 +226,7 @@ struct StridedAccessPlan {
 }
 
 struct IndexedAccessPlan {
+    width: MemoryWidth,
     element_count: usize,
     element_bytes: usize,
     offsets: Vec<usize>,
@@ -321,11 +328,10 @@ fn indexed_access_plan(
     let config = hart.vector_config();
     let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
+    let width = memory_width_from_bytes(config.element_width_bytes()?)?;
     if config.vill()
         || vlmul != 0
         || group_registers != 1
-        || config.element_width_bytes()? != MemoryWidth::Word.bytes()
-        || index_width != MemoryWidth::Word
         || !valid_register_group(register, group_registers)
         || !valid_register_group(index_register, group_registers)
     {
@@ -337,7 +343,7 @@ fn indexed_access_plan(
         return None;
     }
 
-    let element_bytes = MemoryWidth::Word.bytes();
+    let element_bytes = width.bytes();
     let index_bytes = index_width.bytes();
     let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
     if element_count.checked_mul(element_bytes)? > group_bytes
@@ -349,13 +355,14 @@ fn indexed_access_plan(
     let index_group = read_register_group(hart, index_register, group_registers);
     let mut offsets = Vec::with_capacity(element_count);
     for element_index in 0..element_count {
-        offsets.push(read_word_index_offset(&index_group, element_index)?);
+        offsets.push(read_index_offset(&index_group, index_width, element_index)?);
     }
     let span_len = offsets.iter().copied().max()?.checked_add(element_bytes)?;
-    if !supported_indexed_e32_m1_shape(&offsets, span_len) {
+    if !supported_indexed_m1_shape(width, index_width, &offsets, span_len) {
         return None;
     }
     (span_len <= group_bytes).then_some(IndexedAccessPlan {
+        width,
         element_count,
         element_bytes,
         offsets,
@@ -364,14 +371,49 @@ fn indexed_access_plan(
     })
 }
 
-fn read_word_index_offset(source: &[u8], element_index: usize) -> Option<usize> {
-    let offset = element_index.checked_mul(MemoryWidth::Word.bytes())?;
-    let bytes = source.get(offset..offset + MemoryWidth::Word.bytes())?;
-    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+fn memory_width_from_bytes(bytes: usize) -> Option<MemoryWidth> {
+    match bytes {
+        1 => Some(MemoryWidth::Byte),
+        2 => Some(MemoryWidth::Halfword),
+        4 => Some(MemoryWidth::Word),
+        8 => Some(MemoryWidth::Doubleword),
+        _ => None,
+    }
 }
 
-fn supported_indexed_e32_m1_shape(offsets: &[usize], span_len: usize) -> bool {
-    offsets == SUPPORTED_INDEXED_E32_M1_OFFSETS && span_len == 8
+fn read_index_offset(
+    source: &[u8],
+    index_width: MemoryWidth,
+    element_index: usize,
+) -> Option<usize> {
+    let offset = element_index.checked_mul(index_width.bytes())?;
+    let bytes = source.get(offset..offset + index_width.bytes())?;
+    match index_width {
+        MemoryWidth::Word => {
+            Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+        }
+        MemoryWidth::Doubleword => usize::try_from(u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+        .ok(),
+        MemoryWidth::Byte | MemoryWidth::Halfword => None,
+    }
+}
+
+fn supported_indexed_m1_shape(
+    width: MemoryWidth,
+    index_width: MemoryWidth,
+    offsets: &[usize],
+    span_len: usize,
+) -> bool {
+    (width == MemoryWidth::Word
+        && index_width == MemoryWidth::Word
+        && offsets == SUPPORTED_INDEXED_E32_M1_OFFSETS
+        && span_len == 8)
+        || (width == MemoryWidth::Doubleword
+            && index_width == MemoryWidth::Doubleword
+            && offsets == SUPPORTED_INDEXED_E64_M1_OFFSETS
+            && span_len == 16)
 }
 
 fn strided_compact_byte_mask(
@@ -412,6 +454,10 @@ fn indexed_compact_byte_mask(
         }
     }
     Some(byte_mask)
+}
+
+fn masked_indexed_unsupported(mask: RiscvVectorMaskMode, plan: &IndexedAccessPlan) -> bool {
+    mask.is_masked() && plan.width != MemoryWidth::Word
 }
 
 fn indexed_active_span_len(
