@@ -257,7 +257,9 @@ fn supported_fault_only_unit_stride_load_shape(
     plan: &UnitStrideAccessPlan,
 ) -> bool {
     plan.group_registers == 1
-        || (width == MemoryWidth::Word && plan.group_registers == 2 && plan.byte_len == 32)
+        || (width == MemoryWidth::Word
+            && matches!(plan.group_registers, 2 | 4)
+            && plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES)
 }
 
 fn unit_stride_load_memory_access_with_plan(
