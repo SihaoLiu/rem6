@@ -6859,6 +6859,33 @@ fn rem6_run_in_order_pipeline_models_masked_leading_gap_vector_indexed_e32_m1_me
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_masked_trailing_active_vector_indexed_e32_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-indexed-masked-trailing-active-e32-m1-load-store",
+        &masked_trailing_active_indexed_e32_m1_vector_memory_program(),
+        440,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        38,
+        "masked trailing-active indexed e32,m1 vector memory should suppress the first lane while loading and storing the later active indexed lane through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-indexed-masked-trailing-active-e32-m1-load-store",
+        &masked_trailing_active_indexed_e32_m1_vector_memory_program(),
+        1140,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        38,
+        "cache-backed masked trailing-active indexed e32,m1 vector memory should suppress the first lane while loading and storing the later active indexed lane through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_reversed_vector_indexed_e32_m1_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-indexed-masked-reversed-e32-m1-load-store",
@@ -12637,6 +12664,7 @@ fn masked_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     masked_indexed_e32_m1_vector_memory_program_with_offsets(
         [0, 4],
         [0xa1a2_a3a4, 0xb1b2_b3b4, 0x5151_5151, 0x5252_5252],
+        0,
     )
 }
 
@@ -12644,6 +12672,7 @@ fn masked_sparse_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     masked_indexed_e32_m1_vector_memory_program_with_offsets(
         [0, 12],
         [0xa1a2_a3a4, 0x5151_5151, 0x5252_5252, 0xb1b2_b3b4],
+        0,
     )
 }
 
@@ -12651,6 +12680,15 @@ fn masked_leading_gap_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     masked_indexed_e32_m1_vector_memory_program_with_offsets(
         [4, 12],
         [0x5151_5151, 0xa1a2_a3a4, 0x5252_5252, 0xb1b2_b3b4],
+        0,
+    )
+}
+
+fn masked_trailing_active_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
+    masked_indexed_e32_m1_vector_memory_program_with_offsets(
+        [4, 12],
+        [0x5151_5151, 0xa1a2_a3a4, 0x5252_5252, 0xb1b2_b3b4],
+        1,
     )
 }
 
@@ -12658,12 +12696,14 @@ fn masked_reversed_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     masked_indexed_e32_m1_vector_memory_program_with_offsets(
         [12, 0],
         [0x5151_5151, 0x6161_6161, 0x6262_6262, 0xa1a2_a3a4],
+        0,
     )
 }
 
 fn masked_indexed_e32_m1_vector_memory_program_with_offsets(
     offsets: [u32; 2],
     source_span: [u32; 4],
+    active_lane: usize,
 ) -> Vec<u8> {
     const DATA_OFFSET_BYTES: i32 = 256;
     const INDEX_OFFSET_BYTES: i32 = 0;
@@ -12726,19 +12766,22 @@ fn masked_indexed_e32_m1_vector_memory_program_with_offsets(
 
     let initial_vector = [0x1111_1111, 0x2222_2222, 0xeeee_eeee, 0xeeee_eeee];
     let initial_store = [0x9999_9999, 0x6161_6161, 0x6262_6262, 0xaaaa_aaaa];
-    assert_eq!(offsets[0] % 4, 0);
-    let active_word_index = usize::try_from(offsets[0] / 4).unwrap();
+    assert!(active_lane < 2);
+    assert_eq!(offsets[active_lane] % 4, 0);
+    let active_word_index = usize::try_from(offsets[active_lane] / 4).unwrap();
     let active_value = source_span[active_word_index];
     let mut expected_load = initial_vector;
-    expected_load[0] = active_value;
+    expected_load[active_lane] = active_value;
     let mut expected_store = initial_store;
     expected_store[active_word_index] = active_value;
+    let mut mask_data = [1_u32, 1, 0xeeee_eeee, 0xeeee_eeee];
+    mask_data[active_lane] = 0;
 
     let mut program = riscv64_program(&program_words);
     for word in offsets
         .into_iter()
         .chain([0xeeee_eeee, 0xeeee_eeee])
-        .chain([0, 1, 0xeeee_eeee, 0xeeee_eeee])
+        .chain(mask_data)
         .chain(initial_vector)
         .chain(source_span)
         .chain([0, 0, 0xeeee_eeee, 0xeeee_eeee])

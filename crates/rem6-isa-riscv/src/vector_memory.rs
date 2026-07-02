@@ -544,19 +544,13 @@ fn indexed_active_span_len(
         return Some(plan.span_len);
     };
 
-    let mut saw_inactive = false;
     let mut max_active_end = 0usize;
     for element_index in 0..plan.element_count {
         let source_offset = element_index.checked_mul(plan.element_bytes)?;
         let active = *mask.get(source_offset)?;
-        if active && saw_inactive {
-            return None;
-        }
         if active {
             max_active_end =
                 max_active_end.max(plan.offsets[element_index].checked_add(plan.element_bytes)?);
-        } else {
-            saw_inactive = true;
         }
     }
     Some(max_active_end)
