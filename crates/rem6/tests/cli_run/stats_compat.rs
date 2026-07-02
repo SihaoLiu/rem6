@@ -4649,6 +4649,60 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_e32_e64_m1_load_me
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_fault_only_e32_m2_full_register_group_memory() {
+    let normal_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-full-lmul2-load-store-fault-only-baseline",
+        &unit_stride_lmul2_vector_memory_program(8),
+        120,
+    );
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-fault-only-e32-m2-full-load",
+        &fault_only_lmul2_vector_memory_program(8),
+        120,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "no-fault e32/m2 fault-only-first vector load should move a full 32-byte register-group payload through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        stat_value(
+            &direct_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        stat_value(
+            &normal_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        "no-fault e32/m2 fault-only-first vector load should reuse normal e32/m2 vector LSU execute latency\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-fault-only-e32-m2-full-load",
+        &fault_only_lmul2_vector_memory_program(8),
+        500,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "no-fault e32/m2 fault-only-first vector load should move a full 32-byte register-group payload through the cache-backed top-level run path\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        stat_value(
+            &cache_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        stat_value(
+            &normal_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        "cache-backed no-fault e32/m2 fault-only-first vector load should reuse normal e32/m2 vector LSU execute latency\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_unit_stride_lmul2_register_group_memory() {
     const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
 
@@ -7164,12 +7218,36 @@ fn vector_memory_single_access_program(vtype: u32, instruction: u32) -> Vec<u8> 
 }
 
 fn unit_stride_lmul2_vector_memory_program(data_words: usize) -> Vec<u8> {
-    unit_stride_lmul2_vector_memory_program_with_data_offset(data_words, 192)
+    unit_stride_lmul2_vector_memory_program_with_load(
+        data_words,
+        192,
+        vector_unit_stride_load_type(true, 0b110, 10, 2),
+    )
+}
+
+fn fault_only_lmul2_vector_memory_program(data_words: usize) -> Vec<u8> {
+    unit_stride_lmul2_vector_memory_program_with_load(
+        data_words,
+        192,
+        vector_unit_stride_fault_only_load_type(true, 0b110, 10, 2),
+    )
 }
 
 fn unit_stride_lmul2_vector_memory_program_with_data_offset(
     data_words: usize,
     data_offset_bytes: i32,
+) -> Vec<u8> {
+    unit_stride_lmul2_vector_memory_program_with_load(
+        data_words,
+        data_offset_bytes,
+        vector_unit_stride_load_type(true, 0b110, 10, 2),
+    )
+}
+
+fn unit_stride_lmul2_vector_memory_program_with_load(
+    data_words: usize,
+    data_offset_bytes: i32,
+    load: u32,
 ) -> Vec<u8> {
     assert!((1..=8).contains(&data_words));
     assert!(data_offset_bytes > 0 && data_offset_bytes % 4 == 0);
@@ -7182,8 +7260,8 @@ fn unit_stride_lmul2_vector_memory_program_with_data_offset(
         i_type(data_bytes, 10, 0b000, 16, 0x13),        // addi x16, x10, dest
         i_type(data_words as i32, 0, 0b000, 11, 0x13),  // addi x11, x0, vl
         vsetvli_type(0xd1, 11, 5),                      // vsetvli x5, x11, e32, m2, ta, ma
-        0x0205_6107,                                    // vle32.v v2, (x10)
-        0x0208_6127,                                    // vse32.v v2, (x16)
+        load,
+        0x0208_6127, // vse32.v v2, (x16)
     ];
 
     for word_index in 0..data_words {

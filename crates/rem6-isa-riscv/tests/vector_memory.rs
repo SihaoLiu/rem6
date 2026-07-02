@@ -382,7 +382,32 @@ fn hart_builds_fault_only_e8_e16_e32_e64_m1_vector_memory_accesses() {
 }
 
 #[test]
-fn hart_rejects_fault_only_vector_memory_outside_supported_e8_e16_e32_e64_m1_slice() {
+fn hart_builds_fault_only_e32_m2_full_register_group_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8040);
+    hart.set_vector_config(RiscvVectorConfig::new(8, 0xd1));
+    hart.write(reg(14), 0x9080);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_fault_only_load_type(true, 0b110, 14, 2))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadUnitStride {
+            vd: vreg(2),
+            address: 0x9080,
+            width: MemoryWidth::Word,
+            byte_len: 32,
+            byte_mask: None,
+            group_registers: 2,
+        })
+    );
+}
+
+#[test]
+fn hart_rejects_fault_only_vector_memory_outside_supported_slices() {
     assert_fault_only_memory_trap(
         0x8040,
         0xc0,
@@ -392,6 +417,11 @@ fn hart_rejects_fault_only_vector_memory_outside_supported_e8_e16_e32_e64_m1_sli
         0x8060,
         0xc1,
         vector_unit_stride_fault_only_load_type(true, 0b000, 14, 2),
+    );
+    assert_fault_only_memory_trap(
+        0x8080,
+        0xd1,
+        vector_unit_stride_fault_only_load_type(true, 0b110, 14, 2),
     );
 }
 

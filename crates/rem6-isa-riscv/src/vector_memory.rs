@@ -75,7 +75,9 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
-            if mask != RiscvVectorMaskMode::Unmasked || plan.group_registers != 1 {
+            if mask != RiscvVectorMaskMode::Unmasked
+                || !supported_fault_only_unit_stride_load_shape(width, &plan)
+            {
                 return Err(());
             }
             unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
@@ -248,6 +250,14 @@ fn unit_stride_load_memory_access(
         return Err(());
     }
     unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
+}
+
+fn supported_fault_only_unit_stride_load_shape(
+    width: MemoryWidth,
+    plan: &UnitStrideAccessPlan,
+) -> bool {
+    plan.group_registers == 1
+        || (width == MemoryWidth::Word && plan.group_registers == 2 && plan.byte_len == 32)
 }
 
 fn unit_stride_load_memory_access_with_plan(
