@@ -1149,13 +1149,15 @@ pub(crate) fn supports_cross_line_data_access(
             byte_len,
             group_registers,
             ..
-        } => full_e32_register_group_vector_access(*width, *byte_len, *group_registers, size),
+        } => supported_full_register_group_vector_access(*width, *byte_len, *group_registers, size),
         MemoryAccessKind::VectorStoreUnitStride {
             width,
             data,
             group_registers,
             ..
-        } => full_e32_register_group_vector_access(*width, data.len(), *group_registers, size),
+        } => {
+            supported_full_register_group_vector_access(*width, data.len(), *group_registers, size)
+        }
         MemoryAccessKind::VectorLoadStrided {
             width,
             stride,
@@ -1220,7 +1222,7 @@ pub(crate) fn supports_cross_line_data_access(
     }
 }
 
-fn full_e32_register_group_vector_access(
+fn supported_full_register_group_vector_access(
     width: MemoryWidth,
     byte_len: usize,
     group_registers: usize,
@@ -1229,10 +1231,10 @@ fn full_e32_register_group_vector_access(
     let Ok(size_bytes) = usize::try_from(size.bytes()) else {
         return false;
     };
-    matches!(group_registers, 2 | 4 | 8)
-        && width == MemoryWidth::Word
-        && byte_len == group_registers * RISCV_VECTOR_REGISTER_BYTES
-        && size_bytes == byte_len
+    let full_group_bytes = group_registers * RISCV_VECTOR_REGISTER_BYTES;
+    let supported_shape = (width == MemoryWidth::Halfword && group_registers == 2)
+        || (width == MemoryWidth::Word && matches!(group_registers, 2 | 4 | 8));
+    supported_shape && byte_len == full_group_bytes && size_bytes == byte_len
 }
 
 fn sparse_e64_strided_m1_vector_access(
@@ -1369,6 +1371,25 @@ mod tests {
 
         assert!(supports_cross_line_data_access(
             &vector_load_unit_stride(0x8000, 32, 2),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_e16_two_line_full_lmul2_group() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_unit_stride_with_width(0x8000, MemoryWidth::Halfword, 32, 2),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_unit_stride_with_width(0x8000, MemoryWidth::Halfword, 32, 2),
             Address::new(0x8000),
             size,
             layout
@@ -1552,10 +1573,19 @@ mod tests {
         byte_len: usize,
         group_registers: usize,
     ) -> MemoryAccessKind {
+        vector_load_unit_stride_with_width(address, MemoryWidth::Word, byte_len, group_registers)
+    }
+
+    fn vector_load_unit_stride_with_width(
+        address: u64,
+        width: MemoryWidth,
+        byte_len: usize,
+        group_registers: usize,
+    ) -> MemoryAccessKind {
         MemoryAccessKind::VectorLoadUnitStride {
             vd: VectorRegister::new(2).unwrap(),
             address,
-            width: MemoryWidth::Word,
+            width,
             byte_len,
             byte_mask: None,
             group_registers,
@@ -1567,9 +1597,18 @@ mod tests {
         byte_len: usize,
         group_registers: usize,
     ) -> MemoryAccessKind {
+        vector_store_unit_stride_with_width(address, MemoryWidth::Word, byte_len, group_registers)
+    }
+
+    fn vector_store_unit_stride_with_width(
+        address: u64,
+        width: MemoryWidth,
+        byte_len: usize,
+        group_registers: usize,
+    ) -> MemoryAccessKind {
         MemoryAccessKind::VectorStoreUnitStride {
             address,
-            width: MemoryWidth::Word,
+            width,
             data: vec![0; byte_len],
             byte_mask: None,
             group_registers,
