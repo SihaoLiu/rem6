@@ -33,8 +33,18 @@ fn timing_with_all_bank_refresh() -> DramTiming {
         .unwrap()
 }
 
+fn timing_with_bank_group_refresh() -> DramTiming {
+    timing_with_refresh()
+        .with_refresh_policy(DramRefreshPolicy::BankGroup)
+        .unwrap()
+}
+
 fn geometry() -> DramGeometry {
     DramGeometry::new(4, 256, 64).unwrap()
+}
+
+fn bank_group_geometry() -> DramGeometry {
+    geometry().with_bank_groups(2).unwrap()
 }
 
 fn request_id(sequence: u64) -> MemoryRequestId {
@@ -848,6 +858,54 @@ fn dram_controller_all_bank_refresh_updates_sibling_banks() {
     let profile = controller.activity_profile();
     assert_eq!(profile.refresh_count(), 4);
     assert_eq!(profile.refresh_cycle_count(), 20);
+}
+
+#[test]
+fn dram_controller_bank_group_refresh_updates_same_group_banks() {
+    let mut controller =
+        DramController::new(bank_group_geometry(), timing_with_bank_group_refresh());
+
+    let first = controller.schedule(0, &read(0x0000, 8, 172)).unwrap();
+    assert_eq!(first.ready_cycle(), 8);
+    assert!(first.refresh_events().is_empty());
+
+    let second = controller.schedule(21, &read(0x0008, 8, 173)).unwrap();
+
+    assert_eq!(second.refresh_events().len(), 2);
+    for bank in [0, 2] {
+        let refresh = second
+            .refresh_events()
+            .iter()
+            .find(|event| event.bank() == bank)
+            .unwrap_or_else(|| panic!("missing bank-group refresh event for bank {bank}"));
+        assert_eq!(refresh.parallel_port(), 0);
+        assert_eq!(refresh.start_cycle(), 20);
+        assert_eq!(refresh.end_cycle(), 25);
+        assert_eq!(refresh.cycle_count(), 5);
+        let activity = controller.bank_activity(0, bank).unwrap();
+        assert_eq!(activity.refresh_count(), 1, "bank {bank}");
+        assert_eq!(activity.refresh_cycle_count(), 5, "bank {bank}");
+        assert_eq!(
+            controller.bank_state(bank).unwrap().next_refresh_cycle(),
+            40,
+            "bank {bank}"
+        );
+    }
+    for bank in [1, 3] {
+        assert!(
+            second
+                .refresh_events()
+                .iter()
+                .all(|event| event.bank() != bank),
+            "unexpected bank-group refresh event for bank {bank}"
+        );
+        assert!(controller.bank_activity(0, bank).is_none(), "bank {bank}");
+    }
+    assert_eq!(second.command_cycle(), 28);
+    assert_eq!(second.ready_cycle(), 33);
+    let profile = controller.activity_profile();
+    assert_eq!(profile.refresh_count(), 2);
+    assert_eq!(profile.refresh_cycle_count(), 10);
 }
 
 #[test]

@@ -222,7 +222,11 @@ pub(super) fn emit_dram_stats(
         "Tick",
         summary.profile_timing_refresh_recovery,
     )?;
-    for (policy, stat) in [("per-bank", "per_bank"), ("all-bank", "all_bank")] {
+    for (policy, stat) in [
+        ("per-bank", "per_bank"),
+        ("bank-group", "bank_group"),
+        ("all-bank", "all_bank"),
+    ] {
         emit_dram_constant(
             stats,
             prefix,

@@ -19,6 +19,7 @@ pub enum DramRefreshTimingField {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DramRefreshPolicy {
     PerBank,
+    BankGroup,
     AllBank,
 }
 
@@ -26,6 +27,7 @@ impl DramRefreshPolicy {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PerBank => "per-bank",
+            Self::BankGroup => "bank-group",
             Self::AllBank => "all-bank",
         }
     }

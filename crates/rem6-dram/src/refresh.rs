@@ -178,8 +178,99 @@ pub(crate) fn record_due_all_bank_refresh_events(
     events
 }
 
+pub(crate) fn record_due_bank_group_refresh_events(
+    refresh_timing: DramRefreshTiming,
+    banks: &mut [DramBankState],
+    bank_group_count: u32,
+    selected_bank: u32,
+    window: DramRefreshWindow,
+    waits: &mut Vec<DramWaitRecord>,
+) -> Vec<DramRefreshEvent> {
+    if bank_group_count == 0 {
+        return record_due_refresh_events(
+            refresh_timing,
+            &mut banks[selected_bank as usize],
+            window,
+            waits,
+        );
+    }
+    let selected_group = selected_bank % bank_group_count;
+    let group_banks = bank_group_indices(banks, bank_group_count, selected_group);
+    for local_bank in group_banks.iter().copied() {
+        let bank = &mut banks[local_bank];
+        if bank.next_refresh_cycle == 0 {
+            bank.next_refresh_cycle =
+                next_refresh_cycle_at_or_after(bank.available_cycle, refresh_timing.interval());
+        }
+    }
+
+    let mut events = Vec::new();
+    while let Some(due_cycle) = next_bank_group_refresh_cycle(banks, &group_banks) {
+        if due_cycle > window.due_through_cycle {
+            break;
+        }
+        let start_cycle = group_banks
+            .iter()
+            .copied()
+            .fold(due_cycle, |cycle, local_bank| {
+                cycle.max(banks[local_bank].available_cycle)
+            });
+        let end_cycle = start_cycle.saturating_add(refresh_timing.recovery());
+        if end_cycle > window.wait_cycle {
+            if let Some(request) = window.request {
+                waits.push(DramWaitRecord::bank_queue(
+                    request,
+                    window.parallel_port,
+                    window.local_bank,
+                    window.wait_cycle.max(start_cycle),
+                    end_cycle - 1,
+                ));
+            }
+        }
+
+        for local_bank in group_banks.iter().copied() {
+            let bank = &mut banks[local_bank];
+            events.push(DramRefreshEvent::new(
+                window.parallel_port,
+                local_bank as u32,
+                start_cycle,
+                end_cycle,
+            ));
+            bank.open_row = None;
+            bank.available_cycle = bank.available_cycle.max(end_cycle);
+            bank.next_refresh_cycle = due_cycle.saturating_add(refresh_timing.interval());
+        }
+        let next_refresh_cycle = due_cycle.saturating_add(refresh_timing.interval());
+        if next_refresh_cycle == due_cycle {
+            break;
+        }
+    }
+    events
+}
+
+fn bank_group_indices(
+    banks: &[DramBankState],
+    bank_group_count: u32,
+    selected_group: u32,
+) -> Vec<usize> {
+    banks
+        .iter()
+        .enumerate()
+        .filter_map(|(local_bank, _)| {
+            ((local_bank as u32) % bank_group_count == selected_group).then_some(local_bank)
+        })
+        .collect::<Vec<_>>()
+}
+
 fn next_all_bank_refresh_cycle(banks: &[DramBankState]) -> Option<u64> {
     banks.iter().map(|bank| bank.next_refresh_cycle).min()
+}
+
+fn next_bank_group_refresh_cycle(banks: &[DramBankState], group_banks: &[usize]) -> Option<u64> {
+    group_banks
+        .iter()
+        .map(|local_bank| banks[*local_bank].next_refresh_cycle)
+        .min()
 }
 
 fn next_refresh_cycle_at_or_after(available_cycle: u64, interval: u64) -> u64 {

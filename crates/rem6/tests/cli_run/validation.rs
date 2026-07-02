@@ -2116,6 +2116,41 @@ fn rem6_run_rejects_dram_refresh_timing_for_non_refresh_profile() {
 }
 
 #[test]
+fn rem6_run_rejects_bank_group_refresh_policy_without_bank_group_geometry() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("bank-group-refresh-with-ddr", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "ddr",
+            "--dram-refresh-policy",
+            "bank-group",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("DRAM bank-group refresh policy requires bank-group geometry"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_rejects_zero_dram_refresh_timing_from_toml_config() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let binary = temp_binary("zero-dram-refresh-timing-config-bin", &elf);

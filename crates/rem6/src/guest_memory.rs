@@ -1,7 +1,7 @@
 use rem6_boot::BootImage;
 use rem6_dram::{
-    DramGeometry, DramLowPowerTiming, DramMemoryController, DramRefreshTiming, DramTiming,
-    ExternalMemoryProfile, NvmMediaTiming,
+    DramGeometry, DramLowPowerTiming, DramMemoryController, DramRefreshPolicy, DramRefreshTiming,
+    DramTiming, ExternalMemoryProfile, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryTargetId,
@@ -208,7 +208,7 @@ pub(super) fn build_cli_dram_profile(
             CLI_VOLATILE_REFRESH_RECOVERY,
         )),
     )?;
-    match profile {
+    let profile = match profile {
         CliDramMemoryProfile::Ddr => ExternalMemoryProfile::ddr(
             CLI_MEMORY_TARGET,
             line_layout,
@@ -315,7 +315,15 @@ pub(super) fn build_cli_dram_profile(
                 })
         }
     }
-    .map_err(execute_error)
+    .map_err(execute_error)?;
+    if profile.timing().refresh_policy() == DramRefreshPolicy::BankGroup
+        && profile.geometry().bank_group_count().is_none()
+    {
+        return Err(execute_error(
+            "DRAM bank-group refresh policy requires bank-group geometry",
+        ));
+    }
+    Ok(profile)
 }
 
 fn cli_dram_timing(timing: CliDramTiming) -> Result<DramTiming, Rem6CliError> {

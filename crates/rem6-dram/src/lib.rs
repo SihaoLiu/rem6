@@ -36,7 +36,10 @@ pub use profile::{
 pub use profile_snapshot::DramProfileSnapshotMismatch;
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
 pub use refresh::DramRefreshEvent;
-use refresh::{record_due_all_bank_refresh_events, record_due_refresh_events, DramRefreshWindow};
+use refresh::{
+    record_due_all_bank_refresh_events, record_due_bank_group_refresh_events,
+    record_due_refresh_events, DramRefreshWindow,
+};
 pub use timing::{
     DramCommandWindow, DramGeometry, DramRefreshPolicy, DramRefreshTiming, DramRefreshTimingField,
     DramTiming, DramTimingField,
@@ -652,6 +655,20 @@ impl DramController {
                 window,
                 waits,
             ),
+            DramRefreshPolicy::BankGroup => {
+                let bank_count = self.geometry.bank_count() as usize;
+                let port_start = parallel_port as usize * bank_count;
+                let port_end = port_start + bank_count;
+                let bank_group_count = self.geometry.bank_group_count().unwrap_or(0);
+                record_due_bank_group_refresh_events(
+                    refresh_timing,
+                    &mut self.banks[port_start..port_end],
+                    bank_group_count,
+                    local_bank,
+                    window,
+                    waits,
+                )
+            }
             DramRefreshPolicy::AllBank => {
                 let bank_count = self.geometry.bank_count() as usize;
                 let port_start = parallel_port as usize * bank_count;
@@ -698,9 +715,10 @@ impl DramController {
             let target_idle_start_cycle =
                 port_bus_available_cycle.max(self.banks[bank_index].available_cycle());
             let target_has_open_row = self.banks[bank_index].open_row.is_some();
-            let all_bank_low_power_states = if self.timing.refresh_policy()
-                == DramRefreshPolicy::AllBank
-                && self.timing.low_power_timing().is_some()
+            let multi_bank_low_power_states = if matches!(
+                self.timing.refresh_policy(),
+                DramRefreshPolicy::AllBank | DramRefreshPolicy::BankGroup
+            ) && self.timing.low_power_timing().is_some()
             {
                 let bank_count = self.geometry.bank_count() as usize;
                 let port_start = decoded.parallel_port as usize * bank_count;
@@ -720,7 +738,7 @@ impl DramController {
                 &mut waits,
             );
             if let Some(low_power_timing) = self.timing.low_power_timing() {
-                if let Some(bank_states) = all_bank_low_power_states {
+                if let Some(bank_states) = multi_bank_low_power_states {
                     for (local_bank, bank_state) in bank_states.into_iter().enumerate() {
                         let mut bank_low_power_events = Vec::new();
                         let low_power_refresh_events = refresh_events_for_bank(

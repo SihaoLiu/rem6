@@ -360,6 +360,7 @@ impl CliDramTimingOptions {
 fn parse_dram_refresh_policy(value: &str) -> Option<DramRefreshPolicy> {
     match value {
         "per-bank" => Some(DramRefreshPolicy::PerBank),
+        "bank-group" => Some(DramRefreshPolicy::BankGroup),
         "all-bank" => Some(DramRefreshPolicy::AllBank),
         _ => None,
     }

@@ -5,7 +5,8 @@ use crate::activity::{
     collect_dram_port_activity_until, record_future_terminal_memory_activity,
 };
 use crate::refresh::{
-    record_due_all_bank_refresh_events, record_due_refresh_events, DramRefreshWindow,
+    record_due_all_bank_refresh_events, record_due_bank_group_refresh_events,
+    record_due_refresh_events, DramRefreshWindow,
 };
 use crate::{
     low_power, record_low_power_before_refreshes, refresh_events_for_bank, DramAccess,
@@ -147,6 +148,14 @@ impl DramController {
             {
                 continue;
             }
+            let bank_group_count = self.geometry.bank_group_count().unwrap_or(0);
+            if self.timing.refresh_policy() == DramRefreshPolicy::BankGroup
+                && bank_group_count != 0
+                && local_bank >= bank_group_count
+                && !low_power_enabled
+            {
+                continue;
+            }
             let bank_index = parallel_port as usize * bank_count + local_bank as usize;
             let Some(bank) = self.banks.get(bank_index) else {
                 continue;
@@ -167,6 +176,23 @@ impl DramController {
                 match self.timing.refresh_policy() {
                     DramRefreshPolicy::PerBank => {
                         record_due_refresh_events(refresh_timing, &mut bank, window, &mut waits)
+                    }
+                    DramRefreshPolicy::BankGroup => {
+                        let port_start = parallel_port as usize * bank_count;
+                        let port_end = port_start + bank_count;
+                        let mut banks = self.banks[port_start..port_end].to_vec();
+                        let events = record_due_bank_group_refresh_events(
+                            refresh_timing,
+                            &mut banks,
+                            bank_group_count,
+                            local_bank,
+                            window,
+                            &mut waits,
+                        );
+                        if let Some(updated_bank) = banks.get(local_bank as usize) {
+                            bank = *updated_bank;
+                        }
+                        events
                     }
                     DramRefreshPolicy::AllBank => {
                         let port_start = parallel_port as usize * bank_count;
@@ -208,8 +234,18 @@ impl DramController {
                 ));
             }
             if !refresh_events.is_empty() || !low_power_events.is_empty() {
-                if self.timing.refresh_policy() == DramRefreshPolicy::AllBank {
-                    if local_bank == 0 {
+                if matches!(
+                    self.timing.refresh_policy(),
+                    DramRefreshPolicy::AllBank | DramRefreshPolicy::BankGroup
+                ) {
+                    let should_record_refreshes = match self.timing.refresh_policy() {
+                        DramRefreshPolicy::AllBank => local_bank == 0,
+                        DramRefreshPolicy::BankGroup => {
+                            bank_group_count == 0 || local_bank < bank_group_count
+                        }
+                        DramRefreshPolicy::PerBank => false,
+                    };
+                    if should_record_refreshes {
                         for refresh in &refresh_events {
                             let activity = bank_activities
                                 .entry((parallel_port, refresh.bank()))
