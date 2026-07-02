@@ -70,6 +70,17 @@ pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvErro
             },
         ));
     }
+    if is_indexed_unordered_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadIndexedUnordered {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+                vs2: vector_register(raw, 20),
+                index_width: width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
 
     Err(RiscvError::UnknownEncoding { raw })
 }
@@ -98,6 +109,17 @@ pub(crate) fn decode_vector_store(raw: u32) -> Result<RiscvInstruction, RiscvErr
             },
         ));
     }
+    if is_indexed_unordered_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::StoreIndexedUnordered {
+                vs3: vector_register(raw, 7),
+                rs1: rs1(raw),
+                vs2: vector_register(raw, 20),
+                index_width: width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
 
     Err(RiscvError::UnknownEncoding { raw })
 }
@@ -113,6 +135,12 @@ fn is_strided_vector_memory(raw: u32) -> bool {
     let mop = (raw >> 26) & 0x3;
     let mew_and_nf = (raw >> 28) & 0xf;
     mop == 0b10 && mew_and_nf == 0
+}
+
+fn is_indexed_unordered_vector_memory(raw: u32) -> bool {
+    let mop = (raw >> 26) & 0x3;
+    let mew_and_nf = (raw >> 28) & 0xf;
+    mop == 0b01 && mew_and_nf == 0
 }
 
 fn vector_memory_width(raw: u32) -> Option<MemoryWidth> {

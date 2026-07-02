@@ -607,11 +607,13 @@ pub(crate) fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64
         }
         RiscvInstruction::VectorMemory(
             RiscvVectorMemoryInstruction::LoadUnitStride { .. }
-            | RiscvVectorMemoryInstruction::LoadStrided { .. },
+            | RiscvVectorMemoryInstruction::LoadStrided { .. }
+            | RiscvVectorMemoryInstruction::LoadIndexedUnordered { .. },
         ) => RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::VectorMemory(
             RiscvVectorMemoryInstruction::StoreUnitStride { .. }
-            | RiscvVectorMemoryInstruction::StoreStrided { .. },
+            | RiscvVectorMemoryInstruction::StoreStrided { .. }
+            | RiscvVectorMemoryInstruction::StoreIndexedUnordered { .. },
         ) => RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::FloatAddS { .. }
         | RiscvInstruction::FloatAddD { .. }

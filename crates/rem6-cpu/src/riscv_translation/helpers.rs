@@ -58,7 +58,8 @@ pub(super) fn cpu_translation_request(
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::FloatLoad { address, .. }
         | MemoryAccessKind::VectorLoadUnitStride { address, .. }
-        | MemoryAccessKind::VectorLoadStrided { address, .. } => CpuTranslationRequest::load(
+        | MemoryAccessKind::VectorLoadStrided { address, .. }
+        | MemoryAccessKind::VectorLoadIndexed { address, .. } => CpuTranslationRequest::load(
             translation_id,
             memory_request_id,
             data.route(),
@@ -101,6 +102,21 @@ pub(super) fn cpu_translation_request(
             store_byte_mask(size, byte_mask.as_deref())?,
         ),
         MemoryAccessKind::VectorStoreStrided {
+            address,
+            data: bytes,
+            byte_mask,
+            ..
+        } => CpuTranslationRequest::store(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            Address::new(*address),
+            size,
+            bytes.clone(),
+            store_byte_mask(size, Some(byte_mask.as_slice()))?,
+        ),
+        MemoryAccessKind::VectorStoreIndexed {
             address,
             data: bytes,
             byte_mask,

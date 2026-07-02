@@ -48,6 +48,38 @@ fn vector_strided_store_type(vm_unmasked: bool, width: u32, rs1: u8, rs2: u8, vs
         | 0x27
 }
 
+fn vector_indexed_unordered_load_type(
+    vm_unmasked: bool,
+    width: u32,
+    rs1: u8,
+    vs2: u8,
+    vd: u8,
+) -> u32 {
+    (0b01 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_indexed_unordered_store_type(
+    vm_unmasked: bool,
+    width: u32,
+    rs1: u8,
+    vs2: u8,
+    vs3: u8,
+) -> u32 {
+    (0b01 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
 fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
@@ -152,6 +184,32 @@ fn decoder_accepts_unmasked_vector_strided_memory() {
 }
 
 #[test]
+fn decoder_accepts_unmasked_vector_indexed_memory() {
+    assert_eq!(
+        RiscvInstruction::decode(vector_indexed_unordered_load_type(true, 0b110, 14, 2, 1))
+            .unwrap(),
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadIndexedUnordered {
+            vd: vreg(1),
+            rs1: reg(14),
+            vs2: vreg(2),
+            index_width: MemoryWidth::Word,
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vector_indexed_unordered_store_type(true, 0b110, 16, 2, 1))
+            .unwrap(),
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::StoreIndexedUnordered {
+            vs3: vreg(1),
+            rs1: reg(16),
+            vs2: vreg(2),
+            index_width: MemoryWidth::Word,
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_masked_unit_stride_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.set_vector_config(RiscvVectorConfig::new(4, 0xd0));
@@ -192,6 +250,115 @@ fn hart_builds_masked_unit_stride_vector_memory_accesses() {
             width: MemoryWidth::Word,
             data: lanes_u32([1, 2, 3, 4]).to_vec(),
             byte_mask: Some(e32_byte_mask([true, false, true, false])),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_indexed_e32_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8260);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([0, 4, 0, 0]));
+    let source = lanes_u32([0xa1a2_a3a4, 0xb1b2_b3b4, 0, 0]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(true, 0b110, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![0, 4],
+            span_len: 8,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(true, 0b110, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 8];
+    data[0..4].copy_from_slice(&source[0..4]);
+    data[4..8].copy_from_slice(&source[4..8]);
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![0, 4],
+            data,
+            byte_mask: element_byte_mask(&[true, true, true, true, true, true, true, true,], 1,),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_masked_indexed_e32_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8270);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([0, 4, 0, 0]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = lanes_u32([0xa1a2_a3a4, 0xb1b2_b3b4, 0, 0]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b110, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![0, 4],
+            span_len: 4,
+            byte_mask: Some(element_byte_mask(&[true, false], 4)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b110, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 4];
+    data[0..4].copy_from_slice(&source[0..4]);
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![0, 4],
+            data,
+            byte_mask: element_byte_mask(&[true, true, true, true,], 1,),
             group_registers: 1,
         })
     );
@@ -645,6 +812,63 @@ fn hart_rejects_unmasked_zero_vl_strided_memory_outside_supported_slice() {
 }
 
 #[test]
+fn hart_rejects_indexed_vector_memory_outside_supported_slice() {
+    assert_indexed_memory_trap(0x8280, 0xd0, 0b110, 0, [0, 4, 0, 0]);
+    assert_indexed_memory_trap(0x82a0, 0xc8, 0b101, 2, [0, 4, 0, 0]);
+    assert_indexed_memory_trap(0x82c0, 0xd8, 0b111, 2, [0, 4, 0, 0]);
+    assert_indexed_memory_trap(0x82e0, 0xd0, 0b110, 2, [0, 12, 0, 0]);
+    assert_indexed_memory_trap(0x8300, 0xd0, 0b110, 3, [0, 4, 8, 0]);
+}
+
+#[test]
+fn hart_rejects_masked_indexed_nonprefix_active_lanes_outside_supported_slice() {
+    let mut hart = RiscvHartState::new(0x8320);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([0, 4, 0, 0]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+
+    let record = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b110, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8320))
+    );
+    assert_eq!(record.memory_access(), None);
+
+    let mut hart = RiscvHartState::new(0x8330);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([0, 4, 0, 0]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+
+    let record = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b110, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8330))
+    );
+    assert_eq!(record.memory_access(), None);
+}
+
+#[test]
 fn hart_rejects_masked_strided_load_when_destination_overlaps_v0() {
     let mut hart = RiscvHartState::new(0x8150);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
@@ -1009,6 +1233,53 @@ fn assert_zero_vl_strided_memory_trap(pc: u64, vtype: u64, width_bits: u32, stri
         .execute(
             RiscvInstruction::decode(vector_strided_store_type(true, width_bits, 16, 12, 1))
                 .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(
+            RiscvTrapKind::IllegalInstruction,
+            pc + 0x10
+        ))
+    );
+    assert_eq!(record.memory_access(), None);
+}
+
+fn assert_indexed_memory_trap(pc: u64, vtype: u64, width_bits: u32, vl: u32, offsets: [u32; 4]) {
+    let mut hart = RiscvHartState::new(pc);
+    hart.set_vector_config(RiscvVectorConfig::new(vl, vtype));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32(offsets));
+
+    let record = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(
+                true, width_bits, 14, 2, 1,
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+    );
+    assert_eq!(record.memory_access(), None);
+
+    let mut hart = RiscvHartState::new(pc + 0x10);
+    hart.set_vector_config(RiscvVectorConfig::new(vl, vtype));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32(offsets));
+
+    let record = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(
+                true, width_bits, 16, 2, 1,
+            ))
+            .unwrap(),
         )
         .unwrap();
 

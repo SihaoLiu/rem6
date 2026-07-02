@@ -141,14 +141,16 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Load { .. }
             | MemoryAccessKind::FloatLoad { .. }
             | MemoryAccessKind::VectorLoadUnitStride { .. }
-            | MemoryAccessKind::VectorLoadStrided { .. } => MemoryOperation::ReadShared,
+            | MemoryAccessKind::VectorLoadStrided { .. }
+            | MemoryAccessKind::VectorLoadIndexed { .. } => MemoryOperation::ReadShared,
             MemoryAccessKind::LoadReserved { .. } => MemoryOperation::LoadLocked,
             MemoryAccessKind::StoreConditional { .. } => MemoryOperation::StoreConditional,
             MemoryAccessKind::AtomicMemory { .. } => MemoryOperation::Atomic,
             MemoryAccessKind::Store { .. }
             | MemoryAccessKind::FloatStore { .. }
             | MemoryAccessKind::VectorStoreUnitStride { .. }
-            | MemoryAccessKind::VectorStoreStrided { .. } => MemoryOperation::Write,
+            | MemoryAccessKind::VectorStoreStrided { .. }
+            | MemoryAccessKind::VectorStoreIndexed { .. } => MemoryOperation::Write,
         }
     }
 

@@ -12,6 +12,7 @@ const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Word, 3, 6, 16),
     (MemoryWidth::Doubleword, 2, 8, 16),
 ];
+const SUPPORTED_INDEXED_E32_M1_OFFSETS: &[usize] = &[0, 4];
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -80,6 +81,37 @@ pub(crate) fn memory_access(
                 group_registers: plan.group_registers,
             }))
         }
+        RiscvVectorMemoryInstruction::LoadIndexedUnordered {
+            vd,
+            rs1,
+            vs2,
+            index_width,
+            mask,
+        } => {
+            let plan = indexed_access_plan(hart, vd, vs2, index_width).ok_or(())?;
+            if masked_load_overlaps_v0(mask, vd, plan.group_registers) {
+                return Err(());
+            }
+            let byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
+            if byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
+                return Ok(None);
+            }
+            let span_len = indexed_active_span_len(&plan, byte_mask.as_deref()).ok_or(())?;
+
+            Ok(Some(MemoryAccessKind::VectorLoadIndexed {
+                vd,
+                address: hart.read(rs1),
+                width: MemoryWidth::Word,
+                index_width,
+                offsets: plan.offsets,
+                span_len,
+                byte_mask,
+                group_registers: plan.group_registers,
+            }))
+        }
         RiscvVectorMemoryInstruction::StoreUnitStride {
             vs3,
             rs1,
@@ -140,6 +172,36 @@ pub(crate) fn memory_access(
                 group_registers: plan.group_registers,
             }))
         }
+        RiscvVectorMemoryInstruction::StoreIndexedUnordered {
+            vs3,
+            rs1,
+            vs2,
+            index_width,
+            mask,
+        } => {
+            let plan = indexed_access_plan(hart, vs3, vs2, index_width).ok_or(())?;
+            let group = read_register_group(hart, vs3, plan.group_registers);
+            let compact_byte_mask = indexed_compact_byte_mask(hart, mask, &plan);
+            if compact_byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
+                return Ok(None);
+            }
+            let span_len = indexed_active_span_len(&plan, compact_byte_mask.as_deref()).ok_or(())?;
+            let (data, byte_mask) =
+                indexed_store_payload(&group, &plan, compact_byte_mask.as_deref(), span_len);
+
+            Ok(Some(MemoryAccessKind::VectorStoreIndexed {
+                address: hart.read(rs1),
+                width: MemoryWidth::Word,
+                index_width,
+                offsets: plan.offsets,
+                data,
+                byte_mask,
+                group_registers: plan.group_registers,
+            }))
+        }
     }
 }
 
@@ -153,6 +215,14 @@ struct StridedAccessPlan {
     element_count: usize,
     element_bytes: usize,
     stride: usize,
+    span_len: usize,
+    group_registers: usize,
+}
+
+struct IndexedAccessPlan {
+    element_count: usize,
+    element_bytes: usize,
+    offsets: Vec<usize>,
     span_len: usize,
     group_registers: usize,
 }
@@ -242,6 +312,68 @@ fn supported_strided_m1_shape(
         .any(|shape| shape == (width, element_count, stride, span_len))
 }
 
+fn indexed_access_plan(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    index_register: VectorRegister,
+    index_width: MemoryWidth,
+) -> Option<IndexedAccessPlan> {
+    let config = hart.vector_config();
+    let vlmul = config.vtype() & 0x7;
+    let group_registers = config.register_group_registers()?;
+    if config.vill()
+        || vlmul != 0
+        || group_registers != 1
+        || config.element_width_bytes()? != MemoryWidth::Word.bytes()
+        || index_width != MemoryWidth::Word
+        || !valid_register_group(register, group_registers)
+        || !valid_register_group(index_register, group_registers)
+    {
+        return None;
+    }
+
+    let element_count = config.vl() as usize;
+    if element_count == 0 {
+        return None;
+    }
+
+    let element_bytes = MemoryWidth::Word.bytes();
+    let index_bytes = index_width.bytes();
+    let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
+    if element_count.checked_mul(element_bytes)? > group_bytes
+        || element_count.checked_mul(index_bytes)? > group_bytes
+    {
+        return None;
+    }
+
+    let index_group = read_register_group(hart, index_register, group_registers);
+    let mut offsets = Vec::with_capacity(element_count);
+    for element_index in 0..element_count {
+        offsets.push(read_word_index_offset(&index_group, element_index)?);
+    }
+    let span_len = offsets.iter().copied().max()?.checked_add(element_bytes)?;
+    if !supported_indexed_e32_m1_shape(&offsets, span_len) {
+        return None;
+    }
+    (span_len <= group_bytes).then_some(IndexedAccessPlan {
+        element_count,
+        element_bytes,
+        offsets,
+        span_len,
+        group_registers,
+    })
+}
+
+fn read_word_index_offset(source: &[u8], element_index: usize) -> Option<usize> {
+    let offset = element_index.checked_mul(MemoryWidth::Word.bytes())?;
+    let bytes = source.get(offset..offset + MemoryWidth::Word.bytes())?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+}
+
+fn supported_indexed_e32_m1_shape(offsets: &[usize], span_len: usize) -> bool {
+    offsets == SUPPORTED_INDEXED_E32_M1_OFFSETS && span_len == 8
+}
+
 fn strided_compact_byte_mask(
     hart: &RiscvHartState,
     mask: RiscvVectorMaskMode,
@@ -262,6 +394,52 @@ fn strided_compact_byte_mask(
     Some(byte_mask)
 }
 
+fn indexed_compact_byte_mask(
+    hart: &RiscvHartState,
+    mask: RiscvVectorMaskMode,
+    plan: &IndexedAccessPlan,
+) -> Option<Vec<bool>> {
+    if !mask.is_masked() {
+        return None;
+    }
+
+    let source = hart.read_vector(VectorRegister::new(0).expect("v0 is a valid vector register"));
+    let mut byte_mask = vec![false; plan.element_count * plan.element_bytes];
+    for element_index in 0..plan.element_count {
+        if read_mask_bit(&source, element_index) {
+            let offset = element_index * plan.element_bytes;
+            byte_mask[offset..offset + plan.element_bytes].fill(true);
+        }
+    }
+    Some(byte_mask)
+}
+
+fn indexed_active_span_len(
+    plan: &IndexedAccessPlan,
+    compact_byte_mask: Option<&[bool]>,
+) -> Option<usize> {
+    let Some(mask) = compact_byte_mask else {
+        return Some(plan.span_len);
+    };
+
+    let mut saw_inactive = false;
+    let mut max_active_end = 0usize;
+    for element_index in 0..plan.element_count {
+        let source_offset = element_index.checked_mul(plan.element_bytes)?;
+        let active = *mask.get(source_offset)?;
+        if active && saw_inactive {
+            return None;
+        }
+        if active {
+            max_active_end =
+                max_active_end.max(plan.offsets[element_index].checked_add(plan.element_bytes)?);
+        } else {
+            saw_inactive = true;
+        }
+    }
+    Some(max_active_end)
+}
+
 fn strided_store_payload(
     source: &[u8],
     plan: &StridedAccessPlan,
@@ -272,6 +450,30 @@ fn strided_store_payload(
     for element_index in 0..plan.element_count {
         let source_offset = element_index * plan.element_bytes;
         let memory_offset = element_index * plan.stride;
+        let active = compact_byte_mask
+            .map(|mask| mask[source_offset])
+            .unwrap_or(true);
+        if !active {
+            continue;
+        }
+        data[memory_offset..memory_offset + plan.element_bytes]
+            .copy_from_slice(&source[source_offset..source_offset + plan.element_bytes]);
+        byte_mask[memory_offset..memory_offset + plan.element_bytes].fill(true);
+    }
+    (data, byte_mask)
+}
+
+fn indexed_store_payload(
+    source: &[u8],
+    plan: &IndexedAccessPlan,
+    compact_byte_mask: Option<&[bool]>,
+    span_len: usize,
+) -> (Vec<u8>, Vec<bool>) {
+    let mut data = vec![0; span_len];
+    let mut byte_mask = vec![false; span_len];
+    for element_index in 0..plan.element_count {
+        let source_offset = element_index * plan.element_bytes;
+        let memory_offset = plan.offsets[element_index];
         let active = compact_byte_mask
             .map(|mask| mask[source_offset])
             .unwrap_or(true);
