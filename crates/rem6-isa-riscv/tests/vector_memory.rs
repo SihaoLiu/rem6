@@ -415,6 +415,59 @@ fn hart_builds_leading_gap_indexed_e32_m1_vector_memory_accesses() {
 }
 
 #[test]
+fn hart_builds_reversed_indexed_e32_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x83c0);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([12, 0, 0, 0]));
+    let source = lanes_u32([0xa1a2_a3a4, 0xb1b2_b3b4, 0, 0]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(true, 0b110, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![12, 0],
+            span_len: 16,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(true, 0b110, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 16];
+    data[12..16].copy_from_slice(&source[0..4]);
+    data[0..4].copy_from_slice(&source[4..8]);
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![12, 0],
+            data,
+            byte_mask: element_byte_mask(&[true, false, false, true], 4),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_indexed_e64_m1_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8340);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
@@ -625,6 +678,62 @@ fn hart_builds_masked_leading_gap_indexed_e32_m1_vector_memory_accesses() {
             offsets: vec![4, 12],
             data,
             byte_mask: element_byte_mask(&[false, true], 4),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_masked_reversed_indexed_e32_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x83d0);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u32([12, 0, 0, 0]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = lanes_u32([0xa1a2_a3a4, 0xb1b2_b3b4, 0, 0]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b110, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![12, 0],
+            span_len: 16,
+            byte_mask: Some(element_byte_mask(&[true, false], 4)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b110, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 16];
+    data[12..16].copy_from_slice(&source[0..4]);
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Word,
+            offsets: vec![12, 0],
+            data,
+            byte_mask: element_byte_mask(&[false, false, false, true], 4),
             group_registers: 1,
         })
     );

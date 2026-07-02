@@ -4956,6 +4956,33 @@ fn rem6_run_in_order_pipeline_models_leading_gap_vector_indexed_e32_m1_memory() 
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_reversed_vector_indexed_e32_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-indexed-reversed-e32-m1-load-store",
+        &reversed_indexed_e32_m1_vector_memory_program(),
+        360,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        33,
+        "reversed indexed e32,m1 vector memory should follow non-monotonic offsets and preserve skipped store words through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-indexed-reversed-e32-m1-load-store",
+        &reversed_indexed_e32_m1_vector_memory_program(),
+        920,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        33,
+        "cache-backed reversed indexed e32,m1 vector memory should follow non-monotonic offsets and preserve skipped store words through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_indexed_e64_m1_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-indexed-e64-m1-load-store",
@@ -5087,6 +5114,33 @@ fn rem6_run_in_order_pipeline_models_masked_leading_gap_vector_indexed_e32_m1_me
         stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
         38,
         "cache-backed masked leading-gap indexed e32,m1 vector memory should preserve the leading gap, interior gap, and inactive sparse lane through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_masked_reversed_vector_indexed_e32_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-indexed-masked-reversed-e32-m1-load-store",
+        &masked_reversed_indexed_e32_m1_vector_memory_program(),
+        460,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        38,
+        "masked reversed indexed e32,m1 vector memory should keep the inactive lower-offset lane untouched while storing only the active high-offset lane through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-indexed-masked-reversed-e32-m1-load-store",
+        &masked_reversed_indexed_e32_m1_vector_memory_program(),
+        1160,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        38,
+        "cache-backed masked reversed indexed e32,m1 vector memory should keep the inactive lower-offset lane untouched while storing only the active high-offset lane through the top-level run path\nstats:\n{cache_stats}"
     );
 }
 
@@ -6153,6 +6207,13 @@ fn leading_gap_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     )
 }
 
+fn reversed_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
+    indexed_e32_m1_vector_memory_program_with_offsets(
+        [12, 0],
+        [0xb1b2_b3b4, 0x5151_5151, 0x5252_5252, 0xa1a2_a3a4],
+    )
+}
+
 fn indexed_e32_m1_vector_memory_program_with_offsets(
     offsets: [u32; 2],
     source_span: [u32; 4],
@@ -6397,6 +6458,13 @@ fn masked_leading_gap_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
     masked_indexed_e32_m1_vector_memory_program_with_offsets(
         [4, 12],
         [0x5151_5151, 0xa1a2_a3a4, 0x5252_5252, 0xb1b2_b3b4],
+    )
+}
+
+fn masked_reversed_indexed_e32_m1_vector_memory_program() -> Vec<u8> {
+    masked_indexed_e32_m1_vector_memory_program_with_offsets(
+        [12, 0],
+        [0x5151_5151, 0x6161_6161, 0x6262_6262, 0xa1a2_a3a4],
     )
 }
 
