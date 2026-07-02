@@ -286,6 +286,12 @@ pub enum RiscvVectorMemoryInstruction {
         width: MemoryWidth,
         mask: RiscvVectorMaskMode,
     },
+    LoadUnitStrideFaultOnly {
+        vd: VectorRegister,
+        rs1: Register,
+        width: MemoryWidth,
+        mask: RiscvVectorMaskMode,
+    },
     LoadStrided {
         vd: VectorRegister,
         rs1: Register,

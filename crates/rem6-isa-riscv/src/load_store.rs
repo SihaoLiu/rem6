@@ -59,6 +59,16 @@ pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvErro
             },
         ));
     }
+    if is_unit_stride_fault_only_vector_load(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+                width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
     if is_strided_vector_memory(raw) {
         return Ok(RiscvInstruction::VectorMemory(
             RiscvVectorMemoryInstruction::LoadStrided {
@@ -129,6 +139,13 @@ fn is_unit_stride_vector_memory(raw: u32) -> bool {
     let lumop_or_sumop = (raw >> 20) & 0x1f;
     let mew_and_nf = (raw >> 28) & 0xf;
     mop == 0 && lumop_or_sumop == 0 && mew_and_nf == 0
+}
+
+fn is_unit_stride_fault_only_vector_load(raw: u32) -> bool {
+    let mop = (raw >> 26) & 0x3;
+    let lumop = (raw >> 20) & 0x1f;
+    let mew_and_nf = (raw >> 28) & 0xf;
+    mop == 0 && lumop == 0b10000 && mew_and_nf == 0
 }
 
 fn is_strided_vector_memory(raw: u32) -> bool {

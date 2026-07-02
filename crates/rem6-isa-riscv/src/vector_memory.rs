@@ -3,7 +3,7 @@ use crate::{
         read_mask_bit, read_register_group, register_groups_overlap, valid_register_group,
         MAX_VECTOR_GROUP_BYTES,
     },
-    MemoryAccessKind, MemoryWidth, RiscvHartState, RiscvVectorMaskMode,
+    MemoryAccessKind, MemoryWidth, Register, RiscvHartState, RiscvVectorMaskMode,
     RiscvVectorMemoryInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
@@ -67,32 +67,21 @@ pub(crate) fn memory_access(
             rs1,
             width,
             mask,
+        } => unit_stride_load_memory_access(hart, vd, rs1, width, mask),
+        RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
+            vd,
+            rs1,
+            width,
+            mask,
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
-            if masked_unit_stride_unsupported(mask, width, &plan)
-                || masked_load_overlaps_v0(mask, vd, plan.group_registers)
+            if mask != RiscvVectorMaskMode::Unmasked
+                || width != MemoryWidth::Byte
+                || plan.group_registers != 1
             {
                 return Err(());
             }
-            if plan.byte_len == 0 {
-                return Ok(None);
-            }
-            let byte_mask = active_byte_mask(hart, mask, &plan);
-            if byte_mask
-                .as_ref()
-                .is_some_and(|mask| !mask.iter().any(|active| *active))
-            {
-                return Ok(None);
-            }
-
-            Ok(Some(MemoryAccessKind::VectorLoadUnitStride {
-                vd,
-                address: hart.read(rs1),
-                width,
-                byte_len: plan.byte_len,
-                byte_mask,
-                group_registers: plan.group_registers,
-            }))
+            unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
         }
         RiscvVectorMemoryInstruction::LoadStrided {
             vd,
@@ -246,6 +235,51 @@ pub(crate) fn memory_access(
             }))
         }
     }
+}
+
+fn unit_stride_load_memory_access(
+    hart: &RiscvHartState,
+    vd: VectorRegister,
+    rs1: Register,
+    width: MemoryWidth,
+    mask: RiscvVectorMaskMode,
+) -> Result<Option<MemoryAccessKind>, ()> {
+    let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
+    if masked_unit_stride_unsupported(mask, width, &plan)
+        || masked_load_overlaps_v0(mask, vd, plan.group_registers)
+    {
+        return Err(());
+    }
+    unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
+}
+
+fn unit_stride_load_memory_access_with_plan(
+    hart: &RiscvHartState,
+    vd: VectorRegister,
+    rs1: Register,
+    width: MemoryWidth,
+    mask: RiscvVectorMaskMode,
+    plan: UnitStrideAccessPlan,
+) -> Result<Option<MemoryAccessKind>, ()> {
+    if plan.byte_len == 0 {
+        return Ok(None);
+    }
+    let byte_mask = active_byte_mask(hart, mask, &plan);
+    if byte_mask
+        .as_ref()
+        .is_some_and(|mask| !mask.iter().any(|active| *active))
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(MemoryAccessKind::VectorLoadUnitStride {
+        vd,
+        address: hart.read(rs1),
+        width,
+        byte_len: plan.byte_len,
+        byte_mask,
+        group_registers: plan.group_registers,
+    }))
 }
 
 struct UnitStrideAccessPlan {
