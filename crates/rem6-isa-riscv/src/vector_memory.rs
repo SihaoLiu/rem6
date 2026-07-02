@@ -23,6 +23,12 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
         &[0, 8],
         16,
     ),
+    (
+        MemoryWidth::Doubleword,
+        MemoryWidth::Doubleword,
+        &[0, 24],
+        32,
+    ),
 ];
 
 pub(crate) fn memory_access(
@@ -371,7 +377,7 @@ fn indexed_access_plan(
     if !supported_indexed_m1_shape(width, index_width, &offsets, span_len) {
         return None;
     }
-    (span_len <= group_bytes).then_some(IndexedAccessPlan {
+    (span_len <= MAX_VECTOR_GROUP_BYTES).then_some(IndexedAccessPlan {
         width,
         element_count,
         element_bytes,

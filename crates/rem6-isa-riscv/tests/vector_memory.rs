@@ -518,6 +518,59 @@ fn hart_builds_indexed_e64_m1_vector_memory_accesses() {
 }
 
 #[test]
+fn hart_builds_sparse_indexed_e64_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8350);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u64([0, 24]));
+    let source = lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xb1b2_b3b4_b5b6_b7b8]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(true, 0b111, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 24],
+            span_len: 32,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(true, 0b111, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 32];
+    data[0..8].copy_from_slice(&source[0..8]);
+    data[24..32].copy_from_slice(&source[8..16]);
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 24],
+            data,
+            byte_mask: element_byte_mask(&[true, false, false, true], 8),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_masked_indexed_e64_m1_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8350);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
@@ -564,6 +617,60 @@ fn hart_builds_masked_indexed_e64_m1_vector_memory_accesses() {
             width: MemoryWidth::Doubleword,
             index_width: MemoryWidth::Doubleword,
             offsets: vec![0, 8],
+            data: source[0..8].to_vec(),
+            byte_mask: element_byte_mask(&[true; 8], 1),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_masked_sparse_indexed_e64_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8370);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u64([0, 24]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xb1b2_b3b4_b5b6_b7b8]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b111, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 24],
+            span_len: 8,
+            byte_mask: Some(element_byte_mask(&[true, false], 8)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b111, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 24],
             data: source[0..8].to_vec(),
             byte_mask: element_byte_mask(&[true; 8], 1),
             group_registers: 1,
