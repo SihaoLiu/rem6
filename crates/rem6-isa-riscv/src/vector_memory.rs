@@ -140,7 +140,7 @@ fn masked_unit_stride_unsupported(
     mask.is_masked()
         && !(plan.group_registers == 1
             || (width == MemoryWidth::Word
-                && matches!(plan.group_registers, 2 | 4)
+                && matches!(plan.group_registers, 2 | 4 | 8)
                 && plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES))
 }
 

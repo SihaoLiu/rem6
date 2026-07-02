@@ -52,6 +52,14 @@ fn lanes_u32x16(lanes: [u32; 16]) -> [u8; 64] {
     bytes
 }
 
+fn lanes_u32x32(lanes: [u32; 32]) -> [u8; 128] {
+    let mut bytes = [0; 128];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&lane.to_le_bytes());
+    }
+    bytes
+}
+
 fn e32_byte_mask(active_lanes: [bool; 4]) -> Vec<bool> {
     element_byte_mask(&active_lanes, 4)
 }
@@ -314,13 +322,95 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_e32_m4_register_group(
 }
 
 #[test]
+fn hart_builds_masked_unit_stride_vector_memory_masks_for_e32_m8_register_group() {
+    let mut hart = RiscvHartState::new(0x80e0);
+    hart.set_vector_config(RiscvVectorConfig::new(32, 0xd3));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9080);
+    hart.write_vector(
+        vreg(0),
+        [
+            0b0101_0101,
+            0b0101_0101,
+            0b0101_0101,
+            0b0101_0101,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    );
+
+    let source = lanes_u32x32([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32,
+    ]);
+    for group_index in 0..8 {
+        let offset = group_index * 16;
+        hart.write_vector(
+            vreg(16 + group_index as u8),
+            source[offset..offset + 16].try_into().unwrap(),
+        );
+    }
+    let byte_mask = element_byte_mask(
+        &[
+            true, false, true, false, true, false, true, false, true, false, true, false, true,
+            false, true, false, true, false, true, false, true, false, true, false, true, false,
+            true, false, true, false, true, false,
+        ],
+        4,
+    );
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_load_type(false, 0b110, 14, 16)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadUnitStride {
+            vd: vreg(16),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            byte_len: 128,
+            byte_mask: Some(byte_mask.clone()),
+            group_registers: 8,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_store_type(false, 0b110, 16, 16)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreUnitStride {
+            address: 0x9080,
+            width: MemoryWidth::Word,
+            data: source.to_vec(),
+            byte_mask: Some(byte_mask),
+            group_registers: 8,
+        })
+    );
+}
+
+#[test]
 fn hart_rejects_masked_unit_stride_vector_memory_outside_supported_lmul_slices() {
     assert_masked_memory_trap(0xd1, vector_unit_stride_load_type(false, 0b110, 14, 2)); // partial e32,m2
     assert_masked_memory_trap(0xd1, vector_unit_stride_store_type(false, 0b110, 14, 2));
     assert_masked_memory_trap(0xd2, vector_unit_stride_load_type(false, 0b110, 14, 4)); // e32,m4
     assert_masked_memory_trap(0xd2, vector_unit_stride_store_type(false, 0b110, 14, 4));
-    assert_full_lmul8_masked_memory_trap(vector_unit_stride_load_type(false, 0b110, 14, 8));
-    assert_full_lmul8_masked_memory_trap(vector_unit_stride_store_type(false, 0b110, 14, 8));
+    assert_masked_memory_trap(0xd3, vector_unit_stride_load_type(false, 0b110, 14, 8)); // partial e32,m8
+    assert_masked_memory_trap(0xd3, vector_unit_stride_store_type(false, 0b110, 14, 8));
 }
 
 #[test]
@@ -345,26 +435,6 @@ fn assert_masked_memory_trap(vtype: u64, raw: u32) {
     assert_eq!(
         record.trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8100))
-    );
-    assert_eq!(record.memory_access(), None);
-}
-
-fn assert_full_lmul8_masked_memory_trap(raw: u32) {
-    let mut hart = RiscvHartState::new(0x8120);
-    hart.set_vector_config(RiscvVectorConfig::new(32, 0xd3));
-    hart.write(reg(14), 0x9000);
-    hart.write_vector(
-        vreg(0),
-        [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    );
-
-    let record = hart
-        .execute(RiscvInstruction::decode(raw).unwrap())
-        .unwrap();
-
-    assert_eq!(
-        record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8120))
     );
     assert_eq!(record.memory_access(), None);
 }
