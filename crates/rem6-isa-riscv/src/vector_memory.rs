@@ -7,9 +7,7 @@ use crate::{
     RiscvVectorMemoryInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
-const SUPPORTED_STRIDED_E32_M1_ELEMENTS: usize = 2;
-const SUPPORTED_STRIDED_E32_M1_STRIDE: usize = 12;
-const SUPPORTED_STRIDED_E32_M1_SPAN: usize = 16;
+const SUPPORTED_STRIDED_E32_M1_SHAPES: &[(usize, usize, usize)] = &[(2, 12, 16), (3, 6, 16)];
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -234,10 +232,7 @@ fn strided_access_plan(
     let span_len = (element_count - 1)
         .checked_mul(stride)?
         .checked_add(element_bytes)?;
-    if element_count != SUPPORTED_STRIDED_E32_M1_ELEMENTS
-        || stride != SUPPORTED_STRIDED_E32_M1_STRIDE
-        || span_len != SUPPORTED_STRIDED_E32_M1_SPAN
-    {
+    if !supported_strided_e32_m1_shape(element_count, stride, span_len) {
         return None;
     }
     let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
@@ -250,6 +245,13 @@ fn strided_access_plan(
             group_registers,
         },
     )
+}
+
+fn supported_strided_e32_m1_shape(element_count: usize, stride: usize, span_len: usize) -> bool {
+    SUPPORTED_STRIDED_E32_M1_SHAPES
+        .iter()
+        .copied()
+        .any(|shape| shape == (element_count, stride, span_len))
 }
 
 fn strided_compact_byte_mask(
