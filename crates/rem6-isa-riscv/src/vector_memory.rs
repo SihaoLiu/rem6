@@ -10,6 +10,7 @@ use crate::{
 const SUPPORTED_STRIDED_M1_SHAPES: &[(MemoryWidth, usize, usize, usize)] = &[
     (MemoryWidth::Byte, 2, 15, 16),
     (MemoryWidth::Byte, 2, 7, 8),
+    (MemoryWidth::Byte, 2, 3, 4),
     (MemoryWidth::Halfword, 2, 14, 16),
     (MemoryWidth::Halfword, 2, 6, 8),
     (MemoryWidth::Word, 2, 12, 16),
