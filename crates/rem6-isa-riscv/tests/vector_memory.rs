@@ -3223,6 +3223,117 @@ fn hart_builds_masked_strided_e8_m1_stride15_vector_memory_accesses() {
 }
 
 #[test]
+fn hart_builds_strided_e8_m1_stride7_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8261);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xc0));
+    hart.write(reg(12), 7);
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    let source = [0xa1, 0xb1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_strided_load_type(true, 0b000, 14, 12, 1)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadStrided {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Byte,
+            stride: 7,
+            element_count: 2,
+            span_len: 8,
+            byte_mask: None,
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_strided_store_type(true, 0b000, 16, 12, 1)).unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 8];
+    data[0] = source[0];
+    data[7] = source[1];
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreStrided {
+            address: 0x9020,
+            width: MemoryWidth::Byte,
+            stride: 7,
+            element_count: 2,
+            data,
+            byte_mask: element_byte_mask(
+                &[true, false, false, false, false, false, false, true],
+                1
+            ),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
+fn hart_builds_masked_strided_e8_m1_stride7_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8271);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xc0));
+    hart.write(reg(12), 7);
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = [0xa1, 0xb1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_strided_load_type(false, 0b000, 14, 12, 1)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadStrided {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Byte,
+            stride: 7,
+            element_count: 2,
+            span_len: 8,
+            byte_mask: Some(element_byte_mask(&[true, false], 1)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_strided_store_type(false, 0b000, 16, 12, 1)).unwrap(),
+        )
+        .unwrap();
+    let mut data = vec![0; 8];
+    data[0] = source[0];
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreStrided {
+            address: 0x9020,
+            width: MemoryWidth::Byte,
+            stride: 7,
+            element_count: 2,
+            data,
+            byte_mask: element_byte_mask(
+                &[true, false, false, false, false, false, false, false],
+                1
+            ),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_strided_e16_m1_stride14_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8240);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xc8));
