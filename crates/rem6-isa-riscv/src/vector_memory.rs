@@ -55,8 +55,21 @@ pub(crate) fn memory_access(
             width,
             mask,
         } => {
-            let plan = strided_access_plan(hart, vd, width, mask, rs2).ok_or(())?;
+            let plan = strided_access_plan(hart, vd, width, rs2).ok_or(())?;
+            if masked_load_overlaps_v0(mask, vd, plan.group_registers) {
+                return Err(());
+            }
             if plan.element_count == 0 {
+                if mask.is_masked() {
+                    return Err(());
+                }
+                return Ok(None);
+            }
+            let byte_mask = strided_compact_byte_mask(hart, mask, &plan);
+            if byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
                 return Ok(None);
             }
 
@@ -67,6 +80,7 @@ pub(crate) fn memory_access(
                 stride: plan.stride,
                 element_count: plan.element_count,
                 span_len: plan.span_len,
+                byte_mask,
                 group_registers: plan.group_registers,
             }))
         }
@@ -108,12 +122,23 @@ pub(crate) fn memory_access(
             width,
             mask,
         } => {
-            let plan = strided_access_plan(hart, vs3, width, mask, rs2).ok_or(())?;
+            let plan = strided_access_plan(hart, vs3, width, rs2).ok_or(())?;
             if plan.element_count == 0 {
+                if mask.is_masked() {
+                    return Err(());
+                }
                 return Ok(None);
             }
             let group = read_register_group(hart, vs3, plan.group_registers);
-            let (data, byte_mask) = strided_store_payload(&group, &plan);
+            let compact_byte_mask = strided_compact_byte_mask(hart, mask, &plan);
+            if compact_byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
+                return Ok(None);
+            }
+            let (data, byte_mask) =
+                strided_store_payload(&group, &plan, compact_byte_mask.as_deref());
 
             Ok(Some(MemoryAccessKind::VectorStoreStrided {
                 address: hart.read(rs1),
@@ -174,15 +199,16 @@ fn strided_access_plan(
     hart: &RiscvHartState,
     register: VectorRegister,
     width: MemoryWidth,
-    mask: RiscvVectorMaskMode,
     stride_register: crate::Register,
 ) -> Option<StridedAccessPlan> {
-    if mask.is_masked() || width != MemoryWidth::Word {
+    if width != MemoryWidth::Word {
         return None;
     }
     let config = hart.vector_config();
+    let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
     if config.vill()
+        || vlmul != 0
         || group_registers != 1
         || config.element_width_bytes()? != width.bytes()
         || !valid_register_group(register, group_registers)
@@ -226,12 +252,42 @@ fn strided_access_plan(
     )
 }
 
-fn strided_store_payload(source: &[u8], plan: &StridedAccessPlan) -> (Vec<u8>, Vec<bool>) {
+fn strided_compact_byte_mask(
+    hart: &RiscvHartState,
+    mask: RiscvVectorMaskMode,
+    plan: &StridedAccessPlan,
+) -> Option<Vec<bool>> {
+    if !mask.is_masked() {
+        return None;
+    }
+
+    let source = hart.read_vector(VectorRegister::new(0).expect("v0 is a valid vector register"));
+    let mut byte_mask = vec![false; plan.element_count * plan.element_bytes];
+    for element_index in 0..plan.element_count {
+        if read_mask_bit(&source, element_index) {
+            let offset = element_index * plan.element_bytes;
+            byte_mask[offset..offset + plan.element_bytes].fill(true);
+        }
+    }
+    Some(byte_mask)
+}
+
+fn strided_store_payload(
+    source: &[u8],
+    plan: &StridedAccessPlan,
+    compact_byte_mask: Option<&[bool]>,
+) -> (Vec<u8>, Vec<bool>) {
     let mut data = vec![0; plan.span_len];
     let mut byte_mask = vec![false; plan.span_len];
     for element_index in 0..plan.element_count {
         let source_offset = element_index * plan.element_bytes;
         let memory_offset = element_index * plan.stride;
+        let active = compact_byte_mask
+            .map(|mask| mask[source_offset])
+            .unwrap_or(true);
+        if !active {
+            continue;
+        }
         data[memory_offset..memory_offset + plan.element_bytes]
             .copy_from_slice(&source[source_offset..source_offset + plan.element_bytes]);
         byte_mask[memory_offset..memory_offset + plan.element_bytes].fill(true);

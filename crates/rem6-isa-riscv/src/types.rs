@@ -283,6 +283,7 @@ pub enum MemoryAccessKind {
         stride: usize,
         element_count: usize,
         span_len: usize,
+        byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
     LoadReserved {

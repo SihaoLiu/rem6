@@ -894,6 +894,7 @@ fn record_load_completion(
             stride,
             element_count,
             span_len,
+            byte_mask,
             group_registers,
             ..
         } => {
@@ -906,6 +907,7 @@ fn record_load_completion(
                 width.bytes(),
                 *stride,
                 *element_count,
+                byte_mask.as_deref(),
             );
             write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
         }
@@ -922,10 +924,17 @@ fn scatter_strided_load(
     element_bytes: usize,
     stride: usize,
     element_count: usize,
+    byte_mask: Option<&[bool]>,
 ) {
     for element_index in 0..element_count {
         let memory_offset = element_index * stride;
         let destination_offset = element_index * element_bytes;
+        let active = byte_mask
+            .map(|mask| mask[destination_offset])
+            .unwrap_or(true);
+        if !active {
+            continue;
+        }
         destination[destination_offset..destination_offset + element_bytes]
             .copy_from_slice(&data[memory_offset..memory_offset + element_bytes]);
     }
