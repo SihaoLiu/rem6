@@ -457,7 +457,7 @@ fn indexed_compact_byte_mask(
 }
 
 fn masked_indexed_unsupported(mask: RiscvVectorMaskMode, plan: &IndexedAccessPlan) -> bool {
-    mask.is_masked() && plan.width != MemoryWidth::Word
+    mask.is_masked() && !matches!(plan.width, MemoryWidth::Word | MemoryWidth::Doubleword)
 }
 
 fn indexed_active_span_len(

@@ -359,6 +359,60 @@ fn hart_builds_indexed_e64_m1_vector_memory_accesses() {
 }
 
 #[test]
+fn hart_builds_masked_indexed_e64_m1_vector_memory_accesses() {
+    let mut hart = RiscvHartState::new(0x8350);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(vreg(2), lanes_u64([0, 8]));
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let source = lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xb1b2_b3b4_b5b6_b7b8]);
+    hart.write_vector(vreg(1), source);
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_load_type(false, 0b111, 14, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadIndexed {
+            vd: vreg(1),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 8],
+            span_len: 8,
+            byte_mask: Some(element_byte_mask(&[true, false], 8)),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_indexed_unordered_store_type(false, 0b111, 16, 2, 1))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9020,
+            width: MemoryWidth::Doubleword,
+            index_width: MemoryWidth::Doubleword,
+            offsets: vec![0, 8],
+            data: source[0..8].to_vec(),
+            byte_mask: element_byte_mask(&[true; 8], 1),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_masked_indexed_e32_m1_vector_memory_accesses() {
     let mut hart = RiscvHartState::new(0x8270);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
@@ -919,15 +973,15 @@ fn hart_rejects_masked_indexed_nonprefix_active_lanes_outside_supported_slice() 
 }
 
 #[test]
-fn hart_rejects_masked_indexed_e64_memory_outside_supported_slice() {
-    let mut hart = RiscvHartState::new(0x8350);
+fn hart_rejects_masked_indexed_e64_nonprefix_active_lanes_outside_supported_slice() {
+    let mut hart = RiscvHartState::new(0x8360);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(14), 0x9000);
     hart.write(reg(16), 0x9020);
     hart.write_vector(vreg(2), lanes_u64([0, 8]));
     hart.write_vector(
         vreg(0),
-        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0b0000_0010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     );
 
     let record = hart
@@ -939,17 +993,17 @@ fn hart_rejects_masked_indexed_e64_memory_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8350))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8360))
     );
     assert_eq!(record.memory_access(), None);
 
-    let mut hart = RiscvHartState::new(0x8360);
+    let mut hart = RiscvHartState::new(0x8370);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(16), 0x9020);
     hart.write_vector(vreg(2), lanes_u64([0, 8]));
     hart.write_vector(
         vreg(0),
-        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0b0000_0010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     );
 
     let record = hart
@@ -961,14 +1015,14 @@ fn hart_rejects_masked_indexed_e64_memory_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8360))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8370))
     );
     assert_eq!(record.memory_access(), None);
 }
 
 #[test]
 fn hart_rejects_mixed_width_indexed_memory_outside_supported_slice() {
-    let mut hart = RiscvHartState::new(0x8370);
+    let mut hart = RiscvHartState::new(0x8380);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(14), 0x9000);
     hart.write(reg(16), 0x9020);
@@ -983,11 +1037,11 @@ fn hart_rejects_mixed_width_indexed_memory_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8370))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8380))
     );
     assert_eq!(record.memory_access(), None);
 
-    let mut hart = RiscvHartState::new(0x8380);
+    let mut hart = RiscvHartState::new(0x8390);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd0));
     hart.write(reg(14), 0x9000);
     hart.write(reg(16), 0x9020);
@@ -1002,14 +1056,14 @@ fn hart_rejects_mixed_width_indexed_memory_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8380))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8390))
     );
     assert_eq!(record.memory_access(), None);
 }
 
 #[test]
 fn hart_rejects_e64_indexed_noncontiguous_offsets_outside_supported_slice() {
-    let mut hart = RiscvHartState::new(0x8390);
+    let mut hart = RiscvHartState::new(0x83a0);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(14), 0x9000);
     hart.write(reg(16), 0x9020);
@@ -1024,11 +1078,11 @@ fn hart_rejects_e64_indexed_noncontiguous_offsets_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8390))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x83a0))
     );
     assert_eq!(record.memory_access(), None);
 
-    let mut hart = RiscvHartState::new(0x83a0);
+    let mut hart = RiscvHartState::new(0x83b0);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(16), 0x9020);
     hart.write_vector(vreg(2), lanes_u64([0, 4]));
@@ -1042,7 +1096,7 @@ fn hart_rejects_e64_indexed_noncontiguous_offsets_outside_supported_slice() {
 
     assert_eq!(
         record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x83a0))
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x83b0))
     );
     assert_eq!(record.memory_access(), None);
 }
