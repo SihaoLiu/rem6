@@ -4668,6 +4668,33 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul4_register_grou
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul8_register_group_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-full-lmul8-load-store",
+        &unit_stride_lmul8_vector_memory_program(),
+        520,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "LMUL8 unit-stride vector memory should move a full 128-byte register-group payload through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-unit-stride-full-lmul8-load-store",
+        &unit_stride_lmul8_vector_memory_program(),
+        1800,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "cache-backed LMUL8 unit-stride vector memory should move a full 128-byte register-group payload through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_full_lmul4_register_group_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-masked-full-lmul4-load-store",
@@ -5193,6 +5220,51 @@ fn unit_stride_lmul4_vector_memory_program() -> Vec<u8> {
     let mut program = riscv64_program(&words);
     for word_index in 0..DATA_WORDS {
         let value = 0x0102_0304_u32.wrapping_add((word_index as u32) * 0x1111_1111);
+        program.extend_from_slice(&value.to_le_bytes());
+    }
+    program.extend(std::iter::repeat_n(0, DATA_WORDS * 4));
+    program
+}
+
+fn unit_stride_lmul8_vector_memory_program() -> Vec<u8> {
+    const DATA_WORDS: usize = 32;
+    const DATA_OFFSET_BYTES: i32 = 512;
+    const VECTOR_BYTES: i32 = (DATA_WORDS * 4) as i32;
+
+    let fail_instruction_index = 7 + DATA_WORDS as i32 * 3 + 1;
+    let mut words = vec![
+        u_type(0, 10, 0x17),                               // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),    // addi x10, x10, data
+        i_type(VECTOR_BYTES, 10, 0b000, 16, 0x13),         // addi x16, x10, dest
+        i_type(DATA_WORDS as i32, 0, 0b000, 11, 0x13),     // addi x11, x0, vl
+        vsetvli_type(0xd3, 11, 5),                         // vsetvli x5, x11, e32, m8, ta, ma
+        vector_unit_stride_load_type(true, 0b110, 10, 8),  // vle32.v v8, (x10)
+        vector_unit_stride_store_type(true, 0b110, 16, 8), // vse32.v v8, (x16)
+    ];
+
+    for word_index in 0..DATA_WORDS {
+        let offset = (word_index * 4) as i32;
+        words.push(i_type(offset, 16, 0b010, 12, 0x03)); // lw x12, dest+i
+        words.push(i_type(offset, 10, 0b010, 13, 0x03)); // lw x13, source+i
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (fail_instruction_index - branch_index) * 4,
+            13,
+            12,
+            0b001,
+        ));
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let mut program = riscv64_program(&words);
+    for word_index in 0..DATA_WORDS {
+        let value = 0x0102_0304_u32.wrapping_add((word_index as u32).wrapping_mul(0x1111_1111));
         program.extend_from_slice(&value.to_le_bytes());
     }
     program.extend(std::iter::repeat_n(0, DATA_WORDS * 4));

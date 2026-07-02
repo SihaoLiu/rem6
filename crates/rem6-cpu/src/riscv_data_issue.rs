@@ -1029,7 +1029,7 @@ fn full_e32_register_group_vector_access(
     let Ok(size_bytes) = usize::try_from(size.bytes()) else {
         return false;
     };
-    matches!(group_registers, 2 | 4)
+    matches!(group_registers, 2 | 4 | 8)
         && width == MemoryWidth::Word
         && byte_len == group_registers * RISCV_VECTOR_REGISTER_BYTES
         && size_bytes == byte_len
@@ -1134,6 +1134,25 @@ mod tests {
     }
 
     #[test]
+    fn cross_line_vector_access_accepts_aligned_eight_line_full_lmul8_group() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(128).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_unit_stride(0x8000, 128, 8),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_unit_stride(0x8000, 128, 8),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
     fn cross_line_vector_access_rejects_unaligned_full_lmul2_group() {
         let layout = CacheLineLayout::new(16).unwrap();
         let size = AccessSize::new(32).unwrap();
@@ -1141,6 +1160,19 @@ mod tests {
         assert!(!supports_cross_line_data_access(
             &vector_load_unit_stride(0x8004, 32, 2),
             Address::new(0x8004),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_rejects_partial_lmul8_group() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(64).unwrap();
+
+        assert!(!supports_cross_line_data_access(
+            &vector_load_unit_stride(0x8000, 64, 8),
+            Address::new(0x8000),
             size,
             layout
         ));
