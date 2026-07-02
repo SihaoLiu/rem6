@@ -4695,6 +4695,33 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul8_register_grou
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_strided_e32_m1_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-strided-e32-m1-load-store",
+        &strided_e32_m1_vector_memory_program(),
+        120,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        21,
+        "strided e32,m1 vector memory should move selected lanes and preserve skipped store bytes through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-strided-e32-m1-load-store",
+        &strided_e32_m1_vector_memory_program(),
+        320,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        21,
+        "cache-backed strided e32,m1 vector memory should move selected lanes and preserve skipped store bytes through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_full_lmul4_register_group_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-masked-full-lmul4-load-store",
@@ -5298,6 +5325,59 @@ fn unit_stride_lmul8_vector_memory_program() -> Vec<u8> {
     program
 }
 
+fn strided_e32_m1_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 128;
+    const STRIDE_BYTES: i32 = 12;
+    const SOURCE_BYTES: i32 = 16;
+
+    let fail_instruction_index = 21;
+    let words = vec![
+        u_type(0, 10, 0x17),                               // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),    // addi x10, x10, data
+        i_type(SOURCE_BYTES, 10, 0b000, 13, 0x13),         // addi x13, x10, dest
+        i_type(2, 0, 0b000, 11, 0x13),                     // addi x11, x0, vl
+        i_type(STRIDE_BYTES, 0, 0b000, 12, 0x13),          // addi x12, x0, stride
+        vsetvli_type(0xd0, 11, 5),                         // vsetvli x5, x11, e32, m1, ta, ma
+        vector_strided_load_type(true, 0b110, 10, 12, 1),  // vlse32.v v1, (x10), x12
+        vector_strided_store_type(true, 0b110, 13, 12, 1), // vsse32.v v1, (x13), x12
+        i_type(0, 13, 0b010, 14, 0x03),                    // lw x14, dest[0]
+        i_type(0, 10, 0b010, 15, 0x03),                    // lw x15, source[0]
+        b_type((fail_instruction_index - 10) * 4, 15, 14, 0b001),
+        i_type(12, 13, 0b010, 14, 0x03), // lw x14, dest[12]
+        i_type(12, 10, 0b010, 15, 0x03), // lw x15, source[12]
+        b_type((fail_instruction_index - 13) * 4, 15, 14, 0b001),
+        i_type(4, 13, 0b010, 14, 0x03), // lw x14, dest gap
+        i_type(4, 10, 0b010, 15, 0x03), // lw x15, gap sentinel
+        b_type((fail_instruction_index - 16) * 4, 15, 14, 0b001),
+        i_type(8, 13, 0b010, 14, 0x03), // lw x14, dest gap
+        i_type(8, 10, 0b010, 15, 0x03), // lw x15, gap sentinel
+        b_type((fail_instruction_index - 19) * 4, 15, 14, 0b001),
+        0x0000_0073, // ecall
+        0x0000_0000, // fail: invalid instruction
+    ];
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+
+    let mut program_words = words;
+    while program_words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        program_words.push(0);
+    }
+
+    let mut program = riscv64_program(&program_words);
+    for word in [
+        0xa1a2_a3a4_u32,
+        0x5151_5151,
+        0x6161_6161,
+        0xb1b2_b3b4,
+        0x1111_1111,
+        0x5151_5151,
+        0x6161_6161,
+        0x2222_2222,
+    ] {
+        program.extend_from_slice(&word.to_le_bytes());
+    }
+    program
+}
+
 fn masked_unit_stride_lmul4_vector_memory_program() -> Vec<u8> {
     const DATA_OFFSET_BYTES: i32 = 512;
     const WORDS_PER_VECTOR: usize = 16;
@@ -5808,6 +5888,26 @@ fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) 
 
 fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8) -> u32 {
     (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
+fn vector_strided_load_type(vm_unmasked: bool, width: u32, rs1: u8, rs2: u8, vd: u8) -> u32 {
+    (0b10 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_strided_store_type(vm_unmasked: bool, width: u32, rs1: u8, rs2: u8, vs3: u8) -> u32 {
+    (0b10 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs2) << 20)
         | (u32::from(rs1) << 15)
         | (width << 12)
         | (u32::from(vs3) << 7)

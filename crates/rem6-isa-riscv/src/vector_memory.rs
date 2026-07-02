@@ -7,6 +7,10 @@ use crate::{
     RiscvVectorMemoryInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
+const SUPPORTED_STRIDED_E32_M1_ELEMENTS: usize = 2;
+const SUPPORTED_STRIDED_E32_M1_STRIDE: usize = 12;
+const SUPPORTED_STRIDED_E32_M1_SPAN: usize = 16;
+
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
     instruction: RiscvVectorMemoryInstruction,
@@ -44,6 +48,28 @@ pub(crate) fn memory_access(
                 group_registers: plan.group_registers,
             }))
         }
+        RiscvVectorMemoryInstruction::LoadStrided {
+            vd,
+            rs1,
+            rs2,
+            width,
+            mask,
+        } => {
+            let plan = strided_access_plan(hart, vd, width, mask, rs2).ok_or(())?;
+            if plan.element_count == 0 {
+                return Ok(None);
+            }
+
+            Ok(Some(MemoryAccessKind::VectorLoadStrided {
+                vd,
+                address: hart.read(rs1),
+                width,
+                stride: plan.stride,
+                element_count: plan.element_count,
+                span_len: plan.span_len,
+                group_registers: plan.group_registers,
+            }))
+        }
         RiscvVectorMemoryInstruction::StoreUnitStride {
             vs3,
             rs1,
@@ -75,12 +101,44 @@ pub(crate) fn memory_access(
                 group_registers: plan.group_registers,
             }))
         }
+        RiscvVectorMemoryInstruction::StoreStrided {
+            vs3,
+            rs1,
+            rs2,
+            width,
+            mask,
+        } => {
+            let plan = strided_access_plan(hart, vs3, width, mask, rs2).ok_or(())?;
+            if plan.element_count == 0 {
+                return Ok(None);
+            }
+            let group = read_register_group(hart, vs3, plan.group_registers);
+            let (data, byte_mask) = strided_store_payload(&group, &plan);
+
+            Ok(Some(MemoryAccessKind::VectorStoreStrided {
+                address: hart.read(rs1),
+                width,
+                stride: plan.stride,
+                element_count: plan.element_count,
+                data,
+                byte_mask,
+                group_registers: plan.group_registers,
+            }))
+        }
     }
 }
 
 struct UnitStrideAccessPlan {
     byte_len: usize,
     element_bytes: usize,
+    group_registers: usize,
+}
+
+struct StridedAccessPlan {
+    element_count: usize,
+    element_bytes: usize,
+    stride: usize,
+    span_len: usize,
     group_registers: usize,
 }
 
@@ -110,6 +168,75 @@ fn unit_stride_access_plan(
             group_registers,
         },
     )
+}
+
+fn strided_access_plan(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    width: MemoryWidth,
+    mask: RiscvVectorMaskMode,
+    stride_register: crate::Register,
+) -> Option<StridedAccessPlan> {
+    if mask.is_masked() || width != MemoryWidth::Word {
+        return None;
+    }
+    let config = hart.vector_config();
+    let group_registers = config.register_group_registers()?;
+    if config.vill()
+        || group_registers != 1
+        || config.element_width_bytes()? != width.bytes()
+        || !valid_register_group(register, group_registers)
+    {
+        return None;
+    }
+
+    let element_count = config.vl() as usize;
+    let element_bytes = width.bytes();
+    let stride = usize::try_from(hart.read(stride_register)).ok()?;
+    if element_count == 0 {
+        return Some(StridedAccessPlan {
+            element_count,
+            element_bytes,
+            stride,
+            span_len: 0,
+            group_registers,
+        });
+    }
+    if stride < element_bytes {
+        return None;
+    }
+    let span_len = (element_count - 1)
+        .checked_mul(stride)?
+        .checked_add(element_bytes)?;
+    if element_count != SUPPORTED_STRIDED_E32_M1_ELEMENTS
+        || stride != SUPPORTED_STRIDED_E32_M1_STRIDE
+        || span_len != SUPPORTED_STRIDED_E32_M1_SPAN
+    {
+        return None;
+    }
+    let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
+    (element_count.checked_mul(element_bytes)? <= group_bytes && span_len <= group_bytes).then_some(
+        StridedAccessPlan {
+            element_count,
+            element_bytes,
+            stride,
+            span_len,
+            group_registers,
+        },
+    )
+}
+
+fn strided_store_payload(source: &[u8], plan: &StridedAccessPlan) -> (Vec<u8>, Vec<bool>) {
+    let mut data = vec![0; plan.span_len];
+    let mut byte_mask = vec![false; plan.span_len];
+    for element_index in 0..plan.element_count {
+        let source_offset = element_index * plan.element_bytes;
+        let memory_offset = element_index * plan.stride;
+        data[memory_offset..memory_offset + plan.element_bytes]
+            .copy_from_slice(&source[source_offset..source_offset + plan.element_bytes]);
+        byte_mask[memory_offset..memory_offset + plan.element_bytes].fill(true);
+    }
+    (data, byte_mask)
 }
 
 fn active_byte_mask(

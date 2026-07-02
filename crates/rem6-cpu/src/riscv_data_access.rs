@@ -140,13 +140,15 @@ impl RiscvDataAccessRecord {
         match self.access {
             MemoryAccessKind::Load { .. }
             | MemoryAccessKind::FloatLoad { .. }
-            | MemoryAccessKind::VectorLoadUnitStride { .. } => MemoryOperation::ReadShared,
+            | MemoryAccessKind::VectorLoadUnitStride { .. }
+            | MemoryAccessKind::VectorLoadStrided { .. } => MemoryOperation::ReadShared,
             MemoryAccessKind::LoadReserved { .. } => MemoryOperation::LoadLocked,
             MemoryAccessKind::StoreConditional { .. } => MemoryOperation::StoreConditional,
             MemoryAccessKind::AtomicMemory { .. } => MemoryOperation::Atomic,
             MemoryAccessKind::Store { .. }
             | MemoryAccessKind::FloatStore { .. }
-            | MemoryAccessKind::VectorStoreUnitStride { .. } => MemoryOperation::Write,
+            | MemoryAccessKind::VectorStoreUnitStride { .. }
+            | MemoryAccessKind::VectorStoreStrided { .. } => MemoryOperation::Write,
         }
     }
 

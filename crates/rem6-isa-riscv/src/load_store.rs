@@ -47,35 +47,59 @@ pub(crate) fn opcode_uses_vector_memory(raw: u32) -> bool {
 }
 
 pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    if !is_unit_stride_vector_memory(raw) {
-        return Err(RiscvError::UnknownEncoding { raw });
-    }
     let width = vector_memory_width(raw).ok_or(RiscvError::UnknownEncoding { raw })?;
 
-    Ok(RiscvInstruction::VectorMemory(
-        RiscvVectorMemoryInstruction::LoadUnitStride {
-            vd: vector_register(raw, 7),
-            rs1: rs1(raw),
-            width,
-            mask: vector_memory_mask_mode(raw),
-        },
-    ))
+    if is_unit_stride_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadUnitStride {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+                width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
+    if is_strided_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadStrided {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+                rs2: rs2(raw),
+                width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
+
+    Err(RiscvError::UnknownEncoding { raw })
 }
 
 pub(crate) fn decode_vector_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    if !is_unit_stride_vector_memory(raw) {
-        return Err(RiscvError::UnknownEncoding { raw });
-    }
     let width = vector_memory_width(raw).ok_or(RiscvError::UnknownEncoding { raw })?;
 
-    Ok(RiscvInstruction::VectorMemory(
-        RiscvVectorMemoryInstruction::StoreUnitStride {
-            vs3: vector_register(raw, 7),
-            rs1: rs1(raw),
-            width,
-            mask: vector_memory_mask_mode(raw),
-        },
-    ))
+    if is_unit_stride_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::StoreUnitStride {
+                vs3: vector_register(raw, 7),
+                rs1: rs1(raw),
+                width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
+    if is_strided_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::StoreStrided {
+                vs3: vector_register(raw, 7),
+                rs1: rs1(raw),
+                rs2: rs2(raw),
+                width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
+
+    Err(RiscvError::UnknownEncoding { raw })
 }
 
 fn is_unit_stride_vector_memory(raw: u32) -> bool {
@@ -83,6 +107,12 @@ fn is_unit_stride_vector_memory(raw: u32) -> bool {
     let lumop_or_sumop = (raw >> 20) & 0x1f;
     let mew_and_nf = (raw >> 28) & 0xf;
     mop == 0 && lumop_or_sumop == 0 && mew_and_nf == 0
+}
+
+fn is_strided_vector_memory(raw: u32) -> bool {
+    let mop = (raw >> 26) & 0x3;
+    let mew_and_nf = (raw >> 28) & 0xf;
+    mop == 0b10 && mew_and_nf == 0
 }
 
 fn vector_memory_width(raw: u32) -> Option<MemoryWidth> {

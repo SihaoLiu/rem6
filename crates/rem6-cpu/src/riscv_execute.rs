@@ -605,12 +605,14 @@ pub(crate) fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64
         RiscvInstruction::VectorReduction(..) => {
             RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES
         }
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride { .. }) => {
-            RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::StoreUnitStride {
-            ..
-        }) => RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadUnitStride { .. }
+            | RiscvVectorMemoryInstruction::LoadStrided { .. },
+        ) => RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::StoreUnitStride { .. }
+            | RiscvVectorMemoryInstruction::StoreStrided { .. },
+        ) => RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::FloatAddS { .. }
         | RiscvInstruction::FloatAddD { .. }
         | RiscvInstruction::FloatSubS { .. }
