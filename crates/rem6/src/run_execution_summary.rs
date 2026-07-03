@@ -23,7 +23,8 @@ use crate::pipeline_stats::{
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
     in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_ordering_blocked_cycles,
     in_order_pipeline_stage_resource_blocked, in_order_pipeline_stage_resource_blocked_cycles,
-    in_order_pipeline_stage_widths,
+    in_order_pipeline_stage_trap_redirect_flushed,
+    in_order_pipeline_stage_trap_redirect_flushed_cycles, in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::{
@@ -168,6 +169,10 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_branch_prediction_flushed(&core);
         let pipeline_stage_branch_prediction_flushed_cycles =
             in_order_pipeline_stage_branch_prediction_flushed_cycles(&core);
+        let pipeline_stage_trap_redirect_flushed =
+            in_order_pipeline_stage_trap_redirect_flushed(&core);
+        let pipeline_stage_trap_redirect_flushed_cycles =
+            in_order_pipeline_stage_trap_redirect_flushed_cycles(&core);
         let branch_speculation_summary = core.branch_speculation_summary();
         let branch_target_buffer = core.branch_target_buffer_snapshot();
         let gshare_branch_predictor = core.gshare_branch_predictor_snapshot();
@@ -212,6 +217,9 @@ pub(super) fn execution_summary(
                 pipeline_stage_branch_prediction_flushed,
             in_order_pipeline_stage_branch_prediction_flushed_cycles:
                 pipeline_stage_branch_prediction_flushed_cycles,
+            in_order_pipeline_stage_trap_redirect_flushed: pipeline_stage_trap_redirect_flushed,
+            in_order_pipeline_stage_trap_redirect_flushed_cycles:
+                pipeline_stage_trap_redirect_flushed_cycles,
             in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_advanced: pipeline_summary.advanced_count() as u64,
             in_order_pipeline_flushed: pipeline_summary.flushed_count() as u64,
@@ -245,6 +253,11 @@ pub(super) fn execution_summary(
                 .branch_prediction_redirect_count()
                 as u64,
             in_order_pipeline_trap_redirects: pipeline_summary.trap_redirect_count() as u64,
+            in_order_pipeline_trap_redirect_flushes: pipeline_summary.trap_redirect_flushed_count()
+                as u64,
+            in_order_pipeline_trap_redirect_flush_cycles: pipeline_summary
+                .trap_redirect_flush_cycle_count()
+                as u64,
             in_order_pipeline_branch_speculation_predictions: branch_speculation_summary
                 .predictions(),
             in_order_pipeline_branch_speculation_repairs: branch_speculation_summary.repairs(),

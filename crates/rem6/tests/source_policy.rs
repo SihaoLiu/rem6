@@ -403,6 +403,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.pipeline.inOrder.branchPredictionFlushCycles",
         "sim.cpu0.pipeline.in_order.branch_prediction_redirects",
         "sim.cpu0.pipeline.in_order.trap_redirects",
+        "sim.cpu0.pipeline.in_order.trap_redirect_flushes",
+        "sim.cpu0.pipeline.in_order.stage.decode.trap_redirect_flushed",
         "system.cpu.pipeline.inOrder.stage.fetch1.resourceBlocked",
         "system.cpu.pipeline.inOrder.stage.fetch1.resourceBlockedCycles",
         "system.cpu.pipeline.inOrder.stage.decode.branchPredictionFlushed",

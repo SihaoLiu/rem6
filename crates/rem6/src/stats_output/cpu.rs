@@ -213,6 +213,23 @@ pub(super) fn emit_cpu_run_stats(
             core.in_order_pipeline_stage_branch_prediction_flushed_cycles
                 .values(),
         )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "trap_redirect_flushed",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_trap_redirect_flushed.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "trap_redirect_flushed_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_trap_redirect_flushed_cycles
+                .values(),
+        )?;
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
@@ -331,6 +348,26 @@ pub(super) fn emit_cpu_run_stats(
             "Count",
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_trap_redirects,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.trap_redirect_flushes",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_trap_redirect_flushes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.trap_redirect_flush_cycles",
+                core.cpu
+            ),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_trap_redirect_flush_cycles,
         )?;
         for (name, value) in [
             (

@@ -703,6 +703,57 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_suppression() {
         0,
         "monotonic",
     );
+    assert_eq!(
+        json_path_u64(&json, "/cores/0/in_order_pipeline/trap_redirect_flushes"),
+        0
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/trap_redirect_flush_cycles"
+        ),
+        0
+    );
+    let stage_trap_redirect_flushed = json_stage_summary_from_path(
+        &json,
+        "/cores/0/in_order_pipeline/stage_trap_redirect_flushed",
+    );
+    let stage_trap_redirect_flushed_cycles = json_stage_summary_from_path(
+        &json,
+        "/cores/0/in_order_pipeline/stage_trap_redirect_flushed_cycles",
+    );
+    assert_eq!(stage_trap_redirect_flushed, [0; 5]);
+    assert_eq!(stage_trap_redirect_flushed_cycles, [0; 5]);
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.trap_redirect_flushes",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.trap_redirect_flush_cycles",
+        "Cycle",
+        0,
+        "monotonic",
+    );
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert_stat(
+            &stdout,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.trap_redirect_flushed"),
+            "Count",
+            0,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.trap_redirect_flushed_cycles"),
+            "Cycle",
+            0,
+            "monotonic",
+        );
+    }
     assert_stat(
         &stdout,
         "sim.debug.pipeline_trace.redirect_cause.trap_redirect.records",
@@ -4029,6 +4080,19 @@ fn json_path_u64(json: &Value, path: &str) -> u64 {
     json.pointer(path)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing JSON u64 path {path}"))
+}
+
+fn json_stage_summary_from_path(json: &Value, path: &str) -> [u64; 5] {
+    let stage = json
+        .pointer(path)
+        .unwrap_or_else(|| panic!("missing JSON stage summary path {path}"));
+    [
+        json_record_u64(stage, "fetch1"),
+        json_record_u64(stage, "fetch2"),
+        json_record_u64(stage, "decode"),
+        json_record_u64(stage, "execute"),
+        json_record_u64(stage, "commit"),
+    ]
 }
 
 #[test]

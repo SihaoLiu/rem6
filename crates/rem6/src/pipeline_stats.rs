@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    CpuFetchEventKind, InOrderPipelineInstruction, InOrderPipelineRunSummary,
-    InOrderPipelineSnapshot, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
+    CpuFetchEventKind, InOrderPipelineInstruction, InOrderPipelineRedirectCause,
+    InOrderPipelineRunSummary, InOrderPipelineSnapshot, InOrderPipelineStage,
+    InOrderPipelineStallCause, RiscvCore,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -204,6 +205,34 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
                 },
             );
             summary.saturating_add(cycle_summary.presence())
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_trap_redirect_flushed(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
+            Some(InOrderPipelineRedirectCause::Trap) => {
+                summary.saturating_add(stage_summary_from_instructions(record.plan().flushed()))
+            }
+            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => summary,
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_trap_redirect_flushed_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
+            Some(InOrderPipelineRedirectCause::Trap) => summary.saturating_add(
+                stage_presence_summary_from_instructions(record.plan().flushed()),
+            ),
+            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => summary,
         },
     )
 }

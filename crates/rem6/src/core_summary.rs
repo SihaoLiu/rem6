@@ -26,6 +26,9 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_stage_branch_prediction_flushed: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_branch_prediction_flushed_cycles:
         Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_stage_trap_redirect_flushed: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_stage_trap_redirect_flushed_cycles:
+        Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_retired: u64,
     pub(crate) in_order_pipeline_advanced: u64,
     pub(crate) in_order_pipeline_flushed: u64,
@@ -46,6 +49,8 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_redirects: u64,
     pub(crate) in_order_pipeline_branch_prediction_redirects: u64,
     pub(crate) in_order_pipeline_trap_redirects: u64,
+    pub(crate) in_order_pipeline_trap_redirect_flushes: u64,
+    pub(crate) in_order_pipeline_trap_redirect_flush_cycles: u64,
     pub(crate) in_order_pipeline_branch_speculation_predictions: u64,
     pub(crate) in_order_pipeline_branch_speculation_repairs: u64,
     pub(crate) in_order_pipeline_branch_speculation_removed_youngers: u64,

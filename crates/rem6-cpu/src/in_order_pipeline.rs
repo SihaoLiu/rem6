@@ -670,6 +670,8 @@ pub struct InOrderPipelineCycleSummary {
     branch_prediction_flushed_count: usize,
     branch_prediction_redirect_count: usize,
     trap_redirect_count: usize,
+    trap_redirect_flushed_count: usize,
+    trap_redirect_flush_cycle_count: usize,
     state_changed: bool,
     redirect_target_pc: Option<u64>,
 }
@@ -697,6 +699,8 @@ pub struct InOrderPipelineRunSummary {
     redirect_count: usize,
     branch_prediction_redirect_count: usize,
     trap_redirect_count: usize,
+    trap_redirect_flushed_count: usize,
+    trap_redirect_flush_cycle_count: usize,
     state_changed_cycle_count: usize,
 }
 
@@ -723,6 +727,8 @@ impl InOrderPipelineRunSummary {
         redirect_count: 0,
         branch_prediction_redirect_count: 0,
         trap_redirect_count: 0,
+        trap_redirect_flushed_count: 0,
+        trap_redirect_flush_cycle_count: 0,
         state_changed_cycle_count: 0,
     };
 
@@ -778,6 +784,8 @@ impl InOrderPipelineRunSummary {
             }
             summary.branch_prediction_redirect_count += cycle.branch_prediction_redirect_count();
             summary.trap_redirect_count += cycle.trap_redirect_count();
+            summary.trap_redirect_flushed_count += cycle.trap_redirect_flushed_count();
+            summary.trap_redirect_flush_cycle_count += cycle.trap_redirect_flush_cycle_count();
             if cycle.state_changed() {
                 summary.state_changed_cycle_count += 1;
             }
@@ -819,6 +827,10 @@ impl InOrderPipelineRunSummary {
             branch_prediction_redirect_count: self.branch_prediction_redirect_count
                 + other.branch_prediction_redirect_count,
             trap_redirect_count: self.trap_redirect_count + other.trap_redirect_count,
+            trap_redirect_flushed_count: self.trap_redirect_flushed_count
+                + other.trap_redirect_flushed_count,
+            trap_redirect_flush_cycle_count: self.trap_redirect_flush_cycle_count
+                + other.trap_redirect_flush_cycle_count,
             state_changed_cycle_count: self.state_changed_cycle_count
                 + other.state_changed_cycle_count,
         })
@@ -910,6 +922,14 @@ impl InOrderPipelineRunSummary {
 
     pub const fn trap_redirect_count(self) -> usize {
         self.trap_redirect_count
+    }
+
+    pub const fn trap_redirect_flushed_count(self) -> usize {
+        self.trap_redirect_flushed_count
+    }
+
+    pub const fn trap_redirect_flush_cycle_count(self) -> usize {
+        self.trap_redirect_flush_cycle_count
     }
 
     pub const fn state_changed_cycle_count(self) -> usize {
@@ -1068,6 +1088,14 @@ impl InOrderPipelineCycleSummary {
         self.trap_redirect_count
     }
 
+    pub const fn trap_redirect_flushed_count(self) -> usize {
+        self.trap_redirect_flushed_count
+    }
+
+    pub const fn trap_redirect_flush_cycle_count(self) -> usize {
+        self.trap_redirect_flush_cycle_count
+    }
+
     pub const fn state_changed(self) -> bool {
         self.state_changed
     }
@@ -1148,6 +1176,11 @@ impl InOrderPipelineCycleRecord {
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::BranchPrediction));
         let trap_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Trap));
+        let trap_redirect_flushed_count = match redirect_cause {
+            Some(InOrderPipelineRedirectCause::Trap) => self.plan.flushed().len(),
+            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => 0,
+        };
+        let trap_redirect_flush_cycle_count = usize::from(trap_redirect_flushed_count > 0);
 
         InOrderPipelineCycleSummary {
             cycle: self.cycle,
@@ -1166,6 +1199,8 @@ impl InOrderPipelineCycleRecord {
             branch_prediction_flushed_count,
             branch_prediction_redirect_count,
             trap_redirect_count,
+            trap_redirect_flushed_count,
+            trap_redirect_flush_cycle_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),
             redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),
         }

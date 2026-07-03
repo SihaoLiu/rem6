@@ -658,6 +658,33 @@ fn in_order_pipeline_cycle_summary_records_redirect_target() {
 }
 
 #[test]
+fn in_order_pipeline_cycle_summary_records_trap_redirect_flush_counts() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Commit),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let redirect = InOrderBranchRedirect::trap(30, InOrderPipelineStage::Commit, 0x0);
+
+    let summary = state
+        .try_advance_cycle_recorded_with_redirect(Some(redirect))
+        .unwrap()
+        .summary();
+
+    assert_eq!(summary.redirect_target_pc(), Some(0x0));
+    assert_eq!(summary.branch_prediction_redirect_count(), 0);
+    assert_eq!(summary.trap_redirect_count(), 1);
+    assert_eq!(summary.flushed_count(), 2);
+    assert_eq!(summary.trap_redirect_flushed_count(), 2);
+    assert_eq!(summary.trap_redirect_flush_cycle_count(), 1);
+    assert_eq!(summary.branch_prediction_flushed_count(), 0);
+}
+
+#[test]
 fn in_order_pipeline_run_summary_aggregates_cycle_records() {
     let mut state = InOrderPipelineState::new(config_with_decode_width(1));
     state
