@@ -64,6 +64,7 @@ pub struct RiscvDataAccessRecord {
     access: MemoryAccessKind,
     size: AccessSize,
     physical_address: Address,
+    request_byte_offset: usize,
 }
 
 impl RiscvDataAccessRecord {
@@ -87,7 +88,13 @@ impl RiscvDataAccessRecord {
             access,
             size,
             physical_address,
+            request_byte_offset: 0,
         }
+    }
+
+    pub fn with_request_byte_offset(mut self, request_byte_offset: usize) -> Self {
+        self.request_byte_offset = request_byte_offset;
+        self
     }
 
     pub fn tick(&self) -> Tick {
@@ -134,6 +141,10 @@ impl RiscvDataAccessRecord {
 
     pub fn physical_address(&self) -> Address {
         self.physical_address
+    }
+
+    pub fn request_byte_offset(&self) -> usize {
+        self.request_byte_offset
     }
 
     pub fn operation(&self) -> MemoryOperation {
@@ -247,6 +258,10 @@ impl RiscvDataAccessEvent {
 
     pub fn physical_address(&self) -> Address {
         self.record.physical_address()
+    }
+
+    pub fn request_byte_offset(&self) -> usize {
+        self.record.request_byte_offset()
     }
 
     pub fn operation(&self) -> MemoryOperation {

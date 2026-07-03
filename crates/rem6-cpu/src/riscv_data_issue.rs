@@ -27,8 +27,8 @@ pub(crate) use request_helpers::{
     access_address, access_size, masked_vector_memory_request_span, vector_store_request_payload,
 };
 use request_helpers::{
-    normalized_masked_indexed_load_data, normalized_masked_load_data, pma_access_kind,
-    pmp_access_kind,
+    normalized_masked_indexed_load_data, normalized_masked_load_data,
+    normalized_masked_strided_load_data, pma_access_kind, pmp_access_kind,
 };
 
 impl RiscvCore {
@@ -755,15 +755,23 @@ impl OutstandingDataAccess {
             }
             MemoryAccessKind::VectorStoreStrided {
                 data, byte_mask, ..
-            } => MemoryRequest::write(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                data.clone(),
-                store_byte_mask(self.size, Some(byte_mask.as_slice()))?,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            } => {
+                let (data, byte_mask) = vector_store_request_payload(
+                    self.size,
+                    self.request_byte_offset,
+                    data,
+                    Some(byte_mask.as_slice()),
+                )?;
+                MemoryRequest::write(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    data,
+                    store_byte_mask(self.size, byte_mask.as_deref())?,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::VectorStoreIndexed {
                 data, byte_mask, ..
             } => {
@@ -836,6 +844,7 @@ impl OutstandingDataAccess {
             access: self.access.clone(),
             size: self.size,
             physical_address: self.physical_address,
+            request_byte_offset: self.request_byte_offset,
         }
     }
 
@@ -854,6 +863,7 @@ pub(crate) struct IssuedDataAccess {
     access: MemoryAccessKind,
     size: AccessSize,
     physical_address: Address,
+    request_byte_offset: usize,
 }
 
 impl IssuedDataAccess {
@@ -868,6 +878,7 @@ impl IssuedDataAccess {
             self.size,
             self.physical_address,
         )
+        .with_request_byte_offset(self.request_byte_offset)
     }
 }
 
@@ -993,10 +1004,18 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
+            let data = normalized_masked_strided_load_data(
+                *span_len,
+                byte_mask.as_deref(),
+                *stride,
+                *element_count,
+                width.bytes(),
+                data,
+            );
             assert_eq!(*span_len, data.len(), "strided vector load response width");
             let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
             scatter_strided_load(
-                data,
+                &data,
                 &mut destination,
                 width.bytes(),
                 *stride,
@@ -1379,13 +1398,21 @@ pub(crate) fn mmio_request(
         }
         MemoryAccessKind::VectorStoreStrided {
             data, byte_mask, ..
-        } => MmioRequest::write(
-            mmio_request_id(request),
-            address,
-            data.clone(),
-            store_byte_mask(size, Some(byte_mask.as_slice()))?,
-        )
-        .map_err(RiscvCpuError::Mmio),
+        } => {
+            let (data, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                data,
+                Some(byte_mask.as_slice()),
+            )?;
+            MmioRequest::write(
+                mmio_request_id(request),
+                address,
+                data,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+            .map_err(RiscvCpuError::Mmio)
+        }
         MemoryAccessKind::VectorStoreIndexed {
             data, byte_mask, ..
         } => {

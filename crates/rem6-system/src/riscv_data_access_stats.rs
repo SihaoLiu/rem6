@@ -518,7 +518,11 @@ impl RiscvDataAccessProbeRecorder {
                 self.response_point.is_some(),
             )?;
         }
-        let request_data = request_data(event.access(), event.size().bytes());
+        let request_data = request_data(
+            event.access(),
+            event.request_byte_offset(),
+            event.size().bytes(),
+        );
         if mem_checker_tracks_access(event.access()) {
             if let Some(mem_checker_monitor) = &mut self.mem_checker_monitor {
                 mem_checker_monitor.observe_timing_request(
@@ -722,23 +726,31 @@ fn mem_checker_tracks_access(access: &MemoryAccessKind) -> bool {
     )
 }
 
-fn request_data(access: &MemoryAccessKind, size: u64) -> Option<Vec<u8>> {
+fn request_data(
+    access: &MemoryAccessKind,
+    request_byte_offset: usize,
+    size: u64,
+) -> Option<Vec<u8>> {
     let size = usize::try_from(size).ok()?;
     match access {
         MemoryAccessKind::Store { value, .. }
         | MemoryAccessKind::FloatStore { value, .. }
         | MemoryAccessKind::StoreConditional { value, .. } => {
             let bytes = value.to_le_bytes();
-            bytes.get(..size).map(<[u8]>::to_vec)
+            slice_request_data(&bytes, request_byte_offset, size)
         }
         MemoryAccessKind::VectorStoreUnitStride { data, .. } => {
-            data.get(..size).map(<[u8]>::to_vec)
+            slice_request_data(data, request_byte_offset, size)
         }
         MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => {
-            data.get(..size).map(<[u8]>::to_vec)
+            slice_request_data(data, request_byte_offset, size)
         }
-        MemoryAccessKind::VectorStoreStrided { data, .. } => data.get(..size).map(<[u8]>::to_vec),
-        MemoryAccessKind::VectorStoreIndexed { data, .. } => data.get(..size).map(<[u8]>::to_vec),
+        MemoryAccessKind::VectorStoreStrided { data, .. } => {
+            slice_request_data(data, request_byte_offset, size)
+        }
+        MemoryAccessKind::VectorStoreIndexed { data, .. } => {
+            slice_request_data(data, request_byte_offset, size)
+        }
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::VectorLoadUnitStride { .. }
@@ -748,6 +760,11 @@ fn request_data(access: &MemoryAccessKind, size: u64) -> Option<Vec<u8>> {
         | MemoryAccessKind::LoadReserved { .. }
         | MemoryAccessKind::AtomicMemory { .. } => None,
     }
+}
+
+fn slice_request_data(data: &[u8], request_byte_offset: usize, size: usize) -> Option<Vec<u8>> {
+    let end = request_byte_offset.checked_add(size)?;
+    data.get(request_byte_offset..end).map(<[u8]>::to_vec)
 }
 
 fn response_operation(
@@ -851,6 +868,33 @@ mod tests {
             AccessSize::new(8).unwrap(),
             Address::new(0x9000 + sequence),
         ))
+    }
+
+    #[test]
+    fn request_data_slices_trimmed_strided_store_payload_from_active_offset() {
+        let access = MemoryAccessKind::VectorStoreStrided {
+            address: 0x400a,
+            width: MemoryWidth::Word,
+            stride: 6,
+            element_count: 3,
+            data: vec![
+                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0xa4, 0xa3, 0xa2, 0xa1, 0xbb, 0xcc, 0xb4, 0xb3,
+                0xb2, 0xb1,
+            ],
+            byte_mask: vec![
+                false, false, false, false, false, false, true, true, true, true, false, false,
+                true, true, true, true,
+            ],
+            group_registers: 1,
+        };
+
+        let data = request_data(&access, 6, 10).unwrap();
+
+        assert_eq!(
+            data,
+            vec![0xa4, 0xa3, 0xa2, 0xa1, 0xbb, 0xcc, 0xb4, 0xb3, 0xb2, 0xb1],
+            "trimmed strided store probe data must match the issued request payload"
+        );
     }
 
     #[test]

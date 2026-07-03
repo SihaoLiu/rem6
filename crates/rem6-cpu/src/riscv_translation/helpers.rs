@@ -139,16 +139,24 @@ pub(super) fn cpu_translation_request(
             data: bytes,
             byte_mask,
             ..
-        } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            address,
-            size,
-            bytes.clone(),
-            store_byte_mask(size, Some(byte_mask.as_slice()))?,
-        ),
+        } => {
+            let (bytes, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                bytes,
+                Some(byte_mask.as_slice()),
+            )?;
+            CpuTranslationRequest::store(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                address,
+                size,
+                bytes,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+        }
         MemoryAccessKind::VectorStoreIndexed {
             data: bytes,
             byte_mask,
