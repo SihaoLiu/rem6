@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rem6_isa_riscv::{
     AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, MemoryWidth, RiscvHartState,
     RiscvPmaAccessKind, RiscvPmpAccessKind, RiscvPrivilegeMode, VectorRegister,
@@ -7,8 +9,8 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryError, MemoryRequest,
+    MemoryRequestId, ResponseStatus,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId};
 use rem6_transport::{
@@ -221,8 +223,9 @@ impl RiscvCore {
             });
         }
 
-        let size = access_size(&access)?;
-        let address = Address::new(access_address(&access));
+        let base_size = access_size(&access)?;
+        let base_address = Address::new(access_address(&access));
+        let (address, size) = masked_vector_load_request_span(&access, base_address, base_size)?;
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address)?;
         let line_layout = data
@@ -894,6 +897,7 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
+            let data = normalized_masked_load_data(*byte_len, byte_mask.as_deref(), data);
             assert_eq!(*byte_len, data.len(), "vector load response payload width");
             let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
             if let Some(byte_mask) = byte_mask {
@@ -908,7 +912,7 @@ fn record_load_completion(
                     }
                 }
             } else {
-                destination[..*byte_len].copy_from_slice(data);
+                destination[..*byte_len].copy_from_slice(&data);
             }
             write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
         }
@@ -922,6 +926,7 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
+            let data = normalized_masked_load_data(*byte_len, byte_mask.as_deref(), data);
             assert_eq!(*byte_len, data.len(), "segment vector load response width");
             if let Some(byte_mask) = byte_mask {
                 assert_eq!(
@@ -931,7 +936,7 @@ fn record_load_completion(
                 );
             }
             scatter_segment_load(
-                data,
+                &data,
                 &mut state.hart,
                 *vd,
                 *fields,
@@ -1150,6 +1155,79 @@ pub(crate) fn access_size(access: &MemoryAccessKind) -> Result<AccessSize, Riscv
         }
         _ => memory_width_size(access_width(access)),
     }
+}
+
+fn masked_vector_load_request_span(
+    access: &MemoryAccessKind,
+    base_address: Address,
+    base_size: AccessSize,
+) -> Result<(Address, AccessSize), RiscvCpuError> {
+    let Some((start, end)) = contiguous_masked_vector_load_span(access) else {
+        return Ok((base_address, base_size));
+    };
+    if start == 0 && end as u64 == base_size.bytes() {
+        return Ok((base_address, base_size));
+    }
+
+    let size = AccessSize::new((end - start) as u64).map_err(RiscvCpuError::Memory)?;
+    let address = base_address
+        .get()
+        .checked_add(start as u64)
+        .map(Address::new)
+        .ok_or(RiscvCpuError::Memory(MemoryError::AddressOverflow {
+            start: base_address,
+            size: base_size,
+        }))?;
+    Ok((address, size))
+}
+
+fn contiguous_masked_vector_load_span(access: &MemoryAccessKind) -> Option<(usize, usize)> {
+    match access {
+        MemoryAccessKind::VectorLoadUnitStride {
+            byte_len,
+            byte_mask: Some(byte_mask),
+            ..
+        }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride {
+            byte_len,
+            byte_mask: Some(byte_mask),
+            ..
+        } if byte_mask.len() == *byte_len => contiguous_active_byte_span(byte_mask),
+        _ => None,
+    }
+}
+
+fn contiguous_active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
+    let first = byte_mask.iter().position(|active| *active)?;
+    let last = byte_mask.iter().rposition(|active| *active)? + 1;
+    if byte_mask[first..last].iter().all(|active| *active) {
+        Some((first, last))
+    } else {
+        None
+    }
+}
+
+fn normalized_masked_load_data<'a>(
+    expected_len: usize,
+    byte_mask: Option<&[bool]>,
+    data: &'a [u8],
+) -> Cow<'a, [u8]> {
+    if data.len() == expected_len {
+        return Cow::Borrowed(data);
+    }
+    let Some(byte_mask) = byte_mask else {
+        return Cow::Borrowed(data);
+    };
+    let Some((start, end)) = contiguous_active_byte_span(byte_mask) else {
+        return Cow::Borrowed(data);
+    };
+    if byte_mask.len() != expected_len || end - start != data.len() {
+        return Cow::Borrowed(data);
+    }
+
+    let mut expanded = vec![0; expected_len];
+    expanded[start..end].copy_from_slice(data);
+    Cow::Owned(expanded)
 }
 
 fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
