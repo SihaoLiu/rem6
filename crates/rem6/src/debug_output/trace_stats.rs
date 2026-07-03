@@ -99,6 +99,7 @@ struct PipelineTraceStatSummary {
 struct PipelineStageTraceStatSummary {
     advanced: u64,
     retired: u64,
+    flushed: u64,
     resource_blocked: u64,
 }
 
@@ -392,10 +393,15 @@ impl PipelineStageTraceStatSummary {
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
     }
 
+    fn add_flushed(&mut self, flushed: u64) {
+        self.flushed = self.flushed.saturating_add(flushed);
+    }
+
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
         for (suffix, value) in [
             ("advanced", self.advanced),
             ("retired", self.retired),
+            ("flushed", self.flushed),
             ("resource_blocked", self.resource_blocked),
         ] {
             stats.push(Rem6PipelineTraceStat {
@@ -573,6 +579,18 @@ pub(super) fn pipeline_trace_stats(
                 .or_default()
                 .add_resource_blocked(*resource_blocked);
         }
+        let mut stage_flushed = BTreeMap::<String, u64>::new();
+        for instruction in &record.flushed {
+            *stage_flushed
+                .entry(stat_path_segment(instruction.stage()))
+                .or_default() += 1;
+        }
+        for (stage, flushed) in &stage_flushed {
+            stages
+                .entry(stage.clone())
+                .or_default()
+                .add_flushed(*flushed);
+        }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
             for (stage, resource_blocked) in stage_resource_blocked {
@@ -584,12 +602,6 @@ pub(super) fn pipeline_trace_stats(
         }
         if let Some(cause) = record.flush_cause {
             flush_causes.entry(cause).or_default().add_record(record);
-            let mut stage_flushed = BTreeMap::<String, u64>::new();
-            for instruction in &record.flushed {
-                *stage_flushed
-                    .entry(stat_path_segment(instruction.stage()))
-                    .or_default() += 1;
-            }
             for (stage, flushed) in stage_flushed {
                 flush_cause_stages
                     .entry((cause, stage))

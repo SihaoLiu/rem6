@@ -516,6 +516,7 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
     );
     assert_pipeline_trace_hierarchy_stats(&stdout, trace);
     assert_pipeline_flush_cause(&stdout, trace, "branch_prediction");
+    assert_pipeline_trace_stage_flushed(&stdout, trace);
 }
 
 #[test]
@@ -2873,6 +2874,32 @@ fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
         assert_stat(
             stdout,
             &format!("sim.debug.pipeline_trace.flush_cause.{cause}.stage.{stage}.flushed"),
+            "Count",
+            flushed,
+            "monotonic",
+        );
+    }
+}
+
+fn assert_pipeline_trace_stage_flushed(stdout: &str, trace: &[Value]) {
+    let mut stage_flushed = BTreeMap::<String, u64>::new();
+    for record in trace {
+        for flushed in record_array(record, "flushed") {
+            let stage = flushed
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing flushed instruction stage: {flushed}"));
+            *stage_flushed.entry(stat_path_segment(stage)).or_default() += 1;
+        }
+    }
+    assert!(
+        !stage_flushed.is_empty(),
+        "pipeline trace should preserve flushed in-flight instructions: {trace:?}"
+    );
+    for (stage, flushed) in stage_flushed {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.flushed"),
             "Count",
             flushed,
             "monotonic",
