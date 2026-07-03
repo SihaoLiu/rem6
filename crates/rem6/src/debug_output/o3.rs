@@ -1,4 +1,6 @@
-use rem6_cpu::{CpuId, O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster};
+use rem6_cpu::{
+    CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
@@ -27,6 +29,10 @@ struct Rem6O3TraceTotals {
     store_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
     fu_latency_cycles: u64,
+    fu_integer_mul_instructions: u64,
+    fu_integer_mul_latency_cycles: u64,
+    fu_integer_div_instructions: u64,
+    fu_integer_div_latency_cycles: u64,
     max_rob_occupancy: u64,
     max_lsq_occupancy: u64,
     rename_map_entries: u64,
@@ -37,6 +43,10 @@ struct Rem6O3TraceTotals {
     event_lsq_loads: u64,
     event_lsq_stores: u64,
     event_fu_latency_cycles: u64,
+    event_fu_integer_mul_instructions: u64,
+    event_fu_integer_mul_latency_cycles: u64,
+    event_fu_integer_div_instructions: u64,
+    event_fu_integer_div_latency_cycles: u64,
 }
 
 impl Rem6O3TraceRecord {
@@ -68,7 +78,7 @@ impl Rem6O3TraceRecord {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             self.stats.instructions(),
             self.stats.rob_allocations(),
@@ -80,6 +90,10 @@ impl Rem6O3TraceRecord {
             self.stats.lsq_store_to_load_forwarding_matches(),
             self.stats.fu_latency_instructions(),
             self.stats.fu_latency_cycles(),
+            self.stats.fu_integer_mul_instructions(),
+            self.stats.fu_integer_mul_latency_cycles(),
+            self.stats.fu_integer_div_instructions(),
+            self.stats.fu_integer_div_latency_cycles(),
             self.stats.max_rob_occupancy(),
             self.stats.max_lsq_occupancy(),
             self.stats.rename_map_entries(),
@@ -149,6 +163,18 @@ impl Rem6O3TraceTotals {
         self.fu_latency_cycles = self
             .fu_latency_cycles
             .saturating_add(stats.fu_latency_cycles());
+        self.fu_integer_mul_instructions = self
+            .fu_integer_mul_instructions
+            .saturating_add(stats.fu_integer_mul_instructions());
+        self.fu_integer_mul_latency_cycles = self
+            .fu_integer_mul_latency_cycles
+            .saturating_add(stats.fu_integer_mul_latency_cycles());
+        self.fu_integer_div_instructions = self
+            .fu_integer_div_instructions
+            .saturating_add(stats.fu_integer_div_instructions());
+        self.fu_integer_div_latency_cycles = self
+            .fu_integer_div_latency_cycles
+            .saturating_add(stats.fu_integer_div_latency_cycles());
         self.max_rob_occupancy = self.max_rob_occupancy.max(stats.max_rob_occupancy());
         self.max_lsq_occupancy = self.max_lsq_occupancy.max(stats.max_lsq_occupancy());
         self.rename_map_entries = self
@@ -170,6 +196,25 @@ impl Rem6O3TraceTotals {
             self.event_fu_latency_cycles = self
                 .event_fu_latency_cycles
                 .saturating_add(event.fu_latency_cycles());
+            if event.fu_latency_cycles() > 0 {
+                match event.fu_latency_class() {
+                    Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
+                        self.event_fu_integer_mul_instructions =
+                            self.event_fu_integer_mul_instructions.saturating_add(1);
+                        self.event_fu_integer_mul_latency_cycles = self
+                            .event_fu_integer_mul_latency_cycles
+                            .saturating_add(event.fu_latency_cycles());
+                    }
+                    Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
+                        self.event_fu_integer_div_instructions =
+                            self.event_fu_integer_div_instructions.saturating_add(1);
+                        self.event_fu_integer_div_latency_cycles = self
+                            .event_fu_integer_div_latency_cycles
+                            .saturating_add(event.fu_latency_cycles());
+                    }
+                    None => {}
+                }
+            }
         }
     }
 
@@ -192,6 +237,14 @@ impl Rem6O3TraceTotals {
                 self.store_load_forwarding_matches,
             ),
             ("fu_latency_instructions", self.fu_latency_instructions),
+            (
+                "fu_integer_mul_instructions",
+                self.fu_integer_mul_instructions,
+            ),
+            (
+                "fu_integer_div_instructions",
+                self.fu_integer_div_instructions,
+            ),
             ("max_rob_occupancy", self.max_rob_occupancy),
             ("max_lsq_occupancy", self.max_lsq_occupancy),
             ("rename_map_entries", self.rename_map_entries),
@@ -201,6 +254,14 @@ impl Rem6O3TraceTotals {
             ("event.rename_writes", self.event_rename_writes),
             ("event.lsq_loads", self.event_lsq_loads),
             ("event.lsq_stores", self.event_lsq_stores),
+            (
+                "event.fu_integer_mul_instructions",
+                self.event_fu_integer_mul_instructions,
+            ),
+            (
+                "event.fu_integer_div_instructions",
+                self.event_fu_integer_div_instructions,
+            ),
         ] {
             stats.push(Rem6O3TraceStat {
                 suffix,
@@ -214,17 +275,41 @@ impl Rem6O3TraceTotals {
             value: self.fu_latency_cycles,
         });
         stats.push(Rem6O3TraceStat {
+            suffix: "fu_integer_mul_latency_cycles",
+            unit: "Cycle",
+            value: self.fu_integer_mul_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "fu_integer_div_latency_cycles",
+            unit: "Cycle",
+            value: self.fu_integer_div_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
             suffix: "event.fu_latency_cycles",
             unit: "Cycle",
             value: self.event_fu_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_mul_latency_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_mul_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_div_latency_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_div_latency_cycles,
         });
         stats
     }
 }
 
 fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
+    let fu_latency_class = event.fu_latency_class().map_or_else(
+        || "null".to_string(),
+        |class| format!("\"{}\"", class.as_str()),
+    );
     format!(
-        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.pc().get(),
         event.rob_allocated(),
@@ -232,6 +317,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.rename_writes(),
         event.lsq_loads(),
         event.lsq_stores(),
+        fu_latency_class,
         event.fu_latency_cycles(),
         event.system_event(),
     )

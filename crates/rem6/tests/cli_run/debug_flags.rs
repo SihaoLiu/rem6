@@ -2735,6 +2735,21 @@ fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        i_type(42, 0, 0x0, 1, 0x13),
+        i_type(7, 0, 0x0, 2, 0x13),
+        0x0220_81b3,
+        0x0220_c1b3,
+        m5op(M5_EXIT),
+        i_type(77, 0, 0x0, 13, 0x13),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn assert_o3_event(
     event: &Value,
     sequence: u64,
@@ -2752,6 +2767,37 @@ fn assert_o3_event(
     assert_eq!(json_record_u64(event, "lsq_loads"), lsq_loads);
     assert_eq!(json_record_u64(event, "lsq_stores"), lsq_stores);
     assert_eq!(json_record_u64(event, "fu_latency_cycles"), 0);
+    assert_eq!(event.get("fu_latency_class"), Some(&Value::Null));
+    assert_eq!(json_record_bool(event, "system_event"), system_event);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_o3_event_with_fu(
+    event: &Value,
+    sequence: u64,
+    pc: &str,
+    rename_writes: u64,
+    lsq_loads: u64,
+    lsq_stores: u64,
+    fu_latency_cycles: u64,
+    fu_latency_class: Option<&str>,
+    system_event: bool,
+) {
+    assert_eq!(json_record_u64(event, "sequence"), sequence);
+    assert_eq!(json_record_str(event, "pc"), pc);
+    assert_eq!(json_record_bool(event, "rob_allocated"), true);
+    assert_eq!(json_record_bool(event, "rob_committed"), true);
+    assert_eq!(json_record_u64(event, "rename_writes"), rename_writes);
+    assert_eq!(json_record_u64(event, "lsq_loads"), lsq_loads);
+    assert_eq!(json_record_u64(event, "lsq_stores"), lsq_stores);
+    assert_eq!(
+        json_record_u64(event, "fu_latency_cycles"),
+        fu_latency_cycles
+    );
+    match fu_latency_class {
+        Some(expected) => assert_eq!(json_record_str(event, "fu_latency_class"), expected),
+        None => assert_eq!(event.get("fu_latency_class"), Some(&Value::Null)),
+    }
     assert_eq!(json_record_bool(event, "system_event"), system_event);
 }
 
@@ -4994,6 +5040,143 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
+    let path = detailed_o3_fu_latency_debug_binary("debug-flags-o3-fu-latency-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+
+    for (field, value) in [
+        ("instructions", 5),
+        ("rob_allocations", 5),
+        ("rob_commits", 5),
+        ("rename_writes", 4),
+        ("lsq_loads", 0),
+        ("lsq_stores", 0),
+        ("fu_latency_instructions", 2),
+        ("fu_latency_cycles", 21),
+        ("fu_integer_mul_instructions", 1),
+        ("fu_integer_mul_latency_cycles", 2),
+        ("fu_integer_div_instructions", 1),
+        ("fu_integer_div_latency_cycles", 19),
+        ("max_rob_occupancy", 1),
+        ("max_lsq_occupancy", 0),
+        ("rename_map_entries", 3),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 5);
+    assert_o3_event_with_fu(&events[0], 0, "0x80000004", 1, 0, 0, 0, None, false);
+    assert_o3_event_with_fu(&events[1], 1, "0x80000008", 1, 0, 0, 0, None, false);
+    assert_o3_event_with_fu(
+        &events[2],
+        2,
+        "0x8000000c",
+        1,
+        0,
+        0,
+        2,
+        Some("scalar_integer_mul"),
+        false,
+    );
+    assert_o3_event_with_fu(
+        &events[3],
+        3,
+        "0x80000010",
+        1,
+        0,
+        0,
+        19,
+        Some("scalar_integer_div"),
+        false,
+    );
+    assert_o3_event_with_fu(&events[4], 4, "0x80000014", 0, 0, 0, 0, None, true);
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.instructions", "Count", 5),
+        ("sim.debug.o3_trace.fu_latency_instructions", "Count", 2),
+        ("sim.debug.o3_trace.fu_latency_cycles", "Cycle", 21),
+        ("sim.debug.o3_trace.fu_integer_mul_instructions", "Count", 1),
+        (
+            "sim.debug.o3_trace.fu_integer_mul_latency_cycles",
+            "Cycle",
+            2,
+        ),
+        ("sim.debug.o3_trace.fu_integer_div_instructions", "Count", 1),
+        (
+            "sim.debug.o3_trace.fu_integer_div_latency_cycles",
+            "Cycle",
+            19,
+        ),
+        ("sim.debug.o3_trace.event.records", "Count", 5),
+        ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 21),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
+            "Cycle",
+            19,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
     let path = detailed_o3_runtime_debug_binary("debug-flags-o3-multicore-runtime");
 
@@ -5136,6 +5319,18 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         ("sim.debug.o3_trace.fu_latency_instructions", "Count", 0),
         ("sim.debug.o3_trace.fu_latency_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.fu_integer_mul_instructions", "Count", 0),
+        (
+            "sim.debug.o3_trace.fu_integer_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        ("sim.debug.o3_trace.fu_integer_div_instructions", "Count", 0),
+        (
+            "sim.debug.o3_trace.fu_integer_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 0),
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 0),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 0),
@@ -5146,6 +5341,26 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }

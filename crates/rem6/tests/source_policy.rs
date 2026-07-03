@@ -706,6 +706,12 @@ fn gem5_migration_sections_are_auditable() {
             cells[0],
             bucket.name
         );
+        if cells[0] == "`tests/gem5/stats`" {
+            assert_eq!(
+                cells[2], "65% representative",
+                "`tests/gem5/stats` score should not change without explicit score evidence"
+            );
+        }
     }
     assert!(
         row_count > 0,

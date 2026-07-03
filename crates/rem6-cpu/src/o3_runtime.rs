@@ -250,8 +250,24 @@ pub struct O3RuntimeTraceRecord {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    fu_latency_class: Option<O3RuntimeFuLatencyClass>,
     fu_latency_cycles: u64,
     system_event: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3RuntimeFuLatencyClass {
+    ScalarIntegerMul,
+    ScalarIntegerDiv,
+}
+
+impl O3RuntimeFuLatencyClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ScalarIntegerMul => "scalar_integer_mul",
+            Self::ScalarIntegerDiv => "scalar_integer_div",
+        }
+    }
 }
 
 impl O3RuntimeTraceRecord {
@@ -261,6 +277,7 @@ impl O3RuntimeTraceRecord {
         rename_writes: u64,
         lsq_loads: u64,
         lsq_stores: u64,
+        fu_latency_class: Option<O3RuntimeFuLatencyClass>,
         fu_latency_cycles: u64,
         system_event: bool,
     ) -> Self {
@@ -272,6 +289,7 @@ impl O3RuntimeTraceRecord {
             rename_writes,
             lsq_loads,
             lsq_stores,
+            fu_latency_class,
             fu_latency_cycles,
             system_event,
         }
@@ -303,6 +321,10 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_stores(self) -> u64 {
         self.lsq_stores
+    }
+
+    pub const fn fu_latency_class(self) -> Option<O3RuntimeFuLatencyClass> {
+        self.fu_latency_class
     }
 
     pub const fn fu_latency_cycles(self) -> u64 {
@@ -384,6 +406,7 @@ impl O3RuntimeState {
             o3_rename_write_count(record),
             lsq_loads,
             lsq_stores,
+            o3_fu_latency_class(execution.instruction()),
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
             record.system_event().is_some(),
         );
@@ -727,14 +750,14 @@ impl O3RuntimeStats {
             self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
             self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);
             match o3_fu_latency_class(record.instruction()) {
-                Some(O3FuLatencyClass::ScalarIntegerMul) => {
+                Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
                     self.fu_integer_mul_instructions =
                         self.fu_integer_mul_instructions.saturating_add(1);
                     self.fu_integer_mul_latency_cycles = self
                         .fu_integer_mul_latency_cycles
                         .saturating_add(fu_latency_cycles);
                 }
-                Some(O3FuLatencyClass::ScalarIntegerDiv) => {
+                Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
                     self.fu_integer_div_instructions =
                         self.fu_integer_div_instructions.saturating_add(1);
                     self.fu_integer_div_latency_cycles = self
@@ -824,25 +847,19 @@ fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum O3FuLatencyClass {
-    ScalarIntegerMul,
-    ScalarIntegerDiv,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct O3LoadForwardingAccess {
     register: Register,
     address: Address,
     bytes: u32,
 }
 
-const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3FuLatencyClass> {
+const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3RuntimeFuLatencyClass> {
     match instruction {
         RiscvInstruction::Mul { .. }
         | RiscvInstruction::Mulh { .. }
         | RiscvInstruction::Mulhsu { .. }
         | RiscvInstruction::Mulhu { .. }
-        | RiscvInstruction::Mulw { .. } => Some(O3FuLatencyClass::ScalarIntegerMul),
+        | RiscvInstruction::Mulw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerMul),
         RiscvInstruction::Div { .. }
         | RiscvInstruction::Divu { .. }
         | RiscvInstruction::Rem { .. }
@@ -850,7 +867,7 @@ const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3FuLatenc
         | RiscvInstruction::Divw { .. }
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
-        | RiscvInstruction::Remuw { .. } => Some(O3FuLatencyClass::ScalarIntegerDiv),
+        | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
         _ => None,
     }
 }
