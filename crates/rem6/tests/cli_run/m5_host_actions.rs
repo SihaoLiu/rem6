@@ -595,6 +595,58 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         execution_mode_switch_transfer_total(host_actions, "payload_bytes"),
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.components",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu0", "component_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunks",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu0", "chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.payload_bytes",
+        "Byte",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu0", "payload_bytes"),
+        "monotonic",
+    );
+    for chunk in ["in-order-pipeline", "o3-pending-state", "o3-runtime-state"] {
+        let stat_chunk = stat_path_segment(chunk);
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunk.{stat_chunk}.chunks"
+            ),
+            "Count",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu0",
+                chunk,
+                "chunk_count",
+            ),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunk.{stat_chunk}.payload_bytes"
+            ),
+            "Byte",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu0",
+                chunk,
+                "payload_bytes",
+            ),
+            "monotonic",
+        );
+    }
 }
 
 #[test]
@@ -1485,6 +1537,91 @@ fn execution_mode_switch_transfer_total(host_actions: &Value, field: &str) -> u6
                 .pointer(&format!("/state_transfer/{field}"))
                 .and_then(Value::as_u64)
                 .unwrap_or_else(|| panic!("missing switch transfer {field}: {action}"))
+        })
+        .sum()
+}
+
+fn execution_mode_switch_transfer_component_total(
+    host_actions: &Value,
+    component: &str,
+    field: &str,
+) -> u64 {
+    host_actions
+        .pointer("/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution mode switch actions: {host_actions}"))
+        .iter()
+        .map(|action| {
+            let components = action
+                .pointer("/state_transfer/components")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("missing switch transfer components: {action}"));
+            let component = components
+                .iter()
+                .find(|entry| {
+                    entry.pointer("/component").and_then(Value::as_str) == Some(component)
+                })
+                .unwrap_or_else(|| {
+                    panic!("missing switch transfer component {component}: {action}")
+                });
+            match field {
+                "component_count" => 1,
+                "chunk_count" => component
+                    .pointer("/chunk_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(|| panic!("missing switch component chunk_count: {component}")),
+                "payload_bytes" => component
+                    .pointer("/payload_bytes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(|| {
+                        panic!("missing switch component payload_bytes: {component}")
+                    }),
+                _ => panic!("unsupported switch component field {field}"),
+            }
+        })
+        .sum()
+}
+
+fn execution_mode_switch_transfer_component_chunk_total(
+    host_actions: &Value,
+    component: &str,
+    chunk: &str,
+    field: &str,
+) -> u64 {
+    host_actions
+        .pointer("/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution mode switch actions: {host_actions}"))
+        .iter()
+        .map(|action| {
+            let components = action
+                .pointer("/state_transfer/components")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("missing switch transfer components: {action}"));
+            let component = components
+                .iter()
+                .find(|entry| {
+                    entry.pointer("/component").and_then(Value::as_str) == Some(component)
+                })
+                .unwrap_or_else(|| {
+                    panic!("missing switch transfer component {component}: {action}")
+                });
+            let chunks = component
+                .pointer("/chunks")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("missing switch transfer chunks: {component}"));
+            let chunk = chunks
+                .iter()
+                .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+                .unwrap_or_else(|| panic!("missing switch transfer chunk {chunk}: {component}"));
+            match field {
+                "chunk_count" => 1,
+                "payload_bytes" => chunk
+                    .pointer("/payload_bytes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(|| panic!("missing switch chunk payload_bytes: {chunk}")),
+                _ => panic!("unsupported switch chunk field {field}"),
+            }
         })
         .sum()
 }

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use rem6_boot::{BootElfInterpreter, BootElfMetadata};
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
@@ -12,6 +10,7 @@ mod elf;
 mod fabric;
 mod gpu_run;
 mod gups;
+mod host_actions;
 mod memory_resources;
 mod multi_run;
 mod resource_acquire;
@@ -27,10 +26,9 @@ use super::{
     parallel_stats, stats_error, CliDataCacheSummary, Rem6AcceleratorRunConfig,
     Rem6AcceleratorRunExecutionSummary, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
     Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6GupsExecutionSummary,
-    Rem6HostActionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
-    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary,
-    RequestedIsa,
+    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary,
+    Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig, Rem6TraceReplayConfig,
+    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
 pub(super) use accelerator_run::accelerator_run_stats_output;
 use cpu::emit_cpu_run_stats;
@@ -44,6 +42,7 @@ use elf::emit_elf_run_stats;
 use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
+use host_actions::emit_run_host_action_stats;
 use memory_resources::emit_memory_resource_stats;
 pub(crate) use multi_run::multi_run_stats_output;
 pub(super) use resource_acquire::resource_acquire_stats_output;
@@ -768,145 +767,6 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("[{samples}]")
-}
-
-fn emit_run_host_action_stats(
-    stats: &mut StatsRegistry,
-    summary: &Rem6HostActionSummary,
-) -> Result<(), Rem6CliError> {
-    let mut guest_host_call_arguments = 0;
-    let mut guest_host_call_payload_bytes = 0;
-    let mut guest_host_call_response_return_values = 0;
-    let mut guest_host_call_response_payload_bytes = 0;
-    for call in &summary.guest_host_calls {
-        guest_host_call_arguments += call.argument_count;
-        guest_host_call_payload_bytes += call.payload_bytes;
-        guest_host_call_response_return_values += call.response_return_count;
-        guest_host_call_response_payload_bytes += call.response_payload_bytes;
-    }
-
-    let mut switch_state_transfer_count = 0;
-    let mut switch_state_transfer_components = 0;
-    let mut switch_state_transfer_chunks = 0;
-    let mut switch_state_transfer_payload_bytes = 0;
-    for transfer in summary
-        .execution_mode_switches
-        .iter()
-        .filter_map(|switch| switch.state_transfer.as_ref())
-    {
-        switch_state_transfer_count += 1;
-        switch_state_transfer_components += transfer.component_count;
-        switch_state_transfer_chunks += transfer.chunk_count;
-        switch_state_transfer_payload_bytes += transfer.payload_bytes;
-    }
-
-    let samples = [
-        ("total", summary.total_action_count),
-        ("injected_commands", summary.injected_command_count),
-        ("guest_host_calls", summary.guest_host_calls.len() as u64),
-        ("guest_host_call_arguments", guest_host_call_arguments),
-        (
-            "guest_host_call_response_return_values",
-            guest_host_call_response_return_values,
-        ),
-        ("roi_begin", summary.roi_begin.len() as u64),
-        ("roi_end", summary.roi_end.len() as u64),
-        ("stats_resets", summary.stats_resets.len() as u64),
-        ("stats_dumps", summary.stats_dumps.len() as u64),
-        ("checkpoints", summary.checkpoints.len() as u64),
-        ("checkpoint_restores", summary.checkpoint_restored_count),
-        (
-            "execution_mode_switches",
-            summary.execution_mode_switch_count,
-        ),
-        (
-            "execution_mode_switch_state_transfers",
-            switch_state_transfer_count,
-        ),
-        (
-            "execution_mode_switch_state_transfer_components",
-            switch_state_transfer_components,
-        ),
-        (
-            "execution_mode_switch_state_transfer_chunks",
-            switch_state_transfer_chunks,
-        ),
-        ("stops", summary.stops.len() as u64),
-    ];
-    for (name, value) in samples {
-        increment_stat(
-            stats,
-            &format!("sim.host_actions.{name}"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
-    }
-    increment_stat(
-        stats,
-        "sim.host_actions.guest_host_call_payload_bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        guest_host_call_payload_bytes,
-    )?;
-    increment_stat(
-        stats,
-        "sim.host_actions.guest_host_call_response_payload_bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        guest_host_call_response_payload_bytes,
-    )?;
-    increment_stat(
-        stats,
-        "sim.host_actions.execution_mode_switch_state_transfer_payload_bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        switch_state_transfer_payload_bytes,
-    )?;
-    for (work_id, buckets) in roi_duration_histograms(summary) {
-        let buckets = buckets.into_iter().collect::<Vec<_>>();
-        emit_histogram_stat(
-            stats,
-            &format!("sim.host_actions.roi_work_item_type{work_id}.duration_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            &buckets,
-        )?;
-    }
-    Ok(())
-}
-
-fn roi_duration_histograms(summary: &Rem6HostActionSummary) -> BTreeMap<u64, BTreeMap<u64, u64>> {
-    let mut events = Vec::with_capacity(summary.roi_begin.len() + summary.roi_end.len());
-    for marker in &summary.roi_begin {
-        events.push((marker.tick, marker.event, true, marker));
-    }
-    for marker in &summary.roi_end {
-        events.push((marker.tick, marker.event, false, marker));
-    }
-    events.sort_by_key(|(tick, event, is_begin, _)| (*tick, *event, !*is_begin));
-
-    let mut active = BTreeMap::new();
-    let mut durations: BTreeMap<u64, BTreeMap<u64, u64>> = BTreeMap::new();
-    for (_, _, is_begin, marker) in events {
-        let key = (marker.thread_id, marker.work_id);
-        if is_begin {
-            active.insert(key, marker.tick);
-            continue;
-        }
-        let Some(start_tick) = active.remove(&key) else {
-            continue;
-        };
-        let Some(duration) = marker.tick.checked_sub(start_tick) else {
-            continue;
-        };
-        *durations
-            .entry(marker.work_id)
-            .or_default()
-            .entry(duration)
-            .or_default() += 1;
-    }
-    durations
 }
 
 pub(super) fn increment_stat(
