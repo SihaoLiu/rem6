@@ -56,6 +56,9 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
         32,
     ),
 ];
+// Current segment execution evidence is single-line only; cross-line segment
+// transport should lift this with explicit CPU/data-path tests.
+const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
 pub(crate) fn memory_access(
     hart: &RiscvHartState,
@@ -90,6 +93,9 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = segment_unit_stride_access_plan(hart, vd, width, fields).ok_or(())?;
+            if unsupported_masked_segment_width(mask, width) {
+                return Err(());
+            }
             if masked_segment_load_overlaps_v0(mask, vd, &plan) {
                 return Err(());
             }
@@ -214,6 +220,9 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = segment_unit_stride_access_plan(hart, vs3, width, fields).ok_or(())?;
+            if unsupported_masked_segment_width(mask, width) {
+                return Err(());
+            }
             if plan.byte_len == 0 {
                 return Ok(None);
             }
@@ -423,7 +432,6 @@ fn segment_unit_stride_access_plan(
     let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
     if config.vill()
-        || width != MemoryWidth::Word
         || fields != 2
         || vlmul != 0
         || group_registers != 1
@@ -447,7 +455,8 @@ fn segment_unit_stride_access_plan(
         .checked_mul(fields)?
         .checked_mul(element_bytes)?;
     (byte_len <= fields * group_registers * RISCV_VECTOR_REGISTER_BYTES
-        && byte_len <= MAX_VECTOR_GROUP_BYTES)
+        && byte_len <= MAX_VECTOR_GROUP_BYTES
+        && byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES)
         .then_some(SegmentUnitStrideAccessPlan {
             fields,
             element_count,
@@ -797,6 +806,10 @@ fn masked_unit_stride_unsupported(
             || (width == MemoryWidth::Word
                 && matches!(plan.group_registers, 2 | 4 | 8)
                 && plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES))
+}
+
+fn unsupported_masked_segment_width(mask: RiscvVectorMaskMode, width: MemoryWidth) -> bool {
+    mask.is_masked() && width != MemoryWidth::Word
 }
 
 fn masked_load_overlaps_v0(

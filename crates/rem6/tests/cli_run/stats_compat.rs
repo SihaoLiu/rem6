@@ -5035,6 +5035,57 @@ fn rem6_run_in_order_pipeline_models_vector_segment_e32_m1_load_store() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_segment_e8_e16_e64_m1_load_store() {
+    for (name, program, committed, direct_tick, cache_tick) in [
+        (
+            "e8",
+            unit_stride_segment_e8_m1_vector_memory_program(),
+            22,
+            120,
+            600,
+        ),
+        (
+            "e16",
+            unit_stride_segment_e16_m1_vector_memory_program(),
+            22,
+            120,
+            600,
+        ),
+        (
+            "e64",
+            unit_stride_segment_e64_m1_vector_memory_program(),
+            16,
+            140,
+            600,
+        ),
+    ] {
+        let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+            &format!("in-order-vector-segment-{name}-m1-load-store"),
+            &program,
+            direct_tick,
+        );
+
+        assert_eq!(
+            stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+            committed,
+            "{name}/m1 segment load/store should scatter two fields and gather them back through the direct-memory top-level run path\nstats:\n{direct_stats}"
+        );
+
+        let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+            &format!("in-order-cache-vector-segment-{name}-m1-load-store"),
+            &program,
+            cache_tick,
+        );
+
+        assert_eq!(
+            stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+            committed,
+            "cache-backed {name}/m1 segment load/store should scatter two fields and gather them back through the top-level run path\nstats:\n{cache_stats}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_segment_e32_m1_load_store() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-segment-masked-e32-m1-load-store",
@@ -13463,29 +13514,89 @@ fn masked_unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
 }
 
 fn unit_stride_segment_e32_m1_vector_memory_program() -> Vec<u8> {
-    const DATA_OFFSET_BYTES: i32 = 128;
-    const SEGMENT_BYTES: i32 = 16;
-    const FAIL_INSTRUCTION_INDEX: i32 = 22;
+    unit_stride_segment_m1_vector_memory_program(
+        0xd0,
+        2,
+        0b110,
+        16,
+        4,
+        0b010,
+        &u32_words_to_bytes(&[0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444]),
+    )
+}
 
+fn unit_stride_segment_e8_m1_vector_memory_program() -> Vec<u8> {
+    unit_stride_segment_m1_vector_memory_program(
+        0xc0,
+        8,
+        0b000,
+        16,
+        4,
+        0b010,
+        &[
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+            0xff, 0x01,
+        ],
+    )
+}
+
+fn unit_stride_segment_e16_m1_vector_memory_program() -> Vec<u8> {
+    unit_stride_segment_m1_vector_memory_program(
+        0xc8,
+        4,
+        0b101,
+        16,
+        4,
+        0b010,
+        &u16_halfwords_to_bytes(&[
+            0x1111, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888,
+        ]),
+    )
+}
+
+fn unit_stride_segment_e64_m1_vector_memory_program() -> Vec<u8> {
+    unit_stride_segment_m1_vector_memory_program(
+        0xd8,
+        1,
+        0b111,
+        16,
+        8,
+        0b011,
+        &u64_words_to_bytes(&[0x1111_2222_3333_4444, 0x5555_6666_7777_8888]),
+    )
+}
+
+fn unit_stride_segment_m1_vector_memory_program(
+    vtype: u32,
+    avl: i32,
+    vector_width: u32,
+    segment_bytes: i32,
+    compare_step: i32,
+    compare_funct3: u32,
+    segment_bytes_payload: &[u8],
+) -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 128;
+    let compare_count = segment_bytes / compare_step;
+    let fail_instruction_index = 9 + compare_count * 3 + 1;
     let mut words = vec![
-        u_type(0, 10, 0x17),                                          // auipc x10, 0
-        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),               // addi x10, x10, data
-        i_type(0, 10, 0b000, 12, 0x13), // addi x12, x10, source segment
-        i_type(SEGMENT_BYTES, 10, 0b000, 13, 0x13), // addi x13, x10, store result
-        i_type(SEGMENT_BYTES * 2, 10, 0b000, 19, 0x13), // addi x19, x10, expected result
-        i_type(2, 0, 0b000, 11, 0x13),  // addi x11, x0, vl
-        vsetvli_type(0xd0, 11, 5),      // vsetvli x5, x11, e32, m1, ta, ma
-        vector_unit_stride_segment_load_type(true, 2, 0b110, 12, 2), // vlseg2e32.v v2, (x12)
-        vector_unit_stride_segment_store_type(true, 2, 0b110, 13, 2), // vsseg2e32.v v2, (x13)
+        u_type(0, 10, 0x17),                            // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(0, 10, 0b000, 12, 0x13),                 // addi x12, x10, source segment
+        i_type(segment_bytes, 10, 0b000, 13, 0x13),     // addi x13, x10, store result
+        i_type(segment_bytes * 2, 10, 0b000, 19, 0x13), // addi x19, x10, expected result
+        i_type(avl, 0, 0b000, 11, 0x13),                // addi x11, x0, vl
+        vsetvli_type(vtype, 11, 5),                     // vsetvli x5, x11, selected SEW, m1, ta, ma
+        vector_unit_stride_segment_load_type(true, 2, vector_width, 12, 2), // vlseg2e*.v v2, (x12)
+        vector_unit_stride_segment_store_type(true, 2, vector_width, 13, 2), // vsseg2e*.v v2, (x13)
     ];
 
-    for word_index in 0..4 {
-        let offset = (word_index * 4) as i32;
-        words.push(i_type(offset, 13, 0b010, 17, 0x03)); // lw x17, store result
-        words.push(i_type(offset, 19, 0b010, 18, 0x03)); // lw x18, expected result
+    for compare_index in 0..compare_count {
+        let offset = compare_index * compare_step;
+        words.push(i_type(offset, 13, compare_funct3, 17, 0x03)); // load observed bytes
+        words.push(i_type(offset, 19, compare_funct3, 18, 0x03)); // load expected bytes
         let branch_index = words.len() as i32;
         words.push(b_type(
-            (FAIL_INSTRUCTION_INDEX - branch_index) * 4,
+            (fail_instruction_index - branch_index) * 4,
             18,
             17,
             0b001,
@@ -13494,21 +13605,42 @@ fn unit_stride_segment_e32_m1_vector_memory_program() -> Vec<u8> {
 
     words.push(0x0000_0073); // ecall
     words.push(0x0000_0000); // fail: invalid instruction
+    assert_eq!(words.len() as i32, fail_instruction_index + 1);
     assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
     while words.len() * 4 < DATA_OFFSET_BYTES as usize {
         words.push(0);
     }
 
-    let segment_words: [u32; 4] = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
+    assert_eq!(segment_bytes_payload.len(), segment_bytes as usize);
     let mut program = riscv64_program(&words);
-    for word in segment_words {
-        program.extend_from_slice(&word.to_le_bytes());
-    }
-    program.extend_from_slice(&[0; SEGMENT_BYTES as usize]);
-    for word in segment_words {
-        program.extend_from_slice(&word.to_le_bytes());
-    }
+    program.extend_from_slice(segment_bytes_payload);
+    program.resize(program.len() + segment_bytes as usize, 0);
+    program.extend_from_slice(segment_bytes_payload);
     program
+}
+
+fn u16_halfwords_to_bytes(halfwords: &[u16]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(halfwords.len() * 2);
+    for halfword in halfwords {
+        bytes.extend_from_slice(&halfword.to_le_bytes());
+    }
+    bytes
+}
+
+fn u32_words_to_bytes(words: &[u32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(words.len() * 4);
+    for word in words {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes
+}
+
+fn u64_words_to_bytes(words: &[u64]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(words.len() * 8);
+    for word in words {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes
 }
 
 fn masked_unit_stride_segment_e32_m1_vector_memory_program() -> Vec<u8> {
