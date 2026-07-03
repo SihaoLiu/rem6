@@ -828,7 +828,11 @@ fn unsupported_masked_segment_shape(
     plan: &SegmentUnitStrideAccessPlan,
 ) -> bool {
     mask.is_masked()
-        && !(width == MemoryWidth::Word
+        && !((width == MemoryWidth::Halfword
+            && plan.fields == 2
+            && plan.element_count == 2
+            && plan.byte_len == 8)
+            || width == MemoryWidth::Word
             || (width == MemoryWidth::Doubleword
                 && plan.fields == 2
                 && plan.element_count == 2
