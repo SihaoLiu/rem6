@@ -83,7 +83,7 @@ pub use crate::o3_pipeline::{
 };
 pub use crate::o3_runtime::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
-    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot,
+    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
 };
 pub use crate::return_address_stack::{
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,

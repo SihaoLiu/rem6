@@ -395,6 +395,7 @@ pub(super) fn emit_cpu_run_stats(
                 value,
             )?;
         }
+        emit_o3_runtime_stats(stats, core)?;
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.lookups", core.cpu),
@@ -866,6 +867,34 @@ pub(super) fn emit_cpu_run_stats(
             "Byte",
             StatResetPolicy::Monotonic,
             core.data_atomic_bytes,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_o3_runtime_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+) -> Result<(), Rem6CliError> {
+    let o3 = core.o3_runtime;
+    if !o3.has_activity() {
+        return Ok(());
+    }
+
+    for (name, value) in [
+        ("instructions", o3.instructions()),
+        ("rob_allocations", o3.rob_allocations()),
+        ("rob_commits", o3.rob_commits()),
+        ("rename_writes", o3.rename_writes()),
+        ("lsq_loads", o3.lsq_loads()),
+        ("lsq_stores", o3.lsq_stores()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
         )?;
     }
     Ok(())

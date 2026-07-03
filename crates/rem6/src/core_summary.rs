@@ -1,4 +1,7 @@
-use rem6_cpu::{BranchTargetKindCounts, BranchTargetProviderCounts, RiscvReturnAddressStackStats};
+use rem6_cpu::{
+    BranchTargetKindCounts, BranchTargetProviderCounts, O3RuntimeStats,
+    RiscvReturnAddressStackStats,
+};
 
 use crate::branch_predictor_summary::{
     Rem6BranchPredictorCounterSummary, Rem6MultiperspectivePerceptronCounterSummary,
@@ -55,6 +58,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_branch_speculation_repairs: u64,
     pub(crate) in_order_pipeline_branch_speculation_removed_youngers: u64,
     pub(crate) in_order_pipeline_branch_speculation_max_pending: u64,
+    pub(crate) o3_runtime: O3RuntimeStats,
     pub(crate) branch_target_buffer_lookups: u64,
     pub(crate) branch_target_buffer_hits: u64,
     pub(crate) branch_target_buffer_misses: u64,

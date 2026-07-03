@@ -740,6 +740,12 @@ impl RiscvSystemRunDriver {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
         }
+        for cpu in cluster.core_ids() {
+            cluster
+                .core(cpu)
+                .map_err(SystemError::RiscvCluster)?
+                .reset_o3_runtime_stats();
+        }
         self.reset_data_access_stats_for_run(cluster)
     }
 
@@ -1067,8 +1073,52 @@ impl RiscvSystemRunDriver {
         tick: Tick,
         turn: &RiscvClusterTurn,
     ) -> Result<(), SystemError> {
+        self.record_o3_runtime_stats(cluster, turn)?;
         self.record_instruction_stats(tick, turn)?;
         self.record_data_access_stats(cluster)
+    }
+
+    pub(crate) fn record_o3_runtime_stats(
+        &self,
+        cluster: &RiscvCluster,
+        turn: &RiscvClusterTurn,
+    ) -> Result<(), SystemError> {
+        let retired = turn
+            .core_events()
+            .iter()
+            .filter_map(|event| match event.action() {
+                RiscvCoreDriveAction::InstructionExecuted(instruction)
+                    if instruction.counts_as_retired_instruction() =>
+                {
+                    Some((event.cpu(), instruction.as_ref()))
+                }
+                RiscvCoreDriveAction::InstructionExecuted(_) => None,
+                RiscvCoreDriveAction::FetchIssued { .. }
+                | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        let detailed_retired = {
+            let controller = self.trap_port.controller();
+            let controller = controller.lock().expect("system host controller lock");
+            retired
+                .into_iter()
+                .filter(|(cpu, _instruction)| {
+                    controller
+                        .executor()
+                        .execution_mode(&trap_event::execution_mode_target_for_cpu(*cpu))
+                        .is_some_and(|mode| mode == ExecutionMode::Detailed)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (cpu, instruction) in detailed_retired {
+            cluster
+                .core(cpu)
+                .map_err(SystemError::RiscvCluster)?
+                .record_o3_retired_instruction(instruction);
+        }
+        Ok(())
     }
 
     pub(crate) fn record_instruction_stats(

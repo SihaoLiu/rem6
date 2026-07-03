@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use rem6_isa_riscv::{MemoryAccessKind, Register};
 use rem6_memory::Address;
 
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
@@ -9,6 +10,7 @@ use crate::o3_pipeline::{
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineError, O3PipelineStage,
     O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
+use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
 const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 1;
@@ -242,6 +244,7 @@ impl O3RuntimeSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
+    stats: O3RuntimeStats,
 }
 
 impl O3RuntimeState {
@@ -253,6 +256,18 @@ impl O3RuntimeState {
 
     pub fn snapshot(&self) -> O3RuntimeSnapshot {
         self.snapshot.clone()
+    }
+
+    pub const fn stats(&self) -> O3RuntimeStats {
+        self.stats
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.stats = O3RuntimeStats::default();
+    }
+
+    pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
+        self.stats.record_retired_instruction(execution);
     }
 
     pub fn pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
@@ -282,7 +297,141 @@ impl Default for O3RuntimeState {
     fn default() -> Self {
         Self {
             snapshot: default_o3_runtime_snapshot(),
+            stats: O3RuntimeStats::default(),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct O3RuntimeStats {
+    instructions: u64,
+    rob_allocations: u64,
+    rob_commits: u64,
+    rename_writes: u64,
+    lsq_loads: u64,
+    lsq_stores: u64,
+}
+
+impl O3RuntimeStats {
+    pub const fn instructions(self) -> u64 {
+        self.instructions
+    }
+
+    pub const fn rob_allocations(self) -> u64 {
+        self.rob_allocations
+    }
+
+    pub const fn rob_commits(self) -> u64 {
+        self.rob_commits
+    }
+
+    pub const fn rename_writes(self) -> u64 {
+        self.rename_writes
+    }
+
+    pub const fn lsq_loads(self) -> u64 {
+        self.lsq_loads
+    }
+
+    pub const fn lsq_stores(self) -> u64 {
+        self.lsq_stores
+    }
+
+    pub const fn has_activity(self) -> bool {
+        self.instructions != 0
+            || self.rob_allocations != 0
+            || self.rob_commits != 0
+            || self.rename_writes != 0
+            || self.lsq_loads != 0
+            || self.lsq_stores != 0
+    }
+
+    fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
+        self.instructions = self.instructions.saturating_add(1);
+        self.rob_allocations = self.rob_allocations.saturating_add(1);
+        self.rob_commits = self.rob_commits.saturating_add(1);
+
+        let record = execution.execution();
+        if record.system_event().is_none() {
+            let immediate_writes =
+                (record.register_writes().len() + record.float_register_writes().len()) as u64;
+            let memory_writes = record
+                .memory_access()
+                .map(o3_memory_destination_writes)
+                .unwrap_or(0);
+            self.rename_writes = self
+                .rename_writes
+                .saturating_add(immediate_writes.saturating_add(memory_writes));
+        }
+
+        if let Some(access) = record.memory_access() {
+            let (loads, stores) = o3_lsq_access_counts(access);
+            self.lsq_loads = self.lsq_loads.saturating_add(loads);
+            self.lsq_stores = self.lsq_stores.saturating_add(stores);
+        }
+    }
+}
+
+fn o3_memory_destination_writes(access: &MemoryAccessKind) -> u64 {
+    match access {
+        MemoryAccessKind::Load { rd, .. }
+        | MemoryAccessKind::LoadReserved { rd, .. }
+        | MemoryAccessKind::StoreConditional { rd, .. }
+        | MemoryAccessKind::AtomicMemory { rd, .. } => integer_destination_count(*rd),
+        MemoryAccessKind::FloatLoad { .. } => 1,
+        MemoryAccessKind::VectorLoadUnitStride {
+            group_registers, ..
+        }
+        | MemoryAccessKind::VectorLoadStrided {
+            group_registers, ..
+        }
+        | MemoryAccessKind::VectorLoadIndexed {
+            group_registers, ..
+        } => vector_destination_count(*group_registers),
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            fields,
+            group_registers,
+            ..
+        } => vector_destination_count(*fields)
+            .saturating_mul(vector_destination_count(*group_registers)),
+        MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorStoreStrided { .. }
+        | MemoryAccessKind::VectorStoreIndexed { .. } => 0,
+    }
+}
+
+const fn integer_destination_count(register: Register) -> u64 {
+    if register.is_zero() {
+        0
+    } else {
+        1
+    }
+}
+
+fn vector_destination_count(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+const fn o3_lsq_access_counts(access: &MemoryAccessKind) -> (u64, u64) {
+    match access {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorLoadStrided { .. }
+        | MemoryAccessKind::VectorLoadIndexed { .. }
+        | MemoryAccessKind::LoadReserved { .. } => (1, 0),
+        MemoryAccessKind::StoreConditional { .. }
+        | MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorStoreStrided { .. }
+        | MemoryAccessKind::VectorStoreIndexed { .. } => (0, 1),
+        MemoryAccessKind::AtomicMemory { .. } => (1, 1),
     }
 }
 
@@ -777,6 +926,30 @@ fn bool_flag(value: bool) -> u8 {
 }
 
 impl crate::RiscvCore {
+    pub fn o3_runtime_stats(&self) -> O3RuntimeStats {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .stats()
+    }
+
+    pub fn reset_o3_runtime_stats(&self) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .reset_stats();
+    }
+
+    pub fn record_o3_retired_instruction(&self, execution: &RiscvCpuExecutionEvent) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .record_retired_instruction(execution);
+    }
+
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {
         O3RuntimeCheckpointPayload::from_snapshot(default_o3_runtime_snapshot())
             .expect("default O3 runtime checkpoint payload is valid")

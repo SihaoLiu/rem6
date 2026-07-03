@@ -1,11 +1,18 @@
 use rem6_cpu::{
+    CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3LoadStoreQueueEntry,
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
     O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
-    O3WritebackTransferSnapshot,
+    O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
 };
-use rem6_memory::Address;
+use rem6_isa_riscv::{
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord,
+    RiscvInstruction, RiscvVectorMaskMode, RiscvVectorMemoryInstruction, VectorRegister,
+};
+use rem6_kernel::PartitionId;
+use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
+use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 const O3_RUNTIME_CHECKPOINT_MAGIC_BYTES: usize = 4;
 const O3_RUNTIME_CHECKPOINT_VERSION_BYTES: usize = 1;
@@ -174,10 +181,180 @@ fn o3_runtime_snapshot_rejects_duplicate_rob_lsq_and_rename_entries() {
     .is_err());
 }
 
+#[test]
+fn o3_runtime_stats_count_grouped_vector_segment_load_rename_destinations() {
+    let core = RiscvCore::new(core(0x8000));
+    let instruction =
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadSegmentUnitStride {
+            vd: vreg(8),
+            rs1: reg(10),
+            width: MemoryWidth::Word,
+            fields: 3,
+            mask: RiscvVectorMaskMode::Unmasked,
+        });
+    let access = MemoryAccessKind::VectorLoadSegmentUnitStride {
+        vd: vreg(8),
+        address: 0x9000,
+        width: MemoryWidth::Word,
+        fields: 3,
+        element_count: 2,
+        byte_len: 48,
+        byte_mask: None,
+        group_registers: 2,
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8000, 1),
+        instruction,
+        RiscvExecutionRecord::new(instruction, 0x8000, 0x8004, Vec::new(), Some(access)),
+    ));
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.instructions(), 1);
+    assert_eq!(stats.rob_allocations(), 1);
+    assert_eq!(stats.rob_commits(), 1);
+    assert_eq!(stats.rename_writes(), 6);
+    assert_eq!(stats.lsq_loads(), 1);
+    assert_eq!(stats.lsq_stores(), 0);
+}
+
+#[test]
+fn o3_runtime_stats_ignore_x0_memory_destinations_for_rename_writes() {
+    let core = RiscvCore::new(core(0x8000));
+    let cases = [
+        (
+            RiscvInstruction::Load {
+                rd: reg(0),
+                rs1: reg(10),
+                offset: Immediate::new(0),
+                width: MemoryWidth::Word,
+                signed: false,
+            },
+            MemoryAccessKind::Load {
+                rd: reg(0),
+                address: 0x9000,
+                width: MemoryWidth::Word,
+                signed: false,
+            },
+        ),
+        (
+            RiscvInstruction::LoadReserved {
+                rd: reg(0),
+                rs1: reg(10),
+                width: MemoryWidth::Word,
+                acquire: false,
+                release: false,
+            },
+            MemoryAccessKind::LoadReserved {
+                rd: reg(0),
+                address: 0x9004,
+                width: MemoryWidth::Word,
+                acquire: false,
+                release: false,
+            },
+        ),
+        (
+            RiscvInstruction::StoreConditional {
+                rd: reg(0),
+                rs1: reg(10),
+                rs2: reg(11),
+                width: MemoryWidth::Word,
+                acquire: false,
+                release: false,
+            },
+            MemoryAccessKind::StoreConditional {
+                rd: reg(0),
+                address: 0x9008,
+                width: MemoryWidth::Word,
+                value: 0x1234,
+                acquire: false,
+                release: false,
+            },
+        ),
+        (
+            RiscvInstruction::AtomicMemory {
+                rd: reg(0),
+                rs1: reg(10),
+                rs2: reg(11),
+                width: MemoryWidth::Word,
+                op: AtomicMemoryOp::Add,
+                acquire: false,
+                release: false,
+            },
+            MemoryAccessKind::AtomicMemory {
+                rd: reg(0),
+                address: 0x900c,
+                width: MemoryWidth::Word,
+                op: AtomicMemoryOp::Add,
+                value: 0x5678,
+                acquire: false,
+                release: false,
+            },
+        ),
+    ];
+
+    for (index, (instruction, access)) in cases.into_iter().enumerate() {
+        let pc = 0x8000 + u64::try_from(index).unwrap() * 4;
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, 10 + u64::try_from(index).unwrap()),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+        ));
+    }
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.instructions(), 4);
+    assert_eq!(stats.rob_allocations(), 4);
+    assert_eq!(stats.rob_commits(), 4);
+    assert_eq!(stats.rename_writes(), 0);
+    assert_eq!(stats.lsq_loads(), 3);
+    assert_eq!(stats.lsq_stores(), 2);
+}
+
 fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {
     let pending_len_bytes = payload
         [O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET..O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET + 4]
         .try_into()
         .unwrap();
     O3_RUNTIME_CHECKPOINT_HEADER_BYTES + u32::from_le_bytes(pending_len_bytes) as usize
+}
+
+fn core(entry: u64) -> CpuCore {
+    CpuCore::new(
+        CpuResetState::new(
+            CpuId::new(0),
+            PartitionId::new(0),
+            AgentId::new(7),
+            Address::new(entry),
+        ),
+        CpuFetchConfig::new(
+            TransportEndpointId::new("cpu0.ifetch").unwrap(),
+            MemoryRouteId::new(0),
+            rem6_memory::CacheLineLayout::new(64).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+    )
+    .unwrap()
+}
+
+fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
+    CpuFetchEvent::completed(
+        CpuFetchRecord::new(
+            10 + sequence,
+            PartitionId::new(0),
+            MemoryRouteId::new(0),
+            TransportEndpointId::new("cpu0.ifetch").unwrap(),
+            MemoryRequestId::new(AgentId::new(7), sequence),
+            Address::new(pc),
+            AccessSize::new(4).unwrap(),
+        ),
+        0x0000_0073u32.to_le_bytes().to_vec(),
+    )
+}
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
+fn vreg(index: u8) -> VectorRegister {
+    VectorRegister::new(index).unwrap()
 }
