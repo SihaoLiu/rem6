@@ -146,6 +146,10 @@ const fn pipeline_flush_cause(branch_prediction_flushed: u64) -> Option<&'static
 }
 
 impl Rem6PipelineTraceInstruction {
+    pub(super) const fn stage(self) -> &'static str {
+        self.stage
+    }
+
     fn to_json(self) -> String {
         format!(
             "{{\"sequence\":{},\"stage\":\"{}\"}}",

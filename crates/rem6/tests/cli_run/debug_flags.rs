@@ -2860,10 +2860,20 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
         .map(|record| json_record_u64(record, "stall_cycles"))
         .sum::<u64>();
     assert!(stall_cycles > 0, "stall cause {cause}: {trace:?}");
+    let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
+    for record in &wait_records {
+        for blocked in record_array(record, "resource_blocked") {
+            let stage = blocked
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing blocked instruction stage: {blocked}"));
+            *stage_resource_blocked
+                .entry(stat_path_segment(stage))
+                .or_default() += 1;
+        }
+    }
     assert!(
-        wait_records
-            .iter()
-            .all(|record| !record_array(record, "resource_blocked").is_empty()),
+        !stage_resource_blocked.is_empty(),
         "stall cause {cause} should preserve blocked in-flight instructions: {trace:?}"
     );
     assert_stat(
@@ -2880,6 +2890,15 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
         stall_cycles,
         "monotonic",
     );
+    for (stage, resource_blocked) in stage_resource_blocked {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.stall_cause.{cause}.stage.{stage}.resource_blocked"),
+            "Count",
+            resource_blocked,
+            "monotonic",
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
