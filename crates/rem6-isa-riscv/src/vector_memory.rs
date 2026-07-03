@@ -813,10 +813,13 @@ fn masked_unit_stride_unsupported(
     plan: &UnitStrideAccessPlan,
 ) -> bool {
     mask.is_masked()
-        && !(plan.group_registers == 1
-            || (width == MemoryWidth::Word
-                && matches!(plan.group_registers, 2 | 4 | 8)
-                && plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES))
+        && !(plan.group_registers == 1 || supported_masked_full_register_group(width, plan))
+}
+
+fn supported_masked_full_register_group(width: MemoryWidth, plan: &UnitStrideAccessPlan) -> bool {
+    plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES
+        && ((width == MemoryWidth::Halfword && plan.group_registers == 2)
+            || (width == MemoryWidth::Word && matches!(plan.group_registers, 2 | 4 | 8)))
 }
 
 fn unsupported_masked_segment_width(mask: RiscvVectorMaskMode, width: MemoryWidth) -> bool {

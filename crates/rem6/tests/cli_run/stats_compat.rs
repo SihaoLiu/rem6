@@ -7241,6 +7241,33 @@ fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_lmul2_register_gr
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_e16_lmul2_register_group_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-masked-e16-lmul2-load-store",
+        &masked_unit_stride_e16_lmul2_vector_memory_program(),
+        620,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        114,
+        "masked e16/m2 unit-stride vector memory should preserve inactive halfword lanes and move active halfword lanes through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-unit-stride-masked-e16-lmul2-load-store",
+        &masked_unit_stride_e16_lmul2_vector_memory_program(),
+        1000,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        114,
+        "cache-backed masked e16/m2 unit-stride vector memory should preserve inactive halfword lanes and move active halfword lanes through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_memory() {
     let vector_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-masked-load-store",
@@ -13543,6 +13570,101 @@ fn masked_unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
         for word in vector {
             program.extend_from_slice(&word.to_le_bytes());
         }
+    }
+    program
+}
+
+fn masked_unit_stride_e16_lmul2_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 512;
+    const LANES_PER_VECTOR: usize = 16;
+    const ELEMENT_BYTES: i32 = 2;
+    const VECTOR_BYTES: i32 = LANES_PER_VECTOR as i32 * ELEMENT_BYTES;
+
+    let fail_instruction_index = 18 + LANES_PER_VECTOR as i32 * 6;
+    let mut words = vec![
+        u_type(0, 10, 0x17),                                 // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),      // addi x10, x10, data
+        i_type(0, 10, 0b000, 12, 0x13),                      // addi x12, x10, mask data
+        i_type(VECTOR_BYTES, 10, 0b000, 13, 0x13),           // addi x13, x10, initial vector
+        i_type(VECTOR_BYTES * 2, 10, 0b000, 14, 0x13),       // addi x14, x10, source vector
+        i_type(VECTOR_BYTES * 3, 10, 0b000, 15, 0x13),       // addi x15, x10, load result
+        i_type(VECTOR_BYTES * 4, 10, 0b000, 16, 0x13),       // addi x16, x10, store result
+        i_type(VECTOR_BYTES * 5, 10, 0b000, 19, 0x13),       // addi x19, x10, expected load result
+        i_type(VECTOR_BYTES * 6, 10, 0b000, 20, 0x13),       // addi x20, x10, expected store result
+        i_type(LANES_PER_VECTOR as i32, 0, 0b000, 11, 0x13), // addi x11, x0, vl
+        vsetvli_type(0xc9, 11, 5),                           // vsetvli x5, x11, e16, m2, ta, ma
+        vector_unit_stride_load_type(true, 0b101, 12, 4),    // vle16.v v4, (x12)
+        vector_vi_type(0b011000, 4, 0, 0),                   // vmseq.vi v0, v4, 0
+        vector_unit_stride_load_type(true, 0b101, 13, 2),    // vle16.v v2, (x13)
+        vector_unit_stride_load_type(false, 0b101, 14, 2),   // vle16.v v2, (x14), v0.t
+        vector_unit_stride_store_type(true, 0b101, 15, 2),   // vse16.v v2, (x15)
+        vector_unit_stride_store_type(false, 0b101, 16, 2),  // vse16.v v2, (x16), v0.t
+    ];
+
+    for lane_index in 0..LANES_PER_VECTOR {
+        let offset = (lane_index * ELEMENT_BYTES as usize) as i32;
+        words.push(i_type(offset, 15, 0b101, 17, 0x03)); // lhu x17, load result
+        words.push(i_type(offset, 19, 0b101, 18, 0x03)); // lhu x18, expected load result
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (fail_instruction_index - branch_index) * 4,
+            18,
+            17,
+            0b001,
+        ));
+    }
+
+    for lane_index in 0..LANES_PER_VECTOR {
+        let offset = (lane_index * ELEMENT_BYTES as usize) as i32;
+        words.push(i_type(offset, 16, 0b101, 17, 0x03)); // lhu x17, store result
+        words.push(i_type(offset, 20, 0b101, 18, 0x03)); // lhu x18, expected store result
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (fail_instruction_index - branch_index) * 4,
+            18,
+            17,
+            0b001,
+        ));
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let mask = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1];
+    let initial = [
+        0x1111, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888, 0x9999, 0xaaaa, 0xbbbb,
+        0xcccc, 0xdddd, 0xeeee, 0xffff, 0x0101,
+    ];
+    let source = [
+        0xa1a2, 0xb1b2, 0xc1c2, 0xd1d2, 0xe1e2, 0xf1f2, 0x1718, 0x2728, 0x3738, 0x4748, 0x5758,
+        0x6768, 0x7778, 0x8788, 0x9798, 0xa7a8,
+    ];
+    let store_initial = [
+        0x5151, 0x5252, 0x5353, 0x5454, 0x5555, 0x5656, 0x5757, 0x5858, 0x5959, 0x5a5a, 0x5b5b,
+        0x5c5c, 0x5d5d, 0x5e5e, 0x5f5f, 0x6060,
+    ];
+    let mut expected_load = initial;
+    let mut expected_store = store_initial;
+    for lane_index in (0..LANES_PER_VECTOR).step_by(2) {
+        expected_load[lane_index] = source[lane_index];
+        expected_store[lane_index] = source[lane_index];
+    }
+
+    let mut program = riscv64_program(&words);
+    for vector in [
+        mask,
+        initial,
+        source,
+        [0; LANES_PER_VECTOR],
+        store_initial,
+        expected_load,
+        expected_store,
+    ] {
+        program.extend_from_slice(&u16_halfwords_to_bytes(&vector));
     }
     program
 }
