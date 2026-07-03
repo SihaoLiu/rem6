@@ -23,11 +23,10 @@ use crate::{
 
 mod request_helpers;
 
-pub(crate) use request_helpers::{access_address, access_size};
-use request_helpers::{
-    masked_vector_memory_request_span, normalized_masked_load_data, pma_access_kind,
-    pmp_access_kind, vector_store_request_payload,
+pub(crate) use request_helpers::{
+    access_address, access_size, masked_vector_memory_request_span, vector_store_request_payload,
 };
+use request_helpers::{normalized_masked_load_data, pma_access_kind, pmp_access_kind};
 
 impl RiscvCore {
     pub fn issue_next_data_access<F>(
@@ -284,7 +283,7 @@ impl RiscvCore {
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
-        let request = mmio_request(request_id, &access, size, address)?;
+        let request = mmio_request(request_id, &access, size, address, 0)?;
         let route = match bus.route_for(self.core.partition(), &request) {
             Ok(route) => route,
             Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
@@ -812,6 +811,7 @@ impl OutstandingDataAccess {
             &self.access,
             self.size,
             self.physical_address,
+            self.request_byte_offset,
         )
     }
 
@@ -1301,6 +1301,7 @@ pub(crate) fn mmio_request(
     access: &MemoryAccessKind,
     size: AccessSize,
     address: Address,
+    request_byte_offset: usize,
 ) -> Result<MmioRequest, RiscvCpuError> {
     match access {
         MemoryAccessKind::Load { .. }
@@ -1326,22 +1327,38 @@ pub(crate) fn mmio_request(
         .map_err(RiscvCpuError::Mmio),
         MemoryAccessKind::VectorStoreUnitStride {
             data, byte_mask, ..
-        } => MmioRequest::write(
-            mmio_request_id(request),
-            address,
-            data.clone(),
-            store_byte_mask(size, byte_mask.as_deref())?,
-        )
-        .map_err(RiscvCpuError::Mmio),
+        } => {
+            let (data, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                data,
+                byte_mask.as_deref(),
+            )?;
+            MmioRequest::write(
+                mmio_request_id(request),
+                address,
+                data,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+            .map_err(RiscvCpuError::Mmio)
+        }
         MemoryAccessKind::VectorStoreSegmentUnitStride {
             data, byte_mask, ..
-        } => MmioRequest::write(
-            mmio_request_id(request),
-            address,
-            data.clone(),
-            store_byte_mask(size, byte_mask.as_deref())?,
-        )
-        .map_err(RiscvCpuError::Mmio),
+        } => {
+            let (data, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                data,
+                byte_mask.as_deref(),
+            )?;
+            MmioRequest::write(
+                mmio_request_id(request),
+                address,
+                data,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+            .map_err(RiscvCpuError::Mmio)
+        }
         MemoryAccessKind::VectorStoreStrided {
             data, byte_mask, ..
         } => MmioRequest::write(

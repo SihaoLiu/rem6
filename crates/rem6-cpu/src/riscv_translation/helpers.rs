@@ -7,7 +7,7 @@ use rem6_memory::{
 };
 
 use crate::riscv_data_issue::{
-    access_address, store_byte_mask, store_bytes, supports_cross_line_data_access,
+    store_byte_mask, store_bytes, supports_cross_line_data_access, vector_store_request_payload,
 };
 use crate::riscv_translation_state::{
     DataTranslationCompletion, PendingDataTranslation, TranslatedDataAccess,
@@ -20,6 +20,7 @@ use crate::{
 
 pub(super) fn supports_translated_cross_line_data_access(
     access: &MemoryAccessKind,
+    virtual_address: Address,
     physical_address: Address,
     size: AccessSize,
     line_layout: CacheLineLayout,
@@ -29,7 +30,7 @@ pub(super) fn supports_translated_cross_line_data_access(
     if !supports_cross_line_data_access(access, physical_address, size, line_layout) {
         return false;
     }
-    let page_offset = access_address(access) & (RISCV_BASE_PAGE_BYTES - 1);
+    let page_offset = virtual_address.get() & (RISCV_BASE_PAGE_BYTES - 1);
     page_offset
         .checked_add(size.bytes())
         .is_some_and(|end| end <= RISCV_BASE_PAGE_BYTES)
@@ -52,121 +53,134 @@ pub(super) fn cpu_translation_request(
     memory_request_id: MemoryRequestId,
     data: &CpuDataConfig,
     access: &MemoryAccessKind,
+    address: Address,
     size: AccessSize,
+    request_byte_offset: usize,
 ) -> Result<CpuTranslationRequest, RiscvCpuError> {
     match access {
-        MemoryAccessKind::Load { address, .. }
-        | MemoryAccessKind::FloatLoad { address, .. }
-        | MemoryAccessKind::VectorLoadUnitStride { address, .. }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride { address, .. }
-        | MemoryAccessKind::VectorLoadStrided { address, .. }
-        | MemoryAccessKind::VectorLoadIndexed { address, .. } => CpuTranslationRequest::load(
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorLoadStrided { .. }
+        | MemoryAccessKind::VectorLoadIndexed { .. } => CpuTranslationRequest::load(
             translation_id,
             memory_request_id,
             data.route(),
             data.endpoint().clone(),
-            Address::new(*address),
-            size,
-        ),
-        MemoryAccessKind::LoadReserved { address, .. } => CpuTranslationRequest::load_locked(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-        ),
-        MemoryAccessKind::Store { address, value, .. }
-        | MemoryAccessKind::FloatStore { address, value, .. } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            store_bytes(*value, size),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-        ),
-        MemoryAccessKind::VectorStoreUnitStride {
             address,
-            data: bytes,
-            byte_mask,
-            ..
-        } => CpuTranslationRequest::store(
+            size,
+        ),
+        MemoryAccessKind::LoadReserved { .. } => CpuTranslationRequest::load_locked(
             translation_id,
             memory_request_id,
             data.route(),
             data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            bytes.clone(),
-            store_byte_mask(size, byte_mask.as_deref())?,
-        ),
-        MemoryAccessKind::VectorStoreSegmentUnitStride {
             address,
-            data: bytes,
-            byte_mask,
-            ..
-        } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
             size,
-            bytes.clone(),
-            store_byte_mask(size, byte_mask.as_deref())?,
         ),
-        MemoryAccessKind::VectorStoreStrided {
-            address,
-            data: bytes,
-            byte_mask,
-            ..
-        } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            bytes.clone(),
-            store_byte_mask(size, Some(byte_mask.as_slice()))?,
-        ),
-        MemoryAccessKind::VectorStoreIndexed {
-            address,
-            data: bytes,
-            byte_mask,
-            ..
-        } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            bytes.clone(),
-            store_byte_mask(size, Some(byte_mask.as_slice()))?,
-        ),
-        MemoryAccessKind::StoreConditional { address, value, .. } => {
-            CpuTranslationRequest::store_conditional(
+        MemoryAccessKind::Store { value, .. } | MemoryAccessKind::FloatStore { value, .. } => {
+            CpuTranslationRequest::store(
                 translation_id,
                 memory_request_id,
                 data.route(),
                 data.endpoint().clone(),
-                Address::new(*address),
+                address,
                 size,
                 store_bytes(*value, size),
                 ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
             )
         }
-        MemoryAccessKind::AtomicMemory {
-            address, value, op, ..
-        } => CpuTranslationRequest::atomic_with_op(
+        MemoryAccessKind::VectorStoreUnitStride {
+            data: bytes,
+            byte_mask,
+            ..
+        } => {
+            let (bytes, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                bytes,
+                byte_mask.as_deref(),
+            )?;
+            CpuTranslationRequest::store(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                address,
+                size,
+                bytes,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+        }
+        MemoryAccessKind::VectorStoreSegmentUnitStride {
+            data: bytes,
+            byte_mask,
+            ..
+        } => {
+            let (bytes, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                bytes,
+                byte_mask.as_deref(),
+            )?;
+            CpuTranslationRequest::store(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                address,
+                size,
+                bytes,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+        }
+        MemoryAccessKind::VectorStoreStrided {
+            data: bytes,
+            byte_mask,
+            ..
+        } => CpuTranslationRequest::store(
             translation_id,
             memory_request_id,
             data.route(),
             data.endpoint().clone(),
-            Address::new(*address),
+            address,
+            size,
+            bytes.clone(),
+            store_byte_mask(size, Some(byte_mask.as_slice()))?,
+        ),
+        MemoryAccessKind::VectorStoreIndexed {
+            data: bytes,
+            byte_mask,
+            ..
+        } => CpuTranslationRequest::store(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            address,
+            size,
+            bytes.clone(),
+            store_byte_mask(size, Some(byte_mask.as_slice()))?,
+        ),
+        MemoryAccessKind::StoreConditional { value, .. } => {
+            CpuTranslationRequest::store_conditional(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                address,
+                size,
+                store_bytes(*value, size),
+                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            )
+        }
+        MemoryAccessKind::AtomicMemory { value, op, .. } => CpuTranslationRequest::atomic_with_op(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            address,
             size,
             match op {
                 AtomicMemoryOp::Swap => MemoryAtomicOp::Swap,
@@ -211,8 +225,10 @@ pub(super) fn translated_data_from_outcome(
                 request_id: mapped.memory_request_id(),
                 fetch_request: pending.fetch_request,
                 access: pending.access,
+                virtual_address: pending.virtual_address,
                 size: mapped.size(),
                 physical_address: mapped.physical_address(),
+                request_byte_offset: pending.request_byte_offset,
             })
         }
         CpuTranslationOutcome::Fault(fault) => DataTranslationCompletion::Fault {

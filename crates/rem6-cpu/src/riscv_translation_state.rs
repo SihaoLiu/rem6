@@ -8,7 +8,9 @@ pub(crate) struct PendingDataTranslation {
     pub(crate) request_id: MemoryRequestId,
     pub(crate) fetch_request: MemoryRequestId,
     pub(crate) access: MemoryAccessKind,
+    pub(crate) virtual_address: Address,
     pub(crate) size: AccessSize,
+    pub(crate) request_byte_offset: usize,
 }
 
 impl PendingDataTranslation {
@@ -31,6 +33,8 @@ pub(crate) struct TranslatedDataAccess {
     pub(crate) request_id: MemoryRequestId,
     pub(crate) fetch_request: MemoryRequestId,
     pub(crate) access: MemoryAccessKind,
+    pub(crate) virtual_address: Address,
     pub(crate) size: AccessSize,
     pub(crate) physical_address: Address,
+    pub(crate) request_byte_offset: usize,
 }

@@ -11,6 +11,7 @@ fn translated_cross_line_vector_access_accepts_same_base_page() {
 
     assert!(supports_translated_cross_line_data_access(
         &access,
+        Address::new(0x1000),
         Address::new(0x8000),
         size,
         layout
@@ -25,6 +26,7 @@ fn translated_cross_line_vector_access_rejects_base_page_crossing() {
 
     assert!(!supports_translated_cross_line_data_access(
         &access,
+        Address::new(0x1ff0),
         Address::new(0x8000),
         size,
         layout

@@ -26,7 +26,8 @@ use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
 use crate::riscv_data_issue::{
-    access_size, mmio_request, OutstandingDataAccess, PreparedDataParallelAccess,
+    access_address, access_size, masked_vector_memory_request_span, mmio_request,
+    OutstandingDataAccess, PreparedDataParallelAccess,
 };
 use crate::{
     riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslationFrontend,
@@ -1278,7 +1279,9 @@ impl RiscvCore {
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(false);
         };
-        let size = access_size(&access)?;
+        let base_address = Address::new(access_address(&access));
+        let base_size = access_size(&access)?;
+        let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
         let (data, address_space, access_context) = {
             let state = self.state.lock().expect("riscv core lock");
             (
@@ -1295,11 +1298,21 @@ impl RiscvCore {
             request_id,
             fetch_request,
             access: access.clone(),
-            size,
+            virtual_address: request_span.address,
+            size: request_span.size,
+            request_byte_offset: request_span.byte_offset,
         };
-        let request = cpu_translation_request(translation_id, request_id, &data, &access, size)?
-            .in_address_space(address_space)
-            .with_sv39_access_context(access_context);
+        let request = cpu_translation_request(
+            translation_id,
+            request_id,
+            &data,
+            &access,
+            request_span.address,
+            request_span.size,
+            request_span.byte_offset,
+        )?
+        .in_address_space(address_space)
+        .with_sv39_access_context(access_context);
 
         let mut state = self.state.lock().expect("riscv core lock");
         let frontend =
@@ -1443,6 +1456,7 @@ impl RiscvCore {
             &translated.access,
             translated.size,
             translated.physical_address,
+            translated.request_byte_offset,
         )?;
         let route = match bus.route_for(self.core.partition(), &request) {
             Ok(route) => route,
@@ -1480,7 +1494,7 @@ impl RiscvCore {
             access: translated.access,
             size: translated.size,
             physical_address: translated.physical_address,
-            request_byte_offset: 0,
+            request_byte_offset: translated.request_byte_offset,
             line_layout: None,
         }))
     }
@@ -1539,6 +1553,7 @@ impl RiscvCore {
         if line_offset + translated.size.bytes() > line_layout.bytes()
             && !supports_translated_cross_line_data_access(
                 &translated.access,
+                translated.virtual_address,
                 translated.physical_address,
                 translated.size,
                 line_layout,
@@ -1563,7 +1578,7 @@ impl RiscvCore {
             access: translated.access,
             size: translated.size,
             physical_address: translated.physical_address,
-            request_byte_offset: 0,
+            request_byte_offset: translated.request_byte_offset,
             line_layout: Some(line_layout),
         })
     }
