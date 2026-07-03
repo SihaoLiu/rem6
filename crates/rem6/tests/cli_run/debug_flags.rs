@@ -562,6 +562,49 @@ fn rem6_run_pipeline_debug_flag_classifies_real_wait_stall_causes() {
 }
 
 #[test]
+fn rem6_run_pipeline_debug_flag_attributes_stage_resource_blocks() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
+        i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
+        i_type(3, 0, 0x0, 7, 0x13),  // addi x7, x0, 3
+        i_type(4, 0, 0x0, 28, 0x13), // addi x28, x0, 4
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-pipeline-resource-blocked", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "3",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_pipeline_trace_stage_resource_blocked(&stdout);
+}
+
+#[test]
 fn rem6_run_fetch_debug_flag_keeps_fetches_across_riscv_se_stream_reset() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
@@ -2917,6 +2960,43 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
         assert_stat(
             stdout,
             &format!("sim.debug.pipeline_trace.stall_cause.{cause}.stage.{stage}.resource_blocked"),
+            "Count",
+            resource_blocked,
+            "monotonic",
+        );
+    }
+}
+
+fn assert_pipeline_trace_stage_resource_blocked(stdout: &str) {
+    let json: Value = serde_json::from_str(stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
+    for record in trace {
+        for blocked in record_array(record, "resource_blocked") {
+            let stage = blocked
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing resource-blocked instruction stage: {blocked}"));
+            *stage_resource_blocked
+                .entry(stat_path_segment(stage))
+                .or_default() += 1;
+        }
+    }
+    assert!(
+        !stage_resource_blocked.is_empty(),
+        "pipeline trace should preserve resource-blocked in-flight instructions: {trace:?}"
+    );
+    assert!(
+        stage_resource_blocked.contains_key("commit"),
+        "pipeline trace should expose commit-stage resource blocking: {trace:?}"
+    );
+    for (stage, resource_blocked) in stage_resource_blocked {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.resource_blocked"),
             "Count",
             resource_blocked,
             "monotonic",
