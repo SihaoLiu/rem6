@@ -555,6 +555,7 @@ pub(super) fn pipeline_trace_stats(
     let mut flush_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     let mut flush_cause_stages =
         BTreeMap::<(&str, String), PipelineStageFlushTraceStatSummary>::new();
+    let mut redirect_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     for record in records {
         cpus.entry(record.cpu).or_default().add_record(record);
         states
@@ -609,6 +610,9 @@ pub(super) fn pipeline_trace_stats(
                     .add_record(flushed);
             }
         }
+        if let Some(cause) = record.redirect_cause {
+            redirect_causes.entry(cause).or_default().add_record(record);
+        }
     }
 
     let mut stats = Vec::new();
@@ -643,6 +647,12 @@ pub(super) fn pipeline_trace_stats(
         summary.push_stats(
             &mut stats,
             &format!("flush_cause.{}.stage.{stage}", stat_path_segment(cause)),
+        );
+    }
+    for (cause, summary) in redirect_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("redirect_cause.{}", stat_path_segment(cause)),
         );
     }
     stats

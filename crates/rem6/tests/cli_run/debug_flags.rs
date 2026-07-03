@@ -563,6 +563,114 @@ fn rem6_run_pipeline_debug_flag_classifies_real_wait_stall_causes() {
 }
 
 #[test]
+fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_suppression() {
+    let program = riscv64_program(&[
+        0x0000_0073,                // ecall redirects to the trap vector
+        i_type(9, 0, 0x0, 6, 0x13), // wrong-path addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // trap-vector target after default mtvec
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-pipeline-trap-redirect-suppression", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-route-delay",
+            "5",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let trap_redirect = trace
+        .iter()
+        .find(|record| {
+            record.get("redirect_cause").and_then(Value::as_str) == Some("trap_redirect")
+        })
+        .unwrap_or_else(|| panic!("missing trap redirect cause in pipeline trace: {trace:?}"));
+    let branch_predictions = trace
+        .iter()
+        .map(|record| json_record_u64(record, "branch_predictions"))
+        .sum::<u64>();
+    let branch_prediction_flushed = trace
+        .iter()
+        .map(|record| json_record_u64(record, "branch_prediction_flushed"))
+        .sum::<u64>();
+    assert_eq!(
+        trap_redirect.get("redirect_target").and_then(Value::as_str),
+        Some("0x0")
+    );
+    assert!(json_record_u64(trap_redirect, "branch_predictions") == 0);
+    assert!(json_record_u64(trap_redirect, "branch_prediction_flushed") == 0);
+    assert_eq!(
+        branch_predictions, 0,
+        "trap-only run should not emit branch predictions: {trace:?}"
+    );
+    assert_eq!(
+        branch_prediction_flushed, 0,
+        "trap-only run should not emit branch-prediction flushes: {trace:?}"
+    );
+    assert!(record_array(trap_redirect, "flushed").is_empty());
+    assert!(!stdout.contains("\"x6\":\"0x9\""));
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.branch_predictions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.branch_prediction_flushed",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.redirect_cause.trap_redirect.records",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.redirect_cause.trap_redirect.branch_prediction_flushed",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.redirect_cause.trap_redirect.flushed",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_pipeline_debug_flag_attributes_stage_activity() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
