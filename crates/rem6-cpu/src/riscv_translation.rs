@@ -1450,6 +1450,7 @@ impl RiscvCore {
             &translated.access,
             translated.size,
             translated.physical_address,
+            translated.request_byte_offset,
         )?;
         let request = mmio_request(
             translated.request_id,
@@ -1545,6 +1546,7 @@ impl RiscvCore {
             &translated.access,
             translated.size,
             translated.physical_address,
+            translated.request_byte_offset,
         )?;
         let line_layout = data
             .line_layout_for_access(translated.physical_address, translated.size)

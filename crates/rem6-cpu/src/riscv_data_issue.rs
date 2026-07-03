@@ -28,7 +28,7 @@ pub(crate) use request_helpers::{
 };
 use request_helpers::{
     normalized_masked_indexed_load_data, normalized_masked_load_data,
-    normalized_masked_strided_load_data, pma_access_kind, pmp_access_kind,
+    normalized_masked_strided_load_data, pma_access_kind, pma_alignment_checks, pmp_access_kind,
 };
 
 impl RiscvCore {
@@ -236,7 +236,13 @@ impl RiscvCore {
         let address = request_span.address;
         let size = request_span.size;
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
-        self.check_pma_data_access(fetch_request, &access, size, address)?;
+        self.check_pma_data_access(
+            fetch_request,
+            &access,
+            size,
+            address,
+            request_span.byte_offset,
+        )?;
         let line_layout = data
             .line_layout_for_access(address, size)
             .map_err(RiscvCpuError::Memory)?;
@@ -284,7 +290,7 @@ impl RiscvCore {
         let size = access_size(&access)?;
         let address = Address::new(access_address(&access));
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
-        self.check_pma_data_access(fetch_request, &access, size, address)?;
+        self.check_pma_data_access(fetch_request, &access, size, address, 0)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let request = mmio_request(request_id, &access, size, address, 0)?;
         let route = match bus.route_for(self.core.partition(), &request) {
@@ -347,14 +353,18 @@ impl RiscvCore {
         access: &MemoryAccessKind,
         size: AccessSize,
         address: Address,
+        request_byte_offset: usize,
     ) -> Result<(), RiscvCpuError> {
         let kind = pma_access_kind(access);
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .pma
-            .check_data_alignment(address.get(), size.bytes(), kind)
-            .map_err(|error| RiscvCpuError::DataPmaAccess { fetch, error })
+        let checks = pma_alignment_checks(access, address, size, request_byte_offset)?;
+        let state = self.state.lock().expect("riscv core lock");
+        for check in checks {
+            state
+                .pma
+                .check_data_alignment(check.address.get(), check.size.bytes(), kind)
+                .map_err(|error| RiscvCpuError::DataPmaAccess { fetch, error })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn apply_pma_data_request_attributes(
