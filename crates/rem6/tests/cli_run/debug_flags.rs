@@ -2750,6 +2750,27 @@ fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 5, 0x17),
+        i_type(60, 5, 0x0, 5, 0x13),
+        i_type(0x5a, 0, 0x0, 11, 0x13),
+        s_type(0, 11, 5, 0b010),
+        i_type(0, 5, 0b010, 12, 0x03),
+        b_type(8, 11, 12, 0x1),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.push(0);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn assert_o3_event(
     event: &Value,
     sequence: u64,
@@ -2768,6 +2789,14 @@ fn assert_o3_event(
     assert_eq!(json_record_u64(event, "lsq_stores"), lsq_stores);
     assert_eq!(json_record_u64(event, "fu_latency_cycles"), 0);
     assert_eq!(event.get("fu_latency_class"), Some(&Value::Null));
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_candidate"),
+        false
+    );
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_match"),
+        false
+    );
     assert_eq!(json_record_bool(event, "system_event"), system_event);
 }
 
@@ -2798,6 +2827,46 @@ fn assert_o3_event_with_fu(
         Some(expected) => assert_eq!(json_record_str(event, "fu_latency_class"), expected),
         None => assert_eq!(event.get("fu_latency_class"), Some(&Value::Null)),
     }
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_candidate"),
+        false
+    );
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_match"),
+        false
+    );
+    assert_eq!(json_record_bool(event, "system_event"), system_event);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_o3_event_with_store_forwarding(
+    event: &Value,
+    sequence: u64,
+    pc: &str,
+    rename_writes: u64,
+    lsq_loads: u64,
+    lsq_stores: u64,
+    store_load_forwarding_candidate: bool,
+    store_load_forwarding_match: bool,
+    system_event: bool,
+) {
+    assert_eq!(json_record_u64(event, "sequence"), sequence);
+    assert_eq!(json_record_str(event, "pc"), pc);
+    assert_eq!(json_record_bool(event, "rob_allocated"), true);
+    assert_eq!(json_record_bool(event, "rob_committed"), true);
+    assert_eq!(json_record_u64(event, "rename_writes"), rename_writes);
+    assert_eq!(json_record_u64(event, "lsq_loads"), lsq_loads);
+    assert_eq!(json_record_u64(event, "lsq_stores"), lsq_stores);
+    assert_eq!(event.get("fu_latency_class"), Some(&Value::Null));
+    assert_eq!(json_record_u64(event, "fu_latency_cycles"), 0);
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_candidate"),
+        store_load_forwarding_candidate
+    );
+    assert_eq!(
+        json_record_bool(event, "store_load_forwarding_match"),
+        store_load_forwarding_match
+    );
     assert_eq!(json_record_bool(event, "system_event"), system_event);
 }
 
@@ -5170,6 +5239,162 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
             "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
             "Cycle",
             19,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
+    let path = detailed_o3_store_forwarding_debug_binary("debug-flags-o3-store-forwarding-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+
+    for (field, value) in [
+        ("instructions", 7),
+        ("rob_allocations", 7),
+        ("rob_commits", 7),
+        ("rename_writes", 4),
+        ("lsq_loads", 1),
+        ("lsq_stores", 1),
+        ("store_load_forwarding_candidates", 1),
+        ("store_load_forwarding_matches", 1),
+        ("fu_latency_instructions", 0),
+        ("fu_latency_cycles", 0),
+        ("max_rob_occupancy", 1),
+        ("max_lsq_occupancy", 1),
+        ("rename_map_entries", 3),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 7);
+    assert_o3_event_with_store_forwarding(
+        &events[0],
+        0,
+        "0x80000004",
+        1,
+        0,
+        0,
+        false,
+        false,
+        false,
+    );
+    assert_o3_event_with_store_forwarding(
+        &events[1],
+        1,
+        "0x80000008",
+        1,
+        0,
+        0,
+        false,
+        false,
+        false,
+    );
+    assert_o3_event_with_store_forwarding(
+        &events[2],
+        2,
+        "0x8000000c",
+        1,
+        0,
+        0,
+        false,
+        false,
+        false,
+    );
+    assert_o3_event_with_store_forwarding(
+        &events[3],
+        3,
+        "0x80000010",
+        0,
+        0,
+        1,
+        false,
+        false,
+        false,
+    );
+    assert_o3_event_with_store_forwarding(&events[4], 4, "0x80000014", 1, 1, 0, true, true, false);
+    assert_o3_event_with_store_forwarding(
+        &events[5],
+        5,
+        "0x80000018",
+        0,
+        0,
+        0,
+        false,
+        false,
+        false,
+    );
+    assert_o3_event_with_store_forwarding(&events[6], 6, "0x8000001c", 0, 0, 0, false, false, true);
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.instructions", "Count", 7),
+        ("sim.debug.o3_trace.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.lsq_stores", "Count", 1),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_candidates",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_matches",
+            "Count",
+            1,
+        ),
+        ("sim.debug.o3_trace.event.records", "Count", 7),
+        ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.store_load_forwarding_candidates",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.store_load_forwarding_matches",
+            "Count",
+            1,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");

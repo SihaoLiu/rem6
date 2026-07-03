@@ -42,6 +42,8 @@ struct Rem6O3TraceTotals {
     event_rename_writes: u64,
     event_lsq_loads: u64,
     event_lsq_stores: u64,
+    event_store_load_forwarding_candidates: u64,
+    event_store_load_forwarding_matches: u64,
     event_fu_latency_cycles: u64,
     event_fu_integer_mul_instructions: u64,
     event_fu_integer_mul_latency_cycles: u64,
@@ -193,6 +195,12 @@ impl Rem6O3TraceTotals {
                 .saturating_add(event.rename_writes());
             self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
+            self.event_store_load_forwarding_candidates = self
+                .event_store_load_forwarding_candidates
+                .saturating_add(u64::from(event.store_load_forwarding_candidate()));
+            self.event_store_load_forwarding_matches = self
+                .event_store_load_forwarding_matches
+                .saturating_add(u64::from(event.store_load_forwarding_match()));
             self.event_fu_latency_cycles = self
                 .event_fu_latency_cycles
                 .saturating_add(event.fu_latency_cycles());
@@ -255,6 +263,14 @@ impl Rem6O3TraceTotals {
             ("event.lsq_loads", self.event_lsq_loads),
             ("event.lsq_stores", self.event_lsq_stores),
             (
+                "event.store_load_forwarding_candidates",
+                self.event_store_load_forwarding_candidates,
+            ),
+            (
+                "event.store_load_forwarding_matches",
+                self.event_store_load_forwarding_matches,
+            ),
+            (
                 "event.fu_integer_mul_instructions",
                 self.event_fu_integer_mul_instructions,
             ),
@@ -309,7 +325,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         |class| format!("\"{}\"", class.as_str()),
     );
     format!(
-        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.pc().get(),
         event.rob_allocated(),
@@ -317,6 +333,8 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.rename_writes(),
         event.lsq_loads(),
         event.lsq_stores(),
+        event.store_load_forwarding_candidate(),
+        event.store_load_forwarding_match(),
         fu_latency_class,
         event.fu_latency_cycles(),
         event.system_event(),

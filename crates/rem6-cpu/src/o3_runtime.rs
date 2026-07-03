@@ -250,6 +250,8 @@ pub struct O3RuntimeTraceRecord {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    store_load_forwarding_candidate: bool,
+    store_load_forwarding_match: bool,
     fu_latency_class: Option<O3RuntimeFuLatencyClass>,
     fu_latency_cycles: u64,
     system_event: bool,
@@ -289,6 +291,8 @@ impl O3RuntimeTraceRecord {
             rename_writes,
             lsq_loads,
             lsq_stores,
+            store_load_forwarding_candidate: false,
+            store_load_forwarding_match: false,
             fu_latency_class,
             fu_latency_cycles,
             system_event,
@@ -323,6 +327,14 @@ impl O3RuntimeTraceRecord {
         self.lsq_stores
     }
 
+    pub const fn store_load_forwarding_candidate(self) -> bool {
+        self.store_load_forwarding_candidate
+    }
+
+    pub const fn store_load_forwarding_match(self) -> bool {
+        self.store_load_forwarding_match
+    }
+
     pub const fn fu_latency_class(self) -> Option<O3RuntimeFuLatencyClass> {
         self.fu_latency_class
     }
@@ -333,6 +345,15 @@ impl O3RuntimeTraceRecord {
 
     pub const fn system_event(self) -> bool {
         self.system_event
+    }
+
+    fn set_store_load_forwarding(&mut self, observation: O3StoreForwardingObservation) {
+        self.store_load_forwarding_candidate = observation.candidate;
+        self.store_load_forwarding_match = observation.matched;
+    }
+
+    fn mark_store_load_forwarding_match(&mut self) {
+        self.store_load_forwarding_match = true;
     }
 }
 
@@ -384,12 +405,16 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
         trace_enabled: bool,
     ) {
-        let trace_record = self.record_runtime_state(execution);
+        let mut trace_record = self.record_runtime_state(execution);
         self.stats.record_retired_instruction(execution);
+        let observation = self.record_store_forwarding_window(
+            execution,
+            trace_enabled.then_some(trace_record.sequence()),
+        );
+        trace_record.set_store_load_forwarding(observation);
         if trace_enabled {
             self.trace_records.push(trace_record);
         }
-        self.record_store_forwarding_window(execution);
     }
 
     fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) -> O3RuntimeTraceRecord {
@@ -505,24 +530,32 @@ impl O3RuntimeState {
         physical
     }
 
-    fn record_store_forwarding_window(&mut self, execution: &RiscvCpuExecutionEvent) {
+    fn record_store_forwarding_window(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        trace_sequence: Option<u64>,
+    ) -> O3StoreForwardingObservation {
         let record = execution.execution();
         match record.memory_access() {
             Some(access @ MemoryAccessKind::Load { .. }) => {
-                self.store_forwarding_window.pending_load_match =
-                    self.stats.record_store_to_load_forwarding(
-                        access,
-                        execution.fetch().request_id(),
-                        record.register_writes(),
-                        self.store_forwarding_window.store,
-                    );
+                let (observation, pending_load_match) = self.stats.record_store_to_load_forwarding(
+                    access,
+                    execution.fetch().request_id(),
+                    record.register_writes(),
+                    self.store_forwarding_window.store,
+                    trace_sequence,
+                );
+                self.store_forwarding_window.pending_load_match = pending_load_match;
                 self.store_forwarding_window.store = None;
+                observation
             }
             Some(access) => {
                 self.store_forwarding_window.store = o3_store_forwarding_entry(access);
+                O3StoreForwardingObservation::default()
             }
             None => {
                 self.store_forwarding_window.store = None;
+                O3StoreForwardingObservation::default()
             }
         }
     }
@@ -552,6 +585,20 @@ impl O3RuntimeState {
             .is_some_and(|value| o3_low_bytes_equal(value, pending.value, pending.bytes))
         {
             self.stats.record_store_to_load_forwarding_match();
+            self.mark_trace_store_forwarding_match(pending.trace_sequence);
+        }
+    }
+
+    fn mark_trace_store_forwarding_match(&mut self, trace_sequence: Option<u64>) {
+        let Some(sequence) = trace_sequence else {
+            return;
+        };
+        if let Some(record) = self
+            .trace_records
+            .iter_mut()
+            .find(|record| record.sequence() == sequence)
+        {
+            record.mark_store_load_forwarding_match();
         }
     }
 
@@ -597,6 +644,12 @@ struct O3StoreForwardingWindow {
     pending_load_match: Option<O3PendingLoadForwardingMatch>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3StoreForwardingObservation {
+    candidate: bool,
+    matched: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct O3StoreForwardingEntry {
     address: Address,
@@ -610,6 +663,7 @@ struct O3PendingLoadForwardingMatch {
     address: Address,
     bytes: u32,
     value: u64,
+    trace_sequence: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -785,33 +839,46 @@ impl O3RuntimeStats {
         fetch_request: MemoryRequestId,
         register_writes: &[rem6_isa_riscv::RegisterWrite],
         prior_store: Option<O3StoreForwardingEntry>,
-    ) -> Option<O3PendingLoadForwardingMatch> {
+        trace_sequence: Option<u64>,
+    ) -> (
+        O3StoreForwardingObservation,
+        Option<O3PendingLoadForwardingMatch>,
+    ) {
         let Some(prior_store) = prior_store else {
-            return None;
+            return (O3StoreForwardingObservation::default(), None);
         };
         let Some(load) = o3_load_forwarding_access(access) else {
-            return None;
+            return (O3StoreForwardingObservation::default(), None);
         };
         if load.address != prior_store.address || load.bytes != prior_store.bytes {
-            return None;
+            return (O3StoreForwardingObservation::default(), None);
         }
 
         self.lsq_store_to_load_forwarding_candidates = self
             .lsq_store_to_load_forwarding_candidates
             .saturating_add(1);
+        let mut observation = O3StoreForwardingObservation {
+            candidate: true,
+            matched: false,
+        };
         match o3_load_register_value(register_writes, load.register) {
             Some(value) => {
                 if o3_low_bytes_equal(value, prior_store.value, load.bytes) {
                     self.record_store_to_load_forwarding_match();
+                    observation.matched = true;
                 }
-                None
+                (observation, None)
             }
-            None => Some(O3PendingLoadForwardingMatch {
-                fetch_request,
-                address: load.address,
-                bytes: load.bytes,
-                value: prior_store.value,
-            }),
+            None => (
+                observation,
+                Some(O3PendingLoadForwardingMatch {
+                    fetch_request,
+                    address: load.address,
+                    bytes: load.bytes,
+                    value: prior_store.value,
+                    trace_sequence,
+                }),
+            ),
         }
     }
 
