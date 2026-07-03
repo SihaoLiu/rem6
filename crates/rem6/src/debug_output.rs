@@ -12,6 +12,7 @@ mod dram;
 mod fabric;
 mod host_action;
 mod memory;
+mod o3;
 mod pipeline;
 mod sbi;
 mod trace_stats;
@@ -36,6 +37,7 @@ use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
     Rem6MemoryTraceStat,
 };
+use o3::{o3_trace_records, o3_trace_stats, Rem6O3TraceRecord, Rem6O3TraceStat};
 use pipeline::{pipeline_trace_records, Rem6PipelineTraceRecord};
 pub(crate) use sbi::Rem6SbiTraceInputs;
 use sbi::{sbi_trace_records, Rem6SbiTraceRecord};
@@ -52,6 +54,7 @@ pub(crate) struct Rem6DebugSummary {
     flags: Vec<CliDebugFlag>,
     branch_trace: Vec<Rem6BranchTraceRecord>,
     pipeline_trace: Vec<Rem6PipelineTraceRecord>,
+    o3_trace: Vec<Rem6O3TraceRecord>,
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     host_action_trace: Vec<Rem6HostActionTraceRecord>,
@@ -176,6 +179,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let o3_trace = if config.debug_o3_enabled() {
+            o3_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
         let exec_trace = if config.debug_exec_enabled() {
             exec_trace_records(run)
         } else {
@@ -235,6 +243,7 @@ impl Rem6DebugSummary {
             flags,
             branch_trace,
             pipeline_trace,
+            o3_trace,
             exec_trace,
             fetch_trace,
             host_action_trace,
@@ -467,6 +476,14 @@ impl Rem6DebugSummary {
         stat_path_segment: impl Fn(&str) -> String,
     ) -> Vec<Rem6PipelineTraceStat> {
         pipeline_trace_stats(&self.pipeline_trace, stat_path_segment)
+    }
+
+    pub(crate) fn o3_trace_count(&self) -> u64 {
+        self.o3_trace.len() as u64
+    }
+
+    pub(crate) fn o3_trace_stats(&self) -> Vec<Rem6O3TraceStat> {
+        o3_trace_stats(&self.o3_trace)
     }
 
     pub(crate) fn fetch_trace_count(&self) -> u64 {
@@ -954,6 +971,13 @@ impl Rem6DebugSummary {
             .map(Rem6PipelineTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let o3_trace = self
+            .o3_trace
+            .iter()
+            .copied()
+            .map(Rem6O3TraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let exec_trace = self
             .exec_trace
             .iter()
@@ -1022,10 +1046,11 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"sbi_trace\":[{}],\"syscall_trace\":[{}]}}",
+            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"o3_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"sbi_trace\":[{}],\"syscall_trace\":[{}]}}",
             flags,
             branch_trace,
             pipeline_trace,
+            o3_trace,
             exec_trace,
             fetch_trace,
             host_action_trace,
@@ -1128,10 +1153,11 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
-    fn trace_counts(&self) -> [u64; 13] {
+    fn trace_counts(&self) -> [u64; 14] {
         [
             self.branch_trace_count(),
             self.pipeline_trace_count(),
+            self.o3_trace_count(),
             self.exec_trace_count(),
             self.fetch_trace_count(),
             self.host_action_trace_count(),
@@ -1157,6 +1183,7 @@ impl Rem6DebugSummary {
             CliDebugFlag::Fetch => self.fetch_trace_count(),
             CliDebugFlag::HostAction => self.host_action_trace_count(),
             CliDebugFlag::Memory => self.memory_trace_count(),
+            CliDebugFlag::O3 => self.o3_trace_count(),
             CliDebugFlag::Pipeline => self.pipeline_trace_count(),
             CliDebugFlag::Power => self.power_trace_count(),
             CliDebugFlag::Sbi => self.sbi_trace_count(),

@@ -241,6 +241,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Memory)
     }
 
+    pub fn debug_o3_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::O3)
+    }
+
     pub fn debug_pipeline_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Pipeline)
     }

@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::support::*;
 
 const M5_EXIT: u32 = 0x21;
+const M5_FAIL: u32 = 0x22;
 const M5_RESET_STATS: u32 = 0x40;
 const M5_DUMP_STATS: u32 = 0x41;
 const M5_DUMP_RESET_STATS: u32 = 0x42;
@@ -2713,6 +2714,27 @@ fn m5op(function: u32) -> u32 {
     (function << 25) | 0x7b
 }
 
+fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 5, 0x17),
+        i_type(60, 5, 0x0, 5, 0x13),
+        i_type(7, 0, 0x0, 11, 0x13),
+        i_type(0, 5, 0b010, 12, 0x03),
+        s_type(4, 12, 5, 0b010),
+        m5op(M5_EXIT),
+        i_type(77, 0, 0x0, 13, 0x13),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn load_sbi_time_extension(rd: u8) -> [u32; 2] {
     load_sbi_extension(SBI_TIME_EXTENSION, rd)
 }
@@ -4834,6 +4856,248 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
         1,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
+    let path = detailed_o3_runtime_debug_binary("debug-flags-o3-detailed-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("O3".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+
+    for (field, value) in [
+        ("cpu", 0),
+        ("instructions", 6),
+        ("rob_allocations", 6),
+        ("rob_commits", 6),
+        ("rename_writes", 4),
+        ("lsq_loads", 1),
+        ("lsq_stores", 1),
+        ("store_load_forwarding_candidates", 0),
+        ("store_load_forwarding_matches", 0),
+        ("fu_latency_instructions", 0),
+        ("fu_latency_cycles", 0),
+        ("max_rob_occupancy", 1),
+        ("max_lsq_occupancy", 1),
+        ("rename_map_entries", 3),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 trace field {field}"
+        );
+    }
+
+    assert_stat(&stdout, "sim.debug.flags", "Count", 1, "constant");
+    for (path, unit, value) in [
+        ("sim.debug.trace.records", "Count", 1),
+        ("sim.debug.trace.categories", "Count", 1),
+        ("sim.debug.trace.active_flags", "Count", 1),
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.instructions", "Count", 6),
+        ("sim.debug.o3_trace.rob_allocations", "Count", 6),
+        ("sim.debug.o3_trace.rob_commits", "Count", 6),
+        ("sim.debug.o3_trace.rename_writes", "Count", 4),
+        ("sim.debug.o3_trace.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.lsq_stores", "Count", 1),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_candidates",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_matches",
+            "Count",
+            0,
+        ),
+        ("sim.debug.o3_trace.fu_latency_instructions", "Count", 0),
+        ("sim.debug.o3_trace.fu_latency_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.rename_map_entries", "Count", 3),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
+    let path = detailed_o3_runtime_debug_binary("debug-flags-o3-multicore-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--cores",
+            "2",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 2);
+    for (record, cpu) in trace.iter().zip([0, 1]) {
+        assert_eq!(json_record_u64(record, "cpu"), cpu);
+        assert_eq!(json_record_u64(record, "instructions"), 6);
+        assert_eq!(json_record_u64(record, "rob_allocations"), 6);
+        assert_eq!(json_record_u64(record, "rob_commits"), 6);
+        assert_eq!(json_record_u64(record, "rename_writes"), 4);
+        assert_eq!(json_record_u64(record, "lsq_loads"), 1);
+        assert_eq!(json_record_u64(record, "lsq_stores"), 1);
+        assert_eq!(json_record_u64(record, "max_rob_occupancy"), 1);
+        assert_eq!(json_record_u64(record, "max_lsq_occupancy"), 1);
+        assert_eq!(json_record_u64(record, "rename_map_entries"), 3);
+    }
+
+    for (path, unit, value) in [
+        ("sim.debug.trace.records", "Count", 2),
+        ("sim.debug.trace.categories", "Count", 1),
+        ("sim.debug.trace.active_flags", "Count", 1),
+        ("sim.debug.o3_trace.records", "Count", 2),
+        ("sim.debug.o3_trace.instructions", "Count", 12),
+        ("sim.debug.o3_trace.rob_allocations", "Count", 12),
+        ("sim.debug.o3_trace.rob_commits", "Count", 12),
+        ("sim.debug.o3_trace.rename_writes", "Count", 8),
+        ("sim.debug.o3_trace.lsq_loads", "Count", 2),
+        ("sim.debug.o3_trace.lsq_stores", "Count", 2),
+        ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.rename_map_entries", "Count", 6),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
+    let path = detailed_o3_runtime_debug_binary("debug-flags-o3-timing-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--m5-switch-cpu-mode",
+            "timing",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("O3".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert!(trace.is_empty(), "timing-mode O3 trace: {trace:?}");
+
+    assert_stat(&stdout, "sim.debug.flags", "Count", 1, "constant");
+    for (path, unit, value) in [
+        ("sim.debug.trace.records", "Count", 0),
+        ("sim.debug.trace.categories", "Count", 0),
+        ("sim.debug.trace.active_flags", "Count", 0),
+        ("sim.debug.o3_trace.records", "Count", 0),
+        ("sim.debug.o3_trace.instructions", "Count", 0),
+        ("sim.debug.o3_trace.rob_allocations", "Count", 0),
+        ("sim.debug.o3_trace.rob_commits", "Count", 0),
+        ("sim.debug.o3_trace.rename_writes", "Count", 0),
+        ("sim.debug.o3_trace.lsq_loads", "Count", 0),
+        ("sim.debug.o3_trace.lsq_stores", "Count", 0),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_candidates",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.store_load_forwarding_matches",
+            "Count",
+            0,
+        ),
+        ("sim.debug.o3_trace.fu_latency_instructions", "Count", 0),
+        ("sim.debug.o3_trace.fu_latency_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.max_rob_occupancy", "Count", 0),
+        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 0),
+        ("sim.debug.o3_trace.rename_map_entries", "Count", 0),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
 }
 
 #[test]
