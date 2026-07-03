@@ -245,11 +245,15 @@ impl O3RuntimeSnapshot {
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
+    next_sequence: u64,
+    next_physical_register: u32,
 }
 
 impl O3RuntimeState {
     pub fn restore(&mut self, snapshot: O3RuntimeSnapshot) -> Result<(), O3RuntimeError> {
         validate_runtime_snapshot(&snapshot)?;
+        self.next_sequence = next_runtime_sequence(&snapshot);
+        self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
         Ok(())
     }
@@ -267,7 +271,106 @@ impl O3RuntimeState {
     }
 
     pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
+        self.record_runtime_state(execution);
         self.stats.record_retired_instruction(execution);
+    }
+
+    fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) {
+        let sequence = self.allocate_sequence();
+        let record = execution.execution();
+        let destination = self.record_rename_map_entries(record);
+
+        let rob_start = self.snapshot.reorder_buffer.len();
+        self.snapshot.reorder_buffer.push(
+            O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
+                .with_ready(true),
+        );
+        self.stats
+            .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
+
+        let lsq_start = self.snapshot.load_store_queue.len();
+        if let Some(access) = record.memory_access() {
+            for entry in o3_lsq_entries(sequence, access) {
+                self.snapshot.load_store_queue.push(entry);
+            }
+            self.stats
+                .observe_lsq_occupancy(self.snapshot.load_store_queue.len());
+        }
+
+        self.snapshot.reorder_buffer.truncate(rob_start);
+        self.snapshot.load_store_queue.truncate(lsq_start);
+        self.stats
+            .set_rename_map_entries(self.snapshot.rename_map.len());
+    }
+
+    fn record_rename_map_entries(
+        &mut self,
+        record: &rem6_isa_riscv::RiscvExecutionRecord,
+    ) -> Option<O3PhysicalRegisterId> {
+        if record.system_event().is_some() {
+            return None;
+        }
+
+        let mut first_destination = None;
+        for write in record.register_writes() {
+            if !write.register().is_zero() {
+                let physical = self.install_rename_map_entry(
+                    O3RegisterClass::Integer,
+                    u32::from(write.register().index()),
+                );
+                first_destination.get_or_insert(physical);
+            }
+        }
+        for write in record.float_register_writes() {
+            let physical = self.install_rename_map_entry(
+                O3RegisterClass::FloatingPoint,
+                u32::from(write.register().index()),
+            );
+            first_destination.get_or_insert(physical);
+        }
+        if let Some(access) = record.memory_access() {
+            for (register_class, architectural) in o3_memory_destination_registers(access) {
+                let physical = self.install_rename_map_entry(register_class, architectural);
+                first_destination.get_or_insert(physical);
+            }
+        }
+
+        first_destination
+    }
+
+    fn install_rename_map_entry(
+        &mut self,
+        register_class: O3RegisterClass,
+        architectural: u32,
+    ) -> O3PhysicalRegisterId {
+        let physical = self.allocate_physical_register();
+        let entry = O3RenameMapEntry::new(register_class, architectural, physical);
+        if let Some(existing) = self.snapshot.rename_map.iter_mut().find(|existing| {
+            existing.register_class() == register_class && existing.architectural() == architectural
+        }) {
+            *existing = entry;
+        } else {
+            self.snapshot.rename_map.push(entry);
+        }
+        self.snapshot.rename_map.sort_by_key(|entry| {
+            (
+                encode_register_class(entry.register_class()),
+                entry.architectural(),
+            )
+        });
+        physical
+    }
+
+    fn allocate_sequence(&mut self) -> u64 {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        sequence
+    }
+
+    fn allocate_physical_register(&mut self) -> O3PhysicalRegisterId {
+        let physical = O3PhysicalRegisterId::new(self.next_physical_register);
+        self.next_physical_register = self.next_physical_register.saturating_add(1);
+        physical
     }
 
     pub fn pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
@@ -298,6 +401,8 @@ impl Default for O3RuntimeState {
         Self {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
+            next_sequence: 0,
+            next_physical_register: 1,
         }
     }
 }
@@ -316,6 +421,9 @@ pub struct O3RuntimeStats {
     fu_integer_mul_latency_cycles: u64,
     fu_integer_div_instructions: u64,
     fu_integer_div_latency_cycles: u64,
+    max_rob_occupancy: u64,
+    max_lsq_occupancy: u64,
+    rename_map_entries: u64,
 }
 
 impl O3RuntimeStats {
@@ -367,6 +475,18 @@ impl O3RuntimeStats {
         self.fu_integer_div_latency_cycles
     }
 
+    pub const fn max_rob_occupancy(self) -> u64 {
+        self.max_rob_occupancy
+    }
+
+    pub const fn max_lsq_occupancy(self) -> u64 {
+        self.max_lsq_occupancy
+    }
+
+    pub const fn rename_map_entries(self) -> u64 {
+        self.rename_map_entries
+    }
+
     pub const fn has_activity(self) -> bool {
         self.instructions != 0
             || self.rob_allocations != 0
@@ -380,6 +500,25 @@ impl O3RuntimeStats {
             || self.fu_integer_mul_latency_cycles != 0
             || self.fu_integer_div_instructions != 0
             || self.fu_integer_div_latency_cycles != 0
+            || self.max_rob_occupancy != 0
+            || self.max_lsq_occupancy != 0
+            || self.rename_map_entries != 0
+    }
+
+    fn observe_rob_occupancy(&mut self, occupancy: usize) {
+        self.max_rob_occupancy = self
+            .max_rob_occupancy
+            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
+    }
+
+    fn observe_lsq_occupancy(&mut self, occupancy: usize) {
+        self.max_lsq_occupancy = self
+            .max_lsq_occupancy
+            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
+    }
+
+    fn set_rename_map_entries(&mut self, entries: usize) {
+        self.rename_map_entries = u64::try_from(entries).unwrap_or(u64::MAX);
     }
 
     fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
@@ -430,6 +569,31 @@ impl O3RuntimeStats {
             self.lsq_stores = self.lsq_stores.saturating_add(stores);
         }
     }
+}
+
+fn next_runtime_sequence(snapshot: &O3RuntimeSnapshot) -> u64 {
+    snapshot
+        .reorder_buffer()
+        .iter()
+        .map(|entry| entry.sequence())
+        .chain(
+            snapshot
+                .load_store_queue()
+                .iter()
+                .map(|entry| entry.sequence()),
+        )
+        .max()
+        .map_or(0, |sequence| sequence.saturating_add(1))
+}
+
+fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
+    snapshot
+        .rename_map()
+        .iter()
+        .map(|entry| entry.physical().get())
+        .filter(|physical| *physical != u32::MAX)
+        .max()
+        .map_or(1, |physical| physical.saturating_add(1))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -486,6 +650,121 @@ fn o3_memory_destination_writes(access: &MemoryAccessKind) -> u64 {
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. } => 0,
     }
+}
+
+fn o3_memory_destination_registers(access: &MemoryAccessKind) -> Vec<(O3RegisterClass, u32)> {
+    match access {
+        MemoryAccessKind::Load { rd, .. }
+        | MemoryAccessKind::LoadReserved { rd, .. }
+        | MemoryAccessKind::StoreConditional { rd, .. }
+        | MemoryAccessKind::AtomicMemory { rd, .. } => {
+            if rd.is_zero() {
+                Vec::new()
+            } else {
+                vec![(O3RegisterClass::Integer, u32::from(rd.index()))]
+            }
+        }
+        MemoryAccessKind::FloatLoad { rd, .. } => {
+            vec![(O3RegisterClass::FloatingPoint, u32::from(rd.index()))]
+        }
+        MemoryAccessKind::VectorLoadUnitStride {
+            vd,
+            group_registers,
+            ..
+        }
+        | MemoryAccessKind::VectorLoadStrided {
+            vd,
+            group_registers,
+            ..
+        }
+        | MemoryAccessKind::VectorLoadIndexed {
+            vd,
+            group_registers,
+            ..
+        } => vector_rename_registers(*vd, *group_registers),
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd,
+            fields,
+            group_registers,
+            ..
+        } => vector_rename_registers(*vd, fields.saturating_mul(*group_registers)),
+        MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorStoreStrided { .. }
+        | MemoryAccessKind::VectorStoreIndexed { .. } => Vec::new(),
+    }
+}
+
+fn vector_rename_registers(
+    register: rem6_isa_riscv::VectorRegister,
+    count: usize,
+) -> Vec<(O3RegisterClass, u32)> {
+    (0..count)
+        .map(|offset| {
+            (
+                O3RegisterClass::Vector,
+                u32::from(register.index())
+                    .saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)),
+            )
+        })
+        .collect()
+}
+
+fn o3_lsq_entries(sequence: u64, access: &MemoryAccessKind) -> Vec<O3LoadStoreQueueEntry> {
+    match access {
+        MemoryAccessKind::Load { address, width, .. }
+        | MemoryAccessKind::FloatLoad { address, width, .. }
+        | MemoryAccessKind::LoadReserved { address, width, .. } => {
+            vec![o3_lsq_load(sequence, *address, width.bytes())]
+        }
+        MemoryAccessKind::VectorLoadUnitStride {
+            address, byte_len, ..
+        }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride {
+            address, byte_len, ..
+        } => {
+            vec![o3_lsq_load(sequence, *address, *byte_len)]
+        }
+        MemoryAccessKind::VectorLoadStrided {
+            address, span_len, ..
+        }
+        | MemoryAccessKind::VectorLoadIndexed {
+            address, span_len, ..
+        } => {
+            vec![o3_lsq_load(sequence, *address, *span_len)]
+        }
+        MemoryAccessKind::Store { address, width, .. }
+        | MemoryAccessKind::FloatStore { address, width, .. }
+        | MemoryAccessKind::StoreConditional { address, width, .. } => {
+            vec![o3_lsq_store(sequence, *address, width.bytes())]
+        }
+        MemoryAccessKind::VectorStoreUnitStride { address, data, .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { address, data, .. }
+        | MemoryAccessKind::VectorStoreStrided { address, data, .. }
+        | MemoryAccessKind::VectorStoreIndexed { address, data, .. } => {
+            vec![o3_lsq_store(sequence, *address, data.len())]
+        }
+        MemoryAccessKind::AtomicMemory { address, width, .. } => vec![
+            o3_lsq_load(sequence, *address, width.bytes()),
+            o3_lsq_store(sequence.saturating_add(1), *address, width.bytes()),
+        ],
+    }
+}
+
+fn o3_lsq_load(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
+    O3LoadStoreQueueEntry::load(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
+        .with_completed(true)
+}
+
+fn o3_lsq_store(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
+    O3LoadStoreQueueEntry::store(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
+        .with_completed(true)
+}
+
+fn o3_lsq_bytes(bytes: usize) -> u32 {
+    u32::try_from(bytes).unwrap_or(u32::MAX)
 }
 
 const fn integer_destination_count(register: Register) -> u64 {

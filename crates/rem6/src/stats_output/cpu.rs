@@ -898,6 +898,9 @@ fn emit_o3_runtime_stats(
             "fu_integer_div_instructions",
             o3.fu_integer_div_instructions(),
         ),
+        ("max_rob_occupancy", o3.max_rob_occupancy()),
+        ("max_lsq_occupancy", o3.max_lsq_occupancy()),
+        ("rename_map_entries", o3.rename_map_entries()),
     ] {
         increment_stat(
             stats,

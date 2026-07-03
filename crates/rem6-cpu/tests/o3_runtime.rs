@@ -7,8 +7,9 @@ use rem6_cpu::{
     O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord,
-    RiscvInstruction, RiscvVectorMaskMode, RiscvVectorMemoryInstruction, VectorRegister,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
+    RiscvExecutionRecord, RiscvInstruction, RiscvVectorMaskMode, RiscvVectorMemoryInstruction,
+    VectorRegister,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
@@ -308,6 +309,37 @@ fn o3_runtime_stats_ignore_x0_memory_destinations_for_rename_writes() {
     assert_eq!(stats.rename_writes(), 0);
     assert_eq!(stats.lsq_loads(), 3);
     assert_eq!(stats.lsq_stores(), 2);
+}
+
+#[test]
+fn o3_runtime_checkpoint_encoding_is_stable_after_out_of_order_rename_retire() {
+    let core = RiscvCore::new(core(0x8000));
+    for (index, register) in [reg(11), reg(5)].into_iter().enumerate() {
+        let pc = 0x8000 + u64::try_from(index).unwrap() * 4;
+        let instruction = RiscvInstruction::Addi {
+            rd: register,
+            rs1: reg(0),
+            imm: Immediate::new(i64::try_from(index).unwrap()),
+        };
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, 20 + u64::try_from(index).unwrap()),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                pc,
+                pc + 4,
+                vec![RegisterWrite::new(register, u64::try_from(index).unwrap())],
+                None,
+            ),
+        ));
+    }
+
+    let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.encode(), encoded);
+    assert_eq!(decoded.snapshot().rename_map()[0].architectural(), 5);
+    assert_eq!(decoded.snapshot().rename_map()[1].architectural(), 11);
 }
 
 fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {

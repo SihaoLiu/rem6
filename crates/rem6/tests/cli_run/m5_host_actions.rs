@@ -774,6 +774,78 @@ fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
+    let path = detailed_o3_checkpoint_state_binary("m5-switch-cpu-detailed-o3-checkpoint-state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
+    let after_detailed = checkpoint_chunk_checksum(host_actions, 1, "cpu0", "o3-runtime-state");
+    assert_ne!(
+        after_detailed, baseline,
+        "detailed O3 runtime checkpoint chunk should change after retired rename and LSQ work"
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.max_rob_occupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.max_lsq_occupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.rename_map_entries",
+        "Count",
+        3,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-text-stats");
 
@@ -856,6 +928,9 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_latency_cycles");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.max_rob_occupancy");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.max_lsq_occupancy");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.rename_map_entries");
 }
 
 #[test]
@@ -901,6 +976,9 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.fu_integer_mul_latency_cycles",
         "sim.cpu0.o3.fu_integer_div_instructions",
         "sim.cpu0.o3.fu_integer_div_latency_cycles",
+        "sim.cpu0.o3.max_rob_occupancy",
+        "sim.cpu0.o3.max_lsq_occupancy",
+        "sim.cpu0.o3.rename_map_entries",
         "system.cpu.rename.renamedInsts",
         "system.cpu.rename.renamedOperands",
         "system.cpu.iew.dispLoadInsts",
@@ -1682,6 +1760,28 @@ fn detailed_o3_fu_latency_binary(name: &str) -> std::path::PathBuf {
         i_type(77, 0, 0x0, 13, 0x13), // addi x13, x0, 77
         m5op(M5_FAIL),
     ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_checkpoint_state_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
+        m5op(M5_CHECKPOINT),           // baseline O3 runtime state
+        u_type(0, 5, 0x17),            // auipc x5, 0
+        i_type(48, 5, 0x0, 5, 0x13),   // addi x5, x5, data
+        i_type(7, 0, 0x0, 11, 0x13),   // addi x11, x0, 7
+        i_type(0, 5, 0b010, 12, 0x03), // lw x12, 0(x5)
+        s_type(4, 12, 5, 0b010),       // sw x12, 4(x5)
+        m5op(M5_CHECKPOINT),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 56 {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
 }
