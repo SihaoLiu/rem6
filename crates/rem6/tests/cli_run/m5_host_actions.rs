@@ -937,8 +937,8 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
-    assert_text_stat_absent(&stdout, "system.cpu.rob.writes");
-    assert_text_stat_absent(&stdout, "system.cpu.rob.reads");
+    assert_text_count_stat(&stdout, "system.cpu.rob.writes", 6);
+    assert_text_count_stat(&stdout, "system.cpu.rob.reads", 6);
 }
 
 #[test]

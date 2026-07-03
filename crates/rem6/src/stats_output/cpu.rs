@@ -938,6 +938,8 @@ fn emit_o3_runtime_stats(
         )?;
     }
     for (name, value) in [
+        ("rob.writes", o3.rob_allocations()),
+        ("rob.reads", o3.rob_commits()),
         ("rename.renamedInsts", o3.instructions()),
         ("rename.renamedOperands", o3.rename_writes()),
         ("iew.dispLoadInsts", o3.lsq_loads()),
