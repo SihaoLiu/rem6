@@ -141,6 +141,7 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Load { .. }
             | MemoryAccessKind::FloatLoad { .. }
             | MemoryAccessKind::VectorLoadUnitStride { .. }
+            | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
             | MemoryAccessKind::VectorLoadStrided { .. }
             | MemoryAccessKind::VectorLoadIndexed { .. } => MemoryOperation::ReadShared,
             MemoryAccessKind::LoadReserved { .. } => MemoryOperation::LoadLocked,
@@ -149,6 +150,7 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Store { .. }
             | MemoryAccessKind::FloatStore { .. }
             | MemoryAccessKind::VectorStoreUnitStride { .. }
+            | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
             | MemoryAccessKind::VectorStoreStrided { .. }
             | MemoryAccessKind::VectorStoreIndexed { .. } => MemoryOperation::Write,
         }

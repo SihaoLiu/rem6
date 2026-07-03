@@ -69,6 +69,17 @@ pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvErro
             },
         ));
     }
+    if is_unit_stride_segment_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::LoadSegmentUnitStride {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+                width,
+                fields: vector_segment_fields(raw),
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
     if is_strided_vector_memory(raw) {
         return Ok(RiscvInstruction::VectorMemory(
             RiscvVectorMemoryInstruction::LoadStrided {
@@ -104,6 +115,17 @@ pub(crate) fn decode_vector_store(raw: u32) -> Result<RiscvInstruction, RiscvErr
                 vs3: vector_register(raw, 7),
                 rs1: rs1(raw),
                 width,
+                mask: vector_memory_mask_mode(raw),
+            },
+        ));
+    }
+    if is_unit_stride_segment_vector_memory(raw) {
+        return Ok(RiscvInstruction::VectorMemory(
+            RiscvVectorMemoryInstruction::StoreSegmentUnitStride {
+                vs3: vector_register(raw, 7),
+                rs1: rs1(raw),
+                width,
+                fields: vector_segment_fields(raw),
                 mask: vector_memory_mask_mode(raw),
             },
         ));
@@ -148,6 +170,14 @@ fn is_unit_stride_fault_only_vector_load(raw: u32) -> bool {
     mop == 0 && lumop == 0b10000 && mew_and_nf == 0
 }
 
+fn is_unit_stride_segment_vector_memory(raw: u32) -> bool {
+    let mop = (raw >> 26) & 0x3;
+    let lumop_or_sumop = (raw >> 20) & 0x1f;
+    let mew = (raw >> 28) & 0x1;
+    let nf = (raw >> 29) & 0x7;
+    mop == 0 && lumop_or_sumop == 0 && mew == 0 && nf != 0
+}
+
 fn is_strided_vector_memory(raw: u32) -> bool {
     let mop = (raw >> 26) & 0x3;
     let mew_and_nf = (raw >> 28) & 0xf;
@@ -176,4 +206,8 @@ fn vector_register(raw: u32, shift: u32) -> VectorRegister {
 
 fn vector_memory_mask_mode(raw: u32) -> RiscvVectorMaskMode {
     RiscvVectorMaskMode::from_vm_bit((raw & (1 << 25)) != 0)
+}
+
+fn vector_segment_fields(raw: u32) -> u8 {
+    (((raw >> 29) & 0x7) + 1) as u8
 }

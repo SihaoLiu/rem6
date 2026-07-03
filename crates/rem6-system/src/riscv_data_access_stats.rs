@@ -708,12 +708,14 @@ fn mem_checker_tracks_access(access: &MemoryAccessKind) -> bool {
         MemoryAccessKind::Load { .. }
             | MemoryAccessKind::FloatLoad { .. }
             | MemoryAccessKind::VectorLoadUnitStride { .. }
+            | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
             | MemoryAccessKind::VectorLoadStrided { .. }
             | MemoryAccessKind::VectorLoadIndexed { .. }
             | MemoryAccessKind::LoadReserved { .. }
             | MemoryAccessKind::Store { .. }
             | MemoryAccessKind::FloatStore { .. }
             | MemoryAccessKind::VectorStoreUnitStride { .. }
+            | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
             | MemoryAccessKind::VectorStoreStrided { .. }
             | MemoryAccessKind::VectorStoreIndexed { .. }
             | MemoryAccessKind::StoreConditional { .. }
@@ -732,11 +734,15 @@ fn request_data(access: &MemoryAccessKind, size: u64) -> Option<Vec<u8>> {
         MemoryAccessKind::VectorStoreUnitStride { data, .. } => {
             data.get(..size).map(<[u8]>::to_vec)
         }
+        MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => {
+            data.get(..size).map(<[u8]>::to_vec)
+        }
         MemoryAccessKind::VectorStoreStrided { data, .. } => data.get(..size).map(<[u8]>::to_vec),
         MemoryAccessKind::VectorStoreIndexed { data, .. } => data.get(..size).map(<[u8]>::to_vec),
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
         | MemoryAccessKind::VectorLoadStrided { .. }
         | MemoryAccessKind::VectorLoadIndexed { .. }
         | MemoryAccessKind::LoadReserved { .. }

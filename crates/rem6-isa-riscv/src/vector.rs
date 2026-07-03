@@ -292,6 +292,13 @@ pub enum RiscvVectorMemoryInstruction {
         width: MemoryWidth,
         mask: RiscvVectorMaskMode,
     },
+    LoadSegmentUnitStride {
+        vd: VectorRegister,
+        rs1: Register,
+        width: MemoryWidth,
+        fields: u8,
+        mask: RiscvVectorMaskMode,
+    },
     LoadStrided {
         vd: VectorRegister,
         rs1: Register,
@@ -310,6 +317,13 @@ pub enum RiscvVectorMemoryInstruction {
         vs3: VectorRegister,
         rs1: Register,
         width: MemoryWidth,
+        mask: RiscvVectorMaskMode,
+    },
+    StoreSegmentUnitStride {
+        vs3: VectorRegister,
+        rs1: Register,
+        width: MemoryWidth,
+        fields: u8,
         mask: RiscvVectorMaskMode,
     },
     StoreStrided {

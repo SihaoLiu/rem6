@@ -673,6 +673,7 @@ impl OutstandingDataAccess {
             MemoryAccessKind::Load { .. }
             | MemoryAccessKind::FloatLoad { .. }
             | MemoryAccessKind::VectorLoadUnitStride { .. }
+            | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
             | MemoryAccessKind::VectorLoadStrided { .. }
             | MemoryAccessKind::VectorLoadIndexed { .. } => MemoryRequest::read_shared(
                 self.request_id,
@@ -707,6 +708,15 @@ impl OutstandingDataAccess {
                 self.size,
                 data.clone(),
                 store_byte_mask(self.size, byte_mask.as_deref())?,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => MemoryRequest::write(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                data.clone(),
+                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
@@ -900,6 +910,25 @@ fn record_load_completion(
             }
             write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
         }
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd,
+            fields,
+            element_count,
+            byte_len,
+            group_registers,
+            ..
+        } => {
+            let data = data.expect(missing_data);
+            assert_eq!(*byte_len, data.len(), "segment vector load response width");
+            scatter_segment_load(
+                data,
+                &mut state.hart,
+                *vd,
+                *fields,
+                *element_count,
+                *group_registers,
+            );
+        }
         MemoryAccessKind::VectorLoadStrided {
             vd,
             width,
@@ -947,8 +976,32 @@ fn record_load_completion(
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. } => {}
+    }
+}
+
+fn scatter_segment_load(
+    data: &[u8],
+    hart: &mut RiscvHartState,
+    register: VectorRegister,
+    fields: usize,
+    element_count: usize,
+    group_registers: usize,
+) {
+    debug_assert!(element_count > 0);
+    let element_bytes = data.len() / fields / element_count;
+    for field in 0..fields {
+        let field_register = vector_register_at(register, field * group_registers);
+        let mut destination = read_vector_register_group(hart, field_register, group_registers);
+        for element_index in 0..element_count {
+            let source_offset = (element_index * fields + field) * element_bytes;
+            let destination_offset = element_index * element_bytes;
+            destination[destination_offset..destination_offset + element_bytes]
+                .copy_from_slice(&data[source_offset..source_offset + element_bytes]);
+        }
+        write_vector_register_group(hart, field_register, group_registers, &destination);
     }
 }
 
@@ -1038,6 +1091,7 @@ pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
         MemoryAccessKind::Load { width, .. }
         | MemoryAccessKind::FloatLoad { width, .. }
         | MemoryAccessKind::VectorLoadUnitStride { width, .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { width, .. }
         | MemoryAccessKind::VectorLoadStrided { width, .. }
         | MemoryAccessKind::VectorLoadIndexed { width, .. }
         | MemoryAccessKind::LoadReserved { width, .. }
@@ -1046,6 +1100,7 @@ pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
         | MemoryAccessKind::Store { width, .. }
         | MemoryAccessKind::FloatStore { width, .. }
         | MemoryAccessKind::VectorStoreUnitStride { width, .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { width, .. }
         | MemoryAccessKind::VectorStoreStrided { width, .. }
         | MemoryAccessKind::VectorStoreIndexed { width, .. } => *width,
     }
@@ -1056,7 +1111,13 @@ pub(crate) fn access_size(access: &MemoryAccessKind) -> Result<AccessSize, Riscv
         MemoryAccessKind::VectorLoadUnitStride { byte_len, .. } => {
             AccessSize::new(*byte_len as u64).map_err(RiscvCpuError::Memory)
         }
+        MemoryAccessKind::VectorLoadSegmentUnitStride { byte_len, .. } => {
+            AccessSize::new(*byte_len as u64).map_err(RiscvCpuError::Memory)
+        }
         MemoryAccessKind::VectorStoreUnitStride { data, .. } => {
+            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
+        }
+        MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => {
             AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
         }
         MemoryAccessKind::VectorLoadStrided { span_len, .. } => {
@@ -1080,12 +1141,14 @@ fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
         | MemoryAccessKind::VectorLoadStrided { .. }
         | MemoryAccessKind::VectorLoadIndexed { .. }
         | MemoryAccessKind::LoadReserved { .. } => RiscvPmpAccessKind::Read,
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. }
         | MemoryAccessKind::StoreConditional { .. }
@@ -1098,12 +1161,14 @@ fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
         | MemoryAccessKind::VectorLoadStrided { .. }
         | MemoryAccessKind::VectorLoadIndexed { .. }
         | MemoryAccessKind::LoadReserved { .. } => RiscvPmaAccessKind::Read,
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. }
         | MemoryAccessKind::StoreConditional { .. }
@@ -1116,6 +1181,7 @@ pub(crate) fn access_address(access: &MemoryAccessKind) -> u64 {
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::FloatLoad { address, .. }
         | MemoryAccessKind::VectorLoadUnitStride { address, .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { address, .. }
         | MemoryAccessKind::VectorLoadStrided { address, .. }
         | MemoryAccessKind::VectorLoadIndexed { address, .. }
         | MemoryAccessKind::LoadReserved { address, .. }
@@ -1124,6 +1190,7 @@ pub(crate) fn access_address(access: &MemoryAccessKind) -> u64 {
         | MemoryAccessKind::Store { address, .. }
         | MemoryAccessKind::FloatStore { address, .. }
         | MemoryAccessKind::VectorStoreUnitStride { address, .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { address, .. }
         | MemoryAccessKind::VectorStoreStrided { address, .. }
         | MemoryAccessKind::VectorStoreIndexed { address, .. } => *address,
     }
@@ -1306,6 +1373,7 @@ pub(crate) fn mmio_request(
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
         | MemoryAccessKind::VectorLoadStrided { .. }
         | MemoryAccessKind::VectorLoadIndexed { .. }
         | MemoryAccessKind::LoadReserved { .. } => {
@@ -1330,6 +1398,13 @@ pub(crate) fn mmio_request(
             address,
             data.clone(),
             store_byte_mask(size, byte_mask.as_deref())?,
+        )
+        .map_err(RiscvCpuError::Mmio),
+        MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => MmioRequest::write(
+            mmio_request_id(request),
+            address,
+            data.clone(),
+            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
         )
         .map_err(RiscvCpuError::Mmio),
         MemoryAccessKind::VectorStoreStrided {

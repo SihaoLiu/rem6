@@ -4900,6 +4900,33 @@ fn rem6_run_in_order_pipeline_models_cache_backed_vector_unit_stride_full_lmul2_
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_segment_e32_m1_load_store() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-segment-e32-m1-load-store",
+        &unit_stride_segment_e32_m1_vector_memory_program(),
+        120,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        22,
+        "e32/m1 segment load/store should scatter two fields into vector registers and gather them back through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-segment-e32-m1-load-store",
+        &unit_stride_segment_e32_m1_vector_memory_program(),
+        500,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        22,
+        "cache-backed e32/m1 segment load/store should scatter two fields into vector registers and gather them back through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul4_register_group_memory() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-full-lmul4-load-store",
@@ -13097,6 +13124,55 @@ fn masked_unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
     program
 }
 
+fn unit_stride_segment_e32_m1_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 128;
+    const SEGMENT_BYTES: i32 = 16;
+    const FAIL_INSTRUCTION_INDEX: i32 = 22;
+
+    let mut words = vec![
+        u_type(0, 10, 0x17),                                          // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),               // addi x10, x10, data
+        i_type(0, 10, 0b000, 12, 0x13), // addi x12, x10, source segment
+        i_type(SEGMENT_BYTES, 10, 0b000, 13, 0x13), // addi x13, x10, store result
+        i_type(SEGMENT_BYTES * 2, 10, 0b000, 19, 0x13), // addi x19, x10, expected result
+        i_type(2, 0, 0b000, 11, 0x13),  // addi x11, x0, vl
+        vsetvli_type(0xd0, 11, 5),      // vsetvli x5, x11, e32, m1, ta, ma
+        vector_unit_stride_segment_load_type(true, 2, 0b110, 12, 2), // vlseg2e32.v v2, (x12)
+        vector_unit_stride_segment_store_type(true, 2, 0b110, 13, 2), // vsseg2e32.v v2, (x13)
+    ];
+
+    for word_index in 0..4 {
+        let offset = (word_index * 4) as i32;
+        words.push(i_type(offset, 13, 0b010, 17, 0x03)); // lw x17, store result
+        words.push(i_type(offset, 19, 0b010, 18, 0x03)); // lw x18, expected result
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (FAIL_INSTRUCTION_INDEX - branch_index) * 4,
+            18,
+            17,
+            0b001,
+        ));
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let segment_words: [u32; 4] = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
+    let mut program = riscv64_program(&words);
+    for word in segment_words {
+        program.extend_from_slice(&word.to_le_bytes());
+    }
+    program.extend_from_slice(&[0; SEGMENT_BYTES as usize]);
+    for word in segment_words {
+        program.extend_from_slice(&word.to_le_bytes());
+    }
+    program
+}
+
 fn masked_unit_stride_vector_memory_program() -> Vec<u8> {
     const DATA_OFFSET_BYTES: i32 = 256;
     const WORDS_PER_VECTOR: usize = 4;
@@ -13313,6 +13389,36 @@ fn vector_unit_stride_fault_only_load_type(vm_unmasked: bool, width: u32, rs1: u
 
 fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8) -> u32 {
     (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
+fn vector_unit_stride_segment_load_type(
+    vm_unmasked: bool,
+    fields: u32,
+    width: u32,
+    rs1: u8,
+    vd: u8,
+) -> u32 {
+    ((fields - 1) << 29)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_unit_stride_segment_store_type(
+    vm_unmasked: bool,
+    fields: u32,
+    width: u32,
+    rs1: u8,
+    vs3: u8,
+) -> u32 {
+    ((fields - 1) << 29)
+        | (u32::from(vm_unmasked) << 25)
         | (u32::from(rs1) << 15)
         | (width << 12)
         | (u32::from(vs3) << 7)

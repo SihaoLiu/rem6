@@ -276,6 +276,15 @@ pub enum MemoryAccessKind {
         byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
+    VectorLoadSegmentUnitStride {
+        vd: VectorRegister,
+        address: u64,
+        width: MemoryWidth,
+        fields: usize,
+        element_count: usize,
+        byte_len: usize,
+        group_registers: usize,
+    },
     VectorLoadStrided {
         vd: VectorRegister,
         address: u64,
@@ -337,6 +346,14 @@ pub enum MemoryAccessKind {
         byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
+    VectorStoreSegmentUnitStride {
+        address: u64,
+        width: MemoryWidth,
+        fields: usize,
+        element_count: usize,
+        data: Vec<u8>,
+        group_registers: usize,
+    },
     VectorStoreStrided {
         address: u64,
         width: MemoryWidth,
@@ -372,11 +389,13 @@ impl MemoryAccessKind {
             Self::Load { .. }
             | Self::FloatLoad { .. }
             | Self::VectorLoadUnitStride { .. }
+            | Self::VectorLoadSegmentUnitStride { .. }
             | Self::VectorLoadStrided { .. }
             | Self::VectorLoadIndexed { .. }
             | Self::Store { .. }
             | Self::FloatStore { .. }
             | Self::VectorStoreUnitStride { .. }
+            | Self::VectorStoreSegmentUnitStride { .. }
             | Self::VectorStoreStrided { .. }
             | Self::VectorStoreIndexed { .. } => RiscvMemoryOrdering::none(),
         }
@@ -417,9 +436,11 @@ impl MemoryAccessKind {
             | Self::Store { .. }
             | Self::FloatStore { .. }
             | Self::VectorLoadUnitStride { .. }
+            | Self::VectorLoadSegmentUnitStride { .. }
             | Self::VectorLoadStrided { .. }
             | Self::VectorLoadIndexed { .. }
             | Self::VectorStoreUnitStride { .. }
+            | Self::VectorStoreSegmentUnitStride { .. }
             | Self::VectorStoreStrided { .. }
             | Self::VectorStoreIndexed { .. } => None,
         }

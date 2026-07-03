@@ -82,6 +82,27 @@ pub(crate) fn memory_access(
             }
             unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
         }
+        RiscvVectorMemoryInstruction::LoadSegmentUnitStride {
+            vd,
+            rs1,
+            width,
+            fields,
+            mask,
+        } => {
+            let plan = segment_unit_stride_access_plan(hart, vd, width, fields, mask).ok_or(())?;
+            if plan.byte_len == 0 {
+                return Ok(None);
+            }
+            Ok(Some(MemoryAccessKind::VectorLoadSegmentUnitStride {
+                vd,
+                address: hart.read(rs1),
+                width,
+                fields: plan.fields,
+                element_count: plan.element_count,
+                byte_len: plan.byte_len,
+                group_registers: plan.group_registers,
+            }))
+        }
         RiscvVectorMemoryInstruction::LoadStrided {
             vd,
             rs1,
@@ -171,6 +192,28 @@ pub(crate) fn memory_access(
                 width,
                 data,
                 byte_mask,
+                group_registers: plan.group_registers,
+            }))
+        }
+        RiscvVectorMemoryInstruction::StoreSegmentUnitStride {
+            vs3,
+            rs1,
+            width,
+            fields,
+            mask,
+        } => {
+            let plan = segment_unit_stride_access_plan(hart, vs3, width, fields, mask).ok_or(())?;
+            if plan.byte_len == 0 {
+                return Ok(None);
+            }
+            let data = segment_store_payload(hart, vs3, &plan);
+
+            Ok(Some(MemoryAccessKind::VectorStoreSegmentUnitStride {
+                address: hart.read(rs1),
+                width,
+                fields: plan.fields,
+                element_count: plan.element_count,
+                data,
                 group_registers: plan.group_registers,
             }))
         }
@@ -297,6 +340,14 @@ struct UnitStrideAccessPlan {
     group_registers: usize,
 }
 
+struct SegmentUnitStrideAccessPlan {
+    fields: usize,
+    element_count: usize,
+    element_bytes: usize,
+    byte_len: usize,
+    group_registers: usize,
+}
+
 struct StridedAccessPlan {
     element_count: usize,
     element_bytes: usize,
@@ -340,6 +391,53 @@ fn unit_stride_access_plan(
             group_registers,
         },
     )
+}
+
+fn segment_unit_stride_access_plan(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    width: MemoryWidth,
+    fields: u8,
+    mask: RiscvVectorMaskMode,
+) -> Option<SegmentUnitStrideAccessPlan> {
+    let config = hart.vector_config();
+    let fields = usize::from(fields);
+    let vlmul = config.vtype() & 0x7;
+    let group_registers = config.register_group_registers()?;
+    if config.vill()
+        || mask.is_masked()
+        || width != MemoryWidth::Word
+        || fields != 2
+        || vlmul != 0
+        || group_registers != 1
+        || config.element_width_bytes()? != width.bytes()
+    {
+        return None;
+    }
+
+    for field in 0..fields {
+        if !valid_register_group(
+            segment_field_register(register, field, group_registers)?,
+            group_registers,
+        ) {
+            return None;
+        }
+    }
+
+    let element_count = config.vl() as usize;
+    let element_bytes = width.bytes();
+    let byte_len = element_count
+        .checked_mul(fields)?
+        .checked_mul(element_bytes)?;
+    (byte_len <= fields * group_registers * RISCV_VECTOR_REGISTER_BYTES
+        && byte_len <= MAX_VECTOR_GROUP_BYTES)
+        .then_some(SegmentUnitStrideAccessPlan {
+            fields,
+            element_count,
+            element_bytes,
+            byte_len,
+            group_registers,
+        })
 }
 
 fn strided_access_plan(
@@ -601,6 +699,35 @@ fn indexed_store_payload(
         byte_mask[memory_offset..memory_offset + plan.element_bytes].fill(true);
     }
     (data, byte_mask)
+}
+
+fn segment_store_payload(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    plan: &SegmentUnitStrideAccessPlan,
+) -> Vec<u8> {
+    let mut data = vec![0; plan.byte_len];
+    for element_index in 0..plan.element_count {
+        for field in 0..plan.fields {
+            let source_register = segment_field_register(register, field, plan.group_registers)
+                .expect("validated segment field register");
+            let source = read_register_group(hart, source_register, plan.group_registers);
+            let source_offset = element_index * plan.element_bytes;
+            let memory_offset = (element_index * plan.fields + field) * plan.element_bytes;
+            data[memory_offset..memory_offset + plan.element_bytes]
+                .copy_from_slice(&source[source_offset..source_offset + plan.element_bytes]);
+        }
+    }
+    data
+}
+
+fn segment_field_register(
+    register: VectorRegister,
+    field: usize,
+    group_registers: usize,
+) -> Option<VectorRegister> {
+    let index = usize::from(register.index()).checked_add(field.checked_mul(group_registers)?)?;
+    (index < 32).then(|| VectorRegister::from_field(index as u32))
 }
 
 fn active_byte_mask(
