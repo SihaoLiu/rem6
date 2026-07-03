@@ -7145,6 +7145,33 @@ fn rem6_run_in_order_pipeline_suppresses_noncontiguous_masked_vector_unit_stride
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_suppresses_noncontiguous_masked_vector_unit_stride_cross_line_load() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-masked-e32-m1-noncontig-cross-line-load-suppression",
+        &masked_unit_stride_noncontiguous_cross_line_suppressed_load_program(),
+        240,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        28,
+        "non-contiguous masked e32/m1 unit-stride load should trim the leading inactive lane while preserving the interior inactive lane on the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-masked-e32-m1-noncontig-cross-line-load-suppression",
+        &masked_unit_stride_noncontiguous_cross_line_suppressed_load_program(),
+        800,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        28,
+        "cache-backed non-contiguous masked e32/m1 unit-stride load should trim the leading inactive lane while preserving the interior inactive lane on the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_memory_element_widths() {
     for (name, program, committed) in [
         (
@@ -13625,6 +13652,73 @@ fn masked_unit_stride_noncontiguous_cross_line_suppressed_store_program() -> Vec
         [0x5151_5151, 0x5252_5252, 0x5353_5353, 0x5454_5454],
         [0x6161_6161, 0x6262_6262, 0x6363_6363, 0x6464_6464],
         [0x5454_5454, 0xb1b2_b3b4, 0x6262_6262, 0xd1d2_d3d4],
+    ];
+    let mut program = riscv64_program(&words);
+    for block in blocks {
+        for word in block {
+            program.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    program
+}
+
+fn masked_unit_stride_noncontiguous_cross_line_suppressed_load_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 256;
+    const BLOCK_BYTES: i32 = 16;
+    const MASK_OFFSET_BYTES: i32 = 0;
+    const INITIAL_OFFSET_BYTES: i32 = BLOCK_BYTES;
+    const SOURCE_OFFSET_BYTES: i32 = BLOCK_BYTES * 2;
+    const SOURCE_TAIL_OFFSET_BYTES: i32 = SOURCE_OFFSET_BYTES + 12;
+    const LOAD_RESULT_OFFSET_BYTES: i32 = BLOCK_BYTES * 4;
+    const EXPECTED_LOAD_OFFSET_BYTES: i32 = BLOCK_BYTES * 5;
+    const FAIL_INSTRUCTION_INDEX: i32 = 28;
+
+    let mut words = vec![
+        u_type(0, 10, 0x17),                                     // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),          // addi x10, x10, data
+        i_type(MASK_OFFSET_BYTES, 10, 0b000, 12, 0x13),          // addi x12, x10, mask data
+        i_type(INITIAL_OFFSET_BYTES, 10, 0b000, 13, 0x13),       // addi x13, x10, initial vector
+        i_type(SOURCE_OFFSET_BYTES, 10, 0b000, 14, 0x13),        // addi x14, x10, source block
+        i_type(SOURCE_TAIL_OFFSET_BYTES, 10, 0b000, 15, 0x13),   // addi x15, x10, source tail
+        i_type(LOAD_RESULT_OFFSET_BYTES, 10, 0b000, 16, 0x13),   // addi x16, x10, load result
+        i_type(EXPECTED_LOAD_OFFSET_BYTES, 10, 0b000, 19, 0x13), // addi x19, x10, expected load
+        i_type(4, 0, 0b000, 11, 0x13),                           // addi x11, x0, vl
+        vsetvli_type(0xd0, 11, 5),                               // vsetvli x5, x11, e32, m1, ta, ma
+        vector_unit_stride_load_type(true, 0b110, 12, 8),        // vle32.v v8, (x12)
+        vector_vi_type(0b011000, 8, 0, 0),                       // vmseq.vi v0, v8, 0
+        vector_unit_stride_load_type(true, 0b110, 13, 2),        // vle32.v v2, (x13)
+        vector_unit_stride_load_type(false, 0b110, 15, 2),       // vle32.v v2, (x15), v0.t
+        vector_unit_stride_store_type(true, 0b110, 16, 2),       // vse32.v v2, (x16)
+    ];
+
+    for word_index in 0..4 {
+        let offset = (word_index * 4) as i32;
+        words.push(i_type(offset, 16, 0b010, 17, 0x03)); // lw x17, observed load result
+        words.push(i_type(offset, 19, 0b010, 18, 0x03)); // lw x18, expected load result
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (FAIL_INSTRUCTION_INDEX - branch_index) * 4,
+            18,
+            17,
+            0b001,
+        ));
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    assert_eq!(words.len() as i32, FAIL_INSTRUCTION_INDEX + 1);
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let blocks: [[u32; 4]; 6] = [
+        [1, 0, 1, 0],
+        [0xa1a2_a3a4, 0x5151_5151, 0xc1c2_c3c4, 0x5353_5353],
+        [0xeeee_eeee, 0xeeee_eeee, 0xeeee_eeee, 0x4141_4141],
+        [0xb1b2_b3b4, 0x9999_9999, 0xd1d2_d3d4, 0xeeee_eeee],
+        [0, 0, 0, 0],
+        [0xa1a2_a3a4, 0xb1b2_b3b4, 0xc1c2_c3c4, 0xd1d2_d3d4],
     ];
     let mut program = riscv64_program(&words);
     for block in blocks {

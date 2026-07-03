@@ -67,7 +67,7 @@ pub(crate) fn masked_vector_memory_request_span(
     base_address: Address,
     base_size: AccessSize,
 ) -> Result<MaskedVectorRequestSpan, RiscvCpuError> {
-    let Some((start, end)) = contiguous_masked_vector_memory_span(access) else {
+    let Some((start, end)) = masked_vector_memory_active_span(access) else {
         return Ok(MaskedVectorRequestSpan {
             address: base_address,
             size: base_size,
@@ -98,7 +98,7 @@ pub(crate) fn masked_vector_memory_request_span(
     })
 }
 
-fn contiguous_masked_vector_memory_span(access: &MemoryAccessKind) -> Option<(usize, usize)> {
+fn masked_vector_memory_active_span(access: &MemoryAccessKind) -> Option<(usize, usize)> {
     match access {
         MemoryAccessKind::VectorLoadUnitStride {
             byte_len,
@@ -109,7 +109,7 @@ fn contiguous_masked_vector_memory_span(access: &MemoryAccessKind) -> Option<(us
             byte_len,
             byte_mask: Some(byte_mask),
             ..
-        } if byte_mask.len() == *byte_len => contiguous_active_byte_span(byte_mask),
+        } if byte_mask.len() == *byte_len => active_byte_span(byte_mask),
         MemoryAccessKind::VectorLoadIndexed {
             span_len,
             byte_mask: Some(byte_mask),
@@ -205,16 +205,6 @@ fn strided_active_byte_span(
     (last != 0).then_some((first, last))
 }
 
-fn contiguous_active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
-    let first = byte_mask.iter().position(|active| *active)?;
-    let last = byte_mask.iter().rposition(|active| *active)? + 1;
-    if byte_mask[first..last].iter().all(|active| *active) {
-        Some((first, last))
-    } else {
-        None
-    }
-}
-
 fn active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
     let first = byte_mask.iter().position(|active| *active)?;
     let last = byte_mask.iter().rposition(|active| *active)? + 1;
@@ -232,7 +222,7 @@ pub(crate) fn normalized_masked_load_data<'a>(
     let Some(byte_mask) = byte_mask else {
         return Cow::Borrowed(data);
     };
-    let Some((start, end)) = contiguous_active_byte_span(byte_mask) else {
+    let Some((start, end)) = active_byte_span(byte_mask) else {
         return Cow::Borrowed(data);
     };
     if byte_mask.len() != expected_len || end - start != data.len() {

@@ -48,6 +48,14 @@ fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
     (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
 }
 
+fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) -> u32 {
+    (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
 fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8) -> u32 {
     (u32::from(vm_unmasked) << 25)
         | (u32::from(rs1) << 15)
@@ -433,6 +441,86 @@ fn riscv_core_data_translation_suppresses_leading_inactive_noncontiguous_masked_
         read_store_bytes(&store, 0x9008, 4, 4),
         0xd1d2_d3d4_u32.to_le_bytes()
     );
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_leading_inactive_noncontiguous_masked_vector_load_span() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x3ffc);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(4, 0, 0b000, 11, 0x13),                    // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),                        // vsetvli x5, x11, e32, m1
+            vector_unit_stride_load_type(false, 0b110, 2, 2), // vle32.v v2, (x2), v0.t
+        ],
+        &[(
+            0x9000,
+            vec![
+                0xb4, 0xb3, 0xb2, 0xb1, 0x99, 0xaa, 0xbb, 0xcc, 0xd4, 0xd3, 0xd2, 0xd1,
+            ],
+        )],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_1010;
+    core.write_vector_register(vreg(0), mask);
+    let mut destination = [0; RISCV_VECTOR_REGISTER_BYTES];
+    destination[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    destination[4..8].copy_from_slice(&0x5151_5151_u32.to_le_bytes());
+    destination[8..12].copy_from_slice(&0xc1c2_c3c4_u32.to_le_bytes());
+    destination[12..16].copy_from_slice(&0x5353_5353_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), destination);
+
+    let mut issued_translated_load = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated non-contiguous masked load should trim the leading inactive lane");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. }))
+            || core
+                .data_access_events()
+                .iter()
+                .any(|event| event.physical_address() == Address::new(0x9000))
+        {
+            issued_translated_load = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_load,
+        "translated non-contiguous masked load should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9000))
+        .expect(
+            "translated non-contiguous masked load should record the first active physical address",
+        );
+    assert_eq!(issued.size(), AccessSize::new(12).unwrap());
+    let destination = core.read_vector_register(vreg(2));
+    assert_eq!(
+        &destination[0..4],
+        &0xa1a2_a3a4_u32.to_le_bytes(),
+        "leading inactive unit-stride load lane should preserve the destination register"
+    );
+    assert_eq!(&destination[4..8], &0xb1b2_b3b4_u32.to_le_bytes());
+    assert_eq!(
+        &destination[8..12],
+        &0xc1c2_c3c4_u32.to_le_bytes(),
+        "interior inactive unit-stride load lane should preserve the destination register"
+    );
+    assert_eq!(&destination[12..16], &0xd1d2_d3d4_u32.to_le_bytes());
 }
 
 #[test]
