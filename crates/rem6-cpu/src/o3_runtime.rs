@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
-use rem6_memory::Address;
+use rem6_memory::{Address, MemoryRequestId};
 
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::{
@@ -245,6 +245,7 @@ impl O3RuntimeSnapshot {
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
+    store_forwarding_window: O3StoreForwardingWindow,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -255,6 +256,7 @@ impl O3RuntimeState {
         self.next_sequence = next_runtime_sequence(&snapshot);
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
+        self.store_forwarding_window = O3StoreForwardingWindow::default();
         Ok(())
     }
 
@@ -268,11 +270,13 @@ impl O3RuntimeState {
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
+        self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
 
     pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
         self.record_runtime_state(execution);
         self.stats.record_retired_instruction(execution);
+        self.record_store_forwarding_window(execution);
     }
 
     fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) {
@@ -373,6 +377,56 @@ impl O3RuntimeState {
         physical
     }
 
+    fn record_store_forwarding_window(&mut self, execution: &RiscvCpuExecutionEvent) {
+        let record = execution.execution();
+        match record.memory_access() {
+            Some(access @ MemoryAccessKind::Load { .. }) => {
+                self.store_forwarding_window.pending_load_match =
+                    self.stats.record_store_to_load_forwarding(
+                        access,
+                        execution.fetch().request_id(),
+                        record.register_writes(),
+                        self.store_forwarding_window.store,
+                    );
+                self.store_forwarding_window.store = None;
+            }
+            Some(access) => {
+                self.store_forwarding_window.store = o3_store_forwarding_entry(access);
+            }
+            None => {
+                self.store_forwarding_window.store = None;
+            }
+        }
+    }
+
+    pub fn record_completed_load_data(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+        data: &[u8],
+    ) {
+        let Some(pending) = self.store_forwarding_window.pending_load_match else {
+            return;
+        };
+        if pending.fetch_request != fetch_request {
+            return;
+        }
+        self.store_forwarding_window.pending_load_match = None;
+
+        let Some(load) = o3_load_forwarding_access(access) else {
+            return;
+        };
+        if load.address != pending.address || load.bytes != pending.bytes {
+            return;
+        }
+
+        if o3_load_data_value(data, pending.bytes)
+            .is_some_and(|value| o3_low_bytes_equal(value, pending.value, pending.bytes))
+        {
+            self.stats.record_store_to_load_forwarding_match();
+        }
+    }
+
     pub fn pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
         O3PendingStateCheckpointPayload::from_snapshot(self.snapshot.pending_state.clone())
             .expect("O3 runtime pending-state snapshot is valid")
@@ -401,10 +455,32 @@ impl Default for O3RuntimeState {
         Self {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
+            store_forwarding_window: O3StoreForwardingWindow::default(),
             next_sequence: 0,
             next_physical_register: 1,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3StoreForwardingWindow {
+    store: Option<O3StoreForwardingEntry>,
+    pending_load_match: Option<O3PendingLoadForwardingMatch>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3StoreForwardingEntry {
+    address: Address,
+    bytes: u32,
+    value: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3PendingLoadForwardingMatch {
+    fetch_request: MemoryRequestId,
+    address: Address,
+    bytes: u32,
+    value: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -415,6 +491,8 @@ pub struct O3RuntimeStats {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    lsq_store_to_load_forwarding_candidates: u64,
+    lsq_store_to_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
     fu_latency_cycles: u64,
     fu_integer_mul_instructions: u64,
@@ -449,6 +527,14 @@ impl O3RuntimeStats {
 
     pub const fn lsq_stores(self) -> u64 {
         self.lsq_stores
+    }
+
+    pub const fn lsq_store_to_load_forwarding_candidates(self) -> u64 {
+        self.lsq_store_to_load_forwarding_candidates
+    }
+
+    pub const fn lsq_store_to_load_forwarding_matches(self) -> u64 {
+        self.lsq_store_to_load_forwarding_matches
     }
 
     pub const fn fu_latency_instructions(self) -> u64 {
@@ -494,6 +580,8 @@ impl O3RuntimeStats {
             || self.rename_writes != 0
             || self.lsq_loads != 0
             || self.lsq_stores != 0
+            || self.lsq_store_to_load_forwarding_candidates != 0
+            || self.lsq_store_to_load_forwarding_matches != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.fu_integer_mul_instructions != 0
@@ -569,6 +657,47 @@ impl O3RuntimeStats {
             self.lsq_stores = self.lsq_stores.saturating_add(stores);
         }
     }
+
+    fn record_store_to_load_forwarding(
+        &mut self,
+        access: &MemoryAccessKind,
+        fetch_request: MemoryRequestId,
+        register_writes: &[rem6_isa_riscv::RegisterWrite],
+        prior_store: Option<O3StoreForwardingEntry>,
+    ) -> Option<O3PendingLoadForwardingMatch> {
+        let Some(prior_store) = prior_store else {
+            return None;
+        };
+        let Some(load) = o3_load_forwarding_access(access) else {
+            return None;
+        };
+        if load.address != prior_store.address || load.bytes != prior_store.bytes {
+            return None;
+        }
+
+        self.lsq_store_to_load_forwarding_candidates = self
+            .lsq_store_to_load_forwarding_candidates
+            .saturating_add(1);
+        match o3_load_register_value(register_writes, load.register) {
+            Some(value) => {
+                if o3_low_bytes_equal(value, prior_store.value, load.bytes) {
+                    self.record_store_to_load_forwarding_match();
+                }
+                None
+            }
+            None => Some(O3PendingLoadForwardingMatch {
+                fetch_request,
+                address: load.address,
+                bytes: load.bytes,
+                value: prior_store.value,
+            }),
+        }
+    }
+
+    fn record_store_to_load_forwarding_match(&mut self) {
+        self.lsq_store_to_load_forwarding_matches =
+            self.lsq_store_to_load_forwarding_matches.saturating_add(1);
+    }
 }
 
 fn next_runtime_sequence(snapshot: &O3RuntimeSnapshot) -> u64 {
@@ -602,6 +731,13 @@ enum O3FuLatencyClass {
     ScalarIntegerDiv,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3LoadForwardingAccess {
+    register: Register,
+    address: Address,
+    bytes: u32,
+}
+
 const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3FuLatencyClass> {
     match instruction {
         RiscvInstruction::Mul { .. }
@@ -619,6 +755,66 @@ const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3FuLatenc
         | RiscvInstruction::Remuw { .. } => Some(O3FuLatencyClass::ScalarIntegerDiv),
         _ => None,
     }
+}
+
+fn o3_store_forwarding_entry(access: &MemoryAccessKind) -> Option<O3StoreForwardingEntry> {
+    match access {
+        MemoryAccessKind::Store {
+            address,
+            width,
+            value,
+        } => Some(O3StoreForwardingEntry {
+            address: Address::new(*address),
+            bytes: o3_lsq_bytes(width.bytes()),
+            value: *value,
+        }),
+        _ => None,
+    }
+}
+
+fn o3_load_forwarding_access(access: &MemoryAccessKind) -> Option<O3LoadForwardingAccess> {
+    match access {
+        MemoryAccessKind::Load {
+            rd, address, width, ..
+        } => Some(O3LoadForwardingAccess {
+            register: *rd,
+            address: Address::new(*address),
+            bytes: o3_lsq_bytes(width.bytes()),
+        }),
+        _ => None,
+    }
+}
+
+fn o3_load_register_value(
+    register_writes: &[rem6_isa_riscv::RegisterWrite],
+    register: Register,
+) -> Option<u64> {
+    register_writes
+        .iter()
+        .find(|write| write.register() == register)
+        .map(rem6_isa_riscv::RegisterWrite::value)
+}
+
+fn o3_load_data_value(data: &[u8], bytes: u32) -> Option<u64> {
+    let width = usize::try_from(bytes).ok()?;
+    if data.len() < width || width > U64_BYTES {
+        return None;
+    }
+    let mut value = 0_u64;
+    for (index, byte) in data.iter().take(width).copied().enumerate() {
+        value |= u64::from(byte) << (index * 8);
+    }
+    Some(value)
+}
+
+fn o3_low_bytes_equal(lhs: u64, rhs: u64, bytes: u32) -> bool {
+    let bits = bytes.saturating_mul(8);
+    let mask = if bits >= u64::BITS {
+        u64::MAX
+    } else {
+        (1_u64 << bits) - 1
+    };
+    (lhs & mask) == (rhs & mask)
 }
 
 fn o3_memory_destination_writes(access: &MemoryAccessKind) -> u64 {
@@ -1312,6 +1508,19 @@ impl crate::RiscvCore {
             .expect("riscv core lock")
             .o3_runtime
             .record_retired_instruction(execution);
+    }
+
+    pub fn record_o3_completed_load_data(
+        &self,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+        data: &[u8],
+    ) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .record_completed_load_data(fetch_request, access, data);
     }
 
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {

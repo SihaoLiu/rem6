@@ -1069,6 +1069,11 @@ fn record_load_completion(
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. } => {}
     }
+    if let Some(data) = data {
+        state
+            .o3_runtime
+            .record_completed_load_data(access.fetch_request, &access.access, data);
+    }
 }
 
 fn scatter_segment_load(

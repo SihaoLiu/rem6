@@ -889,6 +889,14 @@ fn emit_o3_runtime_stats(
         ("rename_writes", o3.rename_writes()),
         ("lsq_loads", o3.lsq_loads()),
         ("lsq_stores", o3.lsq_stores()),
+        (
+            "lsq_store_to_load_forwarding_candidates",
+            o3.lsq_store_to_load_forwarding_candidates(),
+        ),
+        (
+            "lsq_store_to_load_forwarding_matches",
+            o3.lsq_store_to_load_forwarding_matches(),
+        ),
         ("fu_latency_instructions", o3.fu_latency_instructions()),
         (
             "fu_integer_mul_instructions",
