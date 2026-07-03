@@ -444,6 +444,14 @@ fn vector_pma_element_offsets(access: &MemoryAccessKind) -> Option<Vec<usize>> {
             width,
             ..
         } => active_suppressed_span_element_offsets(byte_mask, *byte_len, width.bytes()),
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            byte_len,
+            byte_mask: None,
+            width,
+            fields,
+            element_count,
+            ..
+        } => segment_element_offsets(*byte_len, *fields, *element_count, width.bytes()),
         MemoryAccessKind::VectorLoadIndexed {
             byte_mask,
             offsets,
@@ -462,6 +470,14 @@ fn vector_pma_element_offsets(access: &MemoryAccessKind) -> Option<Vec<usize>> {
             width,
             ..
         } => active_suppressed_span_element_offsets(byte_mask, data.len(), width.bytes()),
+        MemoryAccessKind::VectorStoreSegmentUnitStride {
+            data,
+            byte_mask: None,
+            width,
+            fields,
+            element_count,
+            ..
+        } => segment_element_offsets(data.len(), *fields, *element_count, width.bytes()),
         MemoryAccessKind::VectorStoreIndexed {
             data,
             byte_mask,
@@ -473,6 +489,26 @@ fn vector_pma_element_offsets(access: &MemoryAccessKind) -> Option<Vec<usize>> {
         }
         _ => None,
     }
+}
+
+fn segment_element_offsets(
+    byte_len: usize,
+    fields: usize,
+    element_count: usize,
+    element_bytes: usize,
+) -> Option<Vec<usize>> {
+    let expected_len = fields
+        .checked_mul(element_count)?
+        .checked_mul(element_bytes)?;
+    (expected_len == byte_len).then(|| contiguous_element_offsets(byte_len, element_bytes))?
+}
+
+fn contiguous_element_offsets(byte_len: usize, element_bytes: usize) -> Option<Vec<usize>> {
+    if element_bytes == 0 || !byte_len.is_multiple_of(element_bytes) {
+        return None;
+    }
+
+    Some((0..byte_len).step_by(element_bytes).collect())
 }
 
 fn active_suppressed_span_element_offsets(
@@ -719,6 +755,56 @@ mod tests {
         .unwrap();
 
         assert_eq!(checks, vec![pma_check(0x8000, 4), pma_check(0x8008, 4),]);
+    }
+
+    #[test]
+    fn pma_alignment_checks_use_unmasked_segment_elements() {
+        let load = MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd: VectorRegister::new(2).unwrap(),
+            address: 0x8000,
+            width: MemoryWidth::Word,
+            fields: 3,
+            element_count: 1,
+            byte_len: 12,
+            byte_mask: None,
+            group_registers: 1,
+        };
+        let checks =
+            pma_alignment_checks(&load, Address::new(0x8000), AccessSize::new(12).unwrap(), 0)
+                .unwrap();
+        assert_eq!(
+            checks,
+            vec![
+                pma_check(0x8000, 4),
+                pma_check(0x8004, 4),
+                pma_check(0x8008, 4),
+            ]
+        );
+
+        let store = MemoryAccessKind::VectorStoreSegmentUnitStride {
+            address: 0x8020,
+            width: MemoryWidth::Word,
+            fields: 3,
+            element_count: 1,
+            data: vec![0; 12],
+            byte_mask: None,
+            group_registers: 1,
+        };
+        let checks = pma_alignment_checks(
+            &store,
+            Address::new(0x8020),
+            AccessSize::new(12).unwrap(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            checks,
+            vec![
+                pma_check(0x8020, 4),
+                pma_check(0x8024, 4),
+                pma_check(0x8028, 4),
+            ]
+        );
     }
 
     #[test]

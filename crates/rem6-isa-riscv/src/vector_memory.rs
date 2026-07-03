@@ -56,8 +56,9 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
         32,
     ),
 ];
-// Current segment execution evidence covers single-line forms plus the explicit
-// aligned e64/m1 two-line slice. Broader segment transport needs its own tests.
+// Current segment execution evidence covers bounded single-line multi-field
+// forms plus the explicit aligned e64/m1 two-line slice. Broader segment
+// transport needs its own tests.
 const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
 pub(crate) fn memory_access(
@@ -432,7 +433,7 @@ fn segment_unit_stride_access_plan(
     let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
     if config.vill()
-        || fields != 2
+        || !(2..=8).contains(&fields)
         || vlmul != 0
         || group_registers != 1
         || config.element_width_bytes()? != width.bytes()
@@ -456,7 +457,7 @@ fn segment_unit_stride_access_plan(
         .checked_mul(element_bytes)?;
     (byte_len <= fields * group_registers * RISCV_VECTOR_REGISTER_BYTES
         && byte_len <= MAX_VECTOR_GROUP_BYTES
-        && supported_segment_unit_stride_shape(width, byte_len))
+        && supported_segment_unit_stride_shape(width, fields, element_count, byte_len))
     .then_some(SegmentUnitStrideAccessPlan {
         fields,
         element_count,
@@ -466,9 +467,14 @@ fn segment_unit_stride_access_plan(
     })
 }
 
-fn supported_segment_unit_stride_shape(width: MemoryWidth, byte_len: usize) -> bool {
+fn supported_segment_unit_stride_shape(
+    width: MemoryWidth,
+    fields: usize,
+    element_count: usize,
+    byte_len: usize,
+) -> bool {
     byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES
-        || (width == MemoryWidth::Doubleword && byte_len == 32)
+        || (width == MemoryWidth::Doubleword && fields == 2 && element_count == 2 && byte_len == 32)
 }
 
 fn strided_access_plan(
