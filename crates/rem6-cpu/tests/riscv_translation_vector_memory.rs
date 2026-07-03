@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
-    RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, VectorRegister, RISCV_VECTOR_REGISTER_BYTES};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -521,6 +521,131 @@ fn riscv_core_data_translation_suppresses_leading_inactive_noncontiguous_masked_
         "interior inactive unit-stride load lane should preserve the destination register"
     );
     assert_eq!(&destination[12..16], &0xd1d2_d3d4_u32.to_le_bytes());
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_all_inactive_masked_vector_load_access() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x3ffc);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(4, 0, 0b000, 11, 0x13),                    // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),                        // vsetvli x5, x11, e32, m1
+            vector_unit_stride_load_type(false, 0b110, 2, 2), // vle32.v v2, (x2), v0.t
+            i_type(7, 0, 0b000, 6, 0x13),                     // addi x6, x0, 7
+            0x0000_0073,                                      // ecall
+        ],
+        &[(0x9000, vec![0x11; 16])],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0;
+    core.write_vector_register(vreg(0), mask);
+    let mut destination = [0; RISCV_VECTOR_REGISTER_BYTES];
+    destination[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    destination[4..8].copy_from_slice(&0xb1b2_b3b4_u32.to_le_bytes());
+    destination[8..12].copy_from_slice(&0xc1c2_c3c4_u32.to_le_bytes());
+    destination[12..16].copy_from_slice(&0xd1d2_d3d4_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), destination);
+
+    for _ in 0..16 {
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map)
+            .expect("all-inactive masked vector load should not translate or issue memory");
+        scheduler.run_until_idle_conservative();
+        if core.read_register(reg(6)) == 7 {
+            break;
+        }
+    }
+
+    assert_eq!(
+        core.read_register(reg(6)),
+        7,
+        "instruction after all-inactive masked vector load should execute"
+    );
+    assert!(
+        !core
+            .data_access_events()
+            .iter()
+            .any(|event| event.kind() == RiscvDataAccessEventKind::Issued),
+        "all-inactive masked vector load should not issue a translated data request"
+    );
+    let destination = core.read_vector_register(vreg(2));
+    assert_eq!(
+        &destination[0..16],
+        [
+            0xa1a2_a3a4_u32.to_le_bytes(),
+            0xb1b2_b3b4_u32.to_le_bytes(),
+            0xc1c2_c3c4_u32.to_le_bytes(),
+            0xd1d2_d3d4_u32.to_le_bytes(),
+        ]
+        .concat()
+        .as_slice(),
+        "all-inactive masked vector load should preserve every destination lane"
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_all_inactive_masked_vector_store_access() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x3ffc);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(4, 0, 0b000, 11, 0x13),                     // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),                         // vsetvli x5, x11, e32, m1
+            vector_unit_stride_store_type(false, 0b110, 2, 2), // vse32.v v2, (x2), v0.t
+            i_type(7, 0, 0b000, 6, 0x13),                      // addi x6, x0, 7
+            0x0000_0073,                                       // ecall
+        ],
+        &[(
+            0x9000,
+            vec![
+                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+            ],
+        )],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0;
+    core.write_vector_register(vreg(0), mask);
+    let mut source = [0; RISCV_VECTOR_REGISTER_BYTES];
+    source[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    source[4..8].copy_from_slice(&0xb1b2_b3b4_u32.to_le_bytes());
+    source[8..12].copy_from_slice(&0xc1c2_c3c4_u32.to_le_bytes());
+    source[12..16].copy_from_slice(&0xd1d2_d3d4_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), source);
+
+    for _ in 0..16 {
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map)
+            .expect("all-inactive masked vector store should not translate or issue memory");
+        scheduler.run_until_idle_conservative();
+        if core.read_register(reg(6)) == 7 {
+            break;
+        }
+    }
+
+    assert_eq!(
+        core.read_register(reg(6)),
+        7,
+        "instruction after all-inactive masked vector store should execute"
+    );
+    assert!(
+        !core
+            .data_access_events()
+            .iter()
+            .any(|event| event.kind() == RiscvDataAccessEventKind::Issued),
+        "all-inactive masked vector store should not issue a translated data request"
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9000, 12, 5),
+        vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc],
+        "all-inactive masked vector store should preserve memory bytes"
+    );
 }
 
 #[test]
