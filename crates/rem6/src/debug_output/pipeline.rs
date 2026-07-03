@@ -159,6 +159,10 @@ impl Rem6PipelineTraceInstruction {
 }
 
 impl Rem6PipelineTraceAdvance {
+    pub(super) const fn source_stage(self) -> &'static str {
+        self.source_stage
+    }
+
     fn to_json(self) -> String {
         let destination_stage = self
             .destination_stage

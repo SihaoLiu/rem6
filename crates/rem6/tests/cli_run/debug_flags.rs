@@ -562,7 +562,7 @@ fn rem6_run_pipeline_debug_flag_classifies_real_wait_stall_causes() {
 }
 
 #[test]
-fn rem6_run_pipeline_debug_flag_attributes_stage_resource_blocks() {
+fn rem6_run_pipeline_debug_flag_attributes_stage_activity() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
         i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
@@ -601,7 +601,7 @@ fn rem6_run_pipeline_debug_flag_attributes_stage_resource_blocks() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_pipeline_trace_stage_resource_blocked(&stdout);
+    assert_pipeline_trace_stage_activity(&stdout);
 }
 
 #[test]
@@ -2967,14 +2967,27 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
     }
 }
 
-fn assert_pipeline_trace_stage_resource_blocked(stdout: &str) {
+fn assert_pipeline_trace_stage_activity(stdout: &str) {
     let json: Value = serde_json::from_str(stdout).unwrap();
     let trace = json
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    let mut stage_advanced = BTreeMap::<String, u64>::new();
+    let mut stage_retired = BTreeMap::<String, u64>::new();
     let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
     for record in trace {
+        for advanced in record_array(record, "advanced") {
+            let stage = advanced
+                .get("source_stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing advanced instruction source stage: {advanced}"));
+            let stage = stat_path_segment(stage);
+            *stage_advanced.entry(stage.clone()).or_default() += 1;
+            if json_record_bool(advanced, "retires") {
+                *stage_retired.entry(stage).or_default() += 1;
+            }
+        }
         for blocked in record_array(record, "resource_blocked") {
             let stage = blocked
                 .get("stage")
@@ -2986,6 +2999,14 @@ fn assert_pipeline_trace_stage_resource_blocked(stdout: &str) {
         }
     }
     assert!(
+        !stage_advanced.is_empty(),
+        "pipeline trace should preserve per-stage advanced instructions: {trace:?}"
+    );
+    assert!(
+        stage_retired.contains_key("commit"),
+        "pipeline trace should expose commit-stage retirement: {trace:?}"
+    );
+    assert!(
         !stage_resource_blocked.is_empty(),
         "pipeline trace should preserve resource-blocked in-flight instructions: {trace:?}"
     );
@@ -2993,6 +3014,24 @@ fn assert_pipeline_trace_stage_resource_blocked(stdout: &str) {
         stage_resource_blocked.contains_key("commit"),
         "pipeline trace should expose commit-stage resource blocking: {trace:?}"
     );
+    for (stage, advanced) in stage_advanced {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.advanced"),
+            "Count",
+            advanced,
+            "monotonic",
+        );
+    }
+    for (stage, retired) in stage_retired {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.retired"),
+            "Count",
+            retired,
+            "monotonic",
+        );
+    }
     for (stage, resource_blocked) in stage_resource_blocked {
         assert_stat(
             stdout,

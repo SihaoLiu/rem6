@@ -551,6 +551,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.pipeline_trace.stall_cause.fetch_wait.records",
         "sim.debug.pipeline_trace.stall_cause.data_wait.stall_cycles",
         "sim.debug.pipeline_trace.stall_cause.execute_wait.records",
+        "sim.debug.pipeline_trace.stage.commit.advanced",
+        "sim.debug.pipeline_trace.stage.commit.retired",
         "sim.debug.pipeline_trace.stage.commit.resource_blocked",
         "sim.cpu0.pipeline.in_order.execute_wait_cycles",
         "sim.debug.pipeline_trace.cpu.cpu0.records",

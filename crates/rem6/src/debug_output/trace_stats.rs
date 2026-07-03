@@ -96,6 +96,13 @@ struct PipelineTraceStatSummary {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineStageTraceStatSummary {
+    advanced: u64,
+    retired: u64,
+    resource_blocked: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PipelineStageResourceTraceStatSummary {
     resource_blocked: u64,
 }
@@ -373,6 +380,33 @@ impl PipelineTraceStatSummary {
     }
 }
 
+impl PipelineStageTraceStatSummary {
+    fn add_advance(&mut self, retires: bool) {
+        self.advanced = self.advanced.saturating_add(1);
+        if retires {
+            self.retired = self.retired.saturating_add(1);
+        }
+    }
+
+    fn add_resource_blocked(&mut self, resource_blocked: u64) {
+        self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
+        for (suffix, value) in [
+            ("advanced", self.advanced),
+            ("retired", self.retired),
+            ("resource_blocked", self.resource_blocked),
+        ] {
+            stats.push(Rem6PipelineTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit: "Count",
+                value,
+            });
+        }
+    }
+}
+
 impl PipelineStageResourceTraceStatSummary {
     fn add_record(&mut self, resource_blocked: u64) {
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
@@ -508,7 +542,7 @@ pub(super) fn pipeline_trace_stats(
 ) -> Vec<Rem6PipelineTraceStat> {
     let mut cpus = BTreeMap::<u32, PipelineTraceStatSummary>::new();
     let mut states = BTreeMap::<&str, PipelineTraceStatSummary>::new();
-    let mut stages = BTreeMap::<String, PipelineStageResourceTraceStatSummary>::new();
+    let mut stages = BTreeMap::<String, PipelineStageTraceStatSummary>::new();
     let mut stall_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     let mut stall_cause_stages =
         BTreeMap::<(&str, String), PipelineStageResourceTraceStatSummary>::new();
@@ -521,6 +555,12 @@ pub(super) fn pipeline_trace_stats(
             .entry(pipeline_state_path(record.state_changed))
             .or_default()
             .add_record(record);
+        for advance in &record.advanced {
+            stages
+                .entry(stat_path_segment(advance.source_stage()))
+                .or_default()
+                .add_advance(advance.retires);
+        }
         let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
         for instruction in &record.resource_blocked {
             *stage_resource_blocked
@@ -531,7 +571,7 @@ pub(super) fn pipeline_trace_stats(
             stages
                 .entry(stage.clone())
                 .or_default()
-                .add_record(*resource_blocked);
+                .add_resource_blocked(*resource_blocked);
         }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
