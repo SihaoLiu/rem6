@@ -100,6 +100,11 @@ struct PipelineStageStallTraceStatSummary {
     resource_blocked: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineStageFlushTraceStatSummary {
+    flushed: u64,
+}
+
 impl Rem6ExecTraceStat {
     pub(crate) fn path(&self) -> &str {
         &self.path
@@ -382,6 +387,20 @@ impl PipelineStageStallTraceStatSummary {
     }
 }
 
+impl PipelineStageFlushTraceStatSummary {
+    fn add_record(&mut self, flushed: u64) {
+        self.flushed = self.flushed.saturating_add(flushed);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
+        stats.push(Rem6PipelineTraceStat {
+            path: format!("{prefix}.flushed"),
+            unit: "Count",
+            value: self.flushed,
+        });
+    }
+}
+
 pub(super) fn exec_trace_stats(records: &[Rem6ExecTraceRecord]) -> Vec<Rem6ExecTraceStat> {
     let mut cpus = BTreeMap::<u32, ExecTraceStatSummary>::new();
     let mut retirement = BTreeMap::<&str, ExecTraceStatSummary>::new();
@@ -493,6 +512,8 @@ pub(super) fn pipeline_trace_stats(
     let mut stall_cause_stages =
         BTreeMap::<(&str, String), PipelineStageStallTraceStatSummary>::new();
     let mut flush_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
+    let mut flush_cause_stages =
+        BTreeMap::<(&str, String), PipelineStageFlushTraceStatSummary>::new();
     for record in records {
         cpus.entry(record.cpu).or_default().add_record(record);
         states
@@ -516,6 +537,18 @@ pub(super) fn pipeline_trace_stats(
         }
         if let Some(cause) = record.flush_cause {
             flush_causes.entry(cause).or_default().add_record(record);
+            let mut stage_flushed = BTreeMap::<String, u64>::new();
+            for instruction in &record.flushed {
+                *stage_flushed
+                    .entry(stat_path_segment(instruction.stage()))
+                    .or_default() += 1;
+            }
+            for (stage, flushed) in stage_flushed {
+                flush_cause_stages
+                    .entry((cause, stage))
+                    .or_default()
+                    .add_record(flushed);
+            }
         }
     }
 
@@ -542,6 +575,12 @@ pub(super) fn pipeline_trace_stats(
         summary.push_stats(
             &mut stats,
             &format!("flush_cause.{}", stat_path_segment(cause)),
+        );
+    }
+    for ((cause, stage), summary) in flush_cause_stages {
+        summary.push_stats(
+            &mut stats,
+            &format!("flush_cause.{}.stage.{stage}", stat_path_segment(cause)),
         );
     }
     stats

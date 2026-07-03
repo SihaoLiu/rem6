@@ -2786,10 +2786,24 @@ fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
         .iter()
         .map(|record| json_record_u64(record, "branch_prediction_flushed"))
         .sum::<u64>();
+    let mut stage_flushed = BTreeMap::<String, u64>::new();
+    for record in &flush_records {
+        for flushed in record_array(record, "flushed") {
+            let stage = flushed
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing flushed instruction stage: {flushed}"));
+            *stage_flushed.entry(stat_path_segment(stage)).or_default() += 1;
+        }
+    }
     assert!(flushed > 0, "flush cause {cause}: {trace:?}");
     assert!(
         branch_prediction_flushed > 0,
         "flush cause {cause}: {trace:?}"
+    );
+    assert!(
+        !stage_flushed.is_empty(),
+        "flush cause {cause} should preserve flushed in-flight instructions: {trace:?}"
     );
     assert_stat(
         stdout,
@@ -2812,6 +2826,15 @@ fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
         branch_prediction_flushed,
         "monotonic",
     );
+    for (stage, flushed) in stage_flushed {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.pipeline_trace.flush_cause.{cause}.stage.{stage}.flushed"),
+            "Count",
+            flushed,
+            "monotonic",
+        );
+    }
 }
 
 fn run_pipeline_debug_wait_program(path: &Path, extra_args: &[&str]) -> String {
