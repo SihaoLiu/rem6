@@ -7,13 +7,13 @@ use crate::{
     riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind},
     BiModeBranchPredictor, BranchPredictor, BranchSpeculationId, BranchTargetKind,
     BranchTargetPrediction, BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
-    GShareBranchPredictor, MultiperspectivePerceptron, MultiperspectivePerceptronThreadSnapshot,
-    ReturnAddressStackOperationId, ReturnAddressStackOperationKind, RiscvBranchPredictorKind,
-    RiscvCore, RiscvCoreState, RiscvCpuError, RiscvSelectedBranchSpeculation,
-    StatisticalCorrectorBranchKind, TageScLBranchPredictor, TournamentBranchPredictor,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
-    RISCV_LOCAL_TOURNAMENT_THREAD,
+    GShareBranchPredictor, InOrderPipelineStage, MultiperspectivePerceptron,
+    MultiperspectivePerceptronThreadSnapshot, ReturnAddressStackOperationId,
+    ReturnAddressStackOperationKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
+    RiscvCpuError, RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind,
+    TageScLBranchPredictor, TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod speculation;
@@ -913,7 +913,9 @@ fn fetch_ahead_decision(
     sequential_pc: Address,
     instruction: RiscvInstruction,
 ) -> Option<RiscvFetchAheadDecision> {
-    if instruction_allows_straight_line_fetch_ahead(instruction) {
+    if instruction_allows_straight_line_fetch_ahead(instruction)
+        || instruction_allows_trap_fallthrough_fetch_ahead(state, instruction)
+    {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
@@ -1728,6 +1730,20 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorShiftRightArithmeticVx { .. }
             | RiscvInstruction::VectorShiftRightArithmeticVi { .. }
     )
+}
+
+fn instruction_allows_trap_fallthrough_fetch_ahead(
+    state: &RiscvCoreState,
+    instruction: RiscvInstruction,
+) -> bool {
+    matches!(
+        instruction,
+        RiscvInstruction::Ecall | RiscvInstruction::Ebreak
+    ) && state
+        .in_order_pipeline
+        .config()
+        .width(InOrderPipelineStage::Fetch1)
+        > 1
 }
 
 fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
