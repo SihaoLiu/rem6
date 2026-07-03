@@ -355,6 +355,87 @@ fn riscv_core_data_translation_suppresses_leading_inactive_masked_vector_store_l
 }
 
 #[test]
+fn riscv_core_data_translation_suppresses_leading_inactive_noncontiguous_masked_vector_store_span()
+{
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x3ffc);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(4, 0, 0b000, 11, 0x13),                     // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),                         // vsetvli x5, x11, e32, m1
+            vector_unit_stride_store_type(false, 0b110, 2, 2), // vse32.v v2, (x2), v0.t
+        ],
+        &[(
+            0x9000,
+            vec![
+                0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x10,
+            ],
+        )],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_1010;
+    core.write_vector_register(vreg(0), mask);
+    let mut source = [0; RISCV_VECTOR_REGISTER_BYTES];
+    source[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    source[4..8].copy_from_slice(&0xb1b2_b3b4_u32.to_le_bytes());
+    source[8..12].copy_from_slice(&0xc1c2_c3c4_u32.to_le_bytes());
+    source[12..16].copy_from_slice(&0xd1d2_d3d4_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), source);
+
+    let mut issued_translated_store = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated non-contiguous masked store should trim the leading inactive lane");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. }))
+            || core
+                .data_access_events()
+                .iter()
+                .any(|event| event.physical_address() == Address::new(0x9000))
+        {
+            issued_translated_store = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_store,
+        "translated non-contiguous masked store should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9000))
+        .expect(
+            "translated non-contiguous masked store should record the first active physical address",
+        );
+    assert_eq!(issued.size(), AccessSize::new(12).unwrap());
+    assert_eq!(
+        read_store_bytes(&store, 0x9000, 4, 2),
+        0xb1b2_b3b4_u32.to_le_bytes()
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9004, 4, 3),
+        vec![0x99, 0xaa, 0xbb, 0xcc],
+        "interior inactive unit-stride lane should remain masked"
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 4, 4),
+        0xd1d2_d3d4_u32.to_le_bytes()
+    );
+}
+
+#[test]
 fn riscv_core_data_translation_suppresses_leading_inactive_masked_indexed_vector_load_lane() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core(fetch_route, data_route, 0x8000);

@@ -134,7 +134,7 @@ fn contiguous_masked_vector_memory_span(access: &MemoryAccessKind) -> Option<(us
             data,
             byte_mask: Some(byte_mask),
             ..
-        } if byte_mask.len() == data.len() => contiguous_active_byte_span(byte_mask),
+        } if byte_mask.len() == data.len() => active_byte_span(byte_mask),
         MemoryAccessKind::VectorStoreStrided {
             data, byte_mask, ..
         } if byte_mask.len() == data.len() => active_byte_span(byte_mask),
