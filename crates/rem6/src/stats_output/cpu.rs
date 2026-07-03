@@ -946,6 +946,14 @@ fn emit_o3_runtime_stats(
             "lsq0.addedLoadsAndStores",
             o3.lsq_loads().saturating_add(o3.lsq_stores()),
         ),
+        (
+            "lsq0.storeLoadForwardingCandidates",
+            o3.lsq_store_to_load_forwarding_candidates(),
+        ),
+        (
+            "lsq0.storeLoadForwardingMatches",
+            o3.lsq_store_to_load_forwarding_matches(),
+        ),
     ] {
         increment_stat(
             stats,

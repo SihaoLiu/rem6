@@ -942,6 +942,51 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
+    let path = detailed_o3_lsq_store_load_match_binary(
+        "m5-switch-cpu-detailed-o3-lsq-store-load-text-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_loads", 1);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_stores", 1);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        1,
+    );
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingCandidates", 1);
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingMatches", 1);
+}
+
+#[test]
 fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     let path = timing_switch_o3_stats_binary("m5-switch-cpu-timing-no-o3-runtime-stats");
 
@@ -1040,6 +1085,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.lsq0.addedLoadsAndStores",
+        "system.cpu.lsq0.storeLoadForwardingCandidates",
+        "system.cpu.lsq0.storeLoadForwardingMatches",
         "system.cpu.rob.writes",
         "system.cpu.rob.reads",
     ] {
