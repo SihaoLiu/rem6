@@ -889,11 +889,39 @@ fn emit_o3_runtime_stats(
         ("rename_writes", o3.rename_writes()),
         ("lsq_loads", o3.lsq_loads()),
         ("lsq_stores", o3.lsq_stores()),
+        ("fu_latency_instructions", o3.fu_latency_instructions()),
+        (
+            "fu_integer_mul_instructions",
+            o3.fu_integer_mul_instructions(),
+        ),
+        (
+            "fu_integer_div_instructions",
+            o3.fu_integer_div_instructions(),
+        ),
     ] {
         increment_stat(
             stats,
             &format!("sim.cpu{}.o3.{name}", core.cpu),
             "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (name, value) in [
+        ("fu_latency_cycles", o3.fu_latency_cycles()),
+        (
+            "fu_integer_mul_latency_cycles",
+            o3.fu_integer_mul_latency_cycles(),
+        ),
+        (
+            "fu_integer_div_latency_cycles",
+            o3.fu_integer_div_latency_cycles(),
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Cycle",
             StatResetPolicy::Monotonic,
             value,
         )?;

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use rem6_isa_riscv::{MemoryAccessKind, Register};
+use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
 use rem6_memory::Address;
 
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
@@ -310,6 +310,12 @@ pub struct O3RuntimeStats {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    fu_latency_instructions: u64,
+    fu_latency_cycles: u64,
+    fu_integer_mul_instructions: u64,
+    fu_integer_mul_latency_cycles: u64,
+    fu_integer_div_instructions: u64,
+    fu_integer_div_latency_cycles: u64,
 }
 
 impl O3RuntimeStats {
@@ -337,6 +343,30 @@ impl O3RuntimeStats {
         self.lsq_stores
     }
 
+    pub const fn fu_latency_instructions(self) -> u64 {
+        self.fu_latency_instructions
+    }
+
+    pub const fn fu_latency_cycles(self) -> u64 {
+        self.fu_latency_cycles
+    }
+
+    pub const fn fu_integer_mul_instructions(self) -> u64 {
+        self.fu_integer_mul_instructions
+    }
+
+    pub const fn fu_integer_mul_latency_cycles(self) -> u64 {
+        self.fu_integer_mul_latency_cycles
+    }
+
+    pub const fn fu_integer_div_instructions(self) -> u64 {
+        self.fu_integer_div_instructions
+    }
+
+    pub const fn fu_integer_div_latency_cycles(self) -> u64 {
+        self.fu_integer_div_latency_cycles
+    }
+
     pub const fn has_activity(self) -> bool {
         self.instructions != 0
             || self.rob_allocations != 0
@@ -344,6 +374,12 @@ impl O3RuntimeStats {
             || self.rename_writes != 0
             || self.lsq_loads != 0
             || self.lsq_stores != 0
+            || self.fu_latency_instructions != 0
+            || self.fu_latency_cycles != 0
+            || self.fu_integer_mul_instructions != 0
+            || self.fu_integer_mul_latency_cycles != 0
+            || self.fu_integer_div_instructions != 0
+            || self.fu_integer_div_latency_cycles != 0
     }
 
     fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
@@ -352,6 +388,30 @@ impl O3RuntimeStats {
         self.rob_commits = self.rob_commits.saturating_add(1);
 
         let record = execution.execution();
+        let fu_latency_cycles =
+            crate::riscv_execute::in_order_execute_wait_cycles(record.instruction());
+        if fu_latency_cycles > 0 {
+            self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
+            self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);
+            match o3_fu_latency_class(record.instruction()) {
+                Some(O3FuLatencyClass::ScalarIntegerMul) => {
+                    self.fu_integer_mul_instructions =
+                        self.fu_integer_mul_instructions.saturating_add(1);
+                    self.fu_integer_mul_latency_cycles = self
+                        .fu_integer_mul_latency_cycles
+                        .saturating_add(fu_latency_cycles);
+                }
+                Some(O3FuLatencyClass::ScalarIntegerDiv) => {
+                    self.fu_integer_div_instructions =
+                        self.fu_integer_div_instructions.saturating_add(1);
+                    self.fu_integer_div_latency_cycles = self
+                        .fu_integer_div_latency_cycles
+                        .saturating_add(fu_latency_cycles);
+                }
+                None => {}
+            }
+        }
+
         if record.system_event().is_none() {
             let immediate_writes =
                 (record.register_writes().len() + record.float_register_writes().len()) as u64;
@@ -369,6 +429,31 @@ impl O3RuntimeStats {
             self.lsq_loads = self.lsq_loads.saturating_add(loads);
             self.lsq_stores = self.lsq_stores.saturating_add(stores);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum O3FuLatencyClass {
+    ScalarIntegerMul,
+    ScalarIntegerDiv,
+}
+
+const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3FuLatencyClass> {
+    match instruction {
+        RiscvInstruction::Mul { .. }
+        | RiscvInstruction::Mulh { .. }
+        | RiscvInstruction::Mulhsu { .. }
+        | RiscvInstruction::Mulhu { .. }
+        | RiscvInstruction::Mulw { .. } => Some(O3FuLatencyClass::ScalarIntegerMul),
+        RiscvInstruction::Div { .. }
+        | RiscvInstruction::Divu { .. }
+        | RiscvInstruction::Rem { .. }
+        | RiscvInstruction::Remu { .. }
+        | RiscvInstruction::Divw { .. }
+        | RiscvInstruction::Divuw { .. }
+        | RiscvInstruction::Remw { .. }
+        | RiscvInstruction::Remuw { .. } => Some(O3FuLatencyClass::ScalarIntegerDiv),
+        _ => None,
     }
 }
 

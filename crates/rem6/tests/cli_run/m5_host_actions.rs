@@ -697,6 +697,83 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
+    let path = detailed_o3_fu_latency_binary("m5-switch-cpu-detailed-o3-fu-latency-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_cycles",
+        "Cycle",
+        21,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_mul_latency_cycles",
+        "Cycle",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_div_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_div_latency_cycles",
+        "Cycle",
+        19,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-text-stats");
 
@@ -773,6 +850,12 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
     assert_json_stat_absent(&json, "sim.cpu0.o3.instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.rob_allocations");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_instructions");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_instructions");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_instructions");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_latency_cycles");
 }
 
 #[test]
@@ -812,6 +895,12 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.rename_writes",
         "sim.cpu0.o3.lsq_loads",
         "sim.cpu0.o3.lsq_stores",
+        "sim.cpu0.o3.fu_latency_instructions",
+        "sim.cpu0.o3.fu_latency_cycles",
+        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "sim.cpu0.o3.fu_integer_mul_latency_cycles",
+        "sim.cpu0.o3.fu_integer_div_instructions",
+        "sim.cpu0.o3.fu_integer_div_latency_cycles",
         "system.cpu.rename.renamedInsts",
         "system.cpu.rename.renamedOperands",
         "system.cpu.iew.dispLoadInsts",
@@ -1578,6 +1667,21 @@ fn detailed_o3_runtime_stats_binary(name: &str) -> std::path::PathBuf {
     }
     words.extend([0x1234_5678, 0]);
     let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_fu_latency_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),         // switch cpu0 to detailed
+        i_type(42, 0, 0x0, 1, 0x13), // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),  // addi x2, x0, 7
+        0x0220_81b3,                 // mul x3, x1, x2
+        0x0220_c1b3,                 // div x3, x1, x2
+        m5op(M5_EXIT),
+        i_type(77, 0, 0x0, 13, 0x13), // addi x13, x0, 77
+        m5op(M5_FAIL),
+    ]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
 }
