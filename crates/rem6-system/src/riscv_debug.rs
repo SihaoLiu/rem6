@@ -15,13 +15,13 @@ use rem6_isa_riscv::{
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
-    PartitionedMemoryStore, TranslationPageMap, TranslationPageMappingScope,
-    TranslationPagePermissions,
+    PartitionedMemoryStore, TranslationPageMap,
 };
 use std::error::Error;
-use std::fmt::{self, Write as _};
+use std::fmt;
 
 use crate::riscv_debug_layout::*;
+pub use crate::riscv_debug_page_table::riscv_gdb_page_table_dump_from_translation_map;
 use crate::riscv_debug_pmp::{
     read_core_pmp_addr_csr, read_core_pmp_config_csr, write_core_pmp_config_csr,
     write_pmp_config_csr,
@@ -99,25 +99,6 @@ pub fn riscv_gdb_remote_session_from_translation_map(
         xlen,
         riscv_gdb_page_table_dump_from_translation_map(map),
     )
-}
-
-pub fn riscv_gdb_page_table_dump_from_translation_map(map: &TranslationPageMap) -> Vec<u8> {
-    let mut dump = String::new();
-    writeln!(dump, "page_size={:#x}", map.page_size().bytes())
-        .expect("page table dump writes into string");
-    for mapping in map.mappings() {
-        writeln!(
-            dump,
-            "vaddr={:#x} paddr={:#x} pages={} flags={} scope={}",
-            mapping.virtual_start().get(),
-            mapping.physical_start().get(),
-            mapping.page_count(),
-            riscv_gdb_page_permission_flags(mapping.permissions()),
-            riscv_gdb_page_mapping_scope(mapping.scope()),
-        )
-        .expect("page table dump writes into string");
-    }
-    dump.into_bytes()
 }
 
 pub fn riscv_gdb_remote_session_from_hart(
@@ -648,30 +629,6 @@ fn riscv_gdb_remote_selected_core(
 fn riscv_gdb_remote_cpu_id(thread_id: u64) -> Option<CpuId> {
     let cpu = thread_id.checked_sub(1)?;
     Some(CpuId::new(u32::try_from(cpu).ok()?))
-}
-
-fn riscv_gdb_page_permission_flags(permissions: TranslationPagePermissions) -> &'static str {
-    match (
-        permissions.read(),
-        permissions.write(),
-        permissions.execute(),
-    ) {
-        (false, false, false) => "---",
-        (false, false, true) => "--x",
-        (false, true, false) => "-w-",
-        (false, true, true) => "-wx",
-        (true, false, false) => "r--",
-        (true, false, true) => "r-x",
-        (true, true, false) => "rw-",
-        (true, true, true) => "rwx",
-    }
-}
-
-fn riscv_gdb_page_mapping_scope(scope: TranslationPageMappingScope) -> &'static str {
-    match scope {
-        TranslationPageMappingScope::Global => "global",
-        TranslationPageMappingScope::NonGlobal => "non-global",
-    }
 }
 
 fn riscv_gdb_remote_thread_selection(
