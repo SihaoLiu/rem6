@@ -19,6 +19,8 @@ use rem6_isa_riscv::{
 };
 use rem6_memory::Address;
 
+use crate::ExecutionModeTarget;
+
 const FREGS_CHUNK: &str = "fregs";
 const BIMODE_BRANCH_PREDICTOR_CHUNK: &str = "bimode-branch-predictor";
 const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
@@ -76,6 +78,29 @@ struct RiscvCoreCheckpointRecordParts {
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
     o3_pending_state_payload: O3PendingStateCheckpointPayload,
     o3_runtime_payload: O3RuntimeCheckpointPayload,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvCoreCheckerSnapshotSummary {
+    checked_instructions: u64,
+    mismatches: u64,
+}
+
+impl RiscvCoreCheckerSnapshotSummary {
+    pub const fn new(checked_instructions: u64, mismatches: u64) -> Self {
+        Self {
+            checked_instructions,
+            mismatches,
+        }
+    }
+
+    pub const fn checked_instructions(self) -> u64 {
+        self.checked_instructions
+    }
+
+    pub const fn mismatches(self) -> u64 {
+        self.mismatches
+    }
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -687,6 +712,23 @@ impl RiscvCoreCheckpointBank {
 
     pub fn components(&self) -> Vec<CheckpointComponentId> {
         self.ports.keys().cloned().collect()
+    }
+
+    pub(crate) fn checker_summary_for_target(
+        &self,
+        target: &ExecutionModeTarget,
+    ) -> Option<RiscvCoreCheckerSnapshotSummary> {
+        let component = CheckpointComponentId::new(target.as_str()).ok()?;
+        self.ports
+            .get(&component)?
+            .core()
+            .checker_cpu_snapshot()
+            .map(|snapshot| {
+                RiscvCoreCheckerSnapshotSummary::new(
+                    snapshot.checked_instructions(),
+                    snapshot.mismatches().len() as u64,
+                )
+            })
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {

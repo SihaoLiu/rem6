@@ -136,10 +136,10 @@ pub use heterogeneous_checkpoint::{
     GpuCheckpointRecord,
 };
 pub use host::{
-    ExecutionModeCheckpointError, ExecutionModeSwitchQuiescenceGate,
-    ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferChunk,
-    ExecutionModeSwitchStateTransferComponent, SystemActionExecutor, SystemActionOutcome,
-    SystemHostController, SystemRunController,
+    ExecutionModeCheckpointError, ExecutionModeSwitchCheckerGate,
+    ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
+    ExecutionModeSwitchStateTransferChunk, ExecutionModeSwitchStateTransferComponent,
+    SystemActionExecutor, SystemActionOutcome, SystemHostController, SystemRunController,
 };
 pub use host_assist::{
     HostAssistedArchitecture, HostAssistedMemoryMode, HostAssistedPendingService,

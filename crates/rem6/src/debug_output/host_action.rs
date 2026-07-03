@@ -238,6 +238,12 @@ fn execution_mode_switch_record(
             field_u64("state_transfer_chunks", transfer.chunk_count),
             field_u64("state_transfer_payload_bytes", transfer.payload_bytes),
         ]);
+        if let Some(checker) = transfer.quiescence_gate.checker {
+            fields.extend([
+                field_u64("checker_checked_instructions", checker.checked_instructions),
+                field_u64("checker_mismatches", checker.mismatches),
+            ]);
+        }
     }
     Rem6HostActionTraceRecord::new(
         "execution_mode_switch",

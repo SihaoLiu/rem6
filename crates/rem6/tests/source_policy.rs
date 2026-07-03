@@ -556,6 +556,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.pipeline_trace.stage.fetch1.flushed",
         "sim.debug.pipeline_trace.stage.commit.resource_blocked",
         "sim.cpu0.pipeline.in_order.execute_wait_cycles",
+        "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
+        "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
         "sim.debug.pipeline_trace.cpu.cpu0.records",
         "sim.debug.host_action_trace.records",
         "system.l2.overallMshrHits",

@@ -1,7 +1,8 @@
 use rem6_stats::{StatDumpRecord, StatsResetRecord};
 use rem6_system::{
-    ExecutionMode, ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
-    ExecutionModeSwitchStateTransferComponent, SystemActionOutcome,
+    ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
+    ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
+    SystemActionOutcome,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -207,6 +208,13 @@ pub(crate) struct Rem6ExecutionModeQuiescenceGateSummary {
     pub(crate) captured_component_count: u64,
     pub(crate) captured_chunk_count: u64,
     pub(crate) captured_payload_bytes: u64,
+    pub(crate) checker: Option<Rem6ExecutionModeSwitchCheckerSummary>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6ExecutionModeSwitchCheckerSummary {
+    pub(crate) checked_instructions: u64,
+    pub(crate) mismatches: u64,
 }
 
 impl Rem6ExecutionModeStateTransferSummary {
@@ -238,6 +246,18 @@ impl Rem6ExecutionModeQuiescenceGateSummary {
             captured_component_count: gate.captured_component_count(),
             captured_chunk_count: gate.captured_chunk_count(),
             captured_payload_bytes: gate.captured_payload_bytes(),
+            checker: gate
+                .checker()
+                .map(Rem6ExecutionModeSwitchCheckerSummary::from_gate),
+        }
+    }
+}
+
+impl Rem6ExecutionModeSwitchCheckerSummary {
+    fn from_gate(gate: ExecutionModeSwitchCheckerGate) -> Self {
+        Self {
+            checked_instructions: gate.checked_instructions(),
+            mismatches: gate.mismatches(),
         }
     }
 }

@@ -8,6 +8,7 @@ use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
+use crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary;
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
     DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget, FabricCheckpointBank,
@@ -54,6 +55,13 @@ pub struct ExecutionModeSwitchQuiescenceGate {
     captured_component_count: u64,
     captured_chunk_count: u64,
     captured_payload_bytes: u64,
+    checker: Option<ExecutionModeSwitchCheckerGate>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionModeSwitchCheckerGate {
+    checked_instructions: u64,
+    mismatches: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,7 +80,11 @@ pub struct ExecutionModeSwitchStateTransferChunk {
 }
 
 impl ExecutionModeSwitchStateTransfer {
-    fn from_manifest(manifest: &CheckpointManifest, target: &ExecutionModeTarget) -> Self {
+    fn from_manifest(
+        manifest: &CheckpointManifest,
+        target: &ExecutionModeTarget,
+        checker: Option<RiscvCoreCheckerSnapshotSummary>,
+    ) -> Self {
         let summary = manifest.summary();
         let components = manifest
             .states()
@@ -91,6 +103,7 @@ impl ExecutionModeSwitchStateTransfer {
                 captured_component_count: summary.component_count() as u64,
                 captured_chunk_count: summary.chunk_count() as u64,
                 captured_payload_bytes: summary.payload_bytes() as u64,
+                checker: checker.map(ExecutionModeSwitchCheckerGate::from_summary),
             },
             components,
         }
@@ -144,6 +157,27 @@ impl ExecutionModeSwitchQuiescenceGate {
 
     pub const fn captured_payload_bytes(&self) -> u64 {
         self.captured_payload_bytes
+    }
+
+    pub const fn checker(&self) -> Option<ExecutionModeSwitchCheckerGate> {
+        self.checker
+    }
+}
+
+impl ExecutionModeSwitchCheckerGate {
+    const fn from_summary(summary: RiscvCoreCheckerSnapshotSummary) -> Self {
+        Self {
+            checked_instructions: summary.checked_instructions(),
+            mismatches: summary.mismatches(),
+        }
+    }
+
+    pub const fn checked_instructions(self) -> u64 {
+        self.checked_instructions
+    }
+
+    pub const fn mismatches(self) -> u64 {
+        self.mismatches
     }
 }
 

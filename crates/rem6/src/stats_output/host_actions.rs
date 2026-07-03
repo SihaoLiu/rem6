@@ -37,6 +37,7 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_state_transfer_components = 0;
     let mut switch_state_transfer_chunks = 0;
     let mut switch_state_transfer_payload_bytes = 0;
+    let mut switch_quiescence_checker = None;
     let mut switch_state_transfer_component_stats =
         BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
@@ -50,6 +51,9 @@ pub(super) fn emit_run_host_action_stats(
         switch_state_transfer_components += transfer.component_count;
         switch_state_transfer_chunks += transfer.chunk_count;
         switch_state_transfer_payload_bytes += transfer.payload_bytes;
+        if let Some(checker) = transfer.quiescence_gate.checker {
+            switch_quiescence_checker = Some(checker);
+        }
         for component in &transfer.components {
             let component_path = stat_path_segment(&component.component);
             let component_stats = switch_state_transfer_component_stats
@@ -110,6 +114,22 @@ pub(super) fn emit_run_host_action_stats(
             "Count",
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+    if let Some(checker) = switch_quiescence_checker {
+        increment_stat(
+            stats,
+            "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.checked_instructions,
+        )?;
+        increment_stat(
+            stats,
+            "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.mismatches,
         )?;
     }
     increment_stat(
@@ -318,6 +338,7 @@ mod tests {
                     captured_component_count: 1,
                     captured_chunk_count: 1,
                     captured_payload_bytes: payload_bytes,
+                    checker: None,
                 },
                 components: vec![Rem6HostCheckpointComponentSummary {
                     component: component.to_string(),

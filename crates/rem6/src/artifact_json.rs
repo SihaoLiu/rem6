@@ -1590,13 +1590,24 @@ impl Rem6ExecutionModeStateTransferSummary {
 
 impl Rem6ExecutionModeQuiescenceGateSummary {
     fn to_json(&self) -> String {
+        let checker = self
+            .checker
+            .as_ref()
+            .map(|checker| {
+                format!(
+                    ",\"checker\":{{\"checked_instructions\":{},\"mismatches\":{}}}",
+                    checker.checked_instructions, checker.mismatches
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "{{\"validated\":{},\"target\":\"{}\",\"captured_component_count\":{},\"captured_chunk_count\":{},\"captured_payload_bytes\":{}}}",
+            "{{\"validated\":{},\"target\":\"{}\",\"captured_component_count\":{},\"captured_chunk_count\":{},\"captured_payload_bytes\":{}{}}}",
             self.validated,
             json_escape(&self.target),
             self.captured_component_count,
             self.captured_chunk_count,
             self.captured_payload_bytes,
+            checker,
         )
     }
 }

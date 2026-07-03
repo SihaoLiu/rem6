@@ -707,6 +707,20 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
         "timing",
         "execution-mode-switch-cpu0",
     );
+    assert!(
+        host_actions
+            .pointer("/execution_mode_switches/0/state_transfer/quiescence_gate/checker")
+            .is_none(),
+        "non-checker timing-mode switch should not publish checker quiescence data: {host_actions}"
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+    );
     assert!(transfer_label.ends_with(&format!("-{switch_tick}")));
     assert!(
         host_actions
@@ -714,6 +728,141 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
             .and_then(Value::as_u64)
             .is_some_and(|stop_tick| stop_tick > switch_tick),
         "m5_switch_cpu timing mode should continue to m5_exit: {host_actions}"
+    );
+}
+
+#[test]
+fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
+    let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 5, 0x13),
+        m5op(M5_SWITCH_CPU),
+        i_type(5, 5, 0x0, 6, 0x13),
+        i_type(1, 6, 0x0, 7, 0x13),
+        m5op(M5_SWITCH_CPU),
+        i_type(1, 7, 0x0, 8, 0x13),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-timing-checker", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--checker-cpu",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    let (switch_tick, _) = assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu0",
+        None,
+        "timing",
+        "execution-mode-switch-cpu0",
+    );
+    assert!(
+        host_actions
+            .pointer("/stops/0/tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|stop_tick| stop_tick > switch_tick),
+        "checker timing-mode switch should continue to m5_exit: {host_actions}"
+    );
+
+    let gate_checker = host_actions
+        .pointer("/execution_mode_switches/0/state_transfer/quiescence_gate/checker")
+        .unwrap_or_else(|| panic!("missing checker quiescence gate: {host_actions}"));
+    let checked_at_switch = gate_checker
+        .pointer("/checked_instructions")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing checker quiescence checked count: {gate_checker}"));
+    assert!(
+        checked_at_switch >= 2,
+        "checker quiescence should include instructions retired through m5_switch_cpu: {gate_checker}"
+    );
+    assert_eq!(
+        gate_checker.pointer("/mismatches").and_then(Value::as_u64),
+        Some(0),
+        "checker quiescence should preserve zero mismatches: {gate_checker}"
+    );
+    let second_gate_checker = host_actions
+        .pointer("/execution_mode_switches/1/state_transfer/quiescence_gate/checker")
+        .unwrap_or_else(|| panic!("missing second checker quiescence gate: {host_actions}"));
+    let second_checked_at_switch = second_gate_checker
+        .pointer("/checked_instructions")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            panic!("missing second checker quiescence checked count: {second_gate_checker}")
+        });
+    assert!(
+        second_checked_at_switch > checked_at_switch,
+        "second switch should capture later checker progress without resetting: {host_actions}"
+    );
+    assert_eq!(
+        second_gate_checker
+            .pointer("/mismatches")
+            .and_then(Value::as_u64),
+        Some(0),
+        "second checker quiescence should preserve zero mismatches: {second_gate_checker}"
+    );
+
+    let final_checker = json
+        .pointer("/cores/0/checker")
+        .unwrap_or_else(|| panic!("missing final checker summary: {json}"));
+    let final_checked = final_checker
+        .pointer("/checked_instructions")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing final checker count: {final_checker}"));
+    assert!(
+        final_checked > second_checked_at_switch,
+        "checker should continue checking instructions after timing-mode switch: {json}"
+    );
+    assert_eq!(
+        final_checker.pointer("/mismatches").and_then(Value::as_u64),
+        Some(0),
+        "checker should preserve zero mismatches after timing-mode switch: {json}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
+        "Count",
+        second_checked_at_switch,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+        "Count",
+        0,
+        "monotonic",
     );
 }
 
@@ -1656,6 +1805,19 @@ fn assert_json_stat(json: &Value, path: &str, unit: &str, value: u64, reset_poli
         sample.pointer("/reset_policy").and_then(Value::as_str),
         Some(reset_policy),
         "unexpected reset policy for {path}: {sample}"
+    );
+}
+
+fn assert_json_stat_absent(json: &Value, path: &str) {
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    assert!(
+        stats
+            .iter()
+            .all(|sample| sample.pointer("/path").and_then(Value::as_str) != Some(path)),
+        "unexpected stat path {path} in {stats:?}"
     );
 }
 

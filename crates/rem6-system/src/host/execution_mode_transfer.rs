@@ -35,9 +35,13 @@ impl SystemActionExecutor {
         }
         self.captured_manifests
             .insert(manifest.label().to_string(), manifest.clone());
+        let checker = self
+            .riscv_checkpoints
+            .as_ref()
+            .and_then(|checkpoints| checkpoints.checker_summary_for_target(target));
 
         Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
-            &manifest, target,
+            &manifest, target, checker,
         )))
     }
 
