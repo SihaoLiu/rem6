@@ -394,12 +394,9 @@ pub(crate) fn pma_alignment_checks(
     request_size: AccessSize,
     request_byte_offset: usize,
 ) -> Result<Vec<PmaAlignmentCheck>, RiscvCpuError> {
-    if let Some(checks) = masked_vector_pma_alignment_checks(
-        access,
-        request_address,
-        request_size,
-        request_byte_offset,
-    )? {
+    if let Some(checks) =
+        vector_pma_alignment_checks(access, request_address, request_size, request_byte_offset)?
+    {
         return Ok(checks);
     }
 
@@ -409,13 +406,13 @@ pub(crate) fn pma_alignment_checks(
     }])
 }
 
-fn masked_vector_pma_alignment_checks(
+fn vector_pma_alignment_checks(
     access: &MemoryAccessKind,
     request_address: Address,
     request_size: AccessSize,
     request_byte_offset: usize,
 ) -> Result<Option<Vec<PmaAlignmentCheck>>, RiscvCpuError> {
-    let Some(active_offsets) = active_masked_vector_element_offsets(access) else {
+    let Some(active_offsets) = vector_pma_element_offsets(access) else {
         return Ok(None);
     };
 
@@ -431,7 +428,7 @@ fn masked_vector_pma_alignment_checks(
     Ok(Some(checks))
 }
 
-fn active_masked_vector_element_offsets(access: &MemoryAccessKind) -> Option<Vec<usize>> {
+fn vector_pma_element_offsets(access: &MemoryAccessKind) -> Option<Vec<usize>> {
     // Strided vector memory keeps the existing span-level PMA model because
     // current translated/top-level evidence accepts unaligned strided lanes.
     match access {
@@ -448,16 +445,11 @@ fn active_masked_vector_element_offsets(access: &MemoryAccessKind) -> Option<Vec
             ..
         } => active_suppressed_span_element_offsets(byte_mask, *byte_len, width.bytes()),
         MemoryAccessKind::VectorLoadIndexed {
-            byte_mask: Some(byte_mask),
+            byte_mask,
             offsets,
             width,
             ..
-        } => active_suppressed_compact_element_offsets(
-            byte_mask,
-            offsets.len(),
-            width.bytes(),
-            |element_index| offsets.get(element_index).copied(),
-        ),
+        } => active_indexed_load_offsets(byte_mask.as_deref(), offsets, width.bytes()),
         MemoryAccessKind::VectorStoreUnitStride {
             data,
             byte_mask: Some(byte_mask),
@@ -477,7 +469,7 @@ fn active_masked_vector_element_offsets(access: &MemoryAccessKind) -> Option<Vec
             width,
             ..
         } if byte_mask.len() == data.len() => {
-            active_suppressed_indexed_store_offsets(byte_mask, offsets, width.bytes())
+            active_indexed_store_offsets(byte_mask, offsets, width.bytes())
         }
         _ => None,
     }
@@ -501,7 +493,24 @@ fn active_suppressed_span_element_offsets(
     )
 }
 
-fn active_suppressed_compact_element_offsets(
+fn active_indexed_load_offsets(
+    byte_mask: Option<&[bool]>,
+    offsets: &[usize],
+    element_bytes: usize,
+) -> Option<Vec<usize>> {
+    match byte_mask {
+        Some(byte_mask) => active_compact_element_offsets(
+            byte_mask,
+            offsets.len(),
+            element_bytes,
+            |element_index| offsets.get(element_index).copied(),
+        ),
+        None if element_bytes != 0 => Some(offsets.to_vec()),
+        None => None,
+    }
+}
+
+fn active_compact_element_offsets(
     byte_mask: &[bool],
     element_count: usize,
     element_bytes: usize,
@@ -511,7 +520,7 @@ fn active_suppressed_compact_element_offsets(
         return None;
     }
 
-    active_suppressed_element_offsets(
+    active_element_offsets(
         element_count,
         element_bytes,
         memory_offset,
@@ -519,17 +528,17 @@ fn active_suppressed_compact_element_offsets(
     )
 }
 
-fn active_suppressed_indexed_store_offsets(
+fn active_indexed_store_offsets(
     byte_mask: &[bool],
     offsets: &[usize],
     element_bytes: usize,
 ) -> Option<Vec<usize>> {
-    active_suppressed_store_offsets(byte_mask, offsets.len(), element_bytes, |element_index| {
+    active_store_offsets(byte_mask, offsets.len(), element_bytes, |element_index| {
         offsets.get(element_index).copied()
     })
 }
 
-fn active_suppressed_store_offsets(
+fn active_store_offsets(
     byte_mask: &[bool],
     element_count: usize,
     element_bytes: usize,
@@ -539,7 +548,7 @@ fn active_suppressed_store_offsets(
         return None;
     }
 
-    active_suppressed_element_offsets(
+    active_element_offsets(
         element_count,
         element_bytes,
         memory_offset,
@@ -550,6 +559,24 @@ fn active_suppressed_store_offsets(
                 .unwrap_or(false)
         },
     )
+}
+
+fn active_element_offsets(
+    element_count: usize,
+    element_bytes: usize,
+    memory_offset: impl Fn(usize) -> Option<usize>,
+    active_byte: impl Fn(usize, usize, usize) -> bool,
+) -> Option<Vec<usize>> {
+    let mut active_offsets = Vec::new();
+    for element_index in 0..element_count {
+        let source_offset = element_index.checked_mul(element_bytes)?;
+        let offset = memory_offset(element_index)?;
+        let active = (0..element_bytes).any(|byte| active_byte(source_offset, offset, byte));
+        if active {
+            active_offsets.push(offset);
+        }
+    }
+    Some(active_offsets)
 }
 
 fn active_suppressed_element_offsets(
@@ -818,6 +845,54 @@ mod tests {
         .unwrap();
 
         assert_eq!(checks, vec![pma_check(0x9004, 4), pma_check(0x901c, 4),]);
+    }
+
+    #[test]
+    fn pma_alignment_checks_use_unmasked_indexed_load_elements() {
+        let access = MemoryAccessKind::VectorLoadIndexed {
+            vd: VectorRegister::new(2).unwrap(),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![4, 12],
+            span_len: 16,
+            byte_mask: None,
+            group_registers: 1,
+        };
+        let checks = pma_alignment_checks(
+            &access,
+            Address::new(0x9004),
+            AccessSize::new(12).unwrap(),
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(checks, vec![pma_check(0x9004, 4), pma_check(0x900c, 4),]);
+    }
+
+    #[test]
+    fn pma_alignment_checks_use_unmasked_indexed_store_elements() {
+        let mut byte_mask = vec![false; 16];
+        byte_mask[4..8].fill(true);
+        byte_mask[12..16].fill(true);
+        let access = MemoryAccessKind::VectorStoreIndexed {
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            index_width: MemoryWidth::Byte,
+            offsets: vec![4, 12],
+            data: vec![0; 16],
+            byte_mask,
+            group_registers: 1,
+        };
+        let checks = pma_alignment_checks(
+            &access,
+            Address::new(0x9004),
+            AccessSize::new(12).unwrap(),
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(checks, vec![pma_check(0x9004, 4), pma_check(0x900c, 4),]);
     }
 
     fn vector_load_unit_stride_with_mask(address: u64, lanes: &[bool]) -> MemoryAccessKind {
