@@ -651,24 +651,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
 
 #[test]
 fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
-    let mut words = vec![
-        m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
-        u_type(0, 5, 0x17),            // auipc x5, 0
-        i_type(60, 5, 0x0, 5, 0x13),   // addi x5, x5, data
-        i_type(7, 0, 0x0, 11, 0x13),   // addi x11, x0, 7
-        i_type(0, 5, 0b010, 12, 0x03), // lw x12, 0(x5)
-        s_type(4, 12, 5, 0b010),       // sw x12, 4(x5)
-        m5op(M5_EXIT),
-        i_type(77, 0, 0x0, 13, 0x13), // addi x13, x0, 77
-        m5op(M5_FAIL),
-    ];
-    while words.len() * 4 < 64 {
-        words.push(0);
-    }
-    words.extend([0x1234_5678, 0]);
-    let program = riscv64_program(&words);
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("m5-switch-cpu-detailed-o3-runtime-stats", &elf);
+    let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-stats");
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -714,14 +697,52 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
+    let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-text-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.instructions", 6);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.rob_allocations", 6);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.rob_commits", 6);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.rename_writes", 4);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_loads", 1);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_stores", 1);
+    assert_text_count_stat(&stdout, "system.cpu.rename.renamedInsts", 6);
+    assert_text_count_stat(&stdout, "system.cpu.rename.renamedOperands", 4);
+    assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
+    assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
+    assert_text_stat_absent(&stdout, "system.cpu.rob.writes");
+    assert_text_stat_absent(&stdout, "system.cpu.rob.reads");
+}
+
+#[test]
 fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
-    let program = riscv64_program(&[
-        m5op(M5_SWITCH_CPU),
-        i_type(7, 0, 0x0, 11, 0x13),
-        m5op(M5_EXIT),
-    ]);
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("m5-switch-cpu-timing-no-o3-runtime-stats", &elf);
+    let path = timing_switch_o3_stats_binary("m5-switch-cpu-timing-no-o3-runtime-stats");
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -752,6 +773,55 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
     assert_json_stat_absent(&json, "sim.cpu0.o3.instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.rob_allocations");
+}
+
+#[test]
+fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
+    let path = timing_switch_o3_stats_binary("m5-switch-cpu-timing-no-o3-runtime-text-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for path in [
+        "sim.cpu0.o3.instructions",
+        "sim.cpu0.o3.rob_allocations",
+        "sim.cpu0.o3.rob_commits",
+        "sim.cpu0.o3.rename_writes",
+        "sim.cpu0.o3.lsq_loads",
+        "sim.cpu0.o3.lsq_stores",
+        "system.cpu.rename.renamedInsts",
+        "system.cpu.rename.renamedOperands",
+        "system.cpu.iew.dispLoadInsts",
+        "system.cpu.iew.dispStoreInsts",
+        "system.cpu.lsq0.addedLoadsAndStores",
+        "system.cpu.rob.writes",
+        "system.cpu.rob.reads",
+    ] {
+        assert_text_stat_absent(&stdout, path);
+    }
 }
 
 #[test]
@@ -1491,6 +1561,37 @@ fn run_m5_checkpoint_memory_checksums(name: &str, dram_memory: bool) -> (String,
     )
 }
 
+fn detailed_o3_runtime_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
+        u_type(0, 5, 0x17),            // auipc x5, 0
+        i_type(60, 5, 0x0, 5, 0x13),   // addi x5, x5, data
+        i_type(7, 0, 0x0, 11, 0x13),   // addi x11, x0, 7
+        i_type(0, 5, 0b010, 12, 0x03), // lw x12, 0(x5)
+        s_type(4, 12, 5, 0b010),       // sw x12, 4(x5)
+        m5op(M5_EXIT),
+        i_type(77, 0, 0x0, 13, 0x13), // addi x13, x0, 77
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn timing_switch_o3_stats_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        i_type(7, 0, 0x0, 11, 0x13),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn assert_work_marker(
     host_actions: &Value,
     field: &str,
@@ -1586,6 +1687,15 @@ fn text_stat_line<'a>(stdout: &'a str, path: &str) -> &'a str {
         .lines()
         .find(|line| line.split_whitespace().next() == Some(path))
         .unwrap_or_else(|| panic!("missing text stat {path} in stdout:\n{stdout}"))
+}
+
+fn assert_text_stat_absent(stdout: &str, path: &str) {
+    assert!(
+        stdout
+            .lines()
+            .all(|line| line.split_whitespace().next() != Some(path)),
+        "unexpected text stat {path} in stdout:\n{stdout}"
+    );
 }
 
 fn text_histogram_bucket_lines<'a>(stdout: &'a str, path: &str) -> Vec<&'a str> {

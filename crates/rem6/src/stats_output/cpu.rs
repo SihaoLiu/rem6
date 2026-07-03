@@ -395,7 +395,7 @@ pub(super) fn emit_cpu_run_stats(
                 value,
             )?;
         }
-        emit_o3_runtime_stats(stats, core)?;
+        emit_o3_runtime_stats(stats, core, &gem5_cpu_alias_prefix)?;
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.lookups", core.cpu),
@@ -875,6 +875,7 @@ pub(super) fn emit_cpu_run_stats(
 fn emit_o3_runtime_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
+    gem5_cpu_alias_prefix: &str,
 ) -> Result<(), Rem6CliError> {
     let o3 = core.o3_runtime;
     if !o3.has_activity() {
@@ -892,6 +893,24 @@ fn emit_o3_runtime_stats(
         increment_stat(
             stats,
             &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (name, value) in [
+        ("rename.renamedInsts", o3.instructions()),
+        ("rename.renamedOperands", o3.rename_writes()),
+        ("iew.dispLoadInsts", o3.lsq_loads()),
+        ("iew.dispStoreInsts", o3.lsq_stores()),
+        (
+            "lsq0.addedLoadsAndStores",
+            o3.lsq_loads().saturating_add(o3.lsq_stores()),
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.{name}"),
             "Count",
             StatResetPolicy::Monotonic,
             value,
