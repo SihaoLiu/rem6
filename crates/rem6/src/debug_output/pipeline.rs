@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    InOrderPipelineAdvance, InOrderPipelineInstruction, InOrderPipelineStage, RiscvCluster,
+    InOrderPipelineAdvance, InOrderPipelineInstruction, InOrderPipelineRedirectCause,
+    InOrderPipelineStage, RiscvCluster,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,16 +56,14 @@ pub(super) fn pipeline_trace_records(
                     let branch_prediction_flushed =
                         summary.branch_prediction_flushed_count() as u64;
                     let branch_predictions = summary.branch_prediction_count() as u64;
+                    let redirect_cause = cycle.plan().redirect().map(|redirect| redirect.cause());
                     Rem6PipelineTraceRecord {
                         cpu: cpu.get(),
                         cycle: cycle.cycle(),
                         stall_cycles: cycle.stall_cycle_count(),
                         stall_cause: cycle.stall_cause().map(|cause| cause.as_str()),
                         flush_cause: pipeline_flush_cause(branch_prediction_flushed),
-                        redirect_cause: pipeline_redirect_cause(
-                            summary.redirect_target_pc(),
-                            branch_predictions,
-                        ),
+                        redirect_cause: pipeline_redirect_cause(redirect_cause),
                         state_changed: summary.state_changed(),
                         before_in_flight: cycle
                             .before()
@@ -153,13 +152,11 @@ const fn pipeline_flush_cause(branch_prediction_flushed: u64) -> Option<&'static
 }
 
 const fn pipeline_redirect_cause(
-    redirect_target_pc: Option<u64>,
-    branch_predictions: u64,
+    cause: Option<InOrderPipelineRedirectCause>,
 ) -> Option<&'static str> {
-    match (redirect_target_pc, branch_predictions) {
-        (None, _) => None,
-        (Some(_), 0) => Some("trap_redirect"),
-        (Some(_), _) => Some("branch_prediction"),
+    match cause {
+        None => None,
+        Some(cause) => Some(cause.as_str()),
     }
 }
 

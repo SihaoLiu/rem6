@@ -34,9 +34,10 @@ pub use crate::in_order_pipeline::{
     InOrderBranchPrediction, InOrderBranchPredictionRecord, InOrderBranchRedirect,
     InOrderPipelineAdvance, InOrderPipelineCheckpointPayload, InOrderPipelineConfig,
     InOrderPipelineCycleRecord, InOrderPipelineCycleSummary, InOrderPipelineError,
-    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineRunSummary,
-    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStageWidth, InOrderPipelineStallCause, InOrderPipelineState,
+    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineRedirectCause,
+    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineStallCause,
+    InOrderPipelineState,
 };
 pub use crate::indirect_target_predictor::{
     IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,

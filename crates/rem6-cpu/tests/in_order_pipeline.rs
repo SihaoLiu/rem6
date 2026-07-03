@@ -90,7 +90,8 @@ fn in_order_pipeline_commit_width_marks_retirements_in_program_order() {
 #[test]
 fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
     let scheduler = scheduler_with_decode_width(1);
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
 
     let plan = scheduler
         .plan_with_redirect(
@@ -335,7 +336,8 @@ fn in_order_pipeline_correct_prediction_rejects_wrong_stage() {
 #[test]
 fn in_order_pipeline_rejects_redirect_for_absent_instruction() {
     let scheduler = scheduler_with_decode_width(1);
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
 
     assert_eq!(
         scheduler
@@ -354,7 +356,8 @@ fn in_order_pipeline_rejects_redirect_for_absent_instruction() {
 #[test]
 fn in_order_pipeline_rejects_redirect_stage_mismatch() {
     let scheduler = scheduler_with_decode_width(1);
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
 
     assert_eq!(
         scheduler
@@ -526,7 +529,8 @@ fn in_order_pipeline_advance_cycle_with_redirect_removes_flushed_work() {
             instruction(32, InOrderPipelineStage::Fetch2),
         ])
         .unwrap();
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
 
     let plan = state.advance_cycle_with_redirect(Some(redirect)).unwrap();
 
@@ -633,7 +637,8 @@ fn in_order_pipeline_cycle_summary_records_redirect_target() {
             instruction(32, InOrderPipelineStage::Fetch2),
         ])
         .unwrap();
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
 
     let summary = state
         .try_advance_cycle_recorded_with_redirect(Some(redirect))
@@ -648,6 +653,8 @@ fn in_order_pipeline_cycle_summary_records_redirect_target() {
     assert_eq!(summary.ordering_blocked_count(), 0);
     assert!(summary.state_changed());
     assert_eq!(summary.redirect_target_pc(), Some(0x2000));
+    assert_eq!(summary.branch_prediction_redirect_count(), 1);
+    assert_eq!(summary.trap_redirect_count(), 0);
 }
 
 #[test]
@@ -689,7 +696,8 @@ fn in_order_pipeline_run_summary_aggregates_redirect_flush_and_ordering_counts()
             instruction(32, InOrderPipelineStage::Fetch2),
         ])
         .unwrap();
-    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
     let redirect_record = redirect_state
         .try_advance_cycle_recorded_with_redirect(Some(redirect))
         .unwrap();
@@ -719,6 +727,8 @@ fn in_order_pipeline_run_summary_aggregates_redirect_flush_and_ordering_counts()
     assert_eq!(summary.flushed_count(), 2);
     assert_eq!(summary.flush_cycle_count(), 1);
     assert_eq!(summary.branch_prediction_flush_cycle_count(), 0);
+    assert_eq!(summary.branch_prediction_redirect_count(), 1);
+    assert_eq!(summary.trap_redirect_count(), 0);
     assert_eq!(summary.resource_blocked_count(), 1);
     assert_eq!(summary.ordering_blocked_count(), 1);
 }

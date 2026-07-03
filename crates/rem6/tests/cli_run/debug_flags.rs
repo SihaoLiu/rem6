@@ -469,6 +469,10 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
         redirect_cycle.get("flush_cause").and_then(Value::as_str),
         Some("branch_prediction")
     );
+    assert_eq!(
+        redirect_cycle.get("redirect_cause").and_then(Value::as_str),
+        Some("branch_prediction")
+    );
     assert!(!redirect_cycle
         .get("advanced")
         .and_then(Value::as_array)
@@ -487,6 +491,35 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
         .get("after_in_flight")
         .and_then(Value::as_array)
         .is_some());
+    let branch_prediction_redirects = json_path_u64(
+        &json,
+        "/cores/0/in_order_pipeline/branch_prediction_redirects",
+    );
+    let trap_redirects = json_path_u64(&json, "/cores/0/in_order_pipeline/trap_redirects");
+    let redirects = json_path_u64(&json, "/cores/0/in_order_pipeline/redirects");
+    assert!(branch_prediction_redirects > 0, "{stdout}");
+    assert_eq!(branch_prediction_redirects + trap_redirects, redirects);
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.branch_prediction_redirects",
+        "Count",
+        branch_prediction_redirects,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.trap_redirects",
+        "Count",
+        trap_redirects,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.redirect_cause.branch_prediction.records",
+        "Count",
+        branch_prediction_redirects,
+        "monotonic",
+    );
 
     let mut aggregate = PipelineTraceStats::default();
     for record in trace {
@@ -643,6 +676,29 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_suppression() {
     assert_stat(
         &stdout,
         "sim.debug.pipeline_trace.branch_prediction_flushed",
+        "Count",
+        0,
+        "monotonic",
+    );
+    let trap_redirects = json_path_u64(&json, "/cores/0/in_order_pipeline/trap_redirects");
+    let branch_prediction_redirects = json_path_u64(
+        &json,
+        "/cores/0/in_order_pipeline/branch_prediction_redirects",
+    );
+    let redirects = json_path_u64(&json, "/cores/0/in_order_pipeline/redirects");
+    assert_eq!(trap_redirects, 1);
+    assert_eq!(branch_prediction_redirects, 0);
+    assert_eq!(branch_prediction_redirects + trap_redirects, redirects);
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.trap_redirects",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.branch_prediction_redirects",
         "Count",
         0,
         "monotonic",

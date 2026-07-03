@@ -44,6 +44,8 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_branch_prediction_flushes: u64,
     pub(crate) in_order_pipeline_branch_prediction_flush_cycles: u64,
     pub(crate) in_order_pipeline_redirects: u64,
+    pub(crate) in_order_pipeline_branch_prediction_redirects: u64,
+    pub(crate) in_order_pipeline_trap_redirects: u64,
     pub(crate) in_order_pipeline_branch_speculation_predictions: u64,
     pub(crate) in_order_pipeline_branch_speculation_repairs: u64,
     pub(crate) in_order_pipeline_branch_speculation_removed_youngers: u64,

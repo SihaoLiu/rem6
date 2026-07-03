@@ -150,18 +150,62 @@ impl InOrderPipelineStallCause {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InOrderPipelineRedirectCause {
+    BranchPrediction,
+    Trap,
+}
+
+impl InOrderPipelineRedirectCause {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BranchPrediction => "branch_prediction",
+            Self::Trap => "trap_redirect",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InOrderBranchRedirect {
     sequence: u64,
     resolved_stage: InOrderPipelineStage,
     target_pc: u64,
+    cause: InOrderPipelineRedirectCause,
 }
 
 impl InOrderBranchRedirect {
-    pub const fn new(sequence: u64, resolved_stage: InOrderPipelineStage, target_pc: u64) -> Self {
+    pub const fn branch_prediction(
+        sequence: u64,
+        resolved_stage: InOrderPipelineStage,
+        target_pc: u64,
+    ) -> Self {
+        Self::with_cause(
+            sequence,
+            resolved_stage,
+            target_pc,
+            InOrderPipelineRedirectCause::BranchPrediction,
+        )
+    }
+
+    pub const fn trap(sequence: u64, resolved_stage: InOrderPipelineStage, target_pc: u64) -> Self {
+        Self::with_cause(
+            sequence,
+            resolved_stage,
+            target_pc,
+            InOrderPipelineRedirectCause::Trap,
+        )
+    }
+
+    const fn with_cause(
+        sequence: u64,
+        resolved_stage: InOrderPipelineStage,
+        target_pc: u64,
+        cause: InOrderPipelineRedirectCause,
+    ) -> Self {
         Self {
             sequence,
             resolved_stage,
             target_pc,
+            cause,
         }
     }
 
@@ -175,6 +219,10 @@ impl InOrderBranchRedirect {
 
     pub const fn target_pc(self) -> u64 {
         self.target_pc
+    }
+
+    pub const fn cause(self) -> InOrderPipelineRedirectCause {
+        self.cause
     }
 }
 
@@ -268,7 +316,11 @@ impl InOrderBranchPrediction {
     fn redirect(self) -> Result<Option<InOrderBranchRedirect>, InOrderPipelineError> {
         self.repair_target_pc().map(|target| {
             target.map(|target_pc| {
-                InOrderBranchRedirect::new(self.sequence, self.resolved_stage, target_pc)
+                InOrderBranchRedirect::branch_prediction(
+                    self.sequence,
+                    self.resolved_stage,
+                    target_pc,
+                )
             })
         })
     }
@@ -616,6 +668,8 @@ pub struct InOrderPipelineCycleSummary {
     conditional_branch_predicted_taken_count: usize,
     conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
+    branch_prediction_redirect_count: usize,
+    trap_redirect_count: usize,
     state_changed: bool,
     redirect_target_pc: Option<u64>,
 }
@@ -641,6 +695,8 @@ pub struct InOrderPipelineRunSummary {
     branch_prediction_flushed_count: usize,
     branch_prediction_flush_cycle_count: usize,
     redirect_count: usize,
+    branch_prediction_redirect_count: usize,
+    trap_redirect_count: usize,
     state_changed_cycle_count: usize,
 }
 
@@ -665,6 +721,8 @@ impl InOrderPipelineRunSummary {
         branch_prediction_flushed_count: 0,
         branch_prediction_flush_cycle_count: 0,
         redirect_count: 0,
+        branch_prediction_redirect_count: 0,
+        trap_redirect_count: 0,
         state_changed_cycle_count: 0,
     };
 
@@ -718,6 +776,8 @@ impl InOrderPipelineRunSummary {
             if cycle.redirect_target_pc().is_some() {
                 summary.redirect_count += 1;
             }
+            summary.branch_prediction_redirect_count += cycle.branch_prediction_redirect_count();
+            summary.trap_redirect_count += cycle.trap_redirect_count();
             if cycle.state_changed() {
                 summary.state_changed_cycle_count += 1;
             }
@@ -756,6 +816,9 @@ impl InOrderPipelineRunSummary {
             branch_prediction_flush_cycle_count: self.branch_prediction_flush_cycle_count
                 + other.branch_prediction_flush_cycle_count,
             redirect_count: self.redirect_count + other.redirect_count,
+            branch_prediction_redirect_count: self.branch_prediction_redirect_count
+                + other.branch_prediction_redirect_count,
+            trap_redirect_count: self.trap_redirect_count + other.trap_redirect_count,
             state_changed_cycle_count: self.state_changed_cycle_count
                 + other.state_changed_cycle_count,
         })
@@ -839,6 +902,14 @@ impl InOrderPipelineRunSummary {
 
     pub const fn redirect_count(self) -> usize {
         self.redirect_count
+    }
+
+    pub const fn branch_prediction_redirect_count(self) -> usize {
+        self.branch_prediction_redirect_count
+    }
+
+    pub const fn trap_redirect_count(self) -> usize {
+        self.trap_redirect_count
     }
 
     pub const fn state_changed_cycle_count(self) -> usize {
@@ -989,6 +1060,14 @@ impl InOrderPipelineCycleSummary {
         self.branch_prediction_flushed_count
     }
 
+    pub const fn branch_prediction_redirect_count(self) -> usize {
+        self.branch_prediction_redirect_count
+    }
+
+    pub const fn trap_redirect_count(self) -> usize {
+        self.trap_redirect_count
+    }
+
     pub const fn state_changed(self) -> bool {
         self.state_changed
     }
@@ -1064,6 +1143,11 @@ impl InOrderPipelineCycleRecord {
             .iter()
             .map(|prediction| prediction.flushed().len())
             .sum();
+        let redirect_cause = self.plan.redirect().map(|redirect| redirect.cause());
+        let branch_prediction_redirect_count =
+            usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::BranchPrediction));
+        let trap_redirect_count =
+            usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Trap));
 
         InOrderPipelineCycleSummary {
             cycle: self.cycle,
@@ -1080,6 +1164,8 @@ impl InOrderPipelineCycleRecord {
             conditional_branch_predicted_taken_count,
             conditional_branch_misprediction_count,
             branch_prediction_flushed_count,
+            branch_prediction_redirect_count,
+            trap_redirect_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),
             redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),
         }

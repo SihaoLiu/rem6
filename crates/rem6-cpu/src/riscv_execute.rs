@@ -236,7 +236,7 @@ impl RiscvCore {
             direct_jump_fetch_ahead_target,
         );
         let pipeline_redirect = execution.trap().is_some().then(|| {
-            InOrderBranchRedirect::new(
+            InOrderBranchRedirect::trap(
                 fetch.request_id().sequence(),
                 InOrderPipelineStage::Commit,
                 next_pc.get(),

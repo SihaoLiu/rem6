@@ -241,6 +241,10 @@ pub(super) fn execution_summary(
                 .branch_prediction_flush_cycle_count()
                 as u64,
             in_order_pipeline_redirects: pipeline_summary.redirect_count() as u64,
+            in_order_pipeline_branch_prediction_redirects: pipeline_summary
+                .branch_prediction_redirect_count()
+                as u64,
+            in_order_pipeline_trap_redirects: pipeline_summary.trap_redirect_count() as u64,
             in_order_pipeline_branch_speculation_predictions: branch_speculation_summary
                 .predictions(),
             in_order_pipeline_branch_speculation_repairs: branch_speculation_summary.repairs(),

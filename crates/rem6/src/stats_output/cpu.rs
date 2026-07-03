@@ -315,6 +315,23 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_redirects,
         )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.branch_prediction_redirects",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_branch_prediction_redirects,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.pipeline.in_order.trap_redirects", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_trap_redirects,
+        )?;
         for (name, value) in [
             (
                 "branch_speculation_predictions",
