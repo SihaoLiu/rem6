@@ -1480,6 +1480,7 @@ impl RiscvCore {
             access: translated.access,
             size: translated.size,
             physical_address: translated.physical_address,
+            request_byte_offset: 0,
             line_layout: None,
         }))
     }
@@ -1562,6 +1563,7 @@ impl RiscvCore {
             access: translated.access,
             size: translated.size,
             physical_address: translated.physical_address,
+            request_byte_offset: 0,
             line_layout: Some(line_layout),
         })
     }

@@ -1,16 +1,13 @@
-use std::borrow::Cow;
-
 use rem6_isa_riscv::{
     AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, MemoryWidth, RiscvHartState,
-    RiscvPmaAccessKind, RiscvPmpAccessKind, RiscvPrivilegeMode, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvPrivilegeMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryError, MemoryRequest,
-    MemoryRequestId, ResponseStatus,
+    AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest, MemoryRequestId,
+    ResponseStatus,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId};
 use rem6_transport::{
@@ -22,6 +19,14 @@ use crate::{
     riscv_checker, riscv_data_access, riscv_execute, CpuId, InOrderPipelineCycleRecord,
     InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError,
     RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+};
+
+mod request_helpers;
+
+pub(crate) use request_helpers::{access_address, access_size};
+use request_helpers::{
+    masked_vector_memory_request_span, normalized_masked_load_data, pma_access_kind,
+    pmp_access_kind, vector_store_request_payload,
 };
 
 impl RiscvCore {
@@ -225,7 +230,9 @@ impl RiscvCore {
 
         let base_size = access_size(&access)?;
         let base_address = Address::new(access_address(&access));
-        let (address, size) = masked_vector_load_request_span(&access, base_address, base_size)?;
+        let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
+        let address = request_span.address;
+        let size = request_span.size;
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address)?;
         let line_layout = data
@@ -256,6 +263,7 @@ impl RiscvCore {
             access,
             size,
             physical_address: address,
+            request_byte_offset: request_span.byte_offset,
             line_layout: Some(line_layout),
         }))
     }
@@ -305,6 +313,7 @@ impl RiscvCore {
             access,
             size,
             physical_address: address,
+            request_byte_offset: 0,
             line_layout: None,
         }))
     }
@@ -659,6 +668,7 @@ pub(crate) struct OutstandingDataAccess {
     pub(crate) access: MemoryAccessKind,
     pub(crate) size: AccessSize,
     pub(crate) physical_address: Address,
+    pub(crate) request_byte_offset: usize,
     pub(crate) line_layout: Option<CacheLineLayout>,
 }
 
@@ -705,26 +715,42 @@ impl OutstandingDataAccess {
             }
             MemoryAccessKind::VectorStoreUnitStride {
                 data, byte_mask, ..
-            } => MemoryRequest::write(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                data.clone(),
-                store_byte_mask(self.size, byte_mask.as_deref())?,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            } => {
+                let (data, byte_mask) = vector_store_request_payload(
+                    self.size,
+                    self.request_byte_offset,
+                    data,
+                    byte_mask.as_deref(),
+                )?;
+                MemoryRequest::write(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    data,
+                    store_byte_mask(self.size, byte_mask.as_deref())?,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::VectorStoreSegmentUnitStride {
                 data, byte_mask, ..
-            } => MemoryRequest::write(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                data.clone(),
-                store_byte_mask(self.size, byte_mask.as_deref())?,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            } => {
+                let (data, byte_mask) = vector_store_request_payload(
+                    self.size,
+                    self.request_byte_offset,
+                    data,
+                    byte_mask.as_deref(),
+                )?;
+                MemoryRequest::write(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    data,
+                    store_byte_mask(self.size, byte_mask.as_deref())?,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::VectorStoreStrided {
                 data, byte_mask, ..
             } => MemoryRequest::write(
@@ -1107,189 +1133,6 @@ fn vector_register_at(register: VectorRegister, group_index: usize) -> VectorReg
     VectorRegister::new(index as u8).expect("validated vector register group")
 }
 
-pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
-    match access {
-        MemoryAccessKind::Load { width, .. }
-        | MemoryAccessKind::FloatLoad { width, .. }
-        | MemoryAccessKind::VectorLoadUnitStride { width, .. }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride { width, .. }
-        | MemoryAccessKind::VectorLoadStrided { width, .. }
-        | MemoryAccessKind::VectorLoadIndexed { width, .. }
-        | MemoryAccessKind::LoadReserved { width, .. }
-        | MemoryAccessKind::StoreConditional { width, .. }
-        | MemoryAccessKind::AtomicMemory { width, .. }
-        | MemoryAccessKind::Store { width, .. }
-        | MemoryAccessKind::FloatStore { width, .. }
-        | MemoryAccessKind::VectorStoreUnitStride { width, .. }
-        | MemoryAccessKind::VectorStoreSegmentUnitStride { width, .. }
-        | MemoryAccessKind::VectorStoreStrided { width, .. }
-        | MemoryAccessKind::VectorStoreIndexed { width, .. } => *width,
-    }
-}
-
-pub(crate) fn access_size(access: &MemoryAccessKind) -> Result<AccessSize, RiscvCpuError> {
-    match access {
-        MemoryAccessKind::VectorLoadUnitStride { byte_len, .. } => {
-            AccessSize::new(*byte_len as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorLoadSegmentUnitStride { byte_len, .. } => {
-            AccessSize::new(*byte_len as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorStoreUnitStride { data, .. } => {
-            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => {
-            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorLoadStrided { span_len, .. } => {
-            AccessSize::new(*span_len as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorStoreStrided { data, .. } => {
-            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorLoadIndexed { span_len, .. } => {
-            AccessSize::new(*span_len as u64).map_err(RiscvCpuError::Memory)
-        }
-        MemoryAccessKind::VectorStoreIndexed { data, .. } => {
-            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
-        }
-        _ => memory_width_size(access_width(access)),
-    }
-}
-
-fn masked_vector_load_request_span(
-    access: &MemoryAccessKind,
-    base_address: Address,
-    base_size: AccessSize,
-) -> Result<(Address, AccessSize), RiscvCpuError> {
-    let Some((start, end)) = contiguous_masked_vector_load_span(access) else {
-        return Ok((base_address, base_size));
-    };
-    if start == 0 && end as u64 == base_size.bytes() {
-        return Ok((base_address, base_size));
-    }
-
-    let size = AccessSize::new((end - start) as u64).map_err(RiscvCpuError::Memory)?;
-    let address = base_address
-        .get()
-        .checked_add(start as u64)
-        .map(Address::new)
-        .ok_or(RiscvCpuError::Memory(MemoryError::AddressOverflow {
-            start: base_address,
-            size: base_size,
-        }))?;
-    Ok((address, size))
-}
-
-fn contiguous_masked_vector_load_span(access: &MemoryAccessKind) -> Option<(usize, usize)> {
-    match access {
-        MemoryAccessKind::VectorLoadUnitStride {
-            byte_len,
-            byte_mask: Some(byte_mask),
-            ..
-        }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride {
-            byte_len,
-            byte_mask: Some(byte_mask),
-            ..
-        } if byte_mask.len() == *byte_len => contiguous_active_byte_span(byte_mask),
-        _ => None,
-    }
-}
-
-fn contiguous_active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
-    let first = byte_mask.iter().position(|active| *active)?;
-    let last = byte_mask.iter().rposition(|active| *active)? + 1;
-    if byte_mask[first..last].iter().all(|active| *active) {
-        Some((first, last))
-    } else {
-        None
-    }
-}
-
-fn normalized_masked_load_data<'a>(
-    expected_len: usize,
-    byte_mask: Option<&[bool]>,
-    data: &'a [u8],
-) -> Cow<'a, [u8]> {
-    if data.len() == expected_len {
-        return Cow::Borrowed(data);
-    }
-    let Some(byte_mask) = byte_mask else {
-        return Cow::Borrowed(data);
-    };
-    let Some((start, end)) = contiguous_active_byte_span(byte_mask) else {
-        return Cow::Borrowed(data);
-    };
-    if byte_mask.len() != expected_len || end - start != data.len() {
-        return Cow::Borrowed(data);
-    }
-
-    let mut expanded = vec![0; expected_len];
-    expanded[start..end].copy_from_slice(data);
-    Cow::Owned(expanded)
-}
-
-fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
-    match access {
-        MemoryAccessKind::Load { .. }
-        | MemoryAccessKind::FloatLoad { .. }
-        | MemoryAccessKind::VectorLoadUnitStride { .. }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
-        | MemoryAccessKind::VectorLoadStrided { .. }
-        | MemoryAccessKind::VectorLoadIndexed { .. }
-        | MemoryAccessKind::LoadReserved { .. } => RiscvPmpAccessKind::Read,
-        MemoryAccessKind::Store { .. }
-        | MemoryAccessKind::FloatStore { .. }
-        | MemoryAccessKind::VectorStoreUnitStride { .. }
-        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
-        | MemoryAccessKind::VectorStoreStrided { .. }
-        | MemoryAccessKind::VectorStoreIndexed { .. }
-        | MemoryAccessKind::StoreConditional { .. }
-        | MemoryAccessKind::AtomicMemory { .. } => RiscvPmpAccessKind::Write,
-    }
-}
-
-fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
-    match access {
-        MemoryAccessKind::Load { .. }
-        | MemoryAccessKind::FloatLoad { .. }
-        | MemoryAccessKind::VectorLoadUnitStride { .. }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
-        | MemoryAccessKind::VectorLoadStrided { .. }
-        | MemoryAccessKind::VectorLoadIndexed { .. }
-        | MemoryAccessKind::LoadReserved { .. } => RiscvPmaAccessKind::Read,
-        MemoryAccessKind::Store { .. }
-        | MemoryAccessKind::FloatStore { .. }
-        | MemoryAccessKind::VectorStoreUnitStride { .. }
-        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
-        | MemoryAccessKind::VectorStoreStrided { .. }
-        | MemoryAccessKind::VectorStoreIndexed { .. }
-        | MemoryAccessKind::StoreConditional { .. }
-        | MemoryAccessKind::AtomicMemory { .. } => RiscvPmaAccessKind::Write,
-    }
-}
-
-pub(crate) fn access_address(access: &MemoryAccessKind) -> u64 {
-    match access {
-        MemoryAccessKind::Load { address, .. }
-        | MemoryAccessKind::FloatLoad { address, .. }
-        | MemoryAccessKind::VectorLoadUnitStride { address, .. }
-        | MemoryAccessKind::VectorLoadSegmentUnitStride { address, .. }
-        | MemoryAccessKind::VectorLoadStrided { address, .. }
-        | MemoryAccessKind::VectorLoadIndexed { address, .. }
-        | MemoryAccessKind::LoadReserved { address, .. }
-        | MemoryAccessKind::StoreConditional { address, .. }
-        | MemoryAccessKind::AtomicMemory { address, .. }
-        | MemoryAccessKind::Store { address, .. }
-        | MemoryAccessKind::FloatStore { address, .. }
-        | MemoryAccessKind::VectorStoreUnitStride { address, .. }
-        | MemoryAccessKind::VectorStoreSegmentUnitStride { address, .. }
-        | MemoryAccessKind::VectorStoreStrided { address, .. }
-        | MemoryAccessKind::VectorStoreIndexed { address, .. } => *address,
-    }
-}
-
 pub(crate) fn supports_cross_line_data_access(
     access: &MemoryAccessKind,
     address: Address,
@@ -1437,10 +1280,6 @@ fn sparse_e64_indexed_m1_vector_access(
         && offsets == [0, 24]
         && byte_len == 32
         && size_bytes == byte_len
-}
-
-pub(crate) fn memory_width_size(width: MemoryWidth) -> Result<AccessSize, RiscvCpuError> {
-    AccessSize::new(width.bytes() as u64).map_err(RiscvCpuError::Memory)
 }
 
 pub(crate) fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
