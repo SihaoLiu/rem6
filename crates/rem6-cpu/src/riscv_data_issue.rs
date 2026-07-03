@@ -26,7 +26,10 @@ mod request_helpers;
 pub(crate) use request_helpers::{
     access_address, access_size, masked_vector_memory_request_span, vector_store_request_payload,
 };
-use request_helpers::{normalized_masked_load_data, pma_access_kind, pmp_access_kind};
+use request_helpers::{
+    normalized_masked_indexed_load_data, normalized_masked_load_data, pma_access_kind,
+    pmp_access_kind,
+};
 
 impl RiscvCore {
     pub fn issue_next_data_access<F>(
@@ -763,15 +766,23 @@ impl OutstandingDataAccess {
             .map_err(RiscvCpuError::Memory),
             MemoryAccessKind::VectorStoreIndexed {
                 data, byte_mask, ..
-            } => MemoryRequest::write(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                data.clone(),
-                store_byte_mask(self.size, Some(byte_mask.as_slice()))?,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            } => {
+                let (data, byte_mask) = vector_store_request_payload(
+                    self.size,
+                    self.request_byte_offset,
+                    data,
+                    Some(byte_mask.as_slice()),
+                )?;
+                MemoryRequest::write(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    data,
+                    store_byte_mask(self.size, byte_mask.as_deref())?,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::store_conditional(
                 self.request_id,
                 self.physical_address,
@@ -1004,10 +1015,17 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
+            let data = normalized_masked_indexed_load_data(
+                *span_len,
+                byte_mask.as_deref(),
+                offsets,
+                width.bytes(),
+                data,
+            );
             assert_eq!(*span_len, data.len(), "indexed vector load response width");
             let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
             scatter_indexed_load(
-                data,
+                &data,
                 &mut destination,
                 width.bytes(),
                 offsets,
@@ -1370,13 +1388,21 @@ pub(crate) fn mmio_request(
         .map_err(RiscvCpuError::Mmio),
         MemoryAccessKind::VectorStoreIndexed {
             data, byte_mask, ..
-        } => MmioRequest::write(
-            mmio_request_id(request),
-            address,
-            data.clone(),
-            store_byte_mask(size, Some(byte_mask.as_slice()))?,
-        )
-        .map_err(RiscvCpuError::Mmio),
+        } => {
+            let (data, byte_mask) = vector_store_request_payload(
+                size,
+                request_byte_offset,
+                data,
+                Some(byte_mask.as_slice()),
+            )?;
+            MmioRequest::write(
+                mmio_request_id(request),
+                address,
+                data,
+                store_byte_mask(size, byte_mask.as_deref())?,
+            )
+            .map_err(RiscvCpuError::Mmio)
+        }
     }
 }
 

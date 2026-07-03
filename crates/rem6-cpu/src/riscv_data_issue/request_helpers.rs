@@ -110,6 +110,13 @@ fn contiguous_masked_vector_memory_span(access: &MemoryAccessKind) -> Option<(us
             byte_mask: Some(byte_mask),
             ..
         } if byte_mask.len() == *byte_len => contiguous_active_byte_span(byte_mask),
+        MemoryAccessKind::VectorLoadIndexed {
+            span_len,
+            byte_mask: Some(byte_mask),
+            offsets,
+            width,
+            ..
+        } => indexed_active_byte_span(*span_len, byte_mask, offsets, width.bytes()),
         MemoryAccessKind::VectorStoreUnitStride {
             data,
             byte_mask: Some(byte_mask),
@@ -120,8 +127,40 @@ fn contiguous_masked_vector_memory_span(access: &MemoryAccessKind) -> Option<(us
             byte_mask: Some(byte_mask),
             ..
         } if byte_mask.len() == data.len() => contiguous_active_byte_span(byte_mask),
+        MemoryAccessKind::VectorStoreIndexed {
+            data, byte_mask, ..
+        } if byte_mask.len() == data.len() => active_byte_span(byte_mask),
         _ => None,
     }
+}
+
+fn indexed_active_byte_span(
+    span_len: usize,
+    byte_mask: &[bool],
+    offsets: &[usize],
+    element_bytes: usize,
+) -> Option<(usize, usize)> {
+    if byte_mask.len() != offsets.len().checked_mul(element_bytes)? {
+        return None;
+    }
+
+    let mut first = span_len;
+    let mut last = 0usize;
+    for (element_index, memory_offset) in offsets.iter().copied().enumerate() {
+        let source_offset = element_index.checked_mul(element_bytes)?;
+        for element_byte in 0..element_bytes {
+            if !byte_mask[source_offset + element_byte] {
+                continue;
+            }
+            let memory_byte = memory_offset.checked_add(element_byte)?;
+            if memory_byte >= span_len {
+                return None;
+            }
+            first = first.min(memory_byte);
+            last = last.max(memory_byte + 1);
+        }
+    }
+    (last != 0).then_some((first, last))
 }
 
 fn contiguous_active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
@@ -132,6 +171,12 @@ fn contiguous_active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
     } else {
         None
     }
+}
+
+fn active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
+    let first = byte_mask.iter().position(|active| *active)?;
+    let last = byte_mask.iter().rposition(|active| *active)? + 1;
+    Some((first, last))
 }
 
 pub(crate) fn normalized_masked_load_data<'a>(
@@ -149,6 +194,33 @@ pub(crate) fn normalized_masked_load_data<'a>(
         return Cow::Borrowed(data);
     };
     if byte_mask.len() != expected_len || end - start != data.len() {
+        return Cow::Borrowed(data);
+    }
+
+    let mut expanded = vec![0; expected_len];
+    expanded[start..end].copy_from_slice(data);
+    Cow::Owned(expanded)
+}
+
+pub(crate) fn normalized_masked_indexed_load_data<'a>(
+    expected_len: usize,
+    byte_mask: Option<&[bool]>,
+    offsets: &[usize],
+    element_bytes: usize,
+    data: &'a [u8],
+) -> Cow<'a, [u8]> {
+    if data.len() == expected_len {
+        return Cow::Borrowed(data);
+    }
+    let Some(byte_mask) = byte_mask else {
+        return Cow::Borrowed(data);
+    };
+    let Some((start, end)) =
+        indexed_active_byte_span(expected_len, byte_mask, offsets, element_bytes)
+    else {
+        return Cow::Borrowed(data);
+    };
+    if end - start != data.len() {
         return Cow::Borrowed(data);
     }
 

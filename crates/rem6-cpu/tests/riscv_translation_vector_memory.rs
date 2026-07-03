@@ -56,6 +56,38 @@ fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8
         | 0x27
 }
 
+fn vector_indexed_unordered_load_type(
+    vm_unmasked: bool,
+    width: u32,
+    rs1: u8,
+    vs2: u8,
+    vd: u8,
+) -> u32 {
+    (0b01 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_indexed_unordered_store_type(
+    vm_unmasked: bool,
+    width: u32,
+    rs1: u8,
+    vs2: u8,
+    vs3: u8,
+) -> u32 {
+    (0b01 << 26)
+        | (u32::from(vm_unmasked) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
 fn core(route: MemoryRouteId, entry: u64) -> CpuCore {
     CpuCore::new(
         CpuResetState::new(
@@ -298,6 +330,296 @@ fn riscv_core_data_translation_suppresses_leading_inactive_masked_vector_store_l
     );
     assert_eq!(
         read_store_bytes(&store, 0x9010, 4, 2),
+        0xb1b2_b3b4_u32.to_le_bytes()
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_leading_inactive_masked_indexed_vector_load_lane() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x400c);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(2, 0, 0b000, 11, 0x13), // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),     // vsetvli x5, x11, e32, m1
+            vector_indexed_unordered_load_type(false, 0b110, 2, 4, 2), // vluxei32.v v2, (x2), v4, v0.t
+        ],
+        &[(0x900c, vec![0x11, 0x22, 0x33, 0x44, 0xb4, 0xb3, 0xb2, 0xb1])],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_0010;
+    core.write_vector_register(vreg(0), mask);
+    let mut offsets = [0; RISCV_VECTOR_REGISTER_BYTES];
+    offsets[0..4].copy_from_slice(&0_u32.to_le_bytes());
+    offsets[4..8].copy_from_slice(&4_u32.to_le_bytes());
+    core.write_vector_register(vreg(4), offsets);
+    let mut destination = [0; RISCV_VECTOR_REGISTER_BYTES];
+    destination[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    destination[4..8].copy_from_slice(&0x5151_5151_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), destination);
+
+    let mut issued_translated_load = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated masked indexed load should issue only the active high lane");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. })) {
+            issued_translated_load = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_load,
+        "translated masked indexed load should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9010))
+        .expect("translated masked indexed load should record the active-lane physical address");
+    assert_eq!(issued.size(), AccessSize::new(4).unwrap());
+    let destination = core.read_vector_register(vreg(2));
+    assert_eq!(
+        &destination[0..4],
+        &0xa1a2_a3a4_u32.to_le_bytes(),
+        "inactive indexed load lane should preserve the destination register"
+    );
+    assert_eq!(
+        &destination[4..8],
+        &0xb1b2_b3b4_u32.to_le_bytes(),
+        "active indexed load lane should come from the translated active address"
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_leading_inactive_masked_indexed_vector_store_lane() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x400c);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(2, 0, 0b000, 11, 0x13), // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),     // vsetvli x5, x11, e32, m1
+            vector_indexed_unordered_store_type(false, 0b110, 2, 4, 2), // vsuxei32.v v2, (x2), v4, v0.t
+        ],
+        &[(0x900c, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_0010;
+    core.write_vector_register(vreg(0), mask);
+    let mut offsets = [0; RISCV_VECTOR_REGISTER_BYTES];
+    offsets[0..4].copy_from_slice(&0_u32.to_le_bytes());
+    offsets[4..8].copy_from_slice(&4_u32.to_le_bytes());
+    core.write_vector_register(vreg(4), offsets);
+    let mut source = [0; RISCV_VECTOR_REGISTER_BYTES];
+    source[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    source[4..8].copy_from_slice(&0xb1b2_b3b4_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), source);
+
+    let mut issued_translated_store = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated masked indexed store should issue only the active high lane");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. })) {
+            issued_translated_store = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_store,
+        "translated masked indexed store should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9010))
+        .expect("translated masked indexed store should record the active-lane physical address");
+    assert_eq!(issued.size(), AccessSize::new(4).unwrap());
+    assert_eq!(
+        read_store_bytes(&store, 0x900c, 4, 3),
+        vec![0x11, 0x22, 0x33, 0x44]
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9010, 4, 4),
+        0xb1b2_b3b4_u32.to_le_bytes()
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_leading_gap_masked_indexed_vector_load_span() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x402c);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(2, 0, 0b000, 11, 0x13), // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),     // vsetvli x5, x11, e32, m1
+            vector_indexed_unordered_load_type(false, 0b110, 2, 4, 2), // vluxei32.v v2, (x2), v4, v0.t
+        ],
+        &[(
+            0x902c,
+            vec![
+                0x11, 0x22, 0x33, 0x44, 0xa4, 0xa3, 0xa2, 0xa1, 0x55, 0x66, 0x77, 0x88, 0xb4, 0xb3,
+                0xb2, 0xb1,
+            ],
+        )],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_0011;
+    core.write_vector_register(vreg(0), mask);
+    let mut offsets = [0; RISCV_VECTOR_REGISTER_BYTES];
+    offsets[0..4].copy_from_slice(&4_u32.to_le_bytes());
+    offsets[4..8].copy_from_slice(&12_u32.to_le_bytes());
+    core.write_vector_register(vreg(4), offsets);
+    let mut destination = [0; RISCV_VECTOR_REGISTER_BYTES];
+    destination[0..4].copy_from_slice(&0x5151_5151_u32.to_le_bytes());
+    destination[4..8].copy_from_slice(&0x5252_5252_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), destination);
+
+    let mut issued_translated_load = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated masked indexed load should trim the leading inactive memory gap");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. }))
+            || core
+                .data_access_events()
+                .iter()
+                .any(|event| event.physical_address() == Address::new(0x9030))
+        {
+            issued_translated_load = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_load,
+        "translated masked indexed load should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9030))
+        .expect("translated masked indexed load should record the first active physical address");
+    assert_eq!(issued.size(), AccessSize::new(12).unwrap());
+    let destination = core.read_vector_register(vreg(2));
+    assert_eq!(&destination[0..4], &0xa1a2_a3a4_u32.to_le_bytes());
+    assert_eq!(&destination[4..8], &0xb1b2_b3b4_u32.to_le_bytes());
+}
+
+#[test]
+fn riscv_core_data_translation_suppresses_leading_gap_masked_indexed_vector_store_span() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x402c);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(2, 0, 0b000, 11, 0x13), // addi x11, x0, vl
+            vsetvli_type(0xd0, 11, 5),     // vsetvli x5, x11, e32, m1
+            vector_indexed_unordered_store_type(false, 0b110, 2, 4, 2), // vsuxei32.v v2, (x2), v4, v0.t
+        ],
+        &[(
+            0x902c,
+            vec![
+                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+                0xff, 0x10,
+            ],
+        )],
+    );
+
+    let mut mask = [0; RISCV_VECTOR_REGISTER_BYTES];
+    mask[0] = 0b0000_0011;
+    core.write_vector_register(vreg(0), mask);
+    let mut offsets = [0; RISCV_VECTOR_REGISTER_BYTES];
+    offsets[0..4].copy_from_slice(&4_u32.to_le_bytes());
+    offsets[4..8].copy_from_slice(&12_u32.to_le_bytes());
+    core.write_vector_register(vreg(4), offsets);
+    let mut source = [0; RISCV_VECTOR_REGISTER_BYTES];
+    source[0..4].copy_from_slice(&0xa1a2_a3a4_u32.to_le_bytes());
+    source[4..8].copy_from_slice(&0xb1b2_b3b4_u32.to_le_bytes());
+    core.write_vector_register(vreg(2), source);
+
+    let mut issued_translated_store = false;
+    for _ in 0..12 {
+        let action = drive_one_translated_action(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            &page_map,
+        )
+        .expect("translated masked indexed store should trim the leading inactive memory gap");
+        scheduler.run_until_idle_conservative();
+        if matches!(action, Some(RiscvCoreDriveAction::DataAccessIssued { .. }))
+            || core
+                .data_access_events()
+                .iter()
+                .any(|event| event.physical_address() == Address::new(0x9030))
+        {
+            issued_translated_store = true;
+            break;
+        }
+    }
+    assert!(
+        issued_translated_store,
+        "translated masked indexed store should reach the data issue path"
+    );
+
+    let issued = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| event.physical_address() == Address::new(0x9030))
+        .expect("translated masked indexed store should record the first active physical address");
+    assert_eq!(issued.size(), AccessSize::new(12).unwrap());
+    assert_eq!(
+        read_store_bytes(&store, 0x902c, 4, 5),
+        vec![0x11, 0x22, 0x33, 0x44],
+        "leading inactive memory gap should be preserved"
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9030, 4, 6),
+        0xa1a2_a3a4_u32.to_le_bytes()
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9034, 4, 7),
+        vec![0x99, 0xaa, 0xbb, 0xcc],
+        "interior inactive memory gap should remain masked"
+    );
+    assert_eq!(
+        read_store_bytes(&store, 0x9038, 4, 8),
         0xb1b2_b3b4_u32.to_le_bytes()
     );
 }
