@@ -57,8 +57,8 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
     ),
 ];
 // Current segment execution evidence covers bounded single-line multi-field
-// forms plus the explicit aligned e64/m1 two-line slice. Broader segment
-// transport needs its own tests.
+// forms plus the explicit aligned e64/m1 unmasked/masked two-line slices.
+// Broader segment transport needs its own tests.
 const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
 pub(crate) fn memory_access(
@@ -94,7 +94,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = segment_unit_stride_access_plan(hart, vd, width, fields).ok_or(())?;
-            if unsupported_masked_segment_width(mask, width) {
+            if unsupported_masked_segment_shape(mask, width, &plan) {
                 return Err(());
             }
             if masked_segment_load_overlaps_v0(mask, vd, &plan) {
@@ -221,7 +221,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = segment_unit_stride_access_plan(hart, vs3, width, fields).ok_or(())?;
-            if unsupported_masked_segment_width(mask, width) {
+            if unsupported_masked_segment_shape(mask, width, &plan) {
                 return Err(());
             }
             if plan.byte_len == 0 {
@@ -822,8 +822,17 @@ fn supported_masked_full_register_group(width: MemoryWidth, plan: &UnitStrideAcc
             || (width == MemoryWidth::Word && matches!(plan.group_registers, 2 | 4 | 8)))
 }
 
-fn unsupported_masked_segment_width(mask: RiscvVectorMaskMode, width: MemoryWidth) -> bool {
-    mask.is_masked() && width != MemoryWidth::Word
+fn unsupported_masked_segment_shape(
+    mask: RiscvVectorMaskMode,
+    width: MemoryWidth,
+    plan: &SegmentUnitStrideAccessPlan,
+) -> bool {
+    mask.is_masked()
+        && !(width == MemoryWidth::Word
+            || (width == MemoryWidth::Doubleword
+                && plan.fields == 2
+                && plan.element_count == 2
+                && plan.byte_len == 32))
 }
 
 fn masked_load_overlaps_v0(

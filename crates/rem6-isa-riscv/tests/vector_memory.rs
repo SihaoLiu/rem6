@@ -4676,6 +4676,83 @@ fn hart_builds_unmasked_e64_segment_unit_stride_two_line_accesses() {
 }
 
 #[test]
+fn hart_builds_masked_e64_segment_unit_stride_two_line_accesses() {
+    let mut hart = RiscvHartState::new(0x831c);
+    hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    hart.write(reg(14), 0x9000);
+    hart.write(reg(16), 0x9020);
+    hart.write_vector(
+        vreg(0),
+        [0b0000_0001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    hart.write_vector(
+        vreg(2),
+        lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xc1c2_c3c4_c5c6_c7c8]),
+    );
+    hart.write_vector(
+        vreg(3),
+        lanes_u64([0xb1b2_b3b4_b5b6_b7b8, 0xd1d2_d3d4_d5d6_d7d8]),
+    );
+    let byte_mask = vec![
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, false, false, false, false, false, false, false, false, false, false, false, false,
+        false, false, false, false,
+    ];
+
+    let load = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_segment_load_type(false, 2, 0b111, 14, 2))
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        load.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd: vreg(2),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            fields: 2,
+            element_count: 2,
+            byte_len: 32,
+            byte_mask: Some(byte_mask.clone()),
+            group_registers: 1,
+        })
+    );
+
+    let store = hart
+        .execute(
+            RiscvInstruction::decode(vector_unit_stride_segment_store_type(
+                false, 2, 0b111, 16, 2,
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+    let mut data = Vec::new();
+    for value in [
+        0xa1a2_a3a4_a5a6_a7a8u64,
+        0xb1b2_b3b4_b5b6_b7b8,
+        0xc1c2_c3c4_c5c6_c7c8,
+        0xd1d2_d3d4_d5d6_d7d8,
+    ] {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    assert_eq!(
+        store.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreSegmentUnitStride {
+            address: 0x9020,
+            width: MemoryWidth::Doubleword,
+            fields: 2,
+            element_count: 2,
+            data,
+            byte_mask: Some(byte_mask),
+            group_registers: 1,
+        })
+    );
+}
+
+#[test]
 fn hart_builds_unmasked_e32_three_field_segment_unit_stride_accesses() {
     let mut hart = RiscvHartState::new(0x831c);
     hart.set_vector_config(RiscvVectorConfig::new(1, 0xd0));
