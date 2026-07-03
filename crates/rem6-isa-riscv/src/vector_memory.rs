@@ -56,8 +56,8 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
         32,
     ),
 ];
-// Current segment execution evidence is single-line only; cross-line segment
-// transport should lift this with explicit CPU/data-path tests.
+// Current segment execution evidence covers single-line forms plus the explicit
+// aligned e64/m1 two-line slice. Broader segment transport needs its own tests.
 const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
 pub(crate) fn memory_access(
@@ -456,14 +456,19 @@ fn segment_unit_stride_access_plan(
         .checked_mul(element_bytes)?;
     (byte_len <= fields * group_registers * RISCV_VECTOR_REGISTER_BYTES
         && byte_len <= MAX_VECTOR_GROUP_BYTES
-        && byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES)
-        .then_some(SegmentUnitStrideAccessPlan {
-            fields,
-            element_count,
-            element_bytes,
-            byte_len,
-            group_registers,
-        })
+        && supported_segment_unit_stride_shape(width, byte_len))
+    .then_some(SegmentUnitStrideAccessPlan {
+        fields,
+        element_count,
+        element_bytes,
+        byte_len,
+        group_registers,
+    })
+}
+
+fn supported_segment_unit_stride_shape(width: MemoryWidth, byte_len: usize) -> bool {
+    byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES
+        || (width == MemoryWidth::Doubleword && byte_len == 32)
 }
 
 fn strided_access_plan(

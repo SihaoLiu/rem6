@@ -5058,6 +5058,13 @@ fn rem6_run_in_order_pipeline_models_vector_segment_e8_e16_e64_m1_load_store() {
             140,
             600,
         ),
+        (
+            "e64-two-line",
+            unit_stride_segment_e64_m1_two_line_vector_memory_program(),
+            22,
+            160,
+            700,
+        ),
     ] {
         let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
             &format!("in-order-vector-segment-{name}-m1-load-store"),
@@ -13563,6 +13570,23 @@ fn unit_stride_segment_e64_m1_vector_memory_program() -> Vec<u8> {
         8,
         0b011,
         &u64_words_to_bytes(&[0x1111_2222_3333_4444, 0x5555_6666_7777_8888]),
+    )
+}
+
+fn unit_stride_segment_e64_m1_two_line_vector_memory_program() -> Vec<u8> {
+    unit_stride_segment_m1_vector_memory_program(
+        0xd8,
+        2,
+        0b111,
+        32,
+        8,
+        0b011,
+        &u64_words_to_bytes(&[
+            0x1111_2222_3333_4444,
+            0x5555_6666_7777_8888,
+            0x9999_aaaa_bbbb_cccc,
+            0xdddd_eeee_ffff_0001,
+        ]),
     )
 }
 

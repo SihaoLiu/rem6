@@ -53,6 +53,7 @@ mod riscv_cluster_htm;
 mod riscv_cluster_run;
 mod riscv_cluster_run_loop;
 mod riscv_cluster_scheduler;
+mod riscv_cross_line;
 mod riscv_data_access;
 mod riscv_data_issue;
 mod riscv_defaults;

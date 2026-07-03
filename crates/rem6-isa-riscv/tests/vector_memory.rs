@@ -4590,13 +4590,19 @@ fn hart_rejects_indexed_vector_memory_outside_supported_slice() {
 }
 
 #[test]
-fn hart_rejects_segment_unit_stride_outside_supported_single_line_slice() {
+fn hart_builds_unmasked_e64_segment_unit_stride_two_line_accesses() {
     let mut hart = RiscvHartState::new(0x8310);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(14), 0x9000);
     hart.write(reg(16), 0x9020);
-    hart.write_vector(vreg(2), lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0]));
-    hart.write_vector(vreg(3), lanes_u64([0xb1b2_b3b4_b5b6_b7b8, 0]));
+    hart.write_vector(
+        vreg(2),
+        lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xc1c2_c3c4_c5c6_c7c8]),
+    );
+    hart.write_vector(
+        vreg(3),
+        lanes_u64([0xb1b2_b3b4_b5b6_b7b8, 0xd1d2_d3d4_d5d6_d7d8]),
+    );
 
     let record = hart
         .execute(
@@ -4606,16 +4612,30 @@ fn hart_rejects_segment_unit_stride_outside_supported_single_line_slice() {
         .unwrap();
 
     assert_eq!(
-        record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8310))
+        record.memory_access(),
+        Some(&MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd: vreg(2),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            fields: 2,
+            element_count: 2,
+            byte_len: 32,
+            byte_mask: None,
+            group_registers: 1,
+        })
     );
-    assert_eq!(record.memory_access(), None);
 
     let mut hart = RiscvHartState::new(0x8318);
     hart.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
     hart.write(reg(16), 0x9020);
-    hart.write_vector(vreg(2), lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0]));
-    hart.write_vector(vreg(3), lanes_u64([0xb1b2_b3b4_b5b6_b7b8, 0]));
+    hart.write_vector(
+        vreg(2),
+        lanes_u64([0xa1a2_a3a4_a5a6_a7a8, 0xc1c2_c3c4_c5c6_c7c8]),
+    );
+    hart.write_vector(
+        vreg(3),
+        lanes_u64([0xb1b2_b3b4_b5b6_b7b8, 0xd1d2_d3d4_d5d6_d7d8]),
+    );
 
     let record = hart
         .execute(
@@ -4624,11 +4644,74 @@ fn hart_rejects_segment_unit_stride_outside_supported_single_line_slice() {
         )
         .unwrap();
 
+    let mut data = Vec::new();
+    for value in [
+        0xa1a2_a3a4_a5a6_a7a8u64,
+        0xb1b2_b3b4_b5b6_b7b8,
+        0xc1c2_c3c4_c5c6_c7c8,
+        0xd1d2_d3d4_d5d6_d7d8,
+    ] {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
     assert_eq!(
-        record.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8318))
+        record.memory_access(),
+        Some(&MemoryAccessKind::VectorStoreSegmentUnitStride {
+            address: 0x9020,
+            width: MemoryWidth::Doubleword,
+            fields: 2,
+            element_count: 2,
+            data,
+            byte_mask: None,
+            group_registers: 1,
+        })
     );
-    assert_eq!(record.memory_access(), None);
+}
+
+#[test]
+fn hart_rejects_non_e64_segment_unit_stride_two_line_slices() {
+    for (load_pc, store_pc, vl, vtype, width_bits) in [
+        (0x8320, 0x8328, 16, 0xc0, 0b000),
+        (0x8330, 0x8338, 8, 0xc8, 0b101),
+        (0x8340, 0x8348, 4, 0xd0, 0b110),
+    ] {
+        let mut hart = RiscvHartState::new(load_pc);
+        hart.set_vector_config(RiscvVectorConfig::new(vl, vtype));
+        hart.write(reg(14), 0x9000);
+
+        let record = hart
+            .execute(
+                RiscvInstruction::decode(vector_unit_stride_segment_load_type(
+                    true, 2, width_bits, 14, 2,
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, load_pc))
+        );
+        assert_eq!(record.memory_access(), None);
+
+        let mut hart = RiscvHartState::new(store_pc);
+        hart.set_vector_config(RiscvVectorConfig::new(vl, vtype));
+        hart.write(reg(16), 0x9020);
+
+        let record = hart
+            .execute(
+                RiscvInstruction::decode(vector_unit_stride_segment_store_type(
+                    true, 2, width_bits, 16, 2,
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, store_pc))
+        );
+        assert_eq!(record.memory_access(), None);
+    }
 }
 
 #[test]

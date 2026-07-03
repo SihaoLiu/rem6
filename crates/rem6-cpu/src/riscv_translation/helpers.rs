@@ -6,9 +6,8 @@ use rem6_memory::{
     TranslationFaultKind, TranslationRequestId, TranslationResolution,
 };
 
-use crate::riscv_data_issue::{
-    store_byte_mask, store_bytes, supports_cross_line_data_access, vector_store_request_payload,
-};
+use crate::riscv_cross_line::supports_cross_line_data_access;
+use crate::riscv_data_issue::{store_byte_mask, store_bytes, vector_store_request_payload};
 use crate::riscv_translation_state::{
     DataTranslationCompletion, PendingDataTranslation, TranslatedDataAccess,
 };
