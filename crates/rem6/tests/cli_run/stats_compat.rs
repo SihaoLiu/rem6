@@ -1726,6 +1726,114 @@ fn rem6_run_json_stats_omit_text_only_gem5_l3_cache_overall_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_ruby_network_flit_aliases() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gem5-ruby-network-flit-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l2-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l2-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+            "--fabric-request-virtual-network",
+            "3",
+            "--fabric-response-virtual-network",
+            "4",
+            "--fabric-credit-depth",
+            "2",
+            "--fabric-router",
+            "router0",
+            "--fabric-router-input-port",
+            "1",
+            "--fabric-router-output-port",
+            "2",
+            "--fabric-router-virtual-channel",
+            "3",
+            "--fabric-router-latency",
+            "5",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let request_flits = text_stat_value(&stdout, "sim.memory.fabric.vn3.flits");
+    let response_flits = text_stat_value(&stdout, "sim.memory.fabric.vn4.flits");
+    assert!(request_flits > 0, "{stdout}");
+    assert!(response_flits > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.ruby.network.flits_injected::vnet-3"),
+        request_flits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.ruby.network.flits_received::vnet-4"),
+        response_flits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.ruby.network.flits_injected::total"),
+        request_flits + response_flits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.ruby.network.flits_received::total"),
+        request_flits + response_flits
+    );
+    assert!(
+        text_stat_line(&stdout, "system.ruby.network.flits_injected::vnet-3")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.ruby.network.flits_received::vnet-4")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_omit_gem5_l1_demand_aliases_when_prefetch_issued() {
     let path = tagged_next_line_prefetch_binary("gem5-l1-demand-alias-prefetch-omission");
 

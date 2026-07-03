@@ -53,6 +53,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_branch_prediction_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
     append_gem5_l1_prefetcher_formula_alias_stats(output, snapshot);
+    append_gem5_ruby_network_alias_stats(output, snapshot);
     append_gem5_shared_cache_alias_stats(
         output,
         snapshot,
@@ -677,6 +678,46 @@ fn gem5_work_item_type_from_host_action_duration_path(path: &str) -> Option<&str
         .strip_prefix("sim.host_actions.roi_work_item_type")?
         .strip_suffix(".duration_ticks")?;
     (!work_id.is_empty() && work_id.bytes().all(|byte| byte.is_ascii_digit())).then_some(work_id)
+}
+
+fn append_gem5_ruby_network_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let mut total_flits = 0_u64;
+    for sample in snapshot.samples() {
+        let Some(vnet) = gem5_ruby_network_vnet_from_flit_path(sample.path()) else {
+            continue;
+        };
+        let value = sample.value();
+        total_flits = total_flits.saturating_add(value);
+        append_derived_count_stat(
+            output,
+            &format!("system.ruby.network.flits_injected::vnet-{vnet}"),
+            value,
+        );
+        append_derived_count_stat(
+            output,
+            &format!("system.ruby.network.flits_received::vnet-{vnet}"),
+            value,
+        );
+    }
+    if total_flits != 0 {
+        append_derived_count_stat(
+            output,
+            "system.ruby.network.flits_injected::total",
+            total_flits,
+        );
+        append_derived_count_stat(
+            output,
+            "system.ruby.network.flits_received::total",
+            total_flits,
+        );
+    }
+}
+
+fn gem5_ruby_network_vnet_from_flit_path(path: &str) -> Option<&str> {
+    let vnet = path
+        .strip_prefix("sim.memory.fabric.vn")?
+        .strip_suffix(".flits")?;
+    (!vnet.is_empty() && vnet.bytes().all(|byte| byte.is_ascii_digit())).then_some(vnet)
 }
 
 fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
