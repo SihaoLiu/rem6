@@ -707,6 +707,18 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 "Cycle",
             ),
             ("redirects", "redirects", "Count"),
+            (
+                "branch_prediction_redirects",
+                "branchPredictionRedirects",
+                "Count",
+            ),
+            ("trap_redirects", "trapRedirects", "Count"),
+            ("trap_redirect_flushes", "trapRedirectFlushes", "Count"),
+            (
+                "trap_redirect_flush_cycles",
+                "trapRedirectFlushCycles",
+                "Cycle",
+            ),
         ] {
             append_derived_stat_from_snapshot(
                 output,
@@ -733,6 +745,12 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 (
                     "branch_prediction_flushed_cycles",
                     "branchPredictionFlushedCycles",
+                    "Cycle",
+                ),
+                ("trap_redirect_flushed", "trapRedirectFlushed", "Count"),
+                (
+                    "trap_redirect_flushed_cycles",
+                    "trapRedirectFlushedCycles",
                     "Cycle",
                 ),
             ] {
