@@ -89,8 +89,18 @@ pub(crate) fn memory_access(
             fields,
             mask,
         } => {
-            let plan = segment_unit_stride_access_plan(hart, vd, width, fields, mask).ok_or(())?;
+            let plan = segment_unit_stride_access_plan(hart, vd, width, fields).ok_or(())?;
+            if masked_segment_load_overlaps_v0(mask, vd, &plan) {
+                return Err(());
+            }
             if plan.byte_len == 0 {
+                return Ok(None);
+            }
+            let byte_mask = segment_byte_mask(hart, mask, &plan);
+            if byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
                 return Ok(None);
             }
             Ok(Some(MemoryAccessKind::VectorLoadSegmentUnitStride {
@@ -100,6 +110,7 @@ pub(crate) fn memory_access(
                 fields: plan.fields,
                 element_count: plan.element_count,
                 byte_len: plan.byte_len,
+                byte_mask,
                 group_registers: plan.group_registers,
             }))
         }
@@ -202,8 +213,15 @@ pub(crate) fn memory_access(
             fields,
             mask,
         } => {
-            let plan = segment_unit_stride_access_plan(hart, vs3, width, fields, mask).ok_or(())?;
+            let plan = segment_unit_stride_access_plan(hart, vs3, width, fields).ok_or(())?;
             if plan.byte_len == 0 {
+                return Ok(None);
+            }
+            let byte_mask = segment_byte_mask(hart, mask, &plan);
+            if byte_mask
+                .as_ref()
+                .is_some_and(|mask| !mask.iter().any(|active| *active))
+            {
                 return Ok(None);
             }
             let data = segment_store_payload(hart, vs3, &plan);
@@ -214,6 +232,7 @@ pub(crate) fn memory_access(
                 fields: plan.fields,
                 element_count: plan.element_count,
                 data,
+                byte_mask,
                 group_registers: plan.group_registers,
             }))
         }
@@ -398,14 +417,12 @@ fn segment_unit_stride_access_plan(
     register: VectorRegister,
     width: MemoryWidth,
     fields: u8,
-    mask: RiscvVectorMaskMode,
 ) -> Option<SegmentUnitStrideAccessPlan> {
     let config = hart.vector_config();
     let fields = usize::from(fields);
     let vlmul = config.vtype() & 0x7;
     let group_registers = config.register_group_registers()?;
     if config.vill()
-        || mask.is_masked()
         || width != MemoryWidth::Word
         || fields != 2
         || vlmul != 0
@@ -721,6 +738,26 @@ fn segment_store_payload(
     data
 }
 
+fn segment_byte_mask(
+    hart: &RiscvHartState,
+    mask: RiscvVectorMaskMode,
+    plan: &SegmentUnitStrideAccessPlan,
+) -> Option<Vec<bool>> {
+    if !mask.is_masked() {
+        return None;
+    }
+
+    let source = hart.read_vector(VectorRegister::new(0).expect("v0 is a valid vector register"));
+    let mut byte_mask = vec![false; plan.byte_len];
+    for element_index in 0..plan.element_count {
+        if read_mask_bit(&source, element_index) {
+            let offset = element_index * plan.fields * plan.element_bytes;
+            byte_mask[offset..offset + plan.fields * plan.element_bytes].fill(true);
+        }
+    }
+    Some(byte_mask)
+}
+
 fn segment_field_register(
     register: VectorRegister,
     field: usize,
@@ -769,4 +806,24 @@ fn masked_load_overlaps_v0(
 ) -> bool {
     mask.is_masked()
         && register_groups_overlap(register, group_registers, VectorRegister::from_field(0), 1)
+}
+
+fn masked_segment_load_overlaps_v0(
+    mask: RiscvVectorMaskMode,
+    register: VectorRegister,
+    plan: &SegmentUnitStrideAccessPlan,
+) -> bool {
+    mask.is_masked()
+        && (0..plan.fields).any(|field| {
+            segment_field_register(register, field, plan.group_registers).is_some_and(
+                |field_register| {
+                    register_groups_overlap(
+                        field_register,
+                        plan.group_registers,
+                        VectorRegister::from_field(0),
+                        1,
+                    )
+                },
+            )
+        })
 }

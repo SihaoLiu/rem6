@@ -711,12 +711,14 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => MemoryRequest::write(
+            MemoryAccessKind::VectorStoreSegmentUnitStride {
+                data, byte_mask, ..
+            } => MemoryRequest::write(
                 self.request_id,
                 self.physical_address,
                 self.size,
                 data.clone(),
-                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                store_byte_mask(self.size, byte_mask.as_deref())?,
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
@@ -915,17 +917,26 @@ fn record_load_completion(
             fields,
             element_count,
             byte_len,
+            byte_mask,
             group_registers,
             ..
         } => {
             let data = data.expect(missing_data);
             assert_eq!(*byte_len, data.len(), "segment vector load response width");
+            if let Some(byte_mask) = byte_mask {
+                assert_eq!(
+                    *byte_len,
+                    byte_mask.len(),
+                    "segment vector load byte mask width"
+                );
+            }
             scatter_segment_load(
                 data,
                 &mut state.hart,
                 *vd,
                 *fields,
                 *element_count,
+                byte_mask.as_deref(),
                 *group_registers,
             );
         }
@@ -988,6 +999,7 @@ fn scatter_segment_load(
     register: VectorRegister,
     fields: usize,
     element_count: usize,
+    byte_mask: Option<&[bool]>,
     group_registers: usize,
 ) {
     debug_assert!(element_count > 0);
@@ -997,6 +1009,10 @@ fn scatter_segment_load(
         let mut destination = read_vector_register_group(hart, field_register, group_registers);
         for element_index in 0..element_count {
             let source_offset = (element_index * fields + field) * element_bytes;
+            let active = byte_mask.map(|mask| mask[source_offset]).unwrap_or(true);
+            if !active {
+                continue;
+            }
             let destination_offset = element_index * element_bytes;
             destination[destination_offset..destination_offset + element_bytes]
                 .copy_from_slice(&data[source_offset..source_offset + element_bytes]);
@@ -1400,11 +1416,13 @@ pub(crate) fn mmio_request(
             store_byte_mask(size, byte_mask.as_deref())?,
         )
         .map_err(RiscvCpuError::Mmio),
-        MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. } => MmioRequest::write(
+        MemoryAccessKind::VectorStoreSegmentUnitStride {
+            data, byte_mask, ..
+        } => MmioRequest::write(
             mmio_request_id(request),
             address,
             data.clone(),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            store_byte_mask(size, byte_mask.as_deref())?,
         )
         .map_err(RiscvCpuError::Mmio),
         MemoryAccessKind::VectorStoreStrided {

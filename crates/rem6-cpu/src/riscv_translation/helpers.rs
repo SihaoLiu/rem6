@@ -105,6 +105,7 @@ pub(super) fn cpu_translation_request(
         MemoryAccessKind::VectorStoreSegmentUnitStride {
             address,
             data: bytes,
+            byte_mask,
             ..
         } => CpuTranslationRequest::store(
             translation_id,
@@ -114,7 +115,7 @@ pub(super) fn cpu_translation_request(
             Address::new(*address),
             size,
             bytes.clone(),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            store_byte_mask(size, byte_mask.as_deref())?,
         ),
         MemoryAccessKind::VectorStoreStrided {
             address,

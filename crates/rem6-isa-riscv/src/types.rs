@@ -283,6 +283,7 @@ pub enum MemoryAccessKind {
         fields: usize,
         element_count: usize,
         byte_len: usize,
+        byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
     VectorLoadStrided {
@@ -352,6 +353,7 @@ pub enum MemoryAccessKind {
         fields: usize,
         element_count: usize,
         data: Vec<u8>,
+        byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
     VectorStoreStrided {
