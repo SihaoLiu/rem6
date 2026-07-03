@@ -654,6 +654,7 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_suppression() {
         trap_redirect.get("redirect_target").and_then(Value::as_str),
         Some("0x0")
     );
+    assert_eq!(trap_redirect.get("flush_cause"), Some(&Value::Null));
     assert!(json_record_u64(trap_redirect, "branch_predictions") == 0);
     assert!(json_record_u64(trap_redirect, "branch_prediction_flushed") == 0);
     assert_eq!(
@@ -775,6 +776,150 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_suppression() {
         0,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_run_pipeline_debug_flag_attributes_widened_trap_redirect_flush_cause() {
+    let program = riscv64_program(&[
+        0x0000_0073,                // ecall redirects to the trap vector
+        i_type(9, 0, 0x0, 6, 0x13), // wrong-path addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // trap-vector target after default mtvec
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-pipeline-widened-trap-flush", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "2",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let trap_redirect = trace
+        .iter()
+        .find(|record| {
+            record.get("redirect_cause").and_then(Value::as_str) == Some("trap_redirect")
+                && !record_array(record, "flushed").is_empty()
+        })
+        .unwrap_or_else(|| panic!("missing widened trap redirect flush in trace: {trace:?}"));
+    let branch_predictions = trace
+        .iter()
+        .map(|record| json_record_u64(record, "branch_predictions"))
+        .sum::<u64>();
+    let branch_prediction_flushed = trace
+        .iter()
+        .map(|record| json_record_u64(record, "branch_prediction_flushed"))
+        .sum::<u64>();
+    let flushed = record_array(trap_redirect, "flushed").len() as u64;
+    let mut stage_flushed = BTreeMap::<String, u64>::new();
+    for flushed in record_array(trap_redirect, "flushed") {
+        let stage = flushed
+            .get("stage")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing flushed instruction stage: {flushed}"));
+        *stage_flushed.entry(stat_path_segment(stage)).or_default() += 1;
+    }
+
+    assert_eq!(
+        json.pointer("/simulation/trap").and_then(Value::as_str),
+        Some("environment_call")
+    );
+    assert_eq!(
+        trap_redirect.get("flush_cause").and_then(Value::as_str),
+        Some("trap_redirect"),
+        "widened trap redirects that squash younger in-flight instructions need an explicit flush cause: {trap_redirect:?}"
+    );
+    assert_eq!(
+        trap_redirect.get("redirect_target").and_then(Value::as_str),
+        Some("0x0")
+    );
+    assert_eq!(
+        branch_predictions, 0,
+        "trap-only run should not emit branch predictions: {trace:?}"
+    );
+    assert_eq!(
+        branch_prediction_flushed, 0,
+        "trap-only run should not emit branch-prediction flushes: {trace:?}"
+    );
+    assert!(flushed > 0, "widened trap redirect should flush: {trace:?}");
+    assert!(
+        !stage_flushed.is_empty(),
+        "trap redirect flush cause should preserve flushed stages: {trace:?}"
+    );
+    assert_eq!(
+        json_path_u64(&json, "/cores/0/in_order_pipeline/trap_redirects"),
+        1
+    );
+    assert_eq!(
+        json_path_u64(&json, "/cores/0/in_order_pipeline/trap_redirect_flushes"),
+        flushed
+    );
+    assert!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/trap_redirect_flush_cycles"
+        ) > 0,
+        "{stdout}"
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.flush_cause.trap_redirect.records",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.flush_cause.trap_redirect.flushed",
+        "Count",
+        flushed,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.flush_cause.trap_redirect.branch_prediction_flushed",
+        "Count",
+        0,
+        "monotonic",
+    );
+    for (stage, flushed) in stage_flushed {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.flush_cause.trap_redirect.stage.{stage}.flushed"),
+            "Count",
+            flushed,
+            "monotonic",
+        );
+    }
+    assert!(!stdout.contains("\"x6\":\"0x9\""));
 }
 
 #[test]
