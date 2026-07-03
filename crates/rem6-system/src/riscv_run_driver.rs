@@ -8,6 +8,7 @@ impl RiscvSystemRunDriver {
             data_access_stats: None,
             riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
+            o3_runtime_trace_enabled: false,
         }
     }
 
@@ -21,7 +22,13 @@ impl RiscvSystemRunDriver {
             data_access_stats: None,
             riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
+            o3_runtime_trace_enabled: false,
         }
+    }
+
+    pub const fn with_o3_runtime_trace_enabled(mut self, enabled: bool) -> Self {
+        self.o3_runtime_trace_enabled = enabled;
+        self
     }
 
     pub const fn trap_port(&self) -> &RiscvTrapEventPort {

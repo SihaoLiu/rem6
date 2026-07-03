@@ -241,10 +241,84 @@ impl O3RuntimeSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3RuntimeTraceRecord {
+    sequence: u64,
+    pc: Address,
+    rob_allocated: bool,
+    rob_committed: bool,
+    rename_writes: u64,
+    lsq_loads: u64,
+    lsq_stores: u64,
+    fu_latency_cycles: u64,
+    system_event: bool,
+}
+
+impl O3RuntimeTraceRecord {
+    const fn new(
+        sequence: u64,
+        pc: Address,
+        rename_writes: u64,
+        lsq_loads: u64,
+        lsq_stores: u64,
+        fu_latency_cycles: u64,
+        system_event: bool,
+    ) -> Self {
+        Self {
+            sequence,
+            pc,
+            rob_allocated: true,
+            rob_committed: true,
+            rename_writes,
+            lsq_loads,
+            lsq_stores,
+            fu_latency_cycles,
+            system_event,
+        }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn pc(self) -> Address {
+        self.pc
+    }
+
+    pub const fn rob_allocated(self) -> bool {
+        self.rob_allocated
+    }
+
+    pub const fn rob_committed(self) -> bool {
+        self.rob_committed
+    }
+
+    pub const fn rename_writes(self) -> u64 {
+        self.rename_writes
+    }
+
+    pub const fn lsq_loads(self) -> u64 {
+        self.lsq_loads
+    }
+
+    pub const fn lsq_stores(self) -> u64 {
+        self.lsq_stores
+    }
+
+    pub const fn fu_latency_cycles(self) -> u64 {
+        self.fu_latency_cycles
+    }
+
+    pub const fn system_event(self) -> bool {
+        self.system_event
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
+    trace_records: Vec<O3RuntimeTraceRecord>,
     store_forwarding_window: O3StoreForwardingWindow,
     next_sequence: u64,
     next_physical_register: u32,
@@ -256,6 +330,7 @@ impl O3RuntimeState {
         self.next_sequence = next_runtime_sequence(&snapshot);
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
+        self.trace_records.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         Ok(())
     }
@@ -268,21 +343,50 @@ impl O3RuntimeState {
         self.stats
     }
 
+    pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
+        &self.trace_records
+    }
+
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
+        self.trace_records.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
 
     pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
-        self.record_runtime_state(execution);
+        self.record_retired_instruction_with_trace(execution, false);
+    }
+
+    pub fn record_retired_instruction_with_trace(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        trace_enabled: bool,
+    ) {
+        let trace_record = self.record_runtime_state(execution);
         self.stats.record_retired_instruction(execution);
+        if trace_enabled {
+            self.trace_records.push(trace_record);
+        }
         self.record_store_forwarding_window(execution);
     }
 
-    fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) {
+    fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) -> O3RuntimeTraceRecord {
         let sequence = self.allocate_sequence();
         let record = execution.execution();
         let destination = self.record_rename_map_entries(record);
+        let (lsq_loads, lsq_stores) = record
+            .memory_access()
+            .map(o3_lsq_access_counts)
+            .unwrap_or((0, 0));
+        let trace_record = O3RuntimeTraceRecord::new(
+            sequence,
+            Address::new(record.pc()),
+            o3_rename_write_count(record),
+            lsq_loads,
+            lsq_stores,
+            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
+            record.system_event().is_some(),
+        );
 
         let rob_start = self.snapshot.reorder_buffer.len();
         self.snapshot.reorder_buffer.push(
@@ -305,6 +409,7 @@ impl O3RuntimeState {
         self.snapshot.load_store_queue.truncate(lsq_start);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
+        trace_record
     }
 
     fn record_rename_map_entries(
@@ -455,6 +560,7 @@ impl Default for O3RuntimeState {
         Self {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
+            trace_records: Vec::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             next_sequence: 0,
             next_physical_register: 1,
@@ -639,17 +745,9 @@ impl O3RuntimeStats {
             }
         }
 
-        if record.system_event().is_none() {
-            let immediate_writes =
-                (record.register_writes().len() + record.float_register_writes().len()) as u64;
-            let memory_writes = record
-                .memory_access()
-                .map(o3_memory_destination_writes)
-                .unwrap_or(0);
-            self.rename_writes = self
-                .rename_writes
-                .saturating_add(immediate_writes.saturating_add(memory_writes));
-        }
+        self.rename_writes = self
+            .rename_writes
+            .saturating_add(o3_rename_write_count(record));
 
         if let Some(access) = record.memory_access() {
             let (loads, stores) = o3_lsq_access_counts(access);
@@ -815,6 +913,20 @@ fn o3_low_bytes_equal(lhs: u64, rhs: u64, bytes: u32) -> bool {
         (1_u64 << bits) - 1
     };
     (lhs & mask) == (rhs & mask)
+}
+
+fn o3_rename_write_count(record: &rem6_isa_riscv::RiscvExecutionRecord) -> u64 {
+    if record.system_event().is_some() {
+        return 0;
+    }
+
+    let immediate_writes =
+        (record.register_writes().len() + record.float_register_writes().len()) as u64;
+    let memory_writes = record
+        .memory_access()
+        .map(o3_memory_destination_writes)
+        .unwrap_or(0);
+    immediate_writes.saturating_add(memory_writes)
 }
 
 fn o3_memory_destination_writes(access: &MemoryAccessKind) -> u64 {
@@ -1494,6 +1606,15 @@ impl crate::RiscvCore {
             .stats()
     }
 
+    pub fn o3_runtime_trace_records(&self) -> Vec<O3RuntimeTraceRecord> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .trace_records()
+            .to_vec()
+    }
+
     pub fn reset_o3_runtime_stats(&self) {
         self.state
             .lock()
@@ -1508,6 +1629,18 @@ impl crate::RiscvCore {
             .expect("riscv core lock")
             .o3_runtime
             .record_retired_instruction(execution);
+    }
+
+    pub fn record_o3_retired_instruction_with_trace(
+        &self,
+        execution: &RiscvCpuExecutionEvent,
+        trace_enabled: bool,
+    ) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .record_retired_instruction_with_trace(execution, trace_enabled);
     }
 
     pub fn record_o3_completed_load_data(

@@ -219,6 +219,53 @@ fn o3_runtime_stats_count_grouped_vector_segment_load_rename_destinations() {
 }
 
 #[test]
+fn o3_runtime_trace_records_only_when_enabled() {
+    let core = RiscvCore::new(core(0x8000));
+    let instruction = RiscvInstruction::Addi {
+        rd: reg(5),
+        rs1: reg(0),
+        imm: Immediate::new(7),
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8000, 1),
+        instruction,
+        RiscvExecutionRecord::new(
+            instruction,
+            0x8000,
+            0x8004,
+            vec![RegisterWrite::new(reg(5), 7)],
+            None,
+        ),
+    ));
+
+    assert_eq!(core.o3_runtime_stats().instructions(), 1);
+    assert!(core.o3_runtime_trace_records().is_empty());
+
+    core.reset_o3_runtime_stats();
+    core.record_o3_retired_instruction_with_trace(
+        &RiscvCpuExecutionEvent::new(
+            fetch_event(0x8004, 2),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(reg(5), 8)],
+                None,
+            ),
+        ),
+        true,
+    );
+
+    let trace = core.o3_runtime_trace_records();
+    assert_eq!(trace.len(), 1);
+    assert_eq!(trace[0].pc(), Address::new(0x8004));
+    assert!(trace[0].rob_allocated());
+    assert!(trace[0].rob_committed());
+    assert_eq!(trace[0].rename_writes(), 1);
+}
+
+#[test]
 fn o3_runtime_stats_ignore_x0_memory_destinations_for_rename_writes() {
     let core = RiscvCore::new(core(0x8000));
     let cases = [

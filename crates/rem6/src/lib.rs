@@ -893,7 +893,8 @@ fn execute_riscv(
         .with_data_access_stats(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
-        );
+        )
+        .with_o3_runtime_trace_enabled(config.debug_o3_enabled());
     let riscv_sbi_console_input = config
         .riscv_sbi_console_input()
         .map(|source| read_riscv_sbi_console_input(source, resource_payloads))

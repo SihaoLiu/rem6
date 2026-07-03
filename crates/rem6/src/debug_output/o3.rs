@@ -1,9 +1,10 @@
-use rem6_cpu::{CpuId, O3RuntimeStats, RiscvCluster};
+use rem6_cpu::{CpuId, O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
     cpu: u32,
     stats: O3RuntimeStats,
+    events: Vec<O3RuntimeTraceRecord>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,27 +30,45 @@ struct Rem6O3TraceTotals {
     max_rob_occupancy: u64,
     max_lsq_occupancy: u64,
     rename_map_entries: u64,
+    event_records: u64,
+    event_rob_allocations: u64,
+    event_rob_commits: u64,
+    event_rename_writes: u64,
+    event_lsq_loads: u64,
+    event_lsq_stores: u64,
+    event_fu_latency_cycles: u64,
 }
 
 impl Rem6O3TraceRecord {
-    fn new(cpu: CpuId, stats: O3RuntimeStats) -> Self {
+    fn new(cpu: CpuId, stats: O3RuntimeStats, events: Vec<O3RuntimeTraceRecord>) -> Self {
         Self {
             cpu: cpu.get(),
             stats,
+            events,
         }
     }
 
-    pub(super) const fn cpu(self) -> u32 {
+    pub(super) const fn cpu(&self) -> u32 {
         self.cpu
     }
 
-    pub(super) fn stats(self) -> O3RuntimeStats {
+    pub(super) fn stats(&self) -> O3RuntimeStats {
         self.stats
     }
 
-    pub(super) fn to_json(self) -> String {
+    pub(super) fn events(&self) -> &[O3RuntimeTraceRecord] {
+        &self.events
+    }
+
+    pub(super) fn to_json(&self) -> String {
+        let events = self
+            .events
+            .iter()
+            .map(o3_event_to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             self.stats.instructions(),
             self.stats.rob_allocations(),
@@ -64,6 +83,7 @@ impl Rem6O3TraceRecord {
             self.stats.max_rob_occupancy(),
             self.stats.max_lsq_occupancy(),
             self.stats.rename_map_entries(),
+            events,
         )
     }
 }
@@ -90,8 +110,9 @@ pub(super) fn o3_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<R
             continue;
         };
         let stats = core.o3_runtime_stats();
-        if stats.has_activity() {
-            records.push(Rem6O3TraceRecord::new(cpu, stats));
+        let events = core.o3_runtime_trace_records();
+        if stats.has_activity() || !events.is_empty() {
+            records.push(Rem6O3TraceRecord::new(cpu, stats, events));
         }
     }
     records.sort_by_key(|record| record.cpu());
@@ -101,13 +122,14 @@ pub(super) fn o3_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<R
 pub(super) fn o3_trace_stats(records: &[Rem6O3TraceRecord]) -> Vec<Rem6O3TraceStat> {
     let mut totals = Rem6O3TraceTotals::default();
     for record in records {
-        totals.add(record.stats());
+        totals.add(record);
     }
     totals.stats()
 }
 
 impl Rem6O3TraceTotals {
-    fn add(&mut self, stats: O3RuntimeStats) {
+    fn add(&mut self, record: &Rem6O3TraceRecord) {
+        let stats = record.stats();
         self.records = self.records.saturating_add(1);
         self.instructions = self.instructions.saturating_add(stats.instructions());
         self.rob_allocations = self.rob_allocations.saturating_add(stats.rob_allocations());
@@ -132,6 +154,23 @@ impl Rem6O3TraceTotals {
         self.rename_map_entries = self
             .rename_map_entries
             .saturating_add(stats.rename_map_entries());
+        for event in record.events() {
+            self.event_records = self.event_records.saturating_add(1);
+            self.event_rob_allocations = self
+                .event_rob_allocations
+                .saturating_add(u64::from(event.rob_allocated()));
+            self.event_rob_commits = self
+                .event_rob_commits
+                .saturating_add(u64::from(event.rob_committed()));
+            self.event_rename_writes = self
+                .event_rename_writes
+                .saturating_add(event.rename_writes());
+            self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
+            self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
+            self.event_fu_latency_cycles = self
+                .event_fu_latency_cycles
+                .saturating_add(event.fu_latency_cycles());
+        }
     }
 
     fn stats(self) -> Vec<Rem6O3TraceStat> {
@@ -156,6 +195,12 @@ impl Rem6O3TraceTotals {
             ("max_rob_occupancy", self.max_rob_occupancy),
             ("max_lsq_occupancy", self.max_lsq_occupancy),
             ("rename_map_entries", self.rename_map_entries),
+            ("event.records", self.event_records),
+            ("event.rob_allocations", self.event_rob_allocations),
+            ("event.rob_commits", self.event_rob_commits),
+            ("event.rename_writes", self.event_rename_writes),
+            ("event.lsq_loads", self.event_lsq_loads),
+            ("event.lsq_stores", self.event_lsq_stores),
         ] {
             stats.push(Rem6O3TraceStat {
                 suffix,
@@ -168,6 +213,26 @@ impl Rem6O3TraceTotals {
             unit: "Cycle",
             value: self.fu_latency_cycles,
         });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_latency_cycles",
+            unit: "Cycle",
+            value: self.event_fu_latency_cycles,
+        });
         stats
     }
+}
+
+fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
+    format!(
+        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        event.sequence(),
+        event.pc().get(),
+        event.rob_allocated(),
+        event.rob_committed(),
+        event.rename_writes(),
+        event.lsq_loads(),
+        event.lsq_stores(),
+        event.fu_latency_cycles(),
+        event.system_event(),
+    )
 }

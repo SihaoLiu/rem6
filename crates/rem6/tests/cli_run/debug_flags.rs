@@ -2735,6 +2735,26 @@ fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn assert_o3_event(
+    event: &Value,
+    sequence: u64,
+    pc: &str,
+    rename_writes: u64,
+    lsq_loads: u64,
+    lsq_stores: u64,
+    system_event: bool,
+) {
+    assert_eq!(json_record_u64(event, "sequence"), sequence);
+    assert_eq!(json_record_str(event, "pc"), pc);
+    assert_eq!(json_record_bool(event, "rob_allocated"), true);
+    assert_eq!(json_record_bool(event, "rob_committed"), true);
+    assert_eq!(json_record_u64(event, "rename_writes"), rename_writes);
+    assert_eq!(json_record_u64(event, "lsq_loads"), lsq_loads);
+    assert_eq!(json_record_u64(event, "lsq_stores"), lsq_stores);
+    assert_eq!(json_record_u64(event, "fu_latency_cycles"), 0);
+    assert_eq!(json_record_bool(event, "system_event"), system_event);
+}
+
 fn load_sbi_time_extension(rd: u8) -> [u32; 2] {
     load_sbi_extension(SBI_TIME_EXTENSION, rd)
 }
@@ -4922,6 +4942,17 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
             "O3 trace field {field}"
         );
     }
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 6);
+    assert_o3_event(&events[0], 0, "0x80000004", 1, 0, 0, false);
+    assert_o3_event(&events[1], 1, "0x80000008", 1, 0, 0, false);
+    assert_o3_event(&events[2], 2, "0x8000000c", 1, 0, 0, false);
+    assert_o3_event(&events[3], 3, "0x80000010", 1, 1, 0, false);
+    assert_o3_event(&events[4], 4, "0x80000014", 0, 0, 1, false);
+    assert_o3_event(&events[5], 5, "0x80000018", 0, 0, 0, true);
 
     assert_stat(&stdout, "sim.debug.flags", "Count", 1, "constant");
     for (path, unit, value) in [
@@ -4950,6 +4981,13 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 3),
+        ("sim.debug.o3_trace.event.records", "Count", 6),
+        ("sim.debug.o3_trace.event.rob_allocations", "Count", 6),
+        ("sim.debug.o3_trace.event.rob_commits", "Count", 6),
+        ("sim.debug.o3_trace.event.rename_writes", "Count", 4),
+        ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
+        ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -5020,6 +5058,12 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 6),
+        ("sim.debug.o3_trace.event.records", "Count", 12),
+        ("sim.debug.o3_trace.event.rob_allocations", "Count", 12),
+        ("sim.debug.o3_trace.event.rob_commits", "Count", 12),
+        ("sim.debug.o3_trace.event.rename_writes", "Count", 8),
+        ("sim.debug.o3_trace.event.lsq_loads", "Count", 2),
+        ("sim.debug.o3_trace.event.lsq_stores", "Count", 2),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -5095,6 +5139,13 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 0),
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 0),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 0),
+        ("sim.debug.o3_trace.event.records", "Count", 0),
+        ("sim.debug.o3_trace.event.rob_allocations", "Count", 0),
+        ("sim.debug.o3_trace.event.rob_commits", "Count", 0),
+        ("sim.debug.o3_trace.event.rename_writes", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_loads", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }

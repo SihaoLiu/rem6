@@ -974,7 +974,6 @@ impl Rem6DebugSummary {
         let o3_trace = self
             .o3_trace
             .iter()
-            .copied()
             .map(Rem6O3TraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");

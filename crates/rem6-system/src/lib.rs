@@ -730,6 +730,7 @@ pub struct RiscvSystemRunDriver {
     data_access_stats: Option<RiscvDataAccessStats>,
     riscv_sbi_firmware: Option<RiscvSbiFirmware>,
     riscv_syscall_emulation: Option<RiscvSyscallEmulation>,
+    o3_runtime_trace_enabled: bool,
 }
 
 impl RiscvSystemRunDriver {
@@ -1116,7 +1117,10 @@ impl RiscvSystemRunDriver {
             cluster
                 .core(cpu)
                 .map_err(SystemError::RiscvCluster)?
-                .record_o3_retired_instruction(instruction);
+                .record_o3_retired_instruction_with_trace(
+                    instruction,
+                    self.o3_runtime_trace_enabled,
+                );
         }
         Ok(())
     }
