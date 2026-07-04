@@ -12,9 +12,9 @@ use rem6_fabric::{
 };
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
-    ParallelSchedulerContext, ParallelWorkerRecord, PartitionFrontier, PartitionId,
-    PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord, Tick,
-    WaitForGraph,
+    ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
+    PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
+    Tick, WaitForGraph,
 };
 use rem6_memory::MemoryTargetId;
 use rem6_mmio::MmioBus;
@@ -738,6 +738,60 @@ impl RiscvSystemRunDriver {
         if let Some(firmware) = &self.riscv_sbi_firmware {
             firmware.register_cluster(cluster)?;
         }
+        self.reset_runtime_stats(cluster)
+    }
+
+    pub(crate) fn schedule_riscv_system_events_from_turn<F>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        turn: &RiscvClusterTurn,
+        event_for: F,
+    ) -> Result<Vec<PartitionEventId>, SystemError>
+    where
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        let scheduled = self
+            .trap_port
+            .schedule_riscv_system_events_from_turn(scheduler, turn, event_for)?;
+        self.reset_runtime_stats_for_new_stats_resets(cluster)?;
+        Ok(scheduled)
+    }
+
+    pub(crate) fn schedule_riscv_system_events_from_turn_parallel<F>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        turn: &RiscvClusterTurn,
+        event_for: F,
+    ) -> Result<Vec<PartitionEventId>, SystemError>
+    where
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        let scheduled = self
+            .trap_port
+            .schedule_riscv_system_events_from_turn_parallel(scheduler, turn, event_for)?;
+        self.reset_runtime_stats_for_new_stats_resets(cluster)?;
+        Ok(scheduled)
+    }
+
+    fn reset_runtime_stats_for_new_stats_resets(
+        &self,
+        cluster: &RiscvCluster,
+    ) -> Result<(), SystemError> {
+        let saw_stats_reset = self
+            .trap_port
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .consume_stats_reset_outcomes();
+        if saw_stats_reset {
+            self.reset_runtime_stats(cluster)?;
+        }
+        Ok(())
+    }
+
+    fn reset_runtime_stats(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
         }
@@ -824,11 +878,7 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_run_stats(cluster, scheduler.now(), &turn)?;
-            self.trap_port.schedule_riscv_system_events_from_turn(
-                scheduler,
-                &turn,
-                &mut event_for,
-            )?;
+            self.schedule_riscv_system_events_from_turn(cluster, scheduler, &turn, &mut event_for)?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.schedule_pending_core_events(
@@ -917,12 +967,12 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_run_stats(cluster, scheduler.now(), &turn)?;
-            self.trap_port
-                .schedule_riscv_system_events_from_turn_parallel(
-                    scheduler,
-                    &turn,
-                    &mut event_for,
-                )?;
+            self.schedule_riscv_system_events_from_turn_parallel(
+                cluster,
+                scheduler,
+                &turn,
+                &mut event_for,
+            )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.schedule_pending_core_events_parallel(
@@ -1013,12 +1063,12 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_run_stats(cluster, scheduler.now(), &turn)?;
-            self.trap_port
-                .schedule_riscv_system_events_from_turn_parallel(
-                    scheduler,
-                    &turn,
-                    &mut event_for,
-                )?;
+            self.schedule_riscv_system_events_from_turn_parallel(
+                cluster,
+                scheduler,
+                &turn,
+                &mut event_for,
+            )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.schedule_pending_core_events_parallel(
@@ -1074,6 +1124,7 @@ impl RiscvSystemRunDriver {
         tick: Tick,
         turn: &RiscvClusterTurn,
     ) -> Result<(), SystemError> {
+        self.reset_runtime_stats_for_new_stats_resets(cluster)?;
         self.record_o3_runtime_stats(cluster, turn)?;
         self.record_instruction_stats(tick, turn)?;
         self.record_data_access_stats(cluster)

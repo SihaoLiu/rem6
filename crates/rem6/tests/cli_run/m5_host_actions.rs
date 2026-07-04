@@ -697,6 +697,59 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_m5_reset_stats_clears_detailed_o3_runtime_stats() {
+    let path = detailed_o3_reset_stats_binary("m5-switch-cpu-detailed-o3-reset-runtime-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 2, "monotonic");
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.rob_allocations",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(&json, "sim.cpu0.o3.rob_commits", "Count", 2, "monotonic");
+    assert_json_stat(&json, "sim.cpu0.o3.lsq_loads", "Count", 1, "monotonic");
+    assert_json_stat(&json, "sim.cpu0.o3.lsq_stores", "Count", 0, "monotonic");
+    assert_json_stat(&json, "sim.cpu0.o3.lsq_load_bytes", "Byte", 4, "monotonic");
+    assert_json_stat(&json, "sim.cpu0.o3.lsq_store_bytes", "Byte", 0, "monotonic");
+}
+
+#[test]
 fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
     let path =
         detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-detailed-o3-lsq-store-load-match");
@@ -2038,6 +2091,27 @@ fn detailed_o3_runtime_stats_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_reset_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
+        u_type(0, 5, 0x17),             // auipc x5, 0
+        i_type(60, 5, 0x0, 5, 0x13),    // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13), // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),        // sw x11, 0(x5)
+        m5op(M5_RESET_STATS),           // reset detailed O3 runtime stats
+        i_type(0, 5, 0b010, 12, 0x03),  // lw x12, 0(x5)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.push(0);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

@@ -1676,6 +1676,7 @@ pub struct SystemHostController {
     run: SystemRunController,
     executor: SystemActionExecutor,
     action_errors: Vec<SystemError>,
+    consumed_stats_reset_outcomes: usize,
 }
 
 impl SystemHostController {
@@ -1684,6 +1685,7 @@ impl SystemHostController {
             run: SystemRunController::new(policy),
             executor: SystemActionExecutor::new(stats),
             action_errors: Vec::new(),
+            consumed_stats_reset_outcomes: 0,
         }
     }
 
@@ -1711,6 +1713,16 @@ impl SystemHostController {
                 Vec::new()
             }
         }
+    }
+
+    pub fn consume_stats_reset_outcomes(&mut self) -> bool {
+        let outcomes = self.run.action_outcomes();
+        let first = self.consumed_stats_reset_outcomes.min(outcomes.len());
+        let saw_stats_reset = outcomes[first..]
+            .iter()
+            .any(|outcome| matches!(outcome, SystemActionOutcome::StatsReset(_)));
+        self.consumed_stats_reset_outcomes = outcomes.len();
+        saw_stats_reset
     }
 
     pub fn action_errors(&self) -> &[SystemError] {
