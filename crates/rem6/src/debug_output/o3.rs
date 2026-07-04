@@ -349,10 +349,7 @@ impl Rem6O3TraceTotals {
         let predicted_target_mismatches = event
             .branch_predicted_target()
             .is_some_and(|target| Some(target) != event.branch_resolved_target());
-        let wrong_target = event
-            .branch_predicted_target()
-            .zip(event.branch_resolved_target())
-            .is_some_and(|(predicted, resolved)| predicted != resolved);
+        let wrong_target = o3_branch_wrong_target(event);
         self.event_branch_predicted_target_matches = self
             .event_branch_predicted_target_matches
             .saturating_add(u64::from(predicted_target_matches));
@@ -996,8 +993,9 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         o3_optional_address_to_json(event.branch_resolved_target().map(|address| address.get()));
     let branch_squashed_target =
         o3_optional_address_to_json(event.branch_squashed_target().map(|address| address.get()));
+    let branch_wrong_target = o3_branch_wrong_target(event);
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_wrong_target\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -1024,6 +1022,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.branch_predicted_taken(),
         event.branch_resolved_taken(),
         event.branch_mispredicted(),
+        branch_wrong_target,
         event.branch_link_register_write(),
         branch_predicted_target,
         branch_resolved_target,
@@ -1033,6 +1032,13 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.fu_latency_cycles(),
         event.system_event(),
     )
+}
+
+fn o3_branch_wrong_target(event: &O3RuntimeTraceRecord) -> bool {
+    event
+        .branch_predicted_target()
+        .zip(event.branch_resolved_target())
+        .is_some_and(|(predicted, resolved)| predicted != resolved)
 }
 
 fn o3_optional_address_to_json(address: Option<u64>) -> String {
