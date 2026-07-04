@@ -43,6 +43,7 @@ struct Rem6O3TraceTotals {
     stats_epoch: u64,
     stats_reset_tick: u64,
     checkpoint_restores: u64,
+    checkpoint_restore_records: u64,
     checkpoint_restore_tick: u64,
     checkpoint_restore_payload_bytes: u64,
     instructions: u64,
@@ -320,6 +321,7 @@ impl Rem6O3TraceTotals {
         self.stats_reset_tick = self.stats_reset_tick.max(record.stats_reset_tick());
         if let Some(restore) = record.checkpoint_restore() {
             self.checkpoint_restores = self.checkpoint_restores.max(restore.count);
+            self.checkpoint_restore_records = self.checkpoint_restore_records.saturating_add(1);
             self.checkpoint_restore_tick = self.checkpoint_restore_tick.max(restore.tick);
             self.checkpoint_restore_payload_bytes = self
                 .checkpoint_restore_payload_bytes
@@ -580,6 +582,10 @@ impl Rem6O3TraceTotals {
             ("records", self.records),
             ("stats_epoch", self.stats_epoch),
             ("checkpoint_restores", self.checkpoint_restores),
+            (
+                "checkpoint_restore_records",
+                self.checkpoint_restore_records,
+            ),
             ("instructions", self.instructions),
             ("rob_allocations", self.rob_allocations),
             ("rob_commits", self.rob_commits),
