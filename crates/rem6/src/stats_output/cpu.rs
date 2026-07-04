@@ -938,6 +938,18 @@ fn emit_o3_runtime_stats(
         )?;
     }
     for (name, value) in [
+        ("lsq_load_bytes", o3.lsq_load_bytes()),
+        ("lsq_store_bytes", o3.lsq_store_bytes()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (name, value) in [
         ("rob.writes", o3.rob_allocations()),
         ("rob.reads", o3.rob_commits()),
         ("rename.renamedInsts", o3.instructions()),

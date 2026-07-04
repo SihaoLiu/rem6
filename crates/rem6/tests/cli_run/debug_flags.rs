@@ -2714,6 +2714,26 @@ fn m5op(function: u32) -> u32 {
     (function << 25) | 0x7b
 }
 
+fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
+    (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
+}
+
+fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) -> u32 {
+    (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8) -> u32 {
+    (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
 fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
@@ -2730,6 +2750,28 @@ fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_vector_memory_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 10, 0x17),
+        i_type(60, 10, 0b000, 10, 0x13),
+        i_type(8, 10, 0b000, 16, 0x13),
+        i_type(2, 0, 0b000, 11, 0x13),
+        vsetvli_type(0xd0, 11, 5),
+        vector_unit_stride_load_type(true, 0b110, 10, 1),
+        vector_unit_stride_store_type(true, 0b110, 16, 1),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([0x1122_3344, 0x5566_7788, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
@@ -5239,6 +5281,92 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
+    let path = detailed_o3_vector_memory_debug_binary("debug-flags-o3-vector-lsq-bytes");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("lsq_loads", 1),
+        ("lsq_stores", 1),
+        ("lsq_load_bytes", 8),
+        ("lsq_store_bytes", 8),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 vector trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    let vector_load = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000018"))
+        .unwrap_or_else(|| panic!("missing vector load O3 event: {events:?}"));
+    assert_eq!(json_record_u64(vector_load, "rename_writes"), 1);
+    assert_eq!(json_record_u64(vector_load, "lsq_loads"), 1);
+    assert_eq!(json_record_u64(vector_load, "lsq_load_bytes"), 8);
+    assert_eq!(json_record_u64(vector_load, "lsq_stores"), 0);
+    assert_eq!(json_record_u64(vector_load, "lsq_store_bytes"), 0);
+
+    let vector_store = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000001c"))
+        .unwrap_or_else(|| panic!("missing vector store O3 event: {events:?}"));
+    assert_eq!(json_record_u64(vector_store, "rename_writes"), 0);
+    assert_eq!(json_record_u64(vector_store, "lsq_loads"), 0);
+    assert_eq!(json_record_u64(vector_store, "lsq_load_bytes"), 0);
+    assert_eq!(json_record_u64(vector_store, "lsq_stores"), 1);
+    assert_eq!(json_record_u64(vector_store, "lsq_store_bytes"), 8);
+
+    for (path, unit, value) in [
+        ("sim.cpu0.o3.lsq_load_bytes", "Byte", 8),
+        ("sim.cpu0.o3.lsq_store_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
     let path = detailed_o3_fu_latency_debug_binary("debug-flags-o3-fu-latency-runtime");
 
@@ -5662,6 +5790,8 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.rename_writes", "Count", 0),
         ("sim.debug.o3_trace.lsq_loads", "Count", 0),
         ("sim.debug.o3_trace.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 0),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 0),
         (
             "sim.debug.o3_trace.store_load_forwarding_candidates",
             "Count",
@@ -5695,6 +5825,8 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.rename_writes", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 0),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 0),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
         (
             "sim.debug.o3_trace.event.fu_integer_mul_instructions",

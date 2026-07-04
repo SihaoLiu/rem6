@@ -1202,6 +1202,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.rob_allocations");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_load_bytes");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_bytes");
     assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates");
     assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_to_load_forwarding_matches");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_instructions");
@@ -1250,6 +1252,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.rename_writes",
         "sim.cpu0.o3.lsq_loads",
         "sim.cpu0.o3.lsq_stores",
+        "sim.cpu0.o3.lsq_load_bytes",
+        "sim.cpu0.o3.lsq_store_bytes",
         "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
         "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
         "sim.cpu0.o3.fu_latency_instructions",

@@ -25,6 +25,8 @@ struct Rem6O3TraceTotals {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    lsq_load_bytes: u64,
+    lsq_store_bytes: u64,
     store_load_forwarding_candidates: u64,
     store_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
@@ -42,6 +44,8 @@ struct Rem6O3TraceTotals {
     event_rename_writes: u64,
     event_lsq_loads: u64,
     event_lsq_stores: u64,
+    event_lsq_load_bytes: u64,
+    event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
     event_store_load_forwarding_matches: u64,
     event_fu_latency_cycles: u64,
@@ -80,7 +84,7 @@ impl Rem6O3TraceRecord {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             self.stats.instructions(),
             self.stats.rob_allocations(),
@@ -88,6 +92,8 @@ impl Rem6O3TraceRecord {
             self.stats.rename_writes(),
             self.stats.lsq_loads(),
             self.stats.lsq_stores(),
+            self.stats.lsq_load_bytes(),
+            self.stats.lsq_store_bytes(),
             self.stats.lsq_store_to_load_forwarding_candidates(),
             self.stats.lsq_store_to_load_forwarding_matches(),
             self.stats.fu_latency_instructions(),
@@ -153,6 +159,8 @@ impl Rem6O3TraceTotals {
         self.rename_writes = self.rename_writes.saturating_add(stats.rename_writes());
         self.lsq_loads = self.lsq_loads.saturating_add(stats.lsq_loads());
         self.lsq_stores = self.lsq_stores.saturating_add(stats.lsq_stores());
+        self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(stats.lsq_load_bytes());
+        self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(stats.lsq_store_bytes());
         self.store_load_forwarding_candidates = self
             .store_load_forwarding_candidates
             .saturating_add(stats.lsq_store_to_load_forwarding_candidates());
@@ -195,6 +203,12 @@ impl Rem6O3TraceTotals {
                 .saturating_add(event.rename_writes());
             self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
+            self.event_lsq_load_bytes = self
+                .event_lsq_load_bytes
+                .saturating_add(event.lsq_load_bytes());
+            self.event_lsq_store_bytes = self
+                .event_lsq_store_bytes
+                .saturating_add(event.lsq_store_bytes());
             self.event_store_load_forwarding_candidates = self
                 .event_store_load_forwarding_candidates
                 .saturating_add(u64::from(event.store_load_forwarding_candidate()));
@@ -291,6 +305,26 @@ impl Rem6O3TraceTotals {
             value: self.fu_latency_cycles,
         });
         stats.push(Rem6O3TraceStat {
+            suffix: "lsq_load_bytes",
+            unit: "Byte",
+            value: self.lsq_load_bytes,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "lsq_store_bytes",
+            unit: "Byte",
+            value: self.lsq_store_bytes,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.lsq_load_bytes",
+            unit: "Byte",
+            value: self.event_lsq_load_bytes,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.lsq_store_bytes",
+            unit: "Byte",
+            value: self.event_lsq_store_bytes,
+        });
+        stats.push(Rem6O3TraceStat {
             suffix: "fu_integer_mul_latency_cycles",
             unit: "Cycle",
             value: self.fu_integer_mul_latency_cycles,
@@ -325,7 +359,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         |class| format!("\"{}\"", class.as_str()),
     );
     format!(
-        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.pc().get(),
         event.rob_allocated(),
@@ -333,6 +367,8 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.rename_writes(),
         event.lsq_loads(),
         event.lsq_stores(),
+        event.lsq_load_bytes(),
+        event.lsq_store_bytes(),
         event.store_load_forwarding_candidate(),
         event.store_load_forwarding_match(),
         fu_latency_class,

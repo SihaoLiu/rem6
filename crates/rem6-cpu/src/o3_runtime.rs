@@ -250,6 +250,8 @@ pub struct O3RuntimeTraceRecord {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    lsq_load_bytes: u64,
+    lsq_store_bytes: u64,
     store_load_forwarding_candidate: bool,
     store_load_forwarding_match: bool,
     fu_latency_class: Option<O3RuntimeFuLatencyClass>,
@@ -279,6 +281,8 @@ impl O3RuntimeTraceRecord {
         rename_writes: u64,
         lsq_loads: u64,
         lsq_stores: u64,
+        lsq_load_bytes: u64,
+        lsq_store_bytes: u64,
         fu_latency_class: Option<O3RuntimeFuLatencyClass>,
         fu_latency_cycles: u64,
         system_event: bool,
@@ -291,6 +295,8 @@ impl O3RuntimeTraceRecord {
             rename_writes,
             lsq_loads,
             lsq_stores,
+            lsq_load_bytes,
+            lsq_store_bytes,
             store_load_forwarding_candidate: false,
             store_load_forwarding_match: false,
             fu_latency_class,
@@ -325,6 +331,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_stores(self) -> u64 {
         self.lsq_stores
+    }
+
+    pub const fn lsq_load_bytes(self) -> u64 {
+        self.lsq_load_bytes
+    }
+
+    pub const fn lsq_store_bytes(self) -> u64 {
+        self.lsq_store_bytes
     }
 
     pub const fn store_load_forwarding_candidate(self) -> bool {
@@ -425,12 +439,18 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_access_counts)
             .unwrap_or((0, 0));
+        let (lsq_load_bytes, lsq_store_bytes) = record
+            .memory_access()
+            .map(o3_lsq_access_bytes)
+            .unwrap_or((0, 0));
         let trace_record = O3RuntimeTraceRecord::new(
             sequence,
             Address::new(record.pc()),
             o3_rename_write_count(record),
             lsq_loads,
             lsq_stores,
+            lsq_load_bytes,
+            lsq_store_bytes,
             o3_fu_latency_class(execution.instruction()),
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
             record.system_event().is_some(),
@@ -674,6 +694,8 @@ pub struct O3RuntimeStats {
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    lsq_load_bytes: u64,
+    lsq_store_bytes: u64,
     lsq_store_to_load_forwarding_candidates: u64,
     lsq_store_to_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
@@ -710,6 +732,14 @@ impl O3RuntimeStats {
 
     pub const fn lsq_stores(self) -> u64 {
         self.lsq_stores
+    }
+
+    pub const fn lsq_load_bytes(self) -> u64 {
+        self.lsq_load_bytes
+    }
+
+    pub const fn lsq_store_bytes(self) -> u64 {
+        self.lsq_store_bytes
     }
 
     pub const fn lsq_store_to_load_forwarding_candidates(self) -> u64 {
@@ -763,6 +793,8 @@ impl O3RuntimeStats {
             || self.rename_writes != 0
             || self.lsq_loads != 0
             || self.lsq_stores != 0
+            || self.lsq_load_bytes != 0
+            || self.lsq_store_bytes != 0
             || self.lsq_store_to_load_forwarding_candidates != 0
             || self.lsq_store_to_load_forwarding_matches != 0
             || self.fu_latency_instructions != 0
@@ -830,6 +862,9 @@ impl O3RuntimeStats {
             let (loads, stores) = o3_lsq_access_counts(access);
             self.lsq_loads = self.lsq_loads.saturating_add(loads);
             self.lsq_stores = self.lsq_stores.saturating_add(stores);
+            let (load_bytes, store_bytes) = o3_lsq_access_bytes(access);
+            self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(load_bytes);
+            self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(store_bytes);
         }
     }
 
@@ -1189,6 +1224,35 @@ const fn o3_lsq_access_counts(access: &MemoryAccessKind) -> (u64, u64) {
         | MemoryAccessKind::VectorStoreIndexed { .. } => (0, 1),
         MemoryAccessKind::AtomicMemory { .. } => (1, 1),
     }
+}
+
+fn o3_lsq_access_bytes(access: &MemoryAccessKind) -> (u64, u64) {
+    match access {
+        MemoryAccessKind::Load { width, .. }
+        | MemoryAccessKind::FloatLoad { width, .. }
+        | MemoryAccessKind::LoadReserved { width, .. } => (usize_to_u64(width.bytes()), 0),
+        MemoryAccessKind::VectorLoadUnitStride { byte_len, .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { byte_len, .. } => {
+            (usize_to_u64(*byte_len), 0)
+        }
+        MemoryAccessKind::VectorLoadStrided { span_len, .. }
+        | MemoryAccessKind::VectorLoadIndexed { span_len, .. } => (usize_to_u64(*span_len), 0),
+        MemoryAccessKind::Store { width, .. }
+        | MemoryAccessKind::FloatStore { width, .. }
+        | MemoryAccessKind::StoreConditional { width, .. } => (0, usize_to_u64(width.bytes())),
+        MemoryAccessKind::VectorStoreUnitStride { data, .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { data, .. }
+        | MemoryAccessKind::VectorStoreStrided { data, .. }
+        | MemoryAccessKind::VectorStoreIndexed { data, .. } => (0, usize_to_u64(data.len())),
+        MemoryAccessKind::AtomicMemory { width, .. } => {
+            let bytes = usize_to_u64(width.bytes());
+            (bytes, bytes)
+        }
+    }
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
