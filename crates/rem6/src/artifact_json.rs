@@ -1387,6 +1387,12 @@ impl Rem6HostActionSummary {
             .map(Rem6HostCheckpointSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let checkpoint_restores = self
+            .checkpoint_restores
+            .iter()
+            .map(Rem6HostCheckpointSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let execution_mode_switches = self
             .execution_mode_switches
             .iter()
@@ -1400,7 +1406,7 @@ impl Rem6HostActionSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"checkpoint_restored_component_count\":{},\"checkpoint_restored_chunk_count\":{},\"checkpoint_restored_payload_bytes\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"injected_commands\":[{}],\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stats_resets\":[{}],\"stats_dumps\":[{}],\"checkpoints\":[{}],\"execution_mode_switches\":[{}],\"stops\":[{}]}}",
+            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"checkpoint_restored_component_count\":{},\"checkpoint_restored_chunk_count\":{},\"checkpoint_restored_payload_bytes\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"injected_commands\":[{}],\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stats_resets\":[{}],\"stats_dumps\":[{}],\"checkpoints\":[{}],\"checkpoint_restores\":[{}],\"execution_mode_switches\":[{}],\"stops\":[{}]}}",
             self.total_action_count,
             self.injected_command_count,
             self.guest_host_calls.len(),
@@ -1422,6 +1428,7 @@ impl Rem6HostActionSummary {
             stats_resets,
             stats_dumps,
             checkpoints,
+            checkpoint_restores,
             execution_mode_switches,
             stops,
         )

@@ -1357,6 +1357,46 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             .and_then(Value::as_u64),
         Some(1)
     );
+    let restored_checkpoint = host_actions
+        .pointer("/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing restored checkpoint detail: {host_actions}"));
+    assert_eq!(
+        restored_checkpoint
+            .pointer("/label")
+            .and_then(Value::as_str),
+        Some("o3-baseline"),
+        "restored checkpoint detail should identify the restored manifest: {restored_checkpoint}"
+    );
+    let restored_execution_mode_component = restored_checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|component| {
+                component.pointer("/component").and_then(Value::as_str)
+                    == Some("host.execution_modes")
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "restored detailed checkpoint should expose host.execution_modes: {restored_checkpoint}"
+            )
+        });
+    assert_eq!(
+        restored_execution_mode_component
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "restored execution-mode component should contain the modes chunk: {restored_execution_mode_component}"
+    );
+    assert!(
+        restored_execution_mode_component
+            .pointer("/chunks")
+            .and_then(Value::as_array)
+            .is_some_and(|chunks| chunks
+                .iter()
+                .any(|chunk| chunk.pointer("/name").and_then(Value::as_str) == Some("modes"))),
+        "restored execution-mode component should expose the modes chunk: {restored_execution_mode_component}"
+    );
     assert_checkpoint(host_actions, 0, "o3-baseline", 9, 9);
     assert_checkpoint(host_actions, 1, "o3-mutated", 51, 51);
     assert_checkpoint(host_actions, 2, "o3-replayed", 114, 114);
