@@ -2755,6 +2755,27 @@ fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_reset_stats_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 5, 0x17),
+        i_type(60, 5, 0x0, 5, 0x13),
+        i_type(0x5a, 0, 0x0, 11, 0x13),
+        s_type(0, 11, 5, 0b010),
+        m5op(M5_RESET_STATS),
+        i_type(0, 5, 0b010, 12, 0x03),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.push(0);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_vector_memory_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
@@ -5618,6 +5639,8 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
 
     for (field, value) in [
         ("cpu", 0),
+        ("stats_epoch", 0),
+        ("stats_reset_tick", 0),
         ("instructions", 6),
         ("rob_allocations", 6),
         ("rob_commits", 6),
@@ -5670,6 +5693,8 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.trace.categories", "Count", 1),
         ("sim.debug.trace.active_flags", "Count", 1),
         ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.stats_epoch", "Count", 0),
+        ("sim.debug.o3_trace.stats_reset_tick", "Tick", 0),
         ("sim.debug.o3_trace.instructions", "Count", 6),
         ("sim.debug.o3_trace.rob_allocations", "Count", 6),
         ("sim.debug.o3_trace.rob_commits", "Count", 6),
@@ -5707,6 +5732,92 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 1),
         ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 1),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_marks_m5_reset_stats_scope() {
+    let path = detailed_o3_reset_stats_debug_binary("debug-flags-o3-reset-stats-scope");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--dump-memory",
+            "0x80000040:4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a000000")
+    );
+    let reset = json
+        .pointer("/host_actions/stats_resets/0")
+        .unwrap_or_else(|| panic!("missing host stats reset: {json}"));
+    let reset_epoch = json_record_u64(reset, "epoch");
+    let reset_tick = json_record_u64(reset, "tick");
+    assert_eq!(reset_epoch, 1);
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    assert_eq!(json_record_u64(record, "stats_epoch"), reset_epoch);
+    assert_eq!(json_record_u64(record, "stats_reset_tick"), reset_tick);
+    assert_eq!(json_record_u64(record, "instructions"), 2);
+    assert_eq!(json_record_u64(record, "lsq_loads"), 1);
+    assert_eq!(json_record_u64(record, "lsq_stores"), 0);
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 2);
+    let event_pcs = events
+        .iter()
+        .map(|event| json_record_str(event, "pc"))
+        .collect::<Vec<_>>();
+    assert_eq!(event_pcs, ["0x80000018", "0x8000001c"]);
+    assert!(!event_pcs.contains(&"0x80000010"));
+    assert_eq!(json_record_str(&events[0], "lsq_operation"), "load");
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.stats_epoch", "Count", reset_epoch),
+        ("sim.debug.o3_trace.stats_reset_tick", "Tick", reset_tick),
+        ("sim.debug.o3_trace.instructions", "Count", 2),
+        ("sim.debug.o3_trace.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.event.records", "Count", 2),
+        ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 0),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -8408,6 +8519,8 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.trace.categories", "Count", 0),
         ("sim.debug.trace.active_flags", "Count", 0),
         ("sim.debug.o3_trace.records", "Count", 0),
+        ("sim.debug.o3_trace.stats_epoch", "Count", 0),
+        ("sim.debug.o3_trace.stats_reset_tick", "Tick", 0),
         ("sim.debug.o3_trace.instructions", "Count", 0),
         ("sim.debug.o3_trace.rob_allocations", "Count", 0),
         ("sim.debug.o3_trace.rob_commits", "Count", 0),

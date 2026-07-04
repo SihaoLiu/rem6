@@ -184,6 +184,7 @@ impl Rem6DebugSummary {
                 cluster,
                 config.cores() as u32,
                 &host_actions.execution_modes,
+                host_actions.stats_resets.last(),
             )
         } else {
             Vec::new()
