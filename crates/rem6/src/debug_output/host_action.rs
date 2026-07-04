@@ -113,6 +113,12 @@ pub(crate) fn host_action_trace_records(
     records.extend(actions.checkpoints.iter().map(checkpoint_record));
     records.extend(
         actions
+            .checkpoint_restores
+            .iter()
+            .map(checkpoint_restore_record),
+    );
+    records.extend(
+        actions
             .execution_mode_switches
             .iter()
             .map(execution_mode_switch_record),
@@ -206,6 +212,23 @@ fn checkpoint_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActionTraceR
     Rem6HostActionTraceRecord::new(
         "checkpoint",
         50,
+        action.tick,
+        Some(action.event),
+        Some(action.source),
+        vec![
+            field_string("label", action.label.as_str()),
+            field_u64("manifest_tick", action.manifest_tick),
+            field_u64("component_count", action.component_count),
+            field_u64("chunk_count", action.chunk_count),
+            field_u64("payload_bytes", action.payload_bytes),
+        ],
+    )
+}
+
+fn checkpoint_restore_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActionTraceRecord {
+    Rem6HostActionTraceRecord::new(
+        "checkpoint_restore",
+        51,
         action.tick,
         Some(action.event),
         Some(action.source),

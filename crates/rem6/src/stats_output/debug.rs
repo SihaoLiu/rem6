@@ -142,6 +142,10 @@ pub(super) fn emit_debug_stats(
             debug.host_action_checkpoint_trace_count(),
         ),
         (
+            "sim.debug.host_action_trace.checkpoint_restores",
+            debug.host_action_checkpoint_restore_trace_count(),
+        ),
+        (
             "sim.debug.host_action_trace.execution_mode_switches",
             debug.host_action_execution_mode_switch_trace_count(),
         ),

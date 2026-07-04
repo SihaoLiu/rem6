@@ -535,6 +535,10 @@ impl Rem6DebugSummary {
         self.host_action_kind_trace_count("checkpoint")
     }
 
+    pub(crate) fn host_action_checkpoint_restore_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("checkpoint_restore")
+    }
+
     pub(crate) fn host_action_execution_mode_switch_trace_count(&self) -> u64 {
         self.host_action_kind_trace_count("execution_mode_switch")
     }

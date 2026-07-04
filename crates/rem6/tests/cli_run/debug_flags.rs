@@ -2771,6 +2771,37 @@ fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_scheduled_restore_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 704_i32;
+    words.extend([
+        u_type(0, 5, 0x17),
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13),
+        i_type(42, 0, 0x0, 1, 0x13),
+        i_type(7, 0, 0x0, 2, 0x13),
+        0x0220_81b3,
+        0x0220_c1b3,
+        i_type(0x5a, 0, 0x0, 11, 0x13),
+        s_type(0, 11, 5, 0b010),
+        i_type(0, 5, 0b010, 12, 0x03),
+    ]);
+    while words.len() < 170 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn assert_o3_event(
     event: &Value,
     sequence: u64,
@@ -4987,6 +5018,105 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
     assert_stat(
         &stdout,
         "sim.debug.host_action_trace.stops",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_host_action_debug_flag_emits_scheduled_checkpoint_restore_trace() {
+    let path =
+        detailed_o3_scheduled_restore_debug_binary("debug-flags-host-action-checkpoint-restore");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "500",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "HostAction",
+            "--host-checkpoint",
+            "8:debug-baseline",
+            "--host-restore-checkpoint",
+            "70:debug-baseline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .expect("debug host action trace array");
+    assert!(
+        host_action_trace_ticks_are_ordered(trace),
+        "trace: {trace:?}"
+    );
+    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 1);
+    assert_eq!(host_action_trace_kind_count(trace, "checkpoint_restore"), 1);
+    assert_eq!(
+        host_action_trace_kind_count(trace, "execution_mode_switch"),
+        1
+    );
+    assert_eq!(host_action_trace_kind_count(trace, "stop"), 1);
+
+    let checkpoint = host_action_trace_record(trace, "checkpoint");
+    let restore = host_action_trace_record(trace, "checkpoint_restore");
+    assert_eq!(
+        restore.pointer("/label").and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert!(
+        host_action_trace_tick(restore) > host_action_trace_tick(checkpoint),
+        "checkpoint trace: {checkpoint:?}; restore trace: {restore:?}"
+    );
+    assert_eq!(
+        restore.pointer("/manifest_tick").and_then(Value::as_u64),
+        checkpoint.pointer("/manifest_tick").and_then(Value::as_u64)
+    );
+    for field in ["component_count", "chunk_count", "payload_bytes"] {
+        let field_pointer = format!("/{field}");
+        let checkpoint_value = checkpoint
+            .pointer(&field_pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("checkpoint {field}: {checkpoint:?}"));
+        let restore_value = restore
+            .pointer(&field_pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("checkpoint restore {field}: {restore:?}"));
+        assert!(restore_value > 0, "checkpoint restore {field}: {restore:?}");
+        assert_eq!(
+            restore_value, checkpoint_value,
+            "restored manifest {field} should match the baseline checkpoint"
+        );
+    }
+
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.checkpoint_restores",
         "Count",
         1,
         "monotonic",

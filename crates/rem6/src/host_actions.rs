@@ -16,6 +16,7 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) stats_resets: Vec<Rem6HostStatsResetSummary>,
     pub(crate) stats_dumps: Vec<Rem6HostStatsDumpSummary>,
     pub(crate) checkpoints: Vec<Rem6HostCheckpointSummary>,
+    pub(crate) checkpoint_restores: Vec<Rem6HostCheckpointSummary>,
     pub(crate) checkpoint_restored_count: u64,
     pub(crate) checkpoint_restored_component_count: u64,
     pub(crate) checkpoint_restored_chunk_count: u64,
@@ -117,33 +118,30 @@ impl Rem6HostActionSummary {
                     source,
                     manifest,
                 } => {
-                    let manifest_summary = manifest.summary();
-                    let components = manifest
-                        .states()
-                        .iter()
-                        .map(Rem6HostCheckpointComponentSummary::from_checkpoint_state)
-                        .collect();
-                    summary.checkpoints.push(Rem6HostCheckpointSummary {
-                        tick: *tick,
-                        event: event.get(),
-                        source: source.get(),
-                        label: manifest.label().to_string(),
-                        manifest_tick: manifest.tick(),
-                        component_count: manifest_summary.component_count() as u64,
-                        chunk_count: manifest_summary.chunk_count() as u64,
-                        payload_bytes: manifest_summary.payload_bytes() as u64,
-                        components,
-                    });
+                    summary.checkpoints.push(checkpoint_summary_from_manifest(
+                        *tick,
+                        event.get(),
+                        source.get(),
+                        manifest,
+                    ));
                 }
-                SystemActionOutcome::CheckpointRestored { manifest, .. } => {
-                    let manifest_summary = manifest.summary();
+                SystemActionOutcome::CheckpointRestored {
+                    tick,
+                    event,
+                    source,
+                    manifest,
+                } => {
+                    let restored = checkpoint_summary_from_manifest(
+                        *tick,
+                        event.get(),
+                        source.get(),
+                        manifest,
+                    );
                     summary.checkpoint_restored_count += 1;
-                    summary.checkpoint_restored_component_count +=
-                        manifest_summary.component_count() as u64;
-                    summary.checkpoint_restored_chunk_count +=
-                        manifest_summary.chunk_count() as u64;
-                    summary.checkpoint_restored_payload_bytes +=
-                        manifest_summary.payload_bytes() as u64;
+                    summary.checkpoint_restored_component_count += restored.component_count;
+                    summary.checkpoint_restored_chunk_count += restored.chunk_count;
+                    summary.checkpoint_restored_payload_bytes += restored.payload_bytes;
+                    summary.checkpoint_restores.push(restored);
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,
@@ -184,6 +182,31 @@ impl Rem6HostActionSummary {
             }
         }
         summary
+    }
+}
+
+fn checkpoint_summary_from_manifest(
+    tick: u64,
+    event: u64,
+    source: u32,
+    manifest: &rem6_checkpoint::CheckpointManifest,
+) -> Rem6HostCheckpointSummary {
+    let manifest_summary = manifest.summary();
+    let components = manifest
+        .states()
+        .iter()
+        .map(Rem6HostCheckpointComponentSummary::from_checkpoint_state)
+        .collect();
+    Rem6HostCheckpointSummary {
+        tick,
+        event,
+        source,
+        label: manifest.label().to_string(),
+        manifest_tick: manifest.tick(),
+        component_count: manifest_summary.component_count() as u64,
+        chunk_count: manifest_summary.chunk_count() as u64,
+        payload_bytes: manifest_summary.payload_bytes() as u64,
+        components,
     }
 }
 
