@@ -87,6 +87,12 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.m5_switch_cpu_mode_is_explicit() {
         return Err(Rem6CliError::M5SwitchCpuModeRequiresExecution);
     }
+    if !config.host_checkpoints().is_empty() {
+        return Err(Rem6CliError::HostCheckpointRequiresExecution);
+    }
+    if !config.host_checkpoint_restores().is_empty() {
+        return Err(Rem6CliError::HostCheckpointRestoreRequiresExecution);
+    }
     if !config.debug_flags().is_empty() {
         return Err(Rem6CliError::DebugFlagsRequireExecution);
     }

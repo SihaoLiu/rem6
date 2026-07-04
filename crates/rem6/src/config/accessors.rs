@@ -9,7 +9,7 @@ use super::{
     CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig, KernelResourceSelector,
     LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig,
     RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig, RunMemorySystem,
-    StatsFormat, DEFAULT_RISCV_IN_ORDER_WIDTH,
+    StatsFormat, TraceReplayHostEventSpec, DEFAULT_RISCV_IN_ORDER_WIDTH,
 };
 
 impl Rem6RunConfig {
@@ -43,6 +43,14 @@ impl Rem6RunConfig {
 
     pub const fn host_event_delay(&self) -> u64 {
         self.host_event_delay
+    }
+
+    pub(crate) fn host_checkpoints(&self) -> &[TraceReplayHostEventSpec] {
+        &self.host_checkpoints
+    }
+
+    pub(crate) fn host_checkpoint_restores(&self) -> &[TraceReplayHostEventSpec] {
+        &self.host_checkpoint_restores
     }
 
     pub const fn start_address(&self) -> Option<u64> {

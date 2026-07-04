@@ -128,7 +128,7 @@ pub(crate) use riscv_guest_output::{
     Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
     Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
 };
-use riscv_run_driver::drive_cli_riscv_run;
+use riscv_run_driver::{drive_cli_riscv_run, schedule_cli_riscv_host_checkpoint_events};
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_sbi_console_input, read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
@@ -895,6 +895,8 @@ fn execute_riscv(
                 .with_mem_footprint(footprint_config),
         )
         .with_o3_runtime_trace_enabled(config.debug_o3_enabled());
+    schedule_cli_riscv_host_checkpoint_events(&driver, &mut scheduler, config)
+        .map_err(execute_error)?;
     let riscv_sbi_console_input = config
         .riscv_sbi_console_input()
         .map(|source| read_riscv_sbi_console_input(source, resource_payloads))
@@ -1038,9 +1040,8 @@ fn execute_riscv(
         let controller = controller
             .lock()
             .map_err(|error| execute_error(format!("host controller lock poisoned: {error}")))?;
-        Rem6HostActionSummary::from_outcomes(controller.run().action_outcomes())
+        host_actions::host_action_summary(&controller).map_err(execute_error)?
     };
-
     let summary_inputs = ExecutionSummaryInputs {
         core_count,
         memory: &memory,

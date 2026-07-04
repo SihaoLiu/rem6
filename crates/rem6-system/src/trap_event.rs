@@ -670,6 +670,74 @@ impl RiscvTrapEventPort {
         self.schedule_riscv_system_events_from_turn_with_mode(scheduler, turn, event_for, true)
     }
 
+    pub fn schedule_host_checkpoint_event(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        label: String,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.schedule_host_checkpoint_event_kind(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            GuestEventKind::Checkpoint { label },
+        )
+    }
+
+    pub fn schedule_host_checkpoint_restore_event(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        label: String,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.schedule_host_checkpoint_event_kind(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            GuestEventKind::RestoreCheckpoint { label },
+        )
+    }
+
+    pub fn schedule_host_checkpoint_event_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        label: String,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.schedule_host_checkpoint_event_kind_parallel(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            GuestEventKind::Checkpoint { label },
+        )
+    }
+
+    pub fn schedule_host_checkpoint_restore_event_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        label: String,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.schedule_host_checkpoint_event_kind_parallel(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            GuestEventKind::RestoreCheckpoint { label },
+        )
+    }
+
     fn schedule_riscv_system_events_from_turn_with_mode<F>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -741,6 +809,37 @@ impl RiscvTrapEventPort {
             scheduled.push(event);
         }
         Ok(scheduled)
+    }
+
+    fn schedule_host_checkpoint_event_kind(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.validate_scheduled_emit(scheduler, source, source_tick)?;
+        self.schedule_prevalidated_system_event(scheduler, event, source, source_tick, kind, 0)
+    }
+
+    fn schedule_host_checkpoint_event_kind_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.validate_parallel_scheduled_emit(scheduler, source, source_tick)?;
+        self.schedule_prevalidated_system_event_parallel(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            kind,
+            0,
+        )
     }
 
     fn schedule_pending_core_traps_with_riscv_emulation_and_mode<I, F>(

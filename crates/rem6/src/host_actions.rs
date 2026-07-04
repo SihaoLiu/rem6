@@ -2,7 +2,7 @@ use rem6_stats::{StatDumpRecord, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
     ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
-    SystemActionOutcome,
+    SystemActionOutcome, SystemHostController,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -268,6 +268,17 @@ const fn execution_mode_name(mode: ExecutionMode) -> &'static str {
         ExecutionMode::Timing => "timing",
         ExecutionMode::Detailed => "detailed",
     }
+}
+
+pub(crate) fn host_action_summary(
+    controller: &SystemHostController,
+) -> Result<Rem6HostActionSummary, String> {
+    if let Some(error) = controller.action_errors().first() {
+        return Err(format!("host action failed: {error}"));
+    }
+    Ok(Rem6HostActionSummary::from_outcomes(
+        controller.run().action_outcomes(),
+    ))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

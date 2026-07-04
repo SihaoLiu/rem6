@@ -201,6 +201,48 @@ fn rem6_run_rejects_m5_switch_cpu_mode_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_host_checkpoint_flags_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let checkpoint_path = temp_binary("host-checkpoint-without-execute", &elf);
+    let restore_path = temp_binary("host-checkpoint-restore-without-execute", &elf);
+
+    for (path, flag, message) in [
+        (
+            checkpoint_path.as_path(),
+            "--host-checkpoint",
+            "--host-checkpoint requires --execute",
+        ),
+        (
+            restore_path.as_path(),
+            "--host-restore-checkpoint",
+            "--host-restore-checkpoint requires --execute",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--stats-format",
+                "json",
+                flag,
+                "8:cp",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success(), "{flag} should require execution");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(message), "stderr: {stderr}");
+    }
+}
+
+#[test]
 fn rem6_run_rejects_riscv_branch_lookahead_without_riscv_isa() {
     let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
     let path = temp_binary("riscv-branch-lookahead-without-riscv", &elf);

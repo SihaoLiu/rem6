@@ -898,6 +898,130 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
 }
 
 #[test]
+fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
+    let path = detailed_o3_scheduled_restore_binary("m5-switch-cpu-detailed-o3-scheduled-restore");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "500",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-checkpoint",
+            "8:o3-baseline",
+            "--host-checkpoint",
+            "50:o3-mutated",
+            "--host-restore-checkpoint",
+            "70:o3-baseline",
+            "--host-checkpoint",
+            "113:o3-replayed",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_checkpoint(host_actions, 0, "o3-baseline", 9, 9);
+    assert_checkpoint(host_actions, 1, "o3-mutated", 51, 51);
+    assert_checkpoint(host_actions, 2, "o3-replayed", 114, 114);
+
+    let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
+    let mutated = checkpoint_chunk_checksum(host_actions, 1, "cpu0", "o3-runtime-state");
+    let replayed = checkpoint_chunk_checksum(host_actions, 2, "cpu0", "o3-runtime-state");
+    assert_ne!(
+        mutated, baseline,
+        "detailed O3 runtime state should change after ROB/LSQ/rename/FU work"
+    );
+    assert_eq!(
+        replayed, mutated,
+        "restoring the earlier O3 checkpoint should replay deterministic detailed work"
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoints",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_reports_scheduled_restore_missing_checkpoint_label() {
+    let path = scheduled_host_restore_missing_label_binary("scheduled-restore-missing-label");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "8:missing-label",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "run should fail when a scheduled restore references a missing checkpoint label"
+    );
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("checkpoint manifest missing-label is not available"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-text-stats");
 
@@ -1905,6 +2029,48 @@ fn detailed_o3_checkpoint_state_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_scheduled_restore_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13)); // nop
+    }
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 704_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(42, 0, 0x0, 1, 0x13),                    // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),                     // addi x2, x0, 7
+        0x0220_81b3,                                    // mul x3, x1, x2
+        0x0220_c1b3,                                    // div x3, x1, x2
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+    ]);
+    while words.len() < 170 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn scheduled_host_restore_missing_label_binary(name: &str) -> std::path::PathBuf {
+    let mut words = Vec::new();
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

@@ -70,6 +70,8 @@ pub struct Rem6RunConfig {
     min_remote_delay: u64,
     memory_route_delay: u64,
     host_event_delay: u64,
+    host_checkpoints: Vec<TraceReplayHostEventSpec>,
+    host_checkpoint_restores: Vec<TraceReplayHostEventSpec>,
     start_address: Option<u64>,
     riscv_boot_a0: u64,
     riscv_boot_a1: u64,
@@ -212,6 +214,8 @@ struct Rem6RunFileConfig {
     min_remote_delay: Option<u64>,
     memory_route_delay: Option<u64>,
     host_event_delay: Option<u64>,
+    host_checkpoints: Option<Vec<String>>,
+    host_checkpoint_restores: Option<Vec<String>>,
     start_address: Option<u64>,
     riscv_boot_a0: Option<u64>,
     riscv_boot_a1: Option<u64>,
@@ -406,6 +410,35 @@ fn parse_m5_switch_cpu_mode(value: &str) -> Option<ExecutionMode> {
     }
 }
 
+fn run_host_events_from_file(
+    values: Option<&[String]>,
+) -> Result<Vec<TraceReplayHostEventSpec>, Rem6CliError> {
+    values
+        .unwrap_or_default()
+        .iter()
+        .map(|value| parse_run_host_event(value))
+        .collect()
+}
+
+fn parse_run_host_event(value: &str) -> Result<TraceReplayHostEventSpec, Rem6CliError> {
+    let Some((tick, label)) = value.split_once(':') else {
+        return Err(Rem6CliError::InvalidRunHostCheckpointEvent {
+            value: value.to_string(),
+        });
+    };
+    let tick = tick
+        .parse::<u64>()
+        .map_err(|_| Rem6CliError::InvalidRunHostCheckpointEvent {
+            value: value.to_string(),
+        })?;
+    if label.is_empty() {
+        return Err(Rem6CliError::InvalidRunHostCheckpointEvent {
+            value: value.to_string(),
+        });
+    }
+    Ok(TraceReplayHostEventSpec::new(tick, label))
+}
+
 impl Rem6RunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -468,6 +501,10 @@ impl Rem6RunConfig {
                 value: "0".to_string(),
             });
         }
+        let mut host_checkpoints =
+            run_host_events_from_file(file_config.host_checkpoints.as_deref())?;
+        let mut host_checkpoint_restores =
+            run_host_events_from_file(file_config.host_checkpoint_restores.as_deref())?;
         let mut start_address = file_config.start_address;
         let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
         let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
@@ -847,6 +884,14 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         }
                     })?);
+                }
+                "--host-checkpoint" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_checkpoints.push(parse_run_host_event(&value)?);
+                }
+                "--host-restore-checkpoint" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_checkpoint_restores.push(parse_run_host_event(&value)?);
                 }
                 "--start-address" => {
                     let value = required_value(&flag, args.next())?;
@@ -1337,6 +1382,8 @@ impl Rem6RunConfig {
             min_remote_delay,
             memory_route_delay,
             host_event_delay,
+            host_checkpoints,
+            host_checkpoint_restores,
             start_address,
             riscv_boot_a0,
             riscv_boot_a1,

@@ -71,6 +71,9 @@ pub enum Rem6CliError {
     InvalidHostEventDelay {
         value: String,
     },
+    InvalidRunHostCheckpointEvent {
+        value: String,
+    },
     InvalidDramLowPowerTiming {
         value: String,
     },
@@ -328,6 +331,8 @@ pub enum Rem6CliError {
     RiscvBranchPredictorRequiresExecution,
     RiscvInOrderWidthRequiresExecution,
     M5SwitchCpuModeRequiresExecution,
+    HostCheckpointRequiresExecution,
+    HostCheckpointRestoreRequiresExecution,
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -654,6 +659,12 @@ impl fmt::Display for Rem6CliError {
                     "invalid trace replay host event {value}; expected tick:label"
                 )
             }
+            Self::InvalidRunHostCheckpointEvent { value } => {
+                write!(
+                    formatter,
+                    "invalid run host checkpoint event {value}; expected tick:label"
+                )
+            }
             Self::InvalidGpuRunFabricBandwidth { value } => {
                 write!(formatter, "invalid gpu run fabric bandwidth {value}")
             }
@@ -883,6 +894,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::M5SwitchCpuModeRequiresExecution => {
                 write!(formatter, "--m5-switch-cpu-mode requires --execute")
+            }
+            Self::HostCheckpointRequiresExecution => {
+                write!(formatter, "--host-checkpoint requires --execute")
+            }
+            Self::HostCheckpointRestoreRequiresExecution => {
+                write!(formatter, "--host-restore-checkpoint requires --execute")
             }
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")

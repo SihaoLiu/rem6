@@ -1,11 +1,34 @@
 use rem6_cpu::{CpuId, RiscvCluster};
-use rem6_kernel::PartitionedScheduler;
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_mmio::MmioBus;
 use rem6_system::{GuestEventId, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason};
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
+use crate::config::{Rem6RunConfig, TraceReplayHostEventSpec};
 use crate::data_cache_runtime::{cli_data_memory_response, CliCacheHierarchy};
 use crate::runtime_memory::CliMemoryRuntime;
+
+const RUN_HOST_CHECKPOINT_EVENT_BASE: u64 = 10_000;
+
+pub(super) fn schedule_cli_riscv_host_checkpoint_events(
+    driver: &RiscvSystemRunDriver,
+    scheduler: &mut PartitionedScheduler,
+    config: &Rem6RunConfig,
+) -> Result<(), rem6_system::SystemError> {
+    let source = PartitionId::new(0);
+    let mut index = 0;
+    for checkpoint in config.host_checkpoints() {
+        schedule_cli_riscv_host_checkpoint_event(driver, scheduler, source, index, checkpoint)?;
+        index += 1;
+    }
+    for restore in config.host_checkpoint_restores() {
+        schedule_cli_riscv_host_checkpoint_restore_event(
+            driver, scheduler, source, index, restore,
+        )?;
+        index += 1;
+    }
+    Ok(())
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_cli_riscv_run(
@@ -206,4 +229,44 @@ fn drive_cli_riscv_run_until_tick(
 
 fn guest_event_for_cpu(cpu: CpuId) -> GuestEventId {
     GuestEventId::new(u64::from(cpu.get()))
+}
+
+fn run_host_checkpoint_event_id(index: u64) -> GuestEventId {
+    GuestEventId::new(RUN_HOST_CHECKPOINT_EVENT_BASE + index)
+}
+
+fn schedule_cli_riscv_host_checkpoint_event(
+    driver: &RiscvSystemRunDriver,
+    scheduler: &mut PartitionedScheduler,
+    source: PartitionId,
+    index: u64,
+    event: &TraceReplayHostEventSpec,
+) -> Result<(), rem6_system::SystemError> {
+    driver.trap_port().schedule_host_checkpoint_event_parallel(
+        scheduler,
+        run_host_checkpoint_event_id(index),
+        source,
+        event.tick(),
+        event.label().to_string(),
+    )?;
+    Ok(())
+}
+
+fn schedule_cli_riscv_host_checkpoint_restore_event(
+    driver: &RiscvSystemRunDriver,
+    scheduler: &mut PartitionedScheduler,
+    source: PartitionId,
+    index: u64,
+    event: &TraceReplayHostEventSpec,
+) -> Result<(), rem6_system::SystemError> {
+    driver
+        .trap_port()
+        .schedule_host_checkpoint_restore_event_parallel(
+            scheduler,
+            run_host_checkpoint_event_id(index),
+            source,
+            event.tick(),
+            event.label().to_string(),
+        )?;
+    Ok(())
 }
