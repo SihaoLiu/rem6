@@ -2734,6 +2734,16 @@ fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8
         | 0x27
 }
 
+fn float_store_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = (imm as u32) & 0xfff;
+    ((imm >> 5) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x27
+}
+
 fn detailed_o3_runtime_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
@@ -2794,6 +2804,28 @@ fn detailed_o3_vector_memory_debug_binary(name: &str) -> std::path::PathBuf {
     }
     words.extend([0x1122_3344, 0x5566_7788, 0, 0]);
     let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_float_memory_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0, 10, 0x3, 1, 0x07),
+        float_store_type(8, 1, 10, 0x3),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    let mut program = riscv64_program(&words);
+    program.extend_from_slice(&1.0f64.to_bits().to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
 }
@@ -6538,6 +6570,119 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape() {
+    let path = detailed_o3_float_memory_debug_binary("debug-flags-o3-float-lsq-operation");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("000000000000f03f000000000000f03f")
+    );
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("lsq_loads", 1),
+        ("lsq_stores", 1),
+        ("lsq_load_bytes", 8),
+        ("lsq_store_bytes", 8),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 float trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    let float_load = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        .unwrap_or_else(|| panic!("missing float load O3 event: {events:?}"));
+    assert_eq!(json_record_u64(float_load, "rename_writes"), 1);
+    assert_eq!(json_record_u64(float_load, "lsq_loads"), 1);
+    assert_eq!(json_record_str(float_load, "lsq_operation"), "float_load");
+    assert_eq!(
+        json_record_str(float_load, "lsq_load_address"),
+        "0x80000040"
+    );
+    assert_eq!(json_record_u64(float_load, "lsq_load_bytes"), 8);
+    assert_eq!(json_record_u64(float_load, "lsq_stores"), 0);
+    assert_eq!(json_record_u64(float_load, "lsq_store_bytes"), 0);
+
+    let float_store = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
+        .unwrap_or_else(|| panic!("missing float store O3 event: {events:?}"));
+    assert_eq!(json_record_u64(float_store, "rename_writes"), 0);
+    assert_eq!(json_record_u64(float_store, "lsq_loads"), 0);
+    assert_eq!(json_record_u64(float_store, "lsq_load_bytes"), 0);
+    assert_eq!(json_record_u64(float_store, "lsq_stores"), 1);
+    assert_eq!(json_record_str(float_store, "lsq_operation"), "float_store");
+    assert_eq!(
+        json_record_str(float_store, "lsq_store_address"),
+        "0x80000048"
+    );
+    assert_eq!(json_record_u64(float_store, "lsq_store_bytes"), 8);
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.float_loads", "Count", 1),
+        ("sim.debug.o3_trace.float_stores", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_load",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store",
+            "Count",
+            1,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
     let path = detailed_o3_atomic_lsq_debug_binary("debug-flags-o3-atomic-lsq-operation");
 
@@ -9150,6 +9295,8 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.lsq_stores", "Count", 0),
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 0),
         ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 0),
+        ("sim.debug.o3_trace.float_loads", "Count", 0),
+        ("sim.debug.o3_trace.float_stores", "Count", 0),
         (
             "sim.debug.o3_trace.store_load_forwarding_candidates",
             "Count",

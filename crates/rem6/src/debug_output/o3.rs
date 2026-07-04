@@ -54,6 +54,8 @@ struct Rem6O3TraceTotals {
     lsq_stores: u64,
     lsq_load_bytes: u64,
     lsq_store_bytes: u64,
+    float_loads: u64,
+    float_stores: u64,
     store_load_forwarding_candidates: u64,
     store_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
@@ -558,10 +560,12 @@ impl Rem6O3TraceTotals {
                 self.event_lsq_operation_atomic = self.event_lsq_operation_atomic.saturating_add(1);
             }
             O3RuntimeLsqOperation::FloatLoad => {
+                self.float_loads = self.float_loads.saturating_add(1);
                 self.event_lsq_operation_float_load =
                     self.event_lsq_operation_float_load.saturating_add(1);
             }
             O3RuntimeLsqOperation::FloatStore => {
+                self.float_stores = self.float_stores.saturating_add(1);
                 self.event_lsq_operation_float_store =
                     self.event_lsq_operation_float_store.saturating_add(1);
             }
@@ -592,6 +596,8 @@ impl Rem6O3TraceTotals {
             ("rename_writes", self.rename_writes),
             ("lsq_loads", self.lsq_loads),
             ("lsq_stores", self.lsq_stores),
+            ("float_loads", self.float_loads),
+            ("float_stores", self.float_stores),
             (
                 "store_load_forwarding_candidates",
                 self.store_load_forwarding_candidates,
