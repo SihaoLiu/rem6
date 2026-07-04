@@ -7633,6 +7633,8 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     assert_eq!(json_record_bool(branch, "branch_predicted_taken"), true);
     assert_eq!(json_record_bool(branch, "branch_resolved_taken"), false);
     assert_eq!(json_record_bool(branch, "branch_mispredicted"), true);
+    assert_eq!(json_record_bool(branch, "branch_wrong_target"), false);
+    assert_eq!(json_record_bool(branch, "branch_targetless_mismatch"), true);
     assert_eq!(
         json_record_str(branch, "branch_predicted_target"),
         "0x80000014"
@@ -7663,6 +7665,12 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatches",
+            "Count",
+            1,
+        ),
+        ("sim.debug.o3_trace.event.branch_wrong_targets", "Count", 0),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 3),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 3),
         (
@@ -7694,6 +7702,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "sim.debug.o3_trace.event.branch_predicted_target_mismatch_kind.direct_conditional",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatch_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_wrong_target_kind.direct_conditional",
+            "Count",
+            0,
         ),
         (
             "sim.debug.o3_trace.event.branch_misprediction_kind.direct_conditional",
