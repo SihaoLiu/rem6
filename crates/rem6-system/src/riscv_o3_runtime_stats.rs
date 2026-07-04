@@ -103,6 +103,7 @@ struct RiscvO3RuntimeCpuStats {
     fu_integer_div_latency_cycles: StatId,
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
+    rename_map_entries: StatId,
 }
 
 impl RiscvO3RuntimeCpuStats {
@@ -175,6 +176,12 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "max_lsq_occupancy",
+                "Count",
+            )?,
+            rename_map_entries: register_o3_counter(
+                registry,
+                &prefix,
+                "rename_map_entries",
                 "Count",
             )?,
         })
@@ -269,6 +276,11 @@ impl RiscvO3RuntimeCpuStats {
                 previous.max_lsq_occupancy(),
                 current.max_lsq_occupancy(),
             ),
+            (
+                self.rename_map_entries,
+                previous.rename_map_entries(),
+                current.rename_map_entries(),
+            ),
         ] {
             let delta = current.saturating_sub(previous);
             if delta != 0 {
@@ -323,6 +335,7 @@ impl RiscvO3RuntimeCpuStats {
             ),
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
+            (self.rename_map_entries, snapshot.rename_map_entries()),
         ] {
             registry.set_resettable_counter(stat, value)?;
         }

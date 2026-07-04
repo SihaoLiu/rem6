@@ -860,9 +860,13 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         0,
         "resettable",
     );
-    assert_stats_dump_sample_absent(
+    assert_stats_dump_sample(
         dump,
         "sim.host_actions.stats_dump.cpu0.o3.rename_map_entries",
+        "counter",
+        "Count",
+        3,
+        "resettable",
     );
     assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 8, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 5, "monotonic");
@@ -1341,6 +1345,10 @@ fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_store_bytes",
             "Byte",
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.rename_map_entries",
+            "Count",
         ),
     ] {
         assert_stats_dump_sample(
