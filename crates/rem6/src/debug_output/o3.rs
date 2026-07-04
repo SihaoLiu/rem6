@@ -92,6 +92,15 @@ struct Rem6O3TraceTotals {
     event_lsq_ordering_acquire_release: u64,
     event_lsq_store_conditional_failures: u64,
     event_lsq_data_latency_ticks: u64,
+    event_lsq_operation_load_latency_ticks: u64,
+    event_lsq_operation_store_latency_ticks: u64,
+    event_lsq_operation_load_reserved_latency_ticks: u64,
+    event_lsq_operation_store_conditional_latency_ticks: u64,
+    event_lsq_operation_atomic_latency_ticks: u64,
+    event_lsq_operation_float_load_latency_ticks: u64,
+    event_lsq_operation_float_store_latency_ticks: u64,
+    event_lsq_operation_vector_load_latency_ticks: u64,
+    event_lsq_operation_vector_store_latency_ticks: u64,
     event_branches: u64,
     event_branch_taken: u64,
     event_branch_not_taken: u64,
@@ -395,7 +404,7 @@ impl Rem6O3TraceTotals {
                 .saturating_add(event.rename_writes());
             self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
-            self.add_event_lsq_operation(event.lsq_operation());
+            self.add_event_lsq_operation(event.lsq_operation(), event.lsq_data_latency_ticks());
             self.add_event_lsq_ordering(event.lsq_ordering());
             self.event_lsq_store_conditional_failures = self
                 .event_lsq_store_conditional_failures
@@ -547,43 +556,70 @@ impl Rem6O3TraceTotals {
         }
     }
 
-    fn add_event_lsq_operation(&mut self, operation: O3RuntimeLsqOperation) {
+    fn add_event_lsq_operation(&mut self, operation: O3RuntimeLsqOperation, latency_ticks: u64) {
         match operation {
             O3RuntimeLsqOperation::None => {}
             O3RuntimeLsqOperation::Load => {
                 self.event_lsq_operation_load = self.event_lsq_operation_load.saturating_add(1);
+                self.event_lsq_operation_load_latency_ticks = self
+                    .event_lsq_operation_load_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::Store => {
                 self.event_lsq_operation_store = self.event_lsq_operation_store.saturating_add(1);
+                self.event_lsq_operation_store_latency_ticks = self
+                    .event_lsq_operation_store_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::LoadReserved => {
                 self.event_lsq_operation_load_reserved =
                     self.event_lsq_operation_load_reserved.saturating_add(1);
+                self.event_lsq_operation_load_reserved_latency_ticks = self
+                    .event_lsq_operation_load_reserved_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::StoreConditional => {
                 self.event_lsq_operation_store_conditional =
                     self.event_lsq_operation_store_conditional.saturating_add(1);
+                self.event_lsq_operation_store_conditional_latency_ticks = self
+                    .event_lsq_operation_store_conditional_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::Atomic => {
                 self.event_lsq_operation_atomic = self.event_lsq_operation_atomic.saturating_add(1);
+                self.event_lsq_operation_atomic_latency_ticks = self
+                    .event_lsq_operation_atomic_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::FloatLoad => {
                 self.float_loads = self.float_loads.saturating_add(1);
                 self.event_lsq_operation_float_load =
                     self.event_lsq_operation_float_load.saturating_add(1);
+                self.event_lsq_operation_float_load_latency_ticks = self
+                    .event_lsq_operation_float_load_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::FloatStore => {
                 self.float_stores = self.float_stores.saturating_add(1);
                 self.event_lsq_operation_float_store =
                     self.event_lsq_operation_float_store.saturating_add(1);
+                self.event_lsq_operation_float_store_latency_ticks = self
+                    .event_lsq_operation_float_store_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::VectorLoad => {
                 self.event_lsq_operation_vector_load =
                     self.event_lsq_operation_vector_load.saturating_add(1);
+                self.event_lsq_operation_vector_load_latency_ticks = self
+                    .event_lsq_operation_vector_load_latency_ticks
+                    .saturating_add(latency_ticks);
             }
             O3RuntimeLsqOperation::VectorStore => {
                 self.event_lsq_operation_vector_store =
                     self.event_lsq_operation_vector_store.saturating_add(1);
+                self.event_lsq_operation_vector_store_latency_ticks = self
+                    .event_lsq_operation_vector_store_latency_ticks
+                    .saturating_add(latency_ticks);
             }
         }
     }
@@ -918,6 +954,50 @@ impl Rem6O3TraceTotals {
             unit: "Tick",
             value: self.event_lsq_data_latency_ticks,
         });
+        for (suffix, value) in [
+            (
+                "event.lsq_operation.load_latency_ticks",
+                self.event_lsq_operation_load_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.store_latency_ticks",
+                self.event_lsq_operation_store_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.load_reserved_latency_ticks",
+                self.event_lsq_operation_load_reserved_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.store_conditional_latency_ticks",
+                self.event_lsq_operation_store_conditional_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.atomic_latency_ticks",
+                self.event_lsq_operation_atomic_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.float_load_latency_ticks",
+                self.event_lsq_operation_float_load_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.float_store_latency_ticks",
+                self.event_lsq_operation_float_store_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.vector_load_latency_ticks",
+                self.event_lsq_operation_vector_load_latency_ticks,
+            ),
+            (
+                "event.lsq_operation.vector_store_latency_ticks",
+                self.event_lsq_operation_vector_store_latency_ticks,
+            ),
+        ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Tick",
+                value,
+            });
+        }
         stats.push(Rem6O3TraceStat {
             suffix: "fu_integer_mul_latency_cycles",
             unit: "Cycle",
