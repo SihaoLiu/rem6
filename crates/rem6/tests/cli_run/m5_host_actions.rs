@@ -957,6 +957,42 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
     assert_checkpoint(host_actions, 0, "o3-baseline", 9, 9);
     assert_checkpoint(host_actions, 1, "o3-mutated", 51, 51);
     assert_checkpoint(host_actions, 2, "o3-replayed", 114, 114);
+    let restored_components = host_actions
+        .pointer("/checkpoint_restored_component_count")
+        .and_then(Value::as_u64)
+        .expect("scheduled restore should report restored checkpoint components");
+    let restored_chunks = host_actions
+        .pointer("/checkpoint_restored_chunk_count")
+        .and_then(Value::as_u64)
+        .expect("scheduled restore should report restored checkpoint chunks");
+    let restored_payload_bytes = host_actions
+        .pointer("/checkpoint_restored_payload_bytes")
+        .and_then(Value::as_u64)
+        .expect("scheduled restore should report restored checkpoint payload bytes");
+    assert_eq!(
+        restored_components,
+        host_actions
+            .pointer("/checkpoints/0/component_count")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "restored manifest component count should match the restored baseline checkpoint"
+    );
+    assert_eq!(
+        restored_chunks,
+        host_actions
+            .pointer("/checkpoints/0/chunk_count")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "restored manifest chunk count should match the restored baseline checkpoint"
+    );
+    assert_eq!(
+        restored_payload_bytes,
+        host_actions
+            .pointer("/checkpoints/0/payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "restored manifest payload bytes should match the restored baseline checkpoint"
+    );
 
     let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
     let mutated = checkpoint_chunk_checksum(host_actions, 1, "cpu0", "o3-runtime-state");
@@ -981,6 +1017,27 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
         "sim.host_actions.checkpoint_restores",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restored_components",
+        "Count",
+        restored_components,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restored_chunks",
+        "Count",
+        restored_chunks,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restored_payload_bytes",
+        "Byte",
+        restored_payload_bytes,
         "monotonic",
     );
 }

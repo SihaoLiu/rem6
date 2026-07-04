@@ -17,6 +17,9 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) stats_dumps: Vec<Rem6HostStatsDumpSummary>,
     pub(crate) checkpoints: Vec<Rem6HostCheckpointSummary>,
     pub(crate) checkpoint_restored_count: u64,
+    pub(crate) checkpoint_restored_component_count: u64,
+    pub(crate) checkpoint_restored_chunk_count: u64,
+    pub(crate) checkpoint_restored_payload_bytes: u64,
     pub(crate) execution_mode_switch_count: u64,
     pub(crate) execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
     pub(crate) stops: Vec<Rem6HostStopActionSummary>,
@@ -132,8 +135,15 @@ impl Rem6HostActionSummary {
                         components,
                     });
                 }
-                SystemActionOutcome::CheckpointRestored { .. } => {
+                SystemActionOutcome::CheckpointRestored { manifest, .. } => {
+                    let manifest_summary = manifest.summary();
                     summary.checkpoint_restored_count += 1;
+                    summary.checkpoint_restored_component_count +=
+                        manifest_summary.component_count() as u64;
+                    summary.checkpoint_restored_chunk_count +=
+                        manifest_summary.chunk_count() as u64;
+                    summary.checkpoint_restored_payload_bytes +=
+                        manifest_summary.payload_bytes() as u64;
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,

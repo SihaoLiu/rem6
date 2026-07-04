@@ -5,7 +5,6 @@ use serde_json::Value;
 use crate::support::*;
 
 const M5_EXIT: u32 = 0x21;
-const M5_CHECKPOINT: u32 = 0x43;
 
 #[test]
 fn rem6_multi_run_executes_run_configs_and_writes_aggregate_artifacts() {
@@ -257,7 +256,11 @@ config = "packet.toml"
 #[test]
 fn rem6_multi_run_reports_run_child_checkpoint_actions() {
     let workspace = temp_workspace("multi-run-run-child-checkpoint-actions");
-    let program = riscv64_program(&[m5op(M5_CHECKPOINT), m5op(M5_EXIT)]);
+    let program = riscv64_program(&[
+        0x0000_0013, // nop
+        0x0000_0013, // nop
+        m5op(M5_EXIT),
+    ]);
     fs::write(
         workspace.join("program.elf"),
         riscv64_elf(0x8000_0000, 0x8000_0000, &program),
@@ -273,6 +276,8 @@ stats_format = "json"
 execute = true
 memory_system = "direct"
 output = "artifacts/checkpoint-run.json"
+host_checkpoints = ["1:run-cp"]
+host_checkpoint_restores = ["2:run-cp"]
 "#,
     )
     .unwrap();
@@ -313,7 +318,7 @@ config = "checkpoint.toml"
     assert_eq!(
         json.get("total_checkpoint_restores")
             .and_then(Value::as_u64),
-        Some(0)
+        Some(1)
     );
     let summary = multi_run_summary_by_id(&json, "checkpoint");
     assert_eq!(
@@ -324,7 +329,7 @@ config = "checkpoint.toml"
         summary
             .get("checkpoint_restored_count")
             .and_then(Value::as_u64),
-        Some(0)
+        Some(1)
     );
 
     let child_artifact = fs::read_to_string(workspace.join("artifacts/checkpoint-run.json"))
@@ -336,11 +341,38 @@ config = "checkpoint.toml"
             .and_then(Value::as_u64),
         Some(1)
     );
+    assert_eq!(
+        child_json
+            .pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
     let checkpoint_components =
         json_u64(&child_json, "/host_actions/checkpoints/0/component_count");
     let checkpoint_chunks = json_u64(&child_json, "/host_actions/checkpoints/0/chunk_count");
     let checkpoint_payload_bytes =
         json_u64(&child_json, "/host_actions/checkpoints/0/payload_bytes");
+    let restored_components = json_u64(
+        &child_json,
+        "/host_actions/checkpoint_restored_component_count",
+    );
+    let restored_chunks = json_u64(&child_json, "/host_actions/checkpoint_restored_chunk_count");
+    let restored_payload_bytes = json_u64(
+        &child_json,
+        "/host_actions/checkpoint_restored_payload_bytes",
+    );
+    assert!(
+        restored_components > 0,
+        "run child should report nonzero restored checkpoint components"
+    );
+    assert!(
+        restored_chunks > 0,
+        "run child should report nonzero restored checkpoint chunks"
+    );
+    assert!(
+        restored_payload_bytes > 0,
+        "run child should report nonzero restored checkpoint payload bytes"
+    );
     assert_eq!(
         json.get("total_checkpoint_component_count")
             .and_then(Value::as_u64),
@@ -378,19 +410,34 @@ config = "checkpoint.toml"
         summary
             .get("checkpoint_restored_component_count")
             .and_then(Value::as_u64),
-        Some(0)
+        Some(restored_components)
     );
     assert_eq!(
         summary
             .get("checkpoint_restored_chunk_count")
             .and_then(Value::as_u64),
-        Some(0)
+        Some(restored_chunks)
     );
     assert_eq!(
         summary
             .get("checkpoint_restored_payload_bytes")
             .and_then(Value::as_u64),
-        Some(0)
+        Some(restored_payload_bytes)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_component_count")
+            .and_then(Value::as_u64),
+        Some(restored_components)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_chunk_count")
+            .and_then(Value::as_u64),
+        Some(restored_chunks)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(restored_payload_bytes)
     );
     assert_stat(
         &stdout,
@@ -403,7 +450,7 @@ config = "checkpoint.toml"
         &stdout,
         "sim.multi_run.checkpoint_restores",
         "Count",
-        0,
+        1,
         "monotonic",
     );
     assert_stat(
@@ -425,6 +472,27 @@ config = "checkpoint.toml"
         "sim.multi_run.checkpoint_payload_bytes",
         "Byte",
         checkpoint_payload_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_components",
+        "Count",
+        restored_components,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_chunks",
+        "Count",
+        restored_chunks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_payload_bytes",
+        "Byte",
+        restored_payload_bytes,
         "monotonic",
     );
 }

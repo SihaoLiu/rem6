@@ -90,6 +90,14 @@ pub(super) fn emit_run_host_action_stats(
         ("checkpoints", summary.checkpoints.len() as u64),
         ("checkpoint_restores", summary.checkpoint_restored_count),
         (
+            "checkpoint_restored_components",
+            summary.checkpoint_restored_component_count,
+        ),
+        (
+            "checkpoint_restored_chunks",
+            summary.checkpoint_restored_chunk_count,
+        ),
+        (
             "execution_mode_switches",
             summary.execution_mode_switch_count,
         ),
@@ -132,6 +140,13 @@ pub(super) fn emit_run_host_action_stats(
             checker.mismatches,
         )?;
     }
+    increment_stat(
+        stats,
+        "sim.host_actions.checkpoint_restored_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.checkpoint_restored_payload_bytes,
+    )?;
     increment_stat(
         stats,
         "sim.host_actions.guest_host_call_payload_bytes",

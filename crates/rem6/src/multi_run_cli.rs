@@ -477,9 +477,9 @@ impl Rem6MultiRunCheckpointTotals {
                 .iter()
                 .map(|checkpoint| checkpoint.payload_bytes)
                 .sum(),
-            restored_components: 0,
-            restored_chunks: 0,
-            restored_payload_bytes: 0,
+            restored_components: host_actions.checkpoint_restored_component_count,
+            restored_chunks: host_actions.checkpoint_restored_chunk_count,
+            restored_payload_bytes: host_actions.checkpoint_restored_payload_bytes,
         }
     }
 
