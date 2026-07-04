@@ -70,9 +70,11 @@ struct Rem6O3TraceTotals {
     event_branch_taken: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
+    event_branch_link_writes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_squash_kinds: [u64; BranchTargetKind::COUNT],
     event_lsq_load_bytes: u64,
@@ -331,6 +333,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_squashes = self
             .event_branch_squashes
             .saturating_add(u64::from(event.branch_squash()));
+        self.event_branch_link_writes = self
+            .event_branch_link_writes
+            .saturating_add(u64::from(event.branch_link_register_write()));
         let index = event.branch_kind().index();
         self.event_branch_kinds[index] = self.event_branch_kinds[index].saturating_add(1);
         if event.branch_resolved_taken() {
@@ -340,6 +345,10 @@ impl Rem6O3TraceTotals {
         if event.branch_resolved_target().is_some() {
             self.event_branch_resolved_target_kinds[index] =
                 self.event_branch_resolved_target_kinds[index].saturating_add(1);
+        }
+        if event.branch_link_register_write() {
+            self.event_branch_link_write_kinds[index] =
+                self.event_branch_link_write_kinds[index].saturating_add(1);
         }
         if event.branch_mispredicted() {
             self.event_branch_misprediction_kinds[index] =
@@ -497,6 +506,7 @@ impl Rem6O3TraceTotals {
                 self.event_branch_mispredictions,
             ),
             ("event.branch_squashes", self.event_branch_squashes),
+            ("event.branch_link_writes", self.event_branch_link_writes),
             (
                 "event.store_load_forwarding_candidates",
                 self.event_store_load_forwarding_candidates,
@@ -548,6 +558,16 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_resolved_target_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_resolved_target_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_link_write_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_link_write_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {
@@ -688,6 +708,25 @@ fn o3_branch_resolved_target_kind_stat_suffix(kind: BranchTargetKind) -> &'stati
     }
 }
 
+fn o3_branch_link_write_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_link_write_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_link_write_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_link_write_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_link_write_kind.call_indirect",
+        BranchTargetKind::DirectConditional => "event.branch_link_write_kind.direct_conditional",
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_link_write_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_link_write_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_link_write_kind.indirect_unconditional"
+        }
+    }
+}
+
 fn o3_branch_misprediction_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
     match kind {
         BranchTargetKind::NoBranch => "event.branch_misprediction_kind.no_branch",
@@ -738,7 +777,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
     let branch_squashed_target =
         o3_optional_address_to_json(event.branch_squashed_target().map(|address| address.get()));
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -765,6 +804,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.branch_predicted_taken(),
         event.branch_resolved_taken(),
         event.branch_mispredicted(),
+        event.branch_link_register_write(),
         branch_predicted_target,
         branch_resolved_target,
         event.branch_squash(),

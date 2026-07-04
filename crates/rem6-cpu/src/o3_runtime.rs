@@ -14,7 +14,7 @@ use crate::o3_pipeline::{
 use crate::o3_runtime_trace::{
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
 };
-use crate::riscv_branch_kind::riscv_branch_target_kind;
+use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 
 #[path = "o3_runtime_checkpoint.rs"]
@@ -343,6 +343,8 @@ impl O3RuntimeState {
             .unwrap_or(BranchTargetKind::NoBranch);
         let branch_predicted_taken = branch_update.is_some_and(|update| update.predicted_taken());
         let branch_resolved_taken = branch_update.is_some_and(|update| update.actual_taken());
+        let branch_link_register_write =
+            branch_update.is_some() && o3_branch_link_register_write(record);
         let branch_predicted_target = branch_update.and_then(|update| update.predicted_target());
         let branch_resolved_target = branch_update.and_then(|update| update.actual_target());
         let branch_fallthrough_target = Address::new(
@@ -391,6 +393,7 @@ impl O3RuntimeState {
             branch_kind,
             branch_predicted_taken,
             branch_resolved_taken,
+            branch_link_register_write,
             branch_predicted_target,
             branch_resolved_target,
             branch_squashed_target,
@@ -898,6 +901,19 @@ const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3RuntimeF
         | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
         _ => None,
     }
+}
+
+fn o3_branch_link_register_write(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {
+    if !matches!(
+        riscv_branch_target_kind(record.instruction()),
+        BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect
+    ) {
+        return false;
+    }
+    record
+        .register_writes()
+        .iter()
+        .any(|write| is_riscv_link_register(write.register()))
 }
 
 fn o3_branch_squashed_target(

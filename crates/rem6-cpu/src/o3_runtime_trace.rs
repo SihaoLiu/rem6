@@ -27,6 +27,7 @@ pub struct O3RuntimeTraceRecord {
     branch_predicted_taken: bool,
     branch_resolved_taken: bool,
     branch_mispredicted: bool,
+    branch_link_register_write: bool,
     branch_predicted_target: Option<Address>,
     branch_resolved_target: Option<Address>,
     branch_squashed_target: Option<Address>,
@@ -135,6 +136,7 @@ impl O3RuntimeTraceRecord {
         branch_kind: BranchTargetKind,
         branch_predicted_taken: bool,
         branch_resolved_taken: bool,
+        branch_link_register_write: bool,
         branch_predicted_target: Option<Address>,
         branch_resolved_target: Option<Address>,
         branch_squashed_target: Option<Address>,
@@ -172,6 +174,7 @@ impl O3RuntimeTraceRecord {
                 branch_predicted_target,
                 branch_resolved_target,
             ),
+            branch_link_register_write,
             branch_predicted_target,
             branch_resolved_target,
             branch_squashed_target,
@@ -275,6 +278,10 @@ impl O3RuntimeTraceRecord {
 
     pub const fn branch_mispredicted(self) -> bool {
         self.branch_mispredicted
+    }
+
+    pub const fn branch_link_register_write(self) -> bool {
+        self.branch_link_register_write
     }
 
     pub const fn branch_predicted_target(self) -> Option<Address> {

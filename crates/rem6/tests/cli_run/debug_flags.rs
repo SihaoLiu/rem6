@@ -2944,6 +2944,30 @@ fn detailed_o3_indirect_jump_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_indirect_call_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - 4, 10, 0x0, 10, 0x13),
+        u_type(0, 11, 0x17),
+        i_type(16, 11, 0x0, 11, 0x13),
+        i_type(0, 11, 0x0, 1, 0x67),
+        i_type(9, 0, 0x0, 6, 0x13),
+        s_type(0, 1, 10, 0b011),
+        s_type(8, 6, 10, 0b011),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
@@ -5863,6 +5887,164 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
+    let path = detailed_o3_indirect_call_debug_binary("debug-flags-o3-indirect-call-events");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--debug-flags",
+            "O3",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("18000080000000000000000000000000")
+    );
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("instructions", 9),
+        ("rename_writes", 5),
+        ("lsq_loads", 0),
+        ("lsq_stores", 2),
+        ("lsq_store_bytes", 16),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 indirect call trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 9);
+    let event_pcs = events
+        .iter()
+        .map(|event| json_record_str(event, "pc"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        event_pcs,
+        [
+            "0x80000004",
+            "0x80000008",
+            "0x8000000c",
+            "0x80000010",
+            "0x80000014",
+            "0x8000001c",
+            "0x80000020",
+            "0x80000024",
+            "0x80000028",
+        ]
+    );
+    assert!(!event_pcs.contains(&"0x80000018"));
+    let first = &events[0];
+    assert_eq!(json_record_bool(first, "branch_event"), false);
+    assert_eq!(json_record_str(first, "branch_kind"), "no_branch");
+    assert_eq!(json_record_bool(first, "branch_mispredicted"), false);
+    assert_eq!(json_record_bool(first, "branch_link_register_write"), false);
+    assert_eq!(json_record_bool(first, "branch_squash"), false);
+    assert_eq!(first.get("branch_predicted_target"), Some(&Value::Null));
+    assert_eq!(first.get("branch_resolved_target"), Some(&Value::Null));
+    assert_eq!(first.get("branch_squashed_target"), Some(&Value::Null));
+    assert_eq!(json_record_bool(&events[8], "system_event"), true);
+
+    let branch = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000014"))
+        .unwrap_or_else(|| panic!("missing O3 indirect call branch event: {events:?}"));
+    assert_eq!(json_record_bool(branch, "branch_event"), true);
+    assert_eq!(json_record_str(branch, "branch_kind"), "call_indirect");
+    assert_eq!(json_record_bool(branch, "branch_predicted_taken"), false);
+    assert_eq!(json_record_bool(branch, "branch_resolved_taken"), true);
+    assert_eq!(json_record_bool(branch, "branch_mispredicted"), true);
+    assert_eq!(json_record_bool(branch, "branch_link_register_write"), true);
+    assert_eq!(branch.get("branch_predicted_target"), Some(&Value::Null));
+    assert_eq!(
+        json_record_str(branch, "branch_resolved_target"),
+        "0x8000001c"
+    );
+    assert_eq!(json_record_bool(branch, "branch_squash"), true);
+    assert_eq!(
+        json_record_str(branch, "branch_squashed_target"),
+        "0x80000018"
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.event.branches", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_taken", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.branch_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_taken_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_resolved_target_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_link_write_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_misprediction_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squash_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 2),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 16),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
     let path = detailed_o3_indirect_jump_debug_binary("debug-flags-o3-indirect-jump-events");
 
@@ -5949,6 +6131,7 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
     assert_eq!(json_record_bool(first, "branch_event"), false);
     assert_eq!(json_record_str(first, "branch_kind"), "no_branch");
     assert_eq!(json_record_bool(first, "branch_mispredicted"), false);
+    assert_eq!(json_record_bool(first, "branch_link_register_write"), false);
     assert_eq!(json_record_bool(first, "branch_squash"), false);
     assert_eq!(first.get("branch_predicted_target"), Some(&Value::Null));
     assert_eq!(first.get("branch_resolved_target"), Some(&Value::Null));
@@ -5967,6 +6150,10 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
     assert_eq!(json_record_bool(branch, "branch_predicted_taken"), false);
     assert_eq!(json_record_bool(branch, "branch_resolved_taken"), true);
     assert_eq!(json_record_bool(branch, "branch_mispredicted"), true);
+    assert_eq!(
+        json_record_bool(branch, "branch_link_register_write"),
+        false
+    );
     assert_eq!(branch.get("branch_predicted_target"), Some(&Value::Null));
     assert_eq!(
         json_record_str(branch, "branch_resolved_target"),
@@ -5983,6 +6170,7 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
         ("sim.debug.o3_trace.event.branch_taken", "Count", 1),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_link_writes", "Count", 0),
         (
             "sim.debug.o3_trace.event.branch_kind.indirect_unconditional",
             "Count",
@@ -5997,6 +6185,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
             "sim.debug.o3_trace.event.branch_resolved_target_kind.indirect_unconditional",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_link_write_kind.indirect_unconditional",
+            "Count",
+            0,
         ),
         (
             "sim.debug.o3_trace.event.branch_misprediction_kind.indirect_unconditional",
