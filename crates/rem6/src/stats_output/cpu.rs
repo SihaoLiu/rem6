@@ -977,6 +977,18 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
+    for (name, value) in [
+        ("lsq0.loadBytes", o3.lsq_load_bytes()),
+        ("lsq0.storeBytes", o3.lsq_store_bytes()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.{name}"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     Ok(())
 }
 

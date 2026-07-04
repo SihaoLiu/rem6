@@ -1113,11 +1113,15 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "sim.cpu0.o3.rename_writes", 4);
     assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_loads", 1);
     assert_text_count_stat(&stdout, "sim.cpu0.o3.lsq_stores", 1);
+    assert_text_byte_stat(&stdout, "sim.cpu0.o3.lsq_load_bytes", 4);
+    assert_text_byte_stat(&stdout, "sim.cpu0.o3.lsq_store_bytes", 4);
     assert_text_count_stat(&stdout, "system.cpu.rename.renamedInsts", 6);
     assert_text_count_stat(&stdout, "system.cpu.rename.renamedOperands", 4);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
+    assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
+    assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
     assert_text_count_stat(&stdout, "system.cpu.rob.writes", 6);
     assert_text_count_stat(&stdout, "system.cpu.rob.reads", 6);
 }
@@ -1270,6 +1274,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.lsq0.addedLoadsAndStores",
+        "system.cpu.lsq0.loadBytes",
+        "system.cpu.lsq0.storeBytes",
         "system.cpu.lsq0.storeLoadForwardingCandidates",
         "system.cpu.lsq0.storeLoadForwardingMatches",
         "system.cpu.rob.writes",
@@ -2185,6 +2191,30 @@ fn assert_text_count_stat(stdout: &str, path: &str, value: u64) {
     assert!(
         line.contains("unit=Count"),
         "missing Count unit for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("reset_policy=monotonic"),
+        "missing monotonic reset policy for {path} in line: {line}"
+    );
+}
+
+fn assert_text_byte_stat(stdout: &str, path: &str, value: u64) {
+    let line = stdout
+        .lines()
+        .find(|line| line.split_whitespace().next() == Some(path))
+        .unwrap_or_else(|| panic!("missing text stat {path} in stdout:\n{stdout}"));
+    let actual = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok());
+    assert_eq!(
+        actual,
+        Some(value),
+        "unexpected text stat value for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("unit=Byte"),
+        "missing Byte unit for {path} in line: {line}"
     );
     assert!(
         line.contains("reset_policy=monotonic"),
