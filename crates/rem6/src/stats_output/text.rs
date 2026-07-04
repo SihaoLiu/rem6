@@ -612,7 +612,28 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
     };
     for cpu in 0..core_count {
         let alias_prefix = gem5_cpu_alias_prefix(core_count, cpu);
+        if let Some(instructions) =
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.instructions"))
+        {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iq.instsIssued"),
+                instructions,
+            );
+        }
+        if let (Some(loads), Some(stores)) = (
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.lsq_loads")),
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.lsq_stores")),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iq.memInstsIssued"),
+                loads.saturating_add(stores),
+            );
+        }
         for (op_class, source_name) in [
+            ("MemRead", "lsq_loads"),
+            ("MemWrite", "lsq_stores"),
             ("IntMult", "fu_integer_mul_instructions"),
             ("IntDiv", "fu_integer_div_instructions"),
         ] {
