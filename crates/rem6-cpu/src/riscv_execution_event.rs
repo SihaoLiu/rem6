@@ -6,8 +6,8 @@ use crate::{
     BiModeHistoryUpdate, BiModePrediction, BiModeTrainingUpdate, BranchUpdate, CpuFetchEvent,
     GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate, InOrderPipelineCycleRecord,
     MultiperspectivePerceptronPrediction, MultiperspectivePerceptronTrainingUpdate,
-    TageScLPrediction, TageScLTrainingUpdate, TournamentHistoryUpdate, TournamentPrediction,
-    TournamentTrainingUpdate,
+    RiscvDataAccessEventKind, TageScLPrediction, TageScLTrainingUpdate, TournamentHistoryUpdate,
+    TournamentPrediction, TournamentTrainingUpdate,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +23,7 @@ pub struct RiscvCpuExecutionEvent {
     multiperspective_perceptron_branch_update: Option<RiscvMultiperspectivePerceptronBranchUpdate>,
     in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
     in_order_pipeline_data_wait_cycles: u64,
+    data_access_event_kind: Option<RiscvDataAccessEventKind>,
     counts_as_retired_instruction: bool,
 }
 
@@ -257,6 +258,7 @@ impl RiscvCpuExecutionEvent {
             multiperspective_perceptron_branch_update: None,
             in_order_pipeline_cycle: None,
             in_order_pipeline_data_wait_cycles: 0,
+            data_access_event_kind: None,
             counts_as_retired_instruction: true,
         }
     }
@@ -319,6 +321,7 @@ impl RiscvCpuExecutionEvent {
             multiperspective_perceptron_branch_update: None,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles: 0,
+            data_access_event_kind: None,
             counts_as_retired_instruction,
         }
     }
@@ -352,6 +355,7 @@ impl RiscvCpuExecutionEvent {
             multiperspective_perceptron_branch_update,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles,
+            data_access_event_kind: None,
             counts_as_retired_instruction,
         }
     }
@@ -406,12 +410,20 @@ impl RiscvCpuExecutionEvent {
         self.in_order_pipeline_data_wait_cycles
     }
 
+    pub const fn data_access_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        self.data_access_event_kind
+    }
+
     pub(crate) fn set_in_order_pipeline_cycle(&mut self, cycle: InOrderPipelineCycleRecord) {
         self.in_order_pipeline_cycle = Some(cycle);
     }
 
     pub(crate) fn set_in_order_pipeline_data_wait_cycles(&mut self, cycles: u64) {
         self.in_order_pipeline_data_wait_cycles = cycles;
+    }
+
+    pub(crate) fn set_data_access_event_kind(&mut self, kind: RiscvDataAccessEventKind) {
+        self.data_access_event_kind = Some(kind);
     }
 
     pub const fn counts_as_retired_instruction(&self) -> bool {

@@ -20,6 +20,7 @@ pub struct O3RuntimeTraceRecord {
     lsq_store_address: Option<Address>,
     lsq_load_bytes: u64,
     lsq_store_bytes: u64,
+    lsq_store_conditional_failed: bool,
     rename_map_entries: u64,
     store_load_forwarding_candidate: bool,
     store_load_forwarding_match: bool,
@@ -132,6 +133,7 @@ impl O3RuntimeTraceRecord {
         lsq_store_address: Option<Address>,
         lsq_load_bytes: u64,
         lsq_store_bytes: u64,
+        lsq_store_conditional_failed: bool,
         rename_map_entries: usize,
         branch_kind: BranchTargetKind,
         branch_predicted_taken: bool,
@@ -161,6 +163,7 @@ impl O3RuntimeTraceRecord {
             lsq_store_address,
             lsq_load_bytes,
             lsq_store_bytes,
+            lsq_store_conditional_failed,
             rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
             store_load_forwarding_candidate: false,
             store_load_forwarding_match: false,
@@ -246,6 +249,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_store_bytes(self) -> u64 {
         self.lsq_store_bytes
+    }
+
+    pub const fn lsq_store_conditional_failed(self) -> bool {
+        self.lsq_store_conditional_failed
+    }
+
+    pub(crate) fn set_lsq_store_conditional_failed(&mut self, failed: bool) {
+        self.lsq_store_conditional_failed = failed;
     }
 
     pub const fn rename_map_entries(self) -> u64 {

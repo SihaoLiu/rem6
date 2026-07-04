@@ -19,7 +19,7 @@ use crate::{
     riscv_checker, riscv_cross_line::supports_cross_line_data_access, riscv_data_access,
     riscv_execute, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
     InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent,
-    RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+    RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 mod request_helpers;
@@ -466,7 +466,12 @@ impl RiscvCore {
             .sc_progress
             .record_failure(self.id(), tick, access.physical_address, access.size);
         riscv_checker::sync_checker_hart(&mut state);
-        record_data_retire_cycle(&mut state, &access, tick);
+        record_data_retire_cycle(
+            &mut state,
+            &access,
+            tick,
+            RiscvDataAccessEventKind::ConditionalFailed,
+        );
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -494,7 +499,12 @@ impl RiscvCore {
                     "load response data",
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(&mut state, &access, delivery.tick());
+                record_data_retire_cycle(
+                    &mut state,
+                    &access,
+                    delivery.tick(),
+                    RiscvDataAccessEventKind::Completed,
+                );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,
@@ -522,7 +532,12 @@ impl RiscvCore {
                     access.size,
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(&mut state, &access, delivery.tick());
+                record_data_retire_cycle(
+                    &mut state,
+                    &access,
+                    delivery.tick(),
+                    RiscvDataAccessEventKind::ConditionalFailed,
+                );
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::conditional_failed(
@@ -537,6 +552,9 @@ impl RiscvCore {
         let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
         };
+        state
+            .o3_runtime
+            .discard_data_access_outcome(access.fetch_request);
         state
             .data_events
             .push(RiscvDataAccessEvent::failed(access.record(tick)));
@@ -563,13 +581,21 @@ impl RiscvCore {
                     "MMIO load response data",
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(&mut state, &access, completion.tick());
+                record_data_retire_cycle(
+                    &mut state,
+                    &access,
+                    completion.tick(),
+                    RiscvDataAccessEventKind::Completed,
+                );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
                     data,
                 ));
             }
             Err(_) => {
+                state
+                    .o3_runtime
+                    .discard_data_access_outcome(access.fetch_request);
                 state.data_events.push(RiscvDataAccessEvent::retry(
                     access.record(completion.tick()),
                 ));
@@ -582,6 +608,7 @@ fn record_data_retire_cycle(
     state: &mut RiscvCoreState,
     access: &IssuedDataAccess,
     completion_tick: Tick,
+    kind: RiscvDataAccessEventKind,
 ) {
     let Some(index) = state
         .events
@@ -594,6 +621,11 @@ fn record_data_retire_cycle(
         );
         return;
     };
+    state.events[index].set_data_access_event_kind(kind);
+    let completed_event = state.events[index].clone();
+    state
+        .o3_runtime
+        .record_data_access_outcome(&completed_event);
     if state.events[index].in_order_pipeline_cycle().is_some()
         || !state.events[index].counts_as_retired_instruction()
     {

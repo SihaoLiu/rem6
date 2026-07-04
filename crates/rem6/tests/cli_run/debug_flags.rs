@@ -2877,6 +2877,28 @@ fn detailed_o3_ordered_atomic_lsq_debug_binary(name: &str) -> std::path::PathBuf
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_store_conditional_failure_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 5, 0x17),
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13),
+        i_type(0x2a, 0, 0x0, 6, 0x13),
+        atomic_type(0x03, false, false, 6, 5, 0x3, 7),
+        s_type(8, 7, 5, 0b011),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x5566_7788, 0x1122_3344, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_branch_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;
@@ -6897,6 +6919,117 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_marks_store_conditional_failures() {
+    let path = detailed_o3_store_conditional_failure_debug_binary(
+        "debug-flags-o3-store-conditional-failure",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("88776655443322110100000000000000")
+    );
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("lsq_loads", 0),
+        ("lsq_stores", 2),
+        ("lsq_load_bytes", 0),
+        ("lsq_store_bytes", 16),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 failed SC trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    let store_conditional = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
+        .unwrap_or_else(|| panic!("missing store-conditional O3 event: {events:?}"));
+    assert_eq!(
+        json_record_str(store_conditional, "lsq_operation"),
+        "store_conditional"
+    );
+    assert_eq!(json_record_u64(store_conditional, "rename_writes"), 1);
+    assert_eq!(json_record_u64(store_conditional, "lsq_loads"), 0);
+    assert_eq!(json_record_u64(store_conditional, "lsq_stores"), 1);
+    assert_eq!(
+        json_record_str(store_conditional, "lsq_store_address"),
+        "0x80000040"
+    );
+    assert_eq!(json_record_u64(store_conditional, "lsq_store_bytes"), 8);
+    assert_eq!(
+        json_record_bool(store_conditional, "lsq_store_conditional_failed"),
+        true
+    );
+
+    let result_store = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000014"))
+        .unwrap_or_else(|| panic!("missing SC result store O3 event: {events:?}"));
+    assert_eq!(json_record_str(result_store, "lsq_operation"), "store");
+    assert_eq!(
+        json_record_bool(result_store, "lsq_store_conditional_failed"),
+        false
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 16),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_store_conditional_failures",
+            "Count",
+            1,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
     let path = detailed_o3_indirect_call_debug_binary("debug-flags-o3-indirect-call-events");
 
@@ -9370,6 +9503,11 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.lsq_operation.vector_store",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_store_conditional_failures",
             "Count",
             0,
         ),

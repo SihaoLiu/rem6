@@ -90,6 +90,7 @@ struct Rem6O3TraceTotals {
     event_lsq_ordering_acquire: u64,
     event_lsq_ordering_release: u64,
     event_lsq_ordering_acquire_release: u64,
+    event_lsq_store_conditional_failures: u64,
     event_branches: u64,
     event_branch_taken: u64,
     event_branch_not_taken: u64,
@@ -395,6 +396,9 @@ impl Rem6O3TraceTotals {
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
             self.add_event_lsq_operation(event.lsq_operation());
             self.add_event_lsq_ordering(event.lsq_ordering());
+            self.event_lsq_store_conditional_failures = self
+                .event_lsq_store_conditional_failures
+                .saturating_add(u64::from(event.lsq_store_conditional_failed()));
             self.add_event_branch(event);
             self.event_lsq_load_bytes = self
                 .event_lsq_load_bytes
@@ -671,6 +675,10 @@ impl Rem6O3TraceTotals {
             (
                 "event.lsq_ordering.acquire_release",
                 self.event_lsq_ordering_acquire_release,
+            ),
+            (
+                "event.lsq_store_conditional_failures",
+                self.event_lsq_store_conditional_failures,
             ),
             ("event.branches", self.event_branches),
             ("event.branch_taken", self.event_branch_taken),
@@ -1185,7 +1193,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
     let branch_targetless_mismatch = o3_branch_targetless_mismatch(event);
     let branch_wrong_target = o3_branch_wrong_target(event);
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_targetless_mismatch\":{},\"branch_wrong_target\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"lsq_store_conditional_failed\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_targetless_mismatch\":{},\"branch_wrong_target\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -1204,6 +1212,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         lsq_store_address,
         event.lsq_load_bytes(),
         event.lsq_store_bytes(),
+        event.lsq_store_conditional_failed(),
         event.rename_map_entries(),
         event.store_load_forwarding_candidate(),
         event.store_load_forwarding_match(),

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -16,6 +16,7 @@ use crate::o3_runtime_trace::{
 };
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
+use crate::RiscvDataAccessEventKind;
 
 #[path = "o3_runtime_checkpoint.rs"]
 mod o3_runtime_checkpoint;
@@ -248,6 +249,7 @@ pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
     trace_records: Vec<O3RuntimeTraceRecord>,
+    trace_store_conditional_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
     next_sequence: u64,
     next_physical_register: u32,
@@ -260,6 +262,7 @@ impl O3RuntimeState {
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
         self.trace_records.clear();
+        self.trace_store_conditional_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         Ok(())
     }
@@ -286,9 +289,28 @@ impl O3RuntimeState {
         &self.trace_records
     }
 
+    pub(crate) fn record_data_access_outcome(&mut self, execution: &RiscvCpuExecutionEvent) {
+        let Some(sequence) = self
+            .trace_store_conditional_sequences
+            .remove(&execution.fetch().request_id())
+        else {
+            return;
+        };
+        if !o3_store_conditional_failed(execution) {
+            return;
+        }
+        self.mark_trace_store_conditional_failed(sequence);
+    }
+
+    pub(crate) fn discard_data_access_outcome(&mut self, fetch_request: MemoryRequestId) {
+        self.trace_store_conditional_sequences
+            .remove(&fetch_request);
+    }
+
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.trace_records.clear();
+        self.trace_store_conditional_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
 
@@ -309,6 +331,7 @@ impl O3RuntimeState {
         );
         trace_record.set_store_load_forwarding(observation.candidate, observation.matched);
         if trace_enabled {
+            self.record_trace_store_conditional_sequence(execution, trace_record.sequence());
             self.trace_records.push(trace_record);
         }
     }
@@ -389,6 +412,7 @@ impl O3RuntimeState {
             lsq_store_address,
             lsq_load_bytes,
             lsq_store_bytes,
+            o3_store_conditional_failed(execution),
             rename_map_entries,
             branch_kind,
             branch_predicted_taken,
@@ -551,6 +575,30 @@ impl O3RuntimeState {
         }
     }
 
+    fn record_trace_store_conditional_sequence(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        trace_sequence: u64,
+    ) {
+        if matches!(
+            execution.execution().memory_access(),
+            Some(MemoryAccessKind::StoreConditional { .. })
+        ) {
+            self.trace_store_conditional_sequences
+                .insert(execution.fetch().request_id(), trace_sequence);
+        }
+    }
+
+    fn mark_trace_store_conditional_failed(&mut self, sequence: u64) {
+        if let Some(record) = self
+            .trace_records
+            .iter_mut()
+            .find(|record| record.sequence() == sequence)
+        {
+            record.set_lsq_store_conditional_failed(true);
+        }
+    }
+
     pub fn pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
         O3PendingStateCheckpointPayload::from_snapshot(self.snapshot.pending_state.clone())
             .expect("O3 runtime pending-state snapshot is valid")
@@ -580,6 +628,7 @@ impl Default for O3RuntimeState {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
             trace_records: Vec::new(),
+            trace_store_conditional_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             next_sequence: 0,
             next_physical_register: 1,
@@ -1285,8 +1334,101 @@ fn o3_lsq_access_addresses(access: &MemoryAccessKind) -> (Option<Address>, Optio
     }
 }
 
+fn o3_store_conditional_failed(execution: &RiscvCpuExecutionEvent) -> bool {
+    matches!(
+        execution.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::ConditionalFailed)
+    ) && matches!(
+        execution.execution().memory_access(),
+        Some(MemoryAccessKind::StoreConditional { .. })
+    )
+}
+
 fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::{MemoryWidth, RiscvExecutionRecord};
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, AgentId};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    use super::*;
+    use crate::{CpuFetchEvent, CpuFetchRecord};
+
+    #[test]
+    fn failed_store_conditional_trace_mark_uses_dynamic_sequence_identity() {
+        let mut runtime = O3RuntimeState::default();
+        let mut first = store_conditional_event(0x8000, 10);
+        let second = store_conditional_event(0x8000, 11);
+
+        runtime.record_retired_instruction_with_trace(&first, true);
+        runtime.record_retired_instruction_with_trace(&second, true);
+        first.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
+        runtime.record_data_access_outcome(&first);
+
+        let trace = runtime.trace_records();
+        assert_eq!(trace.len(), 2);
+        assert!(trace[0].lsq_store_conditional_failed());
+        assert!(!trace[1].lsq_store_conditional_failed());
+    }
+
+    #[test]
+    fn failed_store_conditional_pending_trace_identity_can_be_discarded() {
+        let mut runtime = O3RuntimeState::default();
+        let mut event = store_conditional_event(0x8000, 10);
+
+        runtime.record_retired_instruction_with_trace(&event, true);
+        assert_eq!(runtime.trace_store_conditional_sequences.len(), 1);
+
+        runtime.discard_data_access_outcome(event.fetch().request_id());
+        assert!(runtime.trace_store_conditional_sequences.is_empty());
+
+        event.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
+        runtime.record_data_access_outcome(&event);
+        assert!(!runtime.trace_records()[0].lsq_store_conditional_failed());
+    }
+
+    fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::StoreConditional {
+            rd: Register::new(7).unwrap(),
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            width: MemoryWidth::Doubleword,
+            acquire: false,
+            release: false,
+        };
+        let access = MemoryAccessKind::StoreConditional {
+            rd: Register::new(7).unwrap(),
+            address: 0x9000,
+            width: MemoryWidth::Doubleword,
+            value: 0x2a,
+            acquire: false,
+            release: false,
+        };
+        RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+        )
+    }
+
+    fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
+        CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                10 + sequence,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                MemoryRequestId::new(AgentId::new(7), sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            0x0000_0073u32.to_le_bytes().to_vec(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
