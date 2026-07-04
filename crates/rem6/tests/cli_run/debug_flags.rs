@@ -4109,6 +4109,13 @@ fn fabric_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
+fn o3_event_u64s(events: &[Value], field: &str) -> Vec<u64> {
+    events
+        .iter()
+        .map(|event| json_record_u64(event, field))
+        .collect()
+}
+
 fn json_record_u64(record: &Value, field: &str) -> u64 {
     record
         .get(field)
@@ -5267,6 +5274,18 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         .and_then(Value::as_array)
         .expect("O3 trace events array");
     assert_eq!(events.len(), 6);
+    assert_eq!(
+        o3_event_u64s(events, "rob_occupancy"),
+        vec![1, 1, 1, 1, 1, 1]
+    );
+    assert_eq!(
+        o3_event_u64s(events, "lsq_occupancy"),
+        vec![0, 0, 0, 1, 1, 0]
+    );
+    assert_eq!(
+        o3_event_u64s(events, "rename_map_entries"),
+        vec![1, 1, 2, 3, 3, 3]
+    );
     assert_o3_event(&events[0], 0, "0x80000004", 1, 0, 0, false);
     assert_o3_event(&events[1], 1, "0x80000008", 1, 0, 0, false);
     assert_o3_event(&events[2], 2, "0x8000000c", 1, 0, 0, false);
@@ -5302,6 +5321,13 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 3),
         ("sim.debug.o3_trace.event.records", "Count", 6),
+        ("sim.debug.o3_trace.event.max_rob_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.event.max_lsq_occupancy", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.max_rename_map_entries",
+            "Count",
+            3,
+        ),
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 6),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 6),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 4),
@@ -5985,6 +6011,13 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
+        ("sim.debug.o3_trace.event.max_rob_occupancy", "Count", 0),
+        ("sim.debug.o3_trace.event.max_lsq_occupancy", "Count", 0),
+        (
+            "sim.debug.o3_trace.event.max_rename_map_entries",
+            "Count",
+            0,
+        ),
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 0),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 0),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 0),

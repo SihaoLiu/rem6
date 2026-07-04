@@ -245,11 +245,14 @@ pub struct O3RuntimeTraceRecord {
     pc: Address,
     rob_allocated: bool,
     rob_committed: bool,
+    rob_occupancy: u64,
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
+    lsq_occupancy: u64,
     lsq_load_bytes: u64,
     lsq_store_bytes: u64,
+    rename_map_entries: u64,
     store_load_forwarding_candidate: bool,
     store_load_forwarding_match: bool,
     fu_latency_class: Option<O3RuntimeFuLatencyClass>,
@@ -273,15 +276,18 @@ impl O3RuntimeFuLatencyClass {
 }
 
 impl O3RuntimeTraceRecord {
-    const fn new(
+    fn new(
         sequence: u64,
         tick: u64,
         pc: Address,
+        rob_occupancy: usize,
         rename_writes: u64,
         lsq_loads: u64,
         lsq_stores: u64,
+        lsq_occupancy: usize,
         lsq_load_bytes: u64,
         lsq_store_bytes: u64,
+        rename_map_entries: usize,
         fu_latency_class: Option<O3RuntimeFuLatencyClass>,
         fu_latency_cycles: u64,
         system_event: bool,
@@ -292,11 +298,14 @@ impl O3RuntimeTraceRecord {
             pc,
             rob_allocated: true,
             rob_committed: true,
+            rob_occupancy: u64::try_from(rob_occupancy).unwrap_or(u64::MAX),
             rename_writes,
             lsq_loads,
             lsq_stores,
+            lsq_occupancy: u64::try_from(lsq_occupancy).unwrap_or(u64::MAX),
             lsq_load_bytes,
             lsq_store_bytes,
+            rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
             store_load_forwarding_candidate: false,
             store_load_forwarding_match: false,
             fu_latency_class,
@@ -325,6 +334,10 @@ impl O3RuntimeTraceRecord {
         self.rob_committed
     }
 
+    pub const fn rob_occupancy(self) -> u64 {
+        self.rob_occupancy
+    }
+
     pub const fn rename_writes(self) -> u64 {
         self.rename_writes
     }
@@ -337,12 +350,20 @@ impl O3RuntimeTraceRecord {
         self.lsq_stores
     }
 
+    pub const fn lsq_occupancy(self) -> u64 {
+        self.lsq_occupancy
+    }
+
     pub const fn lsq_load_bytes(self) -> u64 {
         self.lsq_load_bytes
     }
 
     pub const fn lsq_store_bytes(self) -> u64 {
         self.lsq_store_bytes
+    }
+
+    pub const fn rename_map_entries(self) -> u64 {
+        self.rename_map_entries
     }
 
     pub const fn store_load_forwarding_candidate(self) -> bool {
@@ -457,25 +478,12 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_access_bytes)
             .unwrap_or((0, 0));
-        let trace_record = O3RuntimeTraceRecord::new(
-            sequence,
-            execution.fetch().tick(),
-            Address::new(record.pc()),
-            o3_rename_write_count(record),
-            lsq_loads,
-            lsq_stores,
-            lsq_load_bytes,
-            lsq_store_bytes,
-            o3_fu_latency_class(execution.instruction()),
-            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
-            record.system_event().is_some(),
-        );
-
         let rob_start = self.snapshot.reorder_buffer.len();
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
                 .with_ready(true),
         );
+        let rob_occupancy = self.snapshot.reorder_buffer.len();
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
 
@@ -487,6 +495,24 @@ impl O3RuntimeState {
             self.stats
                 .observe_lsq_occupancy(self.snapshot.load_store_queue.len());
         }
+        let lsq_occupancy = self.snapshot.load_store_queue.len();
+        let rename_map_entries = self.snapshot.rename_map.len();
+        let trace_record = O3RuntimeTraceRecord::new(
+            sequence,
+            execution.fetch().tick(),
+            Address::new(record.pc()),
+            rob_occupancy,
+            o3_rename_write_count(record),
+            lsq_loads,
+            lsq_stores,
+            lsq_occupancy,
+            lsq_load_bytes,
+            lsq_store_bytes,
+            rename_map_entries,
+            o3_fu_latency_class(execution.instruction()),
+            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
+            record.system_event().is_some(),
+        );
 
         self.snapshot.reorder_buffer.truncate(rob_start);
         self.snapshot.load_store_queue.truncate(lsq_start);

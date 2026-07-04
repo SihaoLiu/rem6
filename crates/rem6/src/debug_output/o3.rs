@@ -45,6 +45,9 @@ struct Rem6O3TraceTotals {
     event_records: u64,
     event_first_tick: Option<u64>,
     event_last_tick: Option<u64>,
+    event_max_rob_occupancy: u64,
+    event_max_lsq_occupancy: u64,
+    event_max_rename_map_entries: u64,
     event_rob_allocations: u64,
     event_rob_commits: u64,
     event_rename_writes: u64,
@@ -236,6 +239,11 @@ impl Rem6O3TraceTotals {
                 self.event_last_tick
                     .map_or(event_tick, |tick| tick.max(event_tick)),
             );
+            self.event_max_rob_occupancy = self.event_max_rob_occupancy.max(event.rob_occupancy());
+            self.event_max_lsq_occupancy = self.event_max_lsq_occupancy.max(event.lsq_occupancy());
+            self.event_max_rename_map_entries = self
+                .event_max_rename_map_entries
+                .max(event.rename_map_entries());
             self.event_rob_allocations = self
                 .event_rob_allocations
                 .saturating_add(u64::from(event.rob_allocated()));
@@ -315,6 +323,12 @@ impl Rem6O3TraceTotals {
             ("max_lsq_occupancy", self.max_lsq_occupancy),
             ("rename_map_entries", self.rename_map_entries),
             ("event.records", self.event_records),
+            ("event.max_rob_occupancy", self.event_max_rob_occupancy),
+            ("event.max_lsq_occupancy", self.event_max_lsq_occupancy),
+            (
+                "event.max_rename_map_entries",
+                self.event_max_rename_map_entries,
+            ),
             ("event.rob_allocations", self.event_rob_allocations),
             ("event.rob_commits", self.event_rob_commits),
             ("event.rename_writes", self.event_rename_writes),
@@ -420,17 +434,20 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         |class| format!("\"{}\"", class.as_str()),
     );
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
         event.rob_allocated(),
         event.rob_committed(),
+        event.rob_occupancy(),
         event.rename_writes(),
         event.lsq_loads(),
         event.lsq_stores(),
+        event.lsq_occupancy(),
         event.lsq_load_bytes(),
         event.lsq_store_bytes(),
+        event.rename_map_entries(),
         event.store_load_forwarding_candidate(),
         event.store_load_forwarding_match(),
         fu_latency_class,
