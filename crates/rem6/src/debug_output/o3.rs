@@ -30,6 +30,7 @@ pub(crate) struct Rem6O3TraceStat {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreScope {
     count: u64,
+    labels: Vec<String>,
     label: String,
     tick: u64,
     manifest_tick: u64,
@@ -182,6 +183,20 @@ impl Rem6O3TraceRecord {
             || "null".to_string(),
             |restore| format!("\"{}\"", json_escape(&restore.label)),
         );
+        let checkpoint_restore_labels = self.checkpoint_restore.as_ref().map_or_else(
+            || "[]".to_string(),
+            |restore| {
+                format!(
+                    "[{}]",
+                    restore
+                        .labels
+                        .iter()
+                        .map(|label| format!("\"{}\"", json_escape(label)))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            },
+        );
         let (
             checkpoint_restore_count,
             checkpoint_restore_tick,
@@ -199,13 +214,14 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
             self.stats_epoch,
             self.stats_reset_tick,
             checkpoint_restore_count,
+            checkpoint_restore_labels,
             checkpoint_restore_label,
             checkpoint_restore_tick,
             checkpoint_restore_manifest_tick,
@@ -907,6 +923,10 @@ impl Rem6O3CheckpointRestoreScope {
         let summary = summaries.last()?;
         Some(Self {
             count: summaries.len() as u64,
+            labels: summaries
+                .iter()
+                .map(|summary| summary.label.clone())
+                .collect(),
             label: summary.label.clone(),
             tick: summary.tick,
             manifest_tick: summary.manifest_tick,
