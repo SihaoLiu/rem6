@@ -251,6 +251,7 @@ pub struct O3RuntimeTraceRecord {
     lsq_stores: u64,
     lsq_occupancy: u64,
     lsq_operation: O3RuntimeLsqOperation,
+    lsq_ordering: O3RuntimeLsqOrdering,
     lsq_load_address: Option<Address>,
     lsq_store_address: Option<Address>,
     lsq_load_bytes: u64,
@@ -283,6 +284,14 @@ pub enum O3RuntimeLsqOperation {
     VectorStore,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3RuntimeLsqOrdering {
+    None,
+    Acquire,
+    Release,
+    AcquireRelease,
+}
+
 impl O3RuntimeFuLatencyClass {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -309,6 +318,31 @@ impl O3RuntimeLsqOperation {
     }
 }
 
+impl O3RuntimeLsqOrdering {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Acquire => "acquire",
+            Self::Release => "release",
+            Self::AcquireRelease => "acquire_release",
+        }
+    }
+
+    pub const fn acquire(self) -> bool {
+        match self {
+            Self::Acquire | Self::AcquireRelease => true,
+            Self::None | Self::Release => false,
+        }
+    }
+
+    pub const fn release(self) -> bool {
+        match self {
+            Self::Release | Self::AcquireRelease => true,
+            Self::None | Self::Acquire => false,
+        }
+    }
+}
+
 impl O3RuntimeTraceRecord {
     fn new(
         sequence: u64,
@@ -320,6 +354,7 @@ impl O3RuntimeTraceRecord {
         lsq_stores: u64,
         lsq_occupancy: usize,
         lsq_operation: O3RuntimeLsqOperation,
+        lsq_ordering: O3RuntimeLsqOrdering,
         lsq_load_address: Option<Address>,
         lsq_store_address: Option<Address>,
         lsq_load_bytes: u64,
@@ -341,6 +376,7 @@ impl O3RuntimeTraceRecord {
             lsq_stores,
             lsq_occupancy: u64::try_from(lsq_occupancy).unwrap_or(u64::MAX),
             lsq_operation,
+            lsq_ordering,
             lsq_load_address,
             lsq_store_address,
             lsq_load_bytes,
@@ -396,6 +432,10 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_operation(self) -> O3RuntimeLsqOperation {
         self.lsq_operation
+    }
+
+    pub const fn lsq_ordering(self) -> O3RuntimeLsqOrdering {
+        self.lsq_ordering
     }
 
     pub const fn lsq_load_address(self) -> Option<Address> {
@@ -530,6 +570,10 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_operation)
             .unwrap_or(O3RuntimeLsqOperation::None);
+        let lsq_ordering = record
+            .memory_access()
+            .map(o3_lsq_ordering)
+            .unwrap_or(O3RuntimeLsqOrdering::None);
         let (lsq_load_bytes, lsq_store_bytes) = record
             .memory_access()
             .map(o3_lsq_access_bytes)
@@ -567,6 +611,7 @@ impl O3RuntimeState {
             lsq_stores,
             lsq_occupancy,
             lsq_operation,
+            lsq_ordering,
             lsq_load_address,
             lsq_store_address,
             lsq_load_bytes,
@@ -1347,6 +1392,27 @@ const fn o3_lsq_operation(access: &MemoryAccessKind) -> O3RuntimeLsqOperation {
         | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. } => O3RuntimeLsqOperation::VectorStore,
+    }
+}
+
+const fn o3_lsq_ordering(access: &MemoryAccessKind) -> O3RuntimeLsqOrdering {
+    let (acquire, release) = match access {
+        MemoryAccessKind::LoadReserved {
+            acquire, release, ..
+        }
+        | MemoryAccessKind::StoreConditional {
+            acquire, release, ..
+        }
+        | MemoryAccessKind::AtomicMemory {
+            acquire, release, ..
+        } => (*acquire, *release),
+        _ => (false, false),
+    };
+    match (acquire, release) {
+        (false, false) => O3RuntimeLsqOrdering::None,
+        (true, false) => O3RuntimeLsqOrdering::Acquire,
+        (false, true) => O3RuntimeLsqOrdering::Release,
+        (true, true) => O3RuntimeLsqOrdering::AcquireRelease,
     }
 }
 

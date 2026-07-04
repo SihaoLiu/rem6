@@ -2796,6 +2796,34 @@ fn detailed_o3_atomic_lsq_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_ordered_atomic_lsq_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 128_i32;
+    words.extend([
+        u_type(0, 5, 0x17),
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13),
+        i_type(0, 5, 0b011, 6, 0x03),
+        s_type(8, 6, 5, 0b011),
+        atomic_type(0x02, true, false, 0, 5, 0x3, 7),
+        i_type(3, 0, 0x0, 8, 0x13),
+        atomic_type(0x03, false, true, 8, 5, 0x3, 9),
+        i_type(4, 0, 0x0, 10, 0x13),
+        atomic_type(0x01, true, true, 10, 5, 0x3, 11),
+        s_type(16, 9, 5, 0b011),
+        s_type(24, 11, 5, 0b011),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([9, 0, 0, 0, 0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
@@ -5588,6 +5616,127 @@ fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
         ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 1),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
+    let path = detailed_o3_ordered_atomic_lsq_debug_binary("debug-flags-o3-lsq-ordering");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--dump-memory",
+            "0x80000080:16",
+            "--dump-memory",
+            "0x80000090:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("04000000000000000900000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some("00000000000000000300000000000000")
+    );
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("instructions", 13),
+        ("rename_writes", 8),
+        ("lsq_loads", 3),
+        ("lsq_stores", 5),
+        ("lsq_load_bytes", 24),
+        ("lsq_store_bytes", 40),
+        ("max_lsq_occupancy", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 ordered LSQ trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 13);
+    let by_pc = |pc: &str| {
+        events
+            .iter()
+            .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+            .unwrap_or_else(|| panic!("missing O3 event at {pc}: {events:?}"))
+    };
+    for (pc, operation, ordering, acquire, release) in [
+        ("0x8000000c", "load", "none", false, false),
+        ("0x80000010", "store", "none", false, false),
+        ("0x80000014", "load_reserved", "acquire", true, false),
+        ("0x8000001c", "store_conditional", "release", false, true),
+        ("0x80000024", "atomic", "acquire_release", true, true),
+        ("0x80000028", "store", "none", false, false),
+        ("0x8000002c", "store", "none", false, false),
+    ] {
+        let event = by_pc(pc);
+        assert_eq!(json_record_str(event, "lsq_operation"), operation);
+        assert_eq!(json_record_str(event, "lsq_ordering"), ordering);
+        assert_eq!(json_record_bool(event, "lsq_acquire"), acquire);
+        assert_eq!(json_record_bool(event, "lsq_release"), release);
+    }
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 24),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 40),
+        ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 24),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 40),
+        ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 3),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional",
+            "Count",
+            1,
+        ),
+        ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_ordering.acquire", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_ordering.release", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.lsq_ordering.acquire_release",
+            "Count",
+            1,
+        ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
