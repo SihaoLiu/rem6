@@ -694,6 +694,57 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 4, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.lsq_loads", "Count", 1, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.lsq_stores", "Count", 1, "monotonic");
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert_eq!(
+        o3_runtime.pointer("/instructions").and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/rob_allocations")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        o3_runtime.pointer("/rob_commits").and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        o3_runtime.pointer("/rename_writes").and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_load_bytes")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_store_bytes")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/max_rob_occupancy")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/max_lsq_occupancy")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/rename_map_entries")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
 }
 
 #[test]
@@ -1313,6 +1364,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.max_rob_occupancy");
     assert_json_stat_absent(&json, "sim.cpu0.o3.max_lsq_occupancy");
     assert_json_stat_absent(&json, "sim.cpu0.o3.rename_map_entries");
+    assert!(
+        json.pointer("/cores/0/o3_runtime").is_none(),
+        "timing-mode run should not emit inactive O3 runtime state: {json}"
+    );
 }
 
 #[test]
