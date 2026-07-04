@@ -5,7 +5,7 @@ use std::fmt;
 use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
-use crate::branch_predictor::BranchTargetKind;
+use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::{
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineError, O3PipelineStage,
@@ -345,6 +345,14 @@ impl O3RuntimeState {
         let branch_resolved_taken = branch_update.is_some_and(|update| update.actual_taken());
         let branch_predicted_target = branch_update.and_then(|update| update.predicted_target());
         let branch_resolved_target = branch_update.and_then(|update| update.actual_target());
+        let branch_fallthrough_target = Address::new(
+            record
+                .pc()
+                .saturating_add(u64::from(record.instruction_bytes())),
+        );
+        let branch_squashed_target = branch_update.and_then(|update| {
+            o3_branch_squashed_target(branch_kind, update, branch_fallthrough_target)
+        });
         let rob_start = self.snapshot.reorder_buffer.len();
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
@@ -385,6 +393,7 @@ impl O3RuntimeState {
             branch_resolved_taken,
             branch_predicted_target,
             branch_resolved_target,
+            branch_squashed_target,
             o3_fu_latency_class(execution.instruction()),
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
             record.system_event().is_some(),
@@ -888,6 +897,30 @@ const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3RuntimeF
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
         _ => None,
+    }
+}
+
+fn o3_branch_squashed_target(
+    branch_kind: BranchTargetKind,
+    update: &BranchUpdate,
+    fallthrough_target: Address,
+) -> Option<Address> {
+    if matches!(branch_kind, BranchTargetKind::NoBranch) {
+        return None;
+    }
+    let predicted_taken = update.predicted_taken();
+    let resolved_taken = update.actual_taken();
+    let predicted_target = update.predicted_target();
+    let resolved_target = update.actual_target();
+    let mispredicted = predicted_taken != resolved_taken
+        || (predicted_taken && predicted_target != resolved_target);
+    if !mispredicted {
+        return None;
+    }
+    if predicted_taken {
+        predicted_target
+    } else {
+        Some(fallthrough_target)
     }
 }
 

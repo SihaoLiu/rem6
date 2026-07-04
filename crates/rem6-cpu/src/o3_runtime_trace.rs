@@ -29,6 +29,7 @@ pub struct O3RuntimeTraceRecord {
     branch_mispredicted: bool,
     branch_predicted_target: Option<Address>,
     branch_resolved_target: Option<Address>,
+    branch_squashed_target: Option<Address>,
     fu_latency_class: Option<O3RuntimeFuLatencyClass>,
     fu_latency_cycles: u64,
     system_event: bool,
@@ -136,6 +137,7 @@ impl O3RuntimeTraceRecord {
         branch_resolved_taken: bool,
         branch_predicted_target: Option<Address>,
         branch_resolved_target: Option<Address>,
+        branch_squashed_target: Option<Address>,
         fu_latency_class: Option<O3RuntimeFuLatencyClass>,
         fu_latency_cycles: u64,
         system_event: bool,
@@ -172,6 +174,7 @@ impl O3RuntimeTraceRecord {
             ),
             branch_predicted_target,
             branch_resolved_target,
+            branch_squashed_target,
             fu_latency_class,
             fu_latency_cycles,
             system_event,
@@ -280,6 +283,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn branch_resolved_target(self) -> Option<Address> {
         self.branch_resolved_target
+    }
+
+    pub const fn branch_squash(self) -> bool {
+        self.branch_squashed_target.is_some()
+    }
+
+    pub const fn branch_squashed_target(self) -> Option<Address> {
+        self.branch_squashed_target
     }
 
     pub const fn fu_latency_class(self) -> Option<O3RuntimeFuLatencyClass> {

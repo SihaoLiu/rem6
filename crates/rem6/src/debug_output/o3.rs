@@ -69,6 +69,7 @@ struct Rem6O3TraceTotals {
     event_branches: u64,
     event_branch_taken: u64,
     event_branch_mispredictions: u64,
+    event_branch_squashes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_lsq_load_bytes: u64,
     event_lsq_store_bytes: u64,
@@ -323,6 +324,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_mispredictions = self
             .event_branch_mispredictions
             .saturating_add(u64::from(event.branch_mispredicted()));
+        self.event_branch_squashes = self
+            .event_branch_squashes
+            .saturating_add(u64::from(event.branch_squash()));
         let index = event.branch_kind().index();
         self.event_branch_kinds[index] = self.event_branch_kinds[index].saturating_add(1);
     }
@@ -472,6 +476,7 @@ impl Rem6O3TraceTotals {
                 "event.branch_mispredictions",
                 self.event_branch_mispredictions,
             ),
+            ("event.branch_squashes", self.event_branch_squashes),
             (
                 "event.store_load_forwarding_candidates",
                 self.event_store_load_forwarding_candidates,
@@ -602,8 +607,10 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         o3_optional_address_to_json(event.branch_predicted_target().map(|address| address.get()));
     let branch_resolved_target =
         o3_optional_address_to_json(event.branch_resolved_target().map(|address| address.get()));
+    let branch_squashed_target =
+        o3_optional_address_to_json(event.branch_squashed_target().map(|address| address.get()));
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -632,6 +639,8 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.branch_mispredicted(),
         branch_predicted_target,
         branch_resolved_target,
+        event.branch_squash(),
+        branch_squashed_target,
         fu_latency_class,
         event.fu_latency_cycles(),
         event.system_event(),

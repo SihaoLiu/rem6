@@ -5857,6 +5857,8 @@ fn rem6_run_o3_debug_flag_classifies_branch_events() {
     assert_eq!(json_record_str(first, "branch_kind"), "no_branch");
     assert_eq!(first.get("branch_predicted_target"), Some(&Value::Null));
     assert_eq!(first.get("branch_resolved_target"), Some(&Value::Null));
+    assert_eq!(json_record_bool(first, "branch_squash"), false);
+    assert_eq!(first.get("branch_squashed_target"), Some(&Value::Null));
     assert_eq!(json_record_bool(&events[8], "system_event"), true);
 
     let branch = events
@@ -5873,11 +5875,17 @@ fn rem6_run_o3_debug_flag_classifies_branch_events() {
         json_record_str(branch, "branch_resolved_target"),
         "0x80000018"
     );
+    assert_eq!(json_record_bool(branch, "branch_squash"), true);
+    assert_eq!(
+        json_record_str(branch, "branch_squashed_target"),
+        "0x80000014"
+    );
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 1),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 1),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
+        ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
         (
             "sim.debug.o3_trace.event.branch_kind.direct_conditional",
             "Count",
