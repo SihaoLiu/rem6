@@ -41,6 +41,10 @@ pub enum StatsError {
     StatIsNotCounter {
         stat: StatId,
     },
+    StatIsNotResettable {
+        stat: StatId,
+        reset_policy: StatResetPolicy,
+    },
     StatIsNotAverage {
         stat: StatId,
     },
@@ -511,6 +515,11 @@ impl fmt::Display for StatsError {
             Self::StatIsNotCounter { stat } => {
                 write!(formatter, "stat {} is not a counter", stat.get())
             }
+            Self::StatIsNotResettable { stat, reset_policy } => write!(
+                formatter,
+                "stat {} has {reset_policy} reset policy and cannot be overwritten",
+                stat.get()
+            ),
             Self::StatIsNotAverage { stat } => {
                 write!(formatter, "stat {} is not an average", stat.get())
             }

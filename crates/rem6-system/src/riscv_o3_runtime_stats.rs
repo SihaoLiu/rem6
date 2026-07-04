@@ -54,6 +54,23 @@ impl RiscvO3RuntimeStats {
         *previous_snapshot = snapshot;
         Ok(())
     }
+
+    pub fn sync_cpu_snapshot(
+        &self,
+        registry: &mut StatsRegistry,
+        cpu: CpuId,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        let Some(stats) = self.stats.get(&cpu) else {
+            return Ok(());
+        };
+        stats.set_snapshot(registry, snapshot)?;
+        self.previous
+            .lock()
+            .expect("O3 runtime stats lock")
+            .insert(cpu, snapshot);
+        Ok(())
+    }
 }
 
 impl Default for RiscvO3RuntimeStats {
@@ -257,6 +274,57 @@ impl RiscvO3RuntimeCpuStats {
             if delta != 0 {
                 registry.increment(stat, delta)?;
             }
+        }
+        Ok(())
+    }
+
+    fn set_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for (stat, value) in [
+            (self.instructions, snapshot.instructions()),
+            (self.rob_allocations, snapshot.rob_allocations()),
+            (self.rob_commits, snapshot.rob_commits()),
+            (self.rename_writes, snapshot.rename_writes()),
+            (self.lsq_loads, snapshot.lsq_loads()),
+            (self.lsq_stores, snapshot.lsq_stores()),
+            (self.lsq_load_bytes, snapshot.lsq_load_bytes()),
+            (self.lsq_store_bytes, snapshot.lsq_store_bytes()),
+            (
+                self.lsq_store_to_load_forwarding_candidates,
+                snapshot.lsq_store_to_load_forwarding_candidates(),
+            ),
+            (
+                self.lsq_store_to_load_forwarding_matches,
+                snapshot.lsq_store_to_load_forwarding_matches(),
+            ),
+            (
+                self.fu_latency_instructions,
+                snapshot.fu_latency_instructions(),
+            ),
+            (self.fu_latency_cycles, snapshot.fu_latency_cycles()),
+            (
+                self.fu_integer_mul_instructions,
+                snapshot.fu_integer_mul_instructions(),
+            ),
+            (
+                self.fu_integer_mul_latency_cycles,
+                snapshot.fu_integer_mul_latency_cycles(),
+            ),
+            (
+                self.fu_integer_div_instructions,
+                snapshot.fu_integer_div_instructions(),
+            ),
+            (
+                self.fu_integer_div_latency_cycles,
+                snapshot.fu_integer_div_latency_cycles(),
+            ),
+            (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
+            (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
+        ] {
+            registry.set_resettable_counter(stat, value)?;
         }
         Ok(())
     }

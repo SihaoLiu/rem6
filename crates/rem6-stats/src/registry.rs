@@ -497,6 +497,31 @@ impl StatsRegistry {
         Ok(())
     }
 
+    /// Overwrites a resettable counter with an absolute restored snapshot value.
+    pub fn set_resettable_counter(&mut self, stat: StatId, value: u64) -> Result<(), StatsError> {
+        let descriptor = self
+            .descriptors
+            .get(&stat)
+            .ok_or(StatsError::UnknownStat { stat })?;
+        if descriptor.reset_policy != StatResetPolicy::Resettable {
+            return Err(StatsError::StatIsNotResettable {
+                stat,
+                reset_policy: descriptor.reset_policy,
+            });
+        }
+
+        match self
+            .storage
+            .get_mut(&stat)
+            .ok_or(StatsError::UnknownStat { stat })?
+        {
+            StatStorage::Counter(counter) => *counter = value,
+            StatStorage::Average(_) => return Err(StatsError::StatIsNotCounter { stat }),
+            StatStorage::Histogram(_) => return Err(StatsError::StatIsNotCounter { stat }),
+        }
+        Ok(())
+    }
+
     pub fn observe_histogram(&mut self, stat: StatId, bucket: u64) -> Result<(), StatsError> {
         self.observe_histogram_count(stat, bucket, 1)
     }

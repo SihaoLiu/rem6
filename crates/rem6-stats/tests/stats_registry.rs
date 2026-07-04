@@ -101,6 +101,50 @@ fn stats_registry_rejects_duplicate_empty_unknown_and_overflowing_counters() {
 }
 
 #[test]
+fn stats_registry_sets_resettable_counter_snapshots_only() {
+    let mut stats = StatsRegistry::new();
+    let resettable = stats
+        .register_counter("cpu0.o3.instructions", "count")
+        .unwrap();
+    let monotonic = stats
+        .register_counter_with_reset_policy(
+            "cpu0.total.instructions",
+            "count",
+            StatResetPolicy::Monotonic,
+        )
+        .unwrap();
+    let average = stats
+        .register_average("cpu0.temperature", "Celsius")
+        .unwrap();
+
+    stats.increment(resettable, 99).unwrap();
+    stats.set_resettable_counter(resettable, 17).unwrap();
+    assert_eq!(stats.snapshot(10).samples()[0].value(), 17);
+    stats.set_resettable_counter(resettable, 3).unwrap();
+    assert_eq!(stats.snapshot(11).samples()[0].value(), 3);
+
+    assert_eq!(
+        stats
+            .set_resettable_counter(StatId::new(99), 1)
+            .unwrap_err(),
+        StatsError::UnknownStat {
+            stat: StatId::new(99)
+        }
+    );
+    assert_eq!(
+        stats.set_resettable_counter(monotonic, 1).unwrap_err(),
+        StatsError::StatIsNotResettable {
+            stat: monotonic,
+            reset_policy: StatResetPolicy::Monotonic,
+        }
+    );
+    assert_eq!(
+        stats.set_resettable_counter(average, 1).unwrap_err(),
+        StatsError::StatIsNotCounter { stat: average }
+    );
+}
+
+#[test]
 fn stats_registry_rejects_ambiguous_counter_paths_without_consuming_ids() {
     let mut stats = StatsRegistry::new();
 

@@ -5,11 +5,12 @@ use std::fmt;
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::{
     BiModeBranchPredictorCheckpointPayload, BiModeBranchPredictorError,
-    BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
-    GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
-    InOrderPipelineSnapshot, MultiperspectivePerceptronCheckpointPayload,
-    MultiperspectivePerceptronError, O3PendingStateCheckpointPayload, O3PipelineError,
-    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, RiscvCore, RiscvHartRunState,
+    BranchPredictorCheckpointPayload, BranchPredictorError, CpuId,
+    GShareBranchPredictorCheckpointPayload, GShareBranchPredictorError,
+    InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
+    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError,
+    O3PendingStateCheckpointPayload, O3PipelineError, O3RuntimeCheckpointPayload, O3RuntimeError,
+    O3RuntimeSnapshot, O3RuntimeStats, RiscvCore, RiscvHartRunState,
     TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
@@ -729,6 +730,16 @@ impl RiscvCoreCheckpointBank {
                     snapshot.mismatches().len() as u64,
                 )
             })
+    }
+
+    pub(crate) fn o3_runtime_snapshots(&self) -> Vec<(CpuId, O3RuntimeStats)> {
+        self.ports
+            .values()
+            .map(|port| {
+                let core = port.core();
+                (core.id(), core.o3_runtime_stats())
+            })
+            .collect()
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {

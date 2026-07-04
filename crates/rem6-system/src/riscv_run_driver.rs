@@ -34,6 +34,12 @@ impl RiscvSystemRunDriver {
     }
 
     pub fn with_o3_runtime_stats(mut self, o3_runtime_stats: RiscvO3RuntimeStats) -> Self {
+        self.trap_port
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .attach_riscv_o3_runtime_stats(o3_runtime_stats.clone());
         self.o3_runtime_stats = Some(o3_runtime_stats);
         self
     }

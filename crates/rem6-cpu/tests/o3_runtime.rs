@@ -3,7 +3,7 @@ use rem6_cpu::{
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3LoadStoreQueueEntry,
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
-    O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
+    O3RuntimeStats, O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
     O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{
@@ -21,6 +21,7 @@ const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES + 4 * 4;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = 19 * 8;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -85,6 +86,23 @@ fn o3_runtime_checkpoint_round_trips_rob_lsq_rename_and_pending_state() {
         pending_payload.snapshot().resolved_dependency_scopes(),
         &[pending_scope]
     );
+}
+
+#[test]
+fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
+    let payload = RiscvCore::default_o3_runtime_checkpoint_payload();
+    let mut encoded = payload.encode();
+    let v1_len = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    encoded.truncate(v1_len);
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 1;
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(decoded.stats(), O3RuntimeStats::default());
 }
 
 #[test]

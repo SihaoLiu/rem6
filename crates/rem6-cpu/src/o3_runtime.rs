@@ -12,15 +12,12 @@ use crate::o3_pipeline::{
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 
-const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 1;
-const U32_BYTES: usize = 4;
+#[path = "o3_runtime_checkpoint.rs"]
+mod o3_runtime_checkpoint;
+
+pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
+
 const U64_BYTES: usize = 8;
-const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
-    O3_RUNTIME_CHECKPOINT_MAGIC.len() + 1 + U32_BYTES * 4;
-const O3_RUNTIME_ROB_ENTRY_BYTES: usize = U64_BYTES + U64_BYTES + 1 + U32_BYTES + 1;
-const O3_RUNTIME_LSQ_ENTRY_BYTES: usize = U64_BYTES + 1 + U64_BYTES + U32_BYTES + 1 + 1;
-const O3_RUNTIME_RENAME_ENTRY_BYTES: usize = 1 + U32_BYTES + U32_BYTES;
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -389,6 +386,16 @@ impl O3RuntimeState {
         self.snapshot = snapshot;
         self.trace_records.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
+        Ok(())
+    }
+
+    pub fn restore_checkpoint_payload(
+        &mut self,
+        payload: O3RuntimeCheckpointPayload,
+    ) -> Result<(), O3RuntimeError> {
+        let stats = payload.stats();
+        self.restore(payload.into_snapshot())?;
+        self.stats = stats;
         Ok(())
     }
 
@@ -1255,138 +1262,6 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct O3RuntimeCheckpointPayload {
-    snapshot: O3RuntimeSnapshot,
-}
-
-impl O3RuntimeCheckpointPayload {
-    pub fn from_snapshot(snapshot: O3RuntimeSnapshot) -> Result<Self, O3RuntimeError> {
-        validate_runtime_snapshot(&snapshot)?;
-        Ok(Self { snapshot })
-    }
-
-    pub fn decode(payload: &[u8]) -> Result<Self, O3RuntimeError> {
-        if payload.len() < O3_RUNTIME_CHECKPOINT_HEADER_BYTES {
-            return Err(O3RuntimeError::InvalidCheckpointPayloadSize {
-                expected: O3_RUNTIME_CHECKPOINT_HEADER_BYTES,
-                actual: payload.len(),
-            });
-        }
-        if payload[..O3_RUNTIME_CHECKPOINT_MAGIC.len()] != O3_RUNTIME_CHECKPOINT_MAGIC {
-            return Err(O3RuntimeError::InvalidCheckpointMagic);
-        }
-
-        let mut offset = O3_RUNTIME_CHECKPOINT_MAGIC.len();
-        let version = read_u8(payload, &mut offset)?;
-        if version != O3_RUNTIME_CHECKPOINT_VERSION {
-            return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
-        }
-
-        let pending_payload_len = read_u32(payload, &mut offset)? as usize;
-        let rob_count = read_u32(payload, &mut offset)? as usize;
-        let lsq_count = read_u32(payload, &mut offset)? as usize;
-        let rename_count = read_u32(payload, &mut offset)? as usize;
-
-        ensure_remaining(payload, offset, pending_payload_len)?;
-        let pending_payload_end = offset + pending_payload_len;
-        let pending_state =
-            O3PendingStateCheckpointPayload::decode(&payload[offset..pending_payload_end])
-                .map_err(|error| O3RuntimeError::InvalidPendingState { error })?
-                .into_snapshot();
-        offset = pending_payload_end;
-
-        ensure_remaining(
-            payload,
-            offset,
-            checked_bytes(rob_count, O3_RUNTIME_ROB_ENTRY_BYTES, payload.len())?,
-        )?;
-        let mut reorder_buffer = Vec::with_capacity(rob_count);
-        for _ in 0..rob_count {
-            reorder_buffer.push(read_rob_entry(payload, &mut offset)?);
-        }
-
-        ensure_remaining(
-            payload,
-            offset,
-            checked_bytes(lsq_count, O3_RUNTIME_LSQ_ENTRY_BYTES, payload.len())?,
-        )?;
-        let mut load_store_queue = Vec::with_capacity(lsq_count);
-        for _ in 0..lsq_count {
-            load_store_queue.push(read_lsq_entry(payload, &mut offset)?);
-        }
-
-        ensure_remaining(
-            payload,
-            offset,
-            checked_bytes(rename_count, O3_RUNTIME_RENAME_ENTRY_BYTES, payload.len())?,
-        )?;
-        let mut rename_map = Vec::with_capacity(rename_count);
-        for _ in 0..rename_count {
-            rename_map.push(read_rename_entry(payload, &mut offset)?);
-        }
-
-        if offset != payload.len() {
-            return Err(O3RuntimeError::InvalidCheckpointPayloadSize {
-                expected: offset,
-                actual: payload.len(),
-            });
-        }
-
-        Self::from_snapshot(O3RuntimeSnapshot::new(
-            reorder_buffer,
-            load_store_queue,
-            rename_map,
-            pending_state,
-        )?)
-    }
-
-    pub fn encode(&self) -> Vec<u8> {
-        let pending_payload =
-            O3PendingStateCheckpointPayload::from_snapshot(self.snapshot.pending_state.clone())
-                .expect("O3 runtime checkpoint payload was validated before construction")
-                .encode();
-        let pending_payload_len = encode_u32("pending_payload_length", pending_payload.len())
-            .expect("O3 runtime checkpoint payload was validated before construction");
-        let rob_count = encode_u32("reorder_buffer_count", self.snapshot.reorder_buffer.len())
-            .expect("O3 runtime checkpoint payload was validated before construction");
-        let lsq_count = encode_u32(
-            "load_store_queue_count",
-            self.snapshot.load_store_queue.len(),
-        )
-        .expect("O3 runtime checkpoint payload was validated before construction");
-        let rename_count = encode_u32("rename_map_count", self.snapshot.rename_map.len())
-            .expect("O3 runtime checkpoint payload was validated before construction");
-
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&O3_RUNTIME_CHECKPOINT_MAGIC);
-        payload.push(O3_RUNTIME_CHECKPOINT_VERSION);
-        payload.extend_from_slice(&pending_payload_len.to_le_bytes());
-        payload.extend_from_slice(&rob_count.to_le_bytes());
-        payload.extend_from_slice(&lsq_count.to_le_bytes());
-        payload.extend_from_slice(&rename_count.to_le_bytes());
-        payload.extend_from_slice(&pending_payload);
-        for entry in &self.snapshot.reorder_buffer {
-            write_rob_entry(&mut payload, *entry);
-        }
-        for entry in &self.snapshot.load_store_queue {
-            write_lsq_entry(&mut payload, *entry);
-        }
-        for entry in &self.snapshot.rename_map {
-            write_rename_entry(&mut payload, *entry);
-        }
-        payload
-    }
-
-    pub const fn snapshot(&self) -> &O3RuntimeSnapshot {
-        &self.snapshot
-    }
-
-    pub fn into_snapshot(self) -> O3RuntimeSnapshot {
-        self.snapshot
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum O3RuntimeUniqueKey {
     Sequence(u64),
@@ -1555,156 +1430,6 @@ fn encode_u32(field: &'static str, value: usize) -> Result<u32, O3RuntimeError> 
     })
 }
 
-fn checked_bytes(
-    count: usize,
-    bytes_per_item: usize,
-    actual: usize,
-) -> Result<usize, O3RuntimeError> {
-    count
-        .checked_mul(bytes_per_item)
-        .ok_or(O3RuntimeError::InvalidCheckpointPayloadSize {
-            expected: O3_RUNTIME_CHECKPOINT_HEADER_BYTES,
-            actual,
-        })
-}
-
-fn ensure_remaining(payload: &[u8], offset: usize, bytes: usize) -> Result<(), O3RuntimeError> {
-    let expected =
-        offset
-            .checked_add(bytes)
-            .ok_or(O3RuntimeError::InvalidCheckpointPayloadSize {
-                expected: offset,
-                actual: payload.len(),
-            })?;
-    if payload.len() < expected {
-        return Err(O3RuntimeError::InvalidCheckpointPayloadSize {
-            expected,
-            actual: payload.len(),
-        });
-    }
-    Ok(())
-}
-
-fn write_rob_entry(payload: &mut Vec<u8>, entry: O3ReorderBufferEntry) {
-    payload.extend_from_slice(&entry.sequence().to_le_bytes());
-    payload.extend_from_slice(&entry.pc().get().to_le_bytes());
-    if let Some(destination) = entry.destination() {
-        payload.push(1);
-        payload.extend_from_slice(&destination.get().to_le_bytes());
-    } else {
-        payload.push(0);
-        payload.extend_from_slice(&O3PhysicalRegisterId::invalid().get().to_le_bytes());
-    }
-    payload.push(bool_flag(entry.is_ready()));
-}
-
-fn write_lsq_entry(payload: &mut Vec<u8>, entry: O3LoadStoreQueueEntry) {
-    payload.extend_from_slice(&entry.sequence().to_le_bytes());
-    if let Some(address) = entry.address() {
-        payload.push(1);
-        payload.extend_from_slice(&address.get().to_le_bytes());
-    } else {
-        payload.push(0);
-        payload.extend_from_slice(&0_u64.to_le_bytes());
-    }
-    payload.extend_from_slice(&entry.bytes().to_le_bytes());
-    payload.push(encode_lsq_kind(entry.kind()));
-    payload.push(bool_flag(entry.is_completed()));
-}
-
-fn write_rename_entry(payload: &mut Vec<u8>, entry: O3RenameMapEntry) {
-    payload.push(encode_register_class(entry.register_class()));
-    payload.extend_from_slice(&entry.architectural().to_le_bytes());
-    payload.extend_from_slice(&entry.physical().get().to_le_bytes());
-}
-
-fn read_rob_entry(
-    payload: &[u8],
-    offset: &mut usize,
-) -> Result<O3ReorderBufferEntry, O3RuntimeError> {
-    let sequence = read_u64(payload, offset)?;
-    let pc = Address::new(read_u64(payload, offset)?);
-    let destination_present = read_bool("ROB destination-present", payload, offset)?;
-    let physical = O3PhysicalRegisterId::new(read_u32(payload, offset)?);
-    let ready = read_bool("ROB ready", payload, offset)?;
-    Ok(
-        O3ReorderBufferEntry::new(sequence, pc, destination_present.then_some(physical))
-            .with_ready(ready),
-    )
-}
-
-fn read_lsq_entry(
-    payload: &[u8],
-    offset: &mut usize,
-) -> Result<O3LoadStoreQueueEntry, O3RuntimeError> {
-    let sequence = read_u64(payload, offset)?;
-    let address_present = read_bool("LSQ address-present", payload, offset)?;
-    let address = Address::new(read_u64(payload, offset)?);
-    let bytes = read_u32(payload, offset)?;
-    let kind = decode_lsq_kind(read_u8(payload, offset)?)?;
-    let completed = read_bool("LSQ completed", payload, offset)?;
-    let entry = match kind {
-        O3LoadStoreQueueKind::Load => {
-            O3LoadStoreQueueEntry::load(sequence, address_present.then_some(address), bytes)
-        }
-        O3LoadStoreQueueKind::Store => {
-            O3LoadStoreQueueEntry::store(sequence, address_present.then_some(address), bytes)
-        }
-    };
-    Ok(entry.with_completed(completed))
-}
-
-fn read_rename_entry(
-    payload: &[u8],
-    offset: &mut usize,
-) -> Result<O3RenameMapEntry, O3RuntimeError> {
-    let register_class = decode_register_class(read_u8(payload, offset)?)?;
-    let architectural = read_u32(payload, offset)?;
-    let physical = O3PhysicalRegisterId::new(read_u32(payload, offset)?);
-    Ok(O3RenameMapEntry::new(
-        register_class,
-        architectural,
-        physical,
-    ))
-}
-
-fn read_u8(payload: &[u8], offset: &mut usize) -> Result<u8, O3RuntimeError> {
-    ensure_remaining(payload, *offset, 1)?;
-    let value = payload[*offset];
-    *offset += 1;
-    Ok(value)
-}
-
-fn read_u32(payload: &[u8], offset: &mut usize) -> Result<u32, O3RuntimeError> {
-    ensure_remaining(payload, *offset, U32_BYTES)?;
-    let bytes = payload[*offset..*offset + U32_BYTES]
-        .try_into()
-        .expect("O3 runtime checkpoint u32 slice width is fixed");
-    *offset += U32_BYTES;
-    Ok(u32::from_le_bytes(bytes))
-}
-
-fn read_u64(payload: &[u8], offset: &mut usize) -> Result<u64, O3RuntimeError> {
-    ensure_remaining(payload, *offset, U64_BYTES)?;
-    let bytes = payload[*offset..*offset + U64_BYTES]
-        .try_into()
-        .expect("O3 runtime checkpoint u64 slice width is fixed");
-    *offset += U64_BYTES;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-fn read_bool(
-    field: &'static str,
-    payload: &[u8],
-    offset: &mut usize,
-) -> Result<bool, O3RuntimeError> {
-    match read_u8(payload, offset)? {
-        0 => Ok(false),
-        1 => Ok(true),
-        value => Err(O3RuntimeError::InvalidCheckpointBool { field, value }),
-    }
-}
-
 fn encode_register_class(register_class: O3RegisterClass) -> u8 {
     match register_class {
         O3RegisterClass::Integer => 0,
@@ -1713,36 +1438,6 @@ fn encode_register_class(register_class: O3RegisterClass) -> u8 {
         O3RegisterClass::ConditionCode => 3,
         O3RegisterClass::Misc => 4,
     }
-}
-
-fn decode_register_class(code: u8) -> Result<O3RegisterClass, O3RuntimeError> {
-    match code {
-        0 => Ok(O3RegisterClass::Integer),
-        1 => Ok(O3RegisterClass::FloatingPoint),
-        2 => Ok(O3RegisterClass::Vector),
-        3 => Ok(O3RegisterClass::ConditionCode),
-        4 => Ok(O3RegisterClass::Misc),
-        _ => Err(O3RuntimeError::InvalidRegisterClassCode { code }),
-    }
-}
-
-fn encode_lsq_kind(kind: O3LoadStoreQueueKind) -> u8 {
-    match kind {
-        O3LoadStoreQueueKind::Load => 0,
-        O3LoadStoreQueueKind::Store => 1,
-    }
-}
-
-fn decode_lsq_kind(code: u8) -> Result<O3LoadStoreQueueKind, O3RuntimeError> {
-    match code {
-        0 => Ok(O3LoadStoreQueueKind::Load),
-        1 => Ok(O3LoadStoreQueueKind::Store),
-        _ => Err(O3RuntimeError::InvalidLoadStoreKindCode { code }),
-    }
-}
-
-fn bool_flag(value: bool) -> u8 {
-    u8::from(value)
 }
 
 impl crate::RiscvCore {
@@ -1810,12 +1505,10 @@ impl crate::RiscvCore {
     }
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
-        O3RuntimeCheckpointPayload::from_snapshot(
-            self.state
-                .lock()
-                .expect("riscv core lock")
-                .o3_runtime
-                .snapshot(),
+        let state = self.state.lock().expect("riscv core lock");
+        O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            state.o3_runtime.snapshot(),
+            state.o3_runtime.stats(),
         )
         .expect("captured RISC-V O3 runtime checkpoint is internally consistent")
     }
@@ -1829,7 +1522,7 @@ impl crate::RiscvCore {
             .lock()
             .expect("riscv core lock")
             .o3_runtime
-            .restore(payload.into_snapshot())
+            .restore_checkpoint_payload(payload)
     }
 
     pub fn validate_o3_runtime_checkpoint_payload(

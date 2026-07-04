@@ -19,11 +19,11 @@ use crate::{
     MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
-    RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
-    SinicFifoCheckpointPort, SinicRegisterCheckpointBank, SinicRegisterCheckpointPort,
-    Sp804CheckpointBank, Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank,
-    StorageImageCheckpointPort, SystemError, TimerCheckpointBank, UartCheckpointBank,
-    VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
+    RiscvCoreCheckpointBank, RiscvO3RuntimeStats, RtcCheckpointBank, SchedulerCheckpointBank,
+    SinicFifoCheckpointBank, SinicFifoCheckpointPort, SinicRegisterCheckpointBank,
+    SinicRegisterCheckpointPort, Sp804CheckpointBank, Sp805CheckpointBank, StopRequest,
+    StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError, TimerCheckpointBank,
+    UartCheckpointBank, VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
     VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
     VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
     VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
@@ -307,6 +307,7 @@ pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
     captured_manifests: BTreeMap<String, CheckpointManifest>,
+    riscv_o3_runtime_stats: Option<RiscvO3RuntimeStats>,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
     msi_bank_checkpoints: Option<MsiBankCheckpointBank>,
     fabric_checkpoints: Option<FabricCheckpointBank>,
@@ -356,6 +357,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             captured_manifests: BTreeMap::new(),
+            riscv_o3_runtime_stats: None,
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -496,6 +498,10 @@ impl SystemActionExecutor {
 
     pub const fn stats_mut(&mut self) -> &mut StatsRegistry {
         &mut self.stats
+    }
+
+    pub fn attach_riscv_o3_runtime_stats(&mut self, o3_runtime_stats: RiscvO3RuntimeStats) {
+        self.riscv_o3_runtime_stats = Some(o3_runtime_stats);
     }
 
     pub const fn checkpoints(&self) -> &CheckpointRegistry {
@@ -1256,7 +1262,7 @@ impl SystemActionExecutor {
         Ok(())
     }
 
-    fn restore_checkpoint_banks(&self) -> Result<(), SystemError> {
+    fn restore_checkpoint_banks(&mut self) -> Result<(), SystemError> {
         if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
             accelerator_checkpoints
                 .restore_all_from(&self.checkpoints)
@@ -1430,6 +1436,23 @@ impl SystemActionExecutor {
             virtio_pci_device_config_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
+        }
+        self.sync_riscv_o3_runtime_stats_after_checkpoint_restore()?;
+        Ok(())
+    }
+
+    fn sync_riscv_o3_runtime_stats_after_checkpoint_restore(&mut self) -> Result<(), SystemError> {
+        let Some(o3_runtime_stats) = self.riscv_o3_runtime_stats.clone() else {
+            return Ok(());
+        };
+        let Some(riscv_checkpoints) = &self.riscv_checkpoints else {
+            return Ok(());
+        };
+
+        for (cpu, snapshot) in riscv_checkpoints.o3_runtime_snapshots() {
+            o3_runtime_stats
+                .sync_cpu_snapshot(&mut self.stats, cpu, snapshot)
+                .map_err(SystemError::Stats)?;
         }
         Ok(())
     }

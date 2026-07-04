@@ -1268,6 +1268,101 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
 }
 
 #[test]
+fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
+    let path = detailed_o3_restore_dump_stats_binary("m5-switch-cpu-o3-restore-dump-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "500",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let first_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing first stats dump: {host_actions}"));
+    let restored_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing restored stats dump: {host_actions}"));
+
+    for (path, unit) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.instructions", "Count"),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.rob_allocations",
+            "Count",
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_bytes",
+            "Byte",
+        ),
+    ] {
+        assert_stats_dump_sample(
+            restored_dump,
+            path,
+            "counter",
+            unit,
+            stats_dump_sample_value(first_dump, path),
+            "resettable",
+        );
+    }
+    assert!(
+        json_stat_value(&json, "sim.cpu0.o3.instructions")
+            > stats_dump_sample_value(
+                first_dump,
+                "sim.host_actions.stats_dump.cpu0.o3.instructions"
+            )
+    );
+    assert_json_stat(&json, "sim.cpu0.o3.lsq_store_bytes", "Byte", 4, "monotonic");
+}
+
+#[test]
 fn rem6_run_reports_scheduled_restore_missing_checkpoint_label() {
     let path = scheduled_host_restore_missing_label_binary("scheduled-restore-missing-label");
 
@@ -2453,6 +2548,42 @@ fn detailed_o3_scheduled_restore_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_restore_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.push(m5op(M5_CHECKPOINT)); // exact baseline for the scheduled restore
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.push(m5op(M5_DUMP_STATS)); // dump restored-baseline stats before O3 work
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 704_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(42, 0, 0x0, 1, 0x13),                    // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),                     // addi x2, x0, 7
+        0x0220_81b3,                                    // mul x3, x1, x2
+        0x0220_c1b3,                                    // div x3, x1, x2
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+    ]);
+    while words.len() < 170 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn scheduled_host_restore_missing_label_binary(name: &str) -> std::path::PathBuf {
     let mut words = Vec::new();
     for _ in 0..20 {
@@ -3023,6 +3154,18 @@ fn assert_stats_dump_sample(
     );
 }
 
+fn stats_dump_sample_value(dump: &Value, path: &str) -> u64 {
+    dump.pointer("/samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| {
+            samples
+                .iter()
+                .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        })
+        .and_then(|sample| sample.pointer("/value").and_then(Value::as_u64))
+        .unwrap_or_else(|| panic!("missing stats dump sample value {path}: {dump}"))
+}
+
 fn assert_stats_dump_sample_absent(dump: &Value, path: &str) {
     let samples = dump
         .pointer("/samples")
@@ -3034,6 +3177,18 @@ fn assert_stats_dump_sample_absent(dump: &Value, path: &str) {
             .all(|sample| sample.pointer("/path").and_then(Value::as_str) != Some(path)),
         "unexpected stats dump sample {path}: {dump}"
     );
+}
+
+fn json_stat_value(json: &Value, path: &str) -> u64 {
+    json.pointer("/stats")
+        .and_then(Value::as_array)
+        .and_then(|stats| {
+            stats
+                .iter()
+                .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        })
+        .and_then(|sample| sample.pointer("/value").and_then(Value::as_u64))
+        .unwrap_or_else(|| panic!("missing JSON stat value {path}: {json}"))
 }
 
 fn assert_checkpoint(
