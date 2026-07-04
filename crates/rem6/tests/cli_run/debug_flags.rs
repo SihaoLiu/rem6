@@ -9165,7 +9165,23 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", first_tick),
         ("sim.debug.o3_trace.event.last_tick", "Tick", last_tick),
         ("sim.debug.o3_trace.event.tick_span", "Tick", tick_span),
+        (
+            "sim.debug.o3_trace.event.fu_latency_instructions",
+            "Count",
+            2,
+        ),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 21),
+        (
+            "sim.debug.o3_trace.event.fu_latency_max_cycles",
+            "Cycle",
+            19,
+        ),
+        ("sim.debug.o3_trace.event.fu_latency_min_cycles", "Cycle", 2),
+        (
+            "sim.debug.o3_trace.event.fu_latency_avg_cycles",
+            "Cycle",
+            10,
+        ),
         (
             "sim.debug.o3_trace.event.fu_integer_mul_instructions",
             "Count",
@@ -9177,12 +9193,42 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
             2,
         ),
         (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_max_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_min_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_avg_cycles",
+            "Cycle",
+            2,
+        ),
+        (
             "sim.debug.o3_trace.event.fu_integer_div_instructions",
             "Count",
             1,
         ),
         (
             "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_max_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_min_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_avg_cycles",
             "Cycle",
             19,
         ),
@@ -10017,7 +10063,15 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 0),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 0),
+        (
+            "sim.debug.o3_trace.event.fu_latency_instructions",
+            "Count",
+            0,
+        ),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.event.fu_latency_max_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.event.fu_latency_min_cycles", "Cycle", 0),
+        ("sim.debug.o3_trace.event.fu_latency_avg_cycles", "Cycle", 0),
         (
             "sim.debug.o3_trace.event.fu_integer_mul_instructions",
             "Count",
@@ -10029,12 +10083,42 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
             0,
         ),
         (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_max_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_min_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_avg_cycles",
+            "Cycle",
+            0,
+        ),
+        (
             "sim.debug.o3_trace.event.fu_integer_div_instructions",
             "Count",
             0,
         ),
         (
             "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_max_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_min_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_avg_cycles",
             "Cycle",
             0,
         ),

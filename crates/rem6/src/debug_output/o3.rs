@@ -170,11 +170,18 @@ struct Rem6O3TraceTotals {
     event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
     event_store_load_forwarding_matches: u64,
+    event_fu_latency_instructions: u64,
     event_fu_latency_cycles: u64,
+    event_fu_latency_max_cycles: u64,
+    event_fu_latency_min_cycles: Option<u64>,
     event_fu_integer_mul_instructions: u64,
     event_fu_integer_mul_latency_cycles: u64,
+    event_fu_integer_mul_latency_max_cycles: u64,
+    event_fu_integer_mul_latency_min_cycles: Option<u64>,
     event_fu_integer_div_instructions: u64,
     event_fu_integer_div_latency_cycles: u64,
+    event_fu_integer_div_latency_max_cycles: u64,
+    event_fu_integer_div_latency_min_cycles: Option<u64>,
 }
 
 impl Rem6O3TraceRecord {
@@ -480,24 +487,45 @@ impl Rem6O3TraceTotals {
             self.event_store_load_forwarding_matches = self
                 .event_store_load_forwarding_matches
                 .saturating_add(u64::from(event.store_load_forwarding_match()));
+            let fu_latency_cycles = event.fu_latency_cycles();
             self.event_fu_latency_cycles = self
                 .event_fu_latency_cycles
-                .saturating_add(event.fu_latency_cycles());
-            if event.fu_latency_cycles() > 0 {
+                .saturating_add(fu_latency_cycles);
+            if fu_latency_cycles > 0 {
+                self.event_fu_latency_instructions =
+                    self.event_fu_latency_instructions.saturating_add(1);
+                self.event_fu_latency_max_cycles =
+                    self.event_fu_latency_max_cycles.max(fu_latency_cycles);
+                self.event_fu_latency_min_cycles =
+                    min_latency_ticks(self.event_fu_latency_min_cycles, fu_latency_cycles);
                 match event.fu_latency_class() {
                     Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
                         self.event_fu_integer_mul_instructions =
                             self.event_fu_integer_mul_instructions.saturating_add(1);
                         self.event_fu_integer_mul_latency_cycles = self
                             .event_fu_integer_mul_latency_cycles
-                            .saturating_add(event.fu_latency_cycles());
+                            .saturating_add(fu_latency_cycles);
+                        self.event_fu_integer_mul_latency_max_cycles = self
+                            .event_fu_integer_mul_latency_max_cycles
+                            .max(fu_latency_cycles);
+                        self.event_fu_integer_mul_latency_min_cycles = min_latency_ticks(
+                            self.event_fu_integer_mul_latency_min_cycles,
+                            fu_latency_cycles,
+                        );
                     }
                     Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
                         self.event_fu_integer_div_instructions =
                             self.event_fu_integer_div_instructions.saturating_add(1);
                         self.event_fu_integer_div_latency_cycles = self
                             .event_fu_integer_div_latency_cycles
-                            .saturating_add(event.fu_latency_cycles());
+                            .saturating_add(fu_latency_cycles);
+                        self.event_fu_integer_div_latency_max_cycles = self
+                            .event_fu_integer_div_latency_max_cycles
+                            .max(fu_latency_cycles);
+                        self.event_fu_integer_div_latency_min_cycles = min_latency_ticks(
+                            self.event_fu_integer_div_latency_min_cycles,
+                            fu_latency_cycles,
+                        );
                     }
                     None => {}
                 }
@@ -874,6 +902,10 @@ impl Rem6O3TraceTotals {
             (
                 "event.store_load_forwarding_matches",
                 self.event_store_load_forwarding_matches,
+            ),
+            (
+                "event.fu_latency_instructions",
+                self.event_fu_latency_instructions,
             ),
             (
                 "event.fu_integer_mul_instructions",
@@ -1296,14 +1328,68 @@ impl Rem6O3TraceTotals {
             value: self.event_fu_latency_cycles,
         });
         stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_latency_max_cycles",
+            unit: "Cycle",
+            value: self.event_fu_latency_max_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_latency_min_cycles",
+            unit: "Cycle",
+            value: self.event_fu_latency_min_cycles.unwrap_or(0),
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_latency_avg_cycles",
+            unit: "Cycle",
+            value: average_ticks(
+                self.event_fu_latency_cycles,
+                self.event_fu_latency_instructions,
+            ),
+        });
+        stats.push(Rem6O3TraceStat {
             suffix: "event.fu_integer_mul_latency_cycles",
             unit: "Cycle",
             value: self.event_fu_integer_mul_latency_cycles,
         });
         stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_mul_latency_max_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_mul_latency_max_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_mul_latency_min_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_mul_latency_min_cycles.unwrap_or(0),
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_mul_latency_avg_cycles",
+            unit: "Cycle",
+            value: average_ticks(
+                self.event_fu_integer_mul_latency_cycles,
+                self.event_fu_integer_mul_instructions,
+            ),
+        });
+        stats.push(Rem6O3TraceStat {
             suffix: "event.fu_integer_div_latency_cycles",
             unit: "Cycle",
             value: self.event_fu_integer_div_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_div_latency_max_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_div_latency_max_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_div_latency_min_cycles",
+            unit: "Cycle",
+            value: self.event_fu_integer_div_latency_min_cycles.unwrap_or(0),
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_integer_div_latency_avg_cycles",
+            unit: "Cycle",
+            value: average_ticks(
+                self.event_fu_integer_div_latency_cycles,
+                self.event_fu_integer_div_instructions,
+            ),
         });
         stats
     }
