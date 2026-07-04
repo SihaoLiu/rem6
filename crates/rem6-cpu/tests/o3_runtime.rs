@@ -277,6 +277,8 @@ fn o3_runtime_trace_records_only_when_enabled() {
 
     let trace = core.o3_runtime_trace_records();
     assert_eq!(trace.len(), 1);
+    assert_eq!(trace[0].sequence(), 1);
+    assert_eq!(trace[0].tick(), 12);
     assert_eq!(trace[0].pc(), Address::new(0x8004));
     assert!(trace[0].rob_allocated());
     assert!(trace[0].rob_committed());

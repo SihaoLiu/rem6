@@ -241,6 +241,7 @@ impl O3RuntimeSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct O3RuntimeTraceRecord {
     sequence: u64,
+    tick: u64,
     pc: Address,
     rob_allocated: bool,
     rob_committed: bool,
@@ -274,6 +275,7 @@ impl O3RuntimeFuLatencyClass {
 impl O3RuntimeTraceRecord {
     const fn new(
         sequence: u64,
+        tick: u64,
         pc: Address,
         rename_writes: u64,
         lsq_loads: u64,
@@ -286,6 +288,7 @@ impl O3RuntimeTraceRecord {
     ) -> Self {
         Self {
             sequence,
+            tick,
             pc,
             rob_allocated: true,
             rob_committed: true,
@@ -304,6 +307,10 @@ impl O3RuntimeTraceRecord {
 
     pub const fn sequence(self) -> u64 {
         self.sequence
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
     }
 
     pub const fn pc(self) -> Address {
@@ -452,6 +459,7 @@ impl O3RuntimeState {
             .unwrap_or((0, 0));
         let trace_record = O3RuntimeTraceRecord::new(
             sequence,
+            execution.fetch().tick(),
             Address::new(record.pc()),
             o3_rename_write_count(record),
             lsq_loads,

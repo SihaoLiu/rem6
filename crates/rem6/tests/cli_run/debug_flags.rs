@@ -2884,6 +2884,7 @@ fn assert_o3_event(
     system_event: bool,
 ) {
     assert_eq!(json_record_u64(event, "sequence"), sequence);
+    json_record_u64(event, "tick");
     assert_eq!(json_record_str(event, "pc"), pc);
     assert_eq!(json_record_bool(event, "rob_allocated"), true);
     assert_eq!(json_record_bool(event, "rob_committed"), true);
@@ -2916,6 +2917,7 @@ fn assert_o3_event_with_fu(
     system_event: bool,
 ) {
     assert_eq!(json_record_u64(event, "sequence"), sequence);
+    json_record_u64(event, "tick");
     assert_eq!(json_record_str(event, "pc"), pc);
     assert_eq!(json_record_bool(event, "rob_allocated"), true);
     assert_eq!(json_record_bool(event, "rob_committed"), true);
@@ -2954,6 +2956,7 @@ fn assert_o3_event_with_store_forwarding(
     system_event: bool,
 ) {
     assert_eq!(json_record_u64(event, "sequence"), sequence);
+    json_record_u64(event, "tick");
     assert_eq!(json_record_str(event, "pc"), pc);
     assert_eq!(json_record_bool(event, "rob_allocated"), true);
     assert_eq!(json_record_bool(event, "rob_committed"), true);
@@ -5463,6 +5466,14 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         .and_then(Value::as_array)
         .expect("O3 trace events array");
     assert_eq!(events.len(), 5);
+    let event_ticks = events
+        .iter()
+        .map(|event| json_record_u64(event, "tick"))
+        .collect::<Vec<_>>();
+    assert!(
+        event_ticks.windows(2).all(|window| window[0] < window[1]),
+        "O3 event ticks should be strictly increasing: {event_ticks:?}"
+    );
     assert_o3_event_with_fu(&events[0], 0, "0x80000004", 1, 0, 0, 0, None, false);
     assert_o3_event_with_fu(&events[1], 1, "0x80000008", 1, 0, 0, 0, None, false);
     assert_o3_event_with_fu(
@@ -5489,6 +5500,9 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
     );
     assert_o3_event_with_fu(&events[4], 4, "0x80000014", 0, 0, 0, 0, None, true);
 
+    let first_tick = event_ticks[0];
+    let last_tick = *event_ticks.last().expect("O3 event tick");
+    let tick_span = last_tick.saturating_sub(first_tick);
     for (path, unit, value) in [
         ("sim.debug.o3_trace.records", "Count", 1),
         ("sim.debug.o3_trace.instructions", "Count", 5),
@@ -5507,6 +5521,9 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
             19,
         ),
         ("sim.debug.o3_trace.event.records", "Count", 5),
+        ("sim.debug.o3_trace.event.first_tick", "Tick", first_tick),
+        ("sim.debug.o3_trace.event.last_tick", "Tick", last_tick),
+        ("sim.debug.o3_trace.event.tick_span", "Tick", tick_span),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 21),
         (
             "sim.debug.o3_trace.event.fu_integer_mul_instructions",
@@ -5727,6 +5744,7 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         .and_then(Value::as_array)
         .expect("debug O3 trace array");
     assert_eq!(trace.len(), 2);
+    let mut all_event_ticks = Vec::new();
     for (record, cpu) in trace.iter().zip([0, 1]) {
         assert_eq!(json_record_u64(record, "cpu"), cpu);
         assert_eq!(json_record_u64(record, "instructions"), 6);
@@ -5738,7 +5756,23 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         assert_eq!(json_record_u64(record, "max_rob_occupancy"), 1);
         assert_eq!(json_record_u64(record, "max_lsq_occupancy"), 1);
         assert_eq!(json_record_u64(record, "rename_map_entries"), 3);
+        let events = record
+            .pointer("/events")
+            .and_then(Value::as_array)
+            .expect("O3 trace events array");
+        let event_ticks = events
+            .iter()
+            .map(|event| json_record_u64(event, "tick"))
+            .collect::<Vec<_>>();
+        assert!(
+            event_ticks.windows(2).all(|window| window[0] < window[1]),
+            "O3 event ticks should be strictly increasing per CPU: {event_ticks:?}"
+        );
+        all_event_ticks.extend(event_ticks);
     }
+    let first_tick = *all_event_ticks.iter().min().expect("O3 event tick");
+    let last_tick = *all_event_ticks.iter().max().expect("O3 event tick");
+    let tick_span = last_tick.saturating_sub(first_tick);
 
     for (path, unit, value) in [
         ("sim.debug.trace.records", "Count", 2),
@@ -5755,6 +5789,9 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 6),
         ("sim.debug.o3_trace.event.records", "Count", 12),
+        ("sim.debug.o3_trace.event.first_tick", "Tick", first_tick),
+        ("sim.debug.o3_trace.event.last_tick", "Tick", last_tick),
+        ("sim.debug.o3_trace.event.tick_span", "Tick", tick_span),
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 12),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 12),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 8),
@@ -5945,6 +5982,9 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 0),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 0),
         ("sim.debug.o3_trace.event.records", "Count", 0),
+        ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
+        ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
+        ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 0),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 0),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 0),

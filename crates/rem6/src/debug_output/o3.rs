@@ -43,6 +43,8 @@ struct Rem6O3TraceTotals {
     max_lsq_occupancy: u64,
     rename_map_entries: u64,
     event_records: u64,
+    event_first_tick: Option<u64>,
+    event_last_tick: Option<u64>,
     event_rob_allocations: u64,
     event_rob_commits: u64,
     event_rename_writes: u64,
@@ -224,7 +226,16 @@ impl Rem6O3TraceTotals {
             .rename_map_entries
             .saturating_add(stats.rename_map_entries());
         for event in record.events() {
+            let event_tick = event.tick();
             self.event_records = self.event_records.saturating_add(1);
+            self.event_first_tick = Some(
+                self.event_first_tick
+                    .map_or(event_tick, |tick| tick.min(event_tick)),
+            );
+            self.event_last_tick = Some(
+                self.event_last_tick
+                    .map_or(event_tick, |tick| tick.max(event_tick)),
+            );
             self.event_rob_allocations = self
                 .event_rob_allocations
                 .saturating_add(u64::from(event.rob_allocated()));
@@ -357,6 +368,23 @@ impl Rem6O3TraceTotals {
             unit: "Byte",
             value: self.event_lsq_store_bytes,
         });
+        let first_event_tick = self.event_first_tick.unwrap_or(0);
+        let last_event_tick = self.event_last_tick.unwrap_or(0);
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.first_tick",
+            unit: "Tick",
+            value: first_event_tick,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.last_tick",
+            unit: "Tick",
+            value: last_event_tick,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.tick_span",
+            unit: "Tick",
+            value: last_event_tick.saturating_sub(first_event_tick),
+        });
         stats.push(Rem6O3TraceStat {
             suffix: "fu_integer_mul_latency_cycles",
             unit: "Cycle",
@@ -392,8 +420,9 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         |class| format!("\"{}\"", class.as_str()),
     );
     format!(
-        "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
+        event.tick(),
         event.pc().get(),
         event.rob_allocated(),
         event.rob_committed(),
