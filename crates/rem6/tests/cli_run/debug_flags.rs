@@ -5695,6 +5695,13 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.records", "Count", 1),
         ("sim.debug.o3_trace.stats_epoch", "Count", 0),
         ("sim.debug.o3_trace.stats_reset_tick", "Tick", 0),
+        ("sim.debug.o3_trace.checkpoint_restores", "Count", 0),
+        ("sim.debug.o3_trace.checkpoint_restore_tick", "Tick", 0),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
+            "Byte",
+            0,
+        ),
         ("sim.debug.o3_trace.instructions", "Count", 6),
         ("sim.debug.o3_trace.rob_allocations", "Count", 6),
         ("sim.debug.o3_trace.rob_commits", "Count", 6),
@@ -5818,6 +5825,148 @@ fn rem6_run_o3_debug_flag_marks_m5_reset_stats_scope() {
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 1),
         ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 0),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
+    let path =
+        detailed_o3_scheduled_restore_debug_binary("debug-flags-o3-checkpoint-restore-scope");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "500",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--host-checkpoint",
+            "8:debug-baseline",
+            "--host-restore-checkpoint",
+            "70:debug-baseline",
+            "--dump-memory",
+            "0x800002c0:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("O3".to_string())])
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a00000000000000")
+    );
+    let checkpoint = json
+        .pointer("/host_actions/checkpoints/0")
+        .unwrap_or_else(|| panic!("missing host checkpoint: {json}"));
+    let checkpoint_payload_bytes = json_record_u64(checkpoint, "payload_bytes");
+    assert_eq!(
+        checkpoint.pointer("/label").and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert!(
+        checkpoint_payload_bytes > 0,
+        "checkpoint payload: {checkpoint}"
+    );
+    let restore = json
+        .pointer("/host_actions/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing host checkpoint restore: {json}"));
+    let restore_tick = json_record_u64(restore, "tick");
+    let restored_manifest_tick = json_record_u64(restore, "manifest_tick");
+    let restored_payload_bytes = json_record_u64(restore, "payload_bytes");
+    assert_eq!(
+        restore.pointer("/label").and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert!(restored_payload_bytes > 0, "restore payload: {restore}");
+    assert_eq!(restored_payload_bytes, checkpoint_payload_bytes);
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    assert_eq!(
+        record
+            .get("checkpoint_restore_label")
+            .and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_tick"),
+        restore_tick
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_manifest_tick"),
+        restored_manifest_tick
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_payload_bytes"),
+        restored_payload_bytes
+    );
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert!(!events.is_empty(), "restored O3 replay events: {record}");
+    assert!(
+        events
+            .iter()
+            .all(|event| json_record_u64(event, "tick") > restore_tick),
+        "O3 trace should only include post-restore replay events: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            json_record_str(event, "pc") == "0x80000070"
+                && json_record_str(event, "lsq_operation") == "store"
+                && json_record_str(event, "lsq_store_address") == "0x800002c0"
+        }),
+        "restored O3 replay events: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            json_record_str(event, "pc") == "0x80000074"
+                && json_record_str(event, "lsq_operation") == "load"
+                && json_record_str(event, "lsq_load_address") == "0x800002c0"
+        }),
+        "restored O3 replay events: {events:?}"
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.checkpoint_restores", "Count", 1),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_tick",
+            "Tick",
+            restore_tick,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
+            "Byte",
+            restored_payload_bytes,
+        ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -8521,6 +8670,13 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.records", "Count", 0),
         ("sim.debug.o3_trace.stats_epoch", "Count", 0),
         ("sim.debug.o3_trace.stats_reset_tick", "Tick", 0),
+        ("sim.debug.o3_trace.checkpoint_restores", "Count", 0),
+        ("sim.debug.o3_trace.checkpoint_restore_tick", "Tick", 0),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
+            "Byte",
+            0,
+        ),
         ("sim.debug.o3_trace.instructions", "Count", 0),
         ("sim.debug.o3_trace.rob_allocations", "Count", 0),
         ("sim.debug.o3_trace.rob_commits", "Count", 0),
