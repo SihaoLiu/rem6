@@ -2813,6 +2813,36 @@ fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn hart1_detailed_o3_debug_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),
+        b_type(8, 0, 5, 0x1),
+        b_type(0, 0, 0, 0x0),
+        m5op(M5_SWITCH_CPU),
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 6, 0x17),
+        i_type(data_start - auipc_pc, 6, 0x0, 6, 0x13),
+        i_type(42, 0, 0x0, 1, 0x13),
+        i_type(7, 0, 0x0, 2, 0x13),
+        0x0220_81b3,
+        0x0220_c1b3,
+        i_type(0, 6, 0b010, 12, 0x03),
+        s_type(4, 12, 6, 0b010),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_scheduled_restore_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     for _ in 0..20 {
@@ -5730,6 +5760,101 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         ("sim.debug.o3_trace.event.rename_writes", "Count", 8),
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 2),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 2),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_labels_hart_targeted_detailed_mode_trace() {
+    let path = hart1_detailed_o3_debug_binary("debug-flags-o3-hart1-detailed-mode-authority");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(
+        trace.len(),
+        1,
+        "only hart 1 should emit O3 trace: {trace:?}"
+    );
+    let record = &trace[0];
+    assert_eq!(json_record_u64(record, "cpu"), 1);
+    assert_eq!(
+        record.get("target").and_then(Value::as_str),
+        Some("cpu1"),
+        "O3 trace should expose the execution-mode target: {record}"
+    );
+    assert_eq!(
+        record.get("execution_mode").and_then(Value::as_str),
+        Some("detailed"),
+        "O3 trace should expose the detailed-mode authority: {record}"
+    );
+    assert_eq!(json_record_u64(record, "fu_integer_mul_instructions"), 1);
+    assert_eq!(json_record_u64(record, "fu_integer_div_instructions"), 1);
+    assert_eq!(json_record_u64(record, "lsq_load_bytes"), 4);
+    assert_eq!(json_record_u64(record, "lsq_store_bytes"), 4);
+
+    let modes = json
+        .pointer("/host_actions/execution_modes")
+        .and_then(Value::as_array)
+        .expect("final execution-mode authority array");
+    assert_eq!(modes.len(), 1, "final execution-mode authority: {modes:?}");
+    assert_eq!(
+        modes[0].pointer("/target").and_then(Value::as_str),
+        Some("cpu1")
+    );
+    assert_eq!(
+        modes[0].pointer("/mode").and_then(Value::as_str),
+        Some("detailed")
+    );
+    assert!(json.pointer("/cores/0/o3_runtime").is_none());
+    assert!(json.pointer("/cores/1/o3_runtime").is_some());
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.instructions", "Count", 9),
+        ("sim.debug.o3_trace.fu_integer_mul_instructions", "Count", 1),
+        ("sim.debug.o3_trace.fu_integer_div_instructions", "Count", 1),
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 4),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 4),
+        ("sim.debug.o3_trace.event.records", "Count", 9),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }

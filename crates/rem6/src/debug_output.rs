@@ -180,7 +180,11 @@ impl Rem6DebugSummary {
             Vec::new()
         };
         let o3_trace = if config.debug_o3_enabled() {
-            o3_trace_records(cluster, config.cores() as u32)
+            o3_trace_records(
+                cluster,
+                config.cores() as u32,
+                &host_actions.execution_modes,
+            )
         } else {
             Vec::new()
         };

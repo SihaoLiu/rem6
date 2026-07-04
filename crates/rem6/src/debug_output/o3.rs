@@ -2,9 +2,13 @@ use rem6_cpu::{
     CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster,
 };
 
+use crate::{formatting::json_escape, Rem6HostExecutionModeSummary};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
     cpu: u32,
+    target: String,
+    execution_mode: Option<&'static str>,
     stats: O3RuntimeStats,
     events: Vec<O3RuntimeTraceRecord>,
 }
@@ -56,9 +60,17 @@ struct Rem6O3TraceTotals {
 }
 
 impl Rem6O3TraceRecord {
-    fn new(cpu: CpuId, stats: O3RuntimeStats, events: Vec<O3RuntimeTraceRecord>) -> Self {
+    fn new(
+        cpu: CpuId,
+        target: String,
+        execution_mode: Option<&'static str>,
+        stats: O3RuntimeStats,
+        events: Vec<O3RuntimeTraceRecord>,
+    ) -> Self {
         Self {
             cpu: cpu.get(),
+            target,
+            execution_mode,
             stats,
             events,
         }
@@ -83,9 +95,15 @@ impl Rem6O3TraceRecord {
             .map(o3_event_to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let execution_mode = self.execution_mode.map_or_else(
+            || "null".to_string(),
+            |mode| format!("\"{}\"", json_escape(mode)),
+        );
         format!(
-            "{{\"cpu\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
+            json_escape(&self.target),
+            execution_mode,
             self.stats.instructions(),
             self.stats.rob_allocations(),
             self.stats.rob_commits(),
@@ -124,7 +142,11 @@ impl Rem6O3TraceStat {
     }
 }
 
-pub(super) fn o3_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6O3TraceRecord> {
+pub(super) fn o3_trace_records(
+    cluster: &RiscvCluster,
+    core_count: u32,
+    execution_modes: &[Rem6HostExecutionModeSummary],
+) -> Vec<Rem6O3TraceRecord> {
     let mut records = Vec::new();
     for cpu_index in 0..core_count {
         let cpu = CpuId::new(cpu_index);
@@ -134,7 +156,18 @@ pub(super) fn o3_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<R
         let stats = core.o3_runtime_stats();
         let events = core.o3_runtime_trace_records();
         if stats.has_activity() || !events.is_empty() {
-            records.push(Rem6O3TraceRecord::new(cpu, stats, events));
+            let target = format!("cpu{}", cpu.get());
+            let execution_mode = execution_modes
+                .iter()
+                .find(|mode| mode.target == target)
+                .map(|mode| mode.mode);
+            records.push(Rem6O3TraceRecord::new(
+                cpu,
+                target,
+                execution_mode,
+                stats,
+                events,
+            ));
         }
     }
     records.sort_by_key(|record| record.cpu());
