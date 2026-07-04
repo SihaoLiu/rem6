@@ -433,8 +433,12 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         || "null".to_string(),
         |class| format!("\"{}\"", class.as_str()),
     );
+    let lsq_load_address =
+        o3_optional_address_to_json(event.lsq_load_address().map(|address| address.get()));
+    let lsq_store_address =
+        o3_optional_address_to_json(event.lsq_store_address().map(|address| address.get()));
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -445,6 +449,8 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.lsq_loads(),
         event.lsq_stores(),
         event.lsq_occupancy(),
+        lsq_load_address,
+        lsq_store_address,
         event.lsq_load_bytes(),
         event.lsq_store_bytes(),
         event.rename_map_entries(),
@@ -453,5 +459,12 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         fu_latency_class,
         event.fu_latency_cycles(),
         event.system_event(),
+    )
+}
+
+fn o3_optional_address_to_json(address: Option<u64>) -> String {
+    address.map_or_else(
+        || "null".to_string(),
+        |address| format!("\"0x{address:x}\""),
     )
 }

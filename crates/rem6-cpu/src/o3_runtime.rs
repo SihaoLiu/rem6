@@ -250,6 +250,8 @@ pub struct O3RuntimeTraceRecord {
     lsq_loads: u64,
     lsq_stores: u64,
     lsq_occupancy: u64,
+    lsq_load_address: Option<Address>,
+    lsq_store_address: Option<Address>,
     lsq_load_bytes: u64,
     lsq_store_bytes: u64,
     rename_map_entries: u64,
@@ -285,6 +287,8 @@ impl O3RuntimeTraceRecord {
         lsq_loads: u64,
         lsq_stores: u64,
         lsq_occupancy: usize,
+        lsq_load_address: Option<Address>,
+        lsq_store_address: Option<Address>,
         lsq_load_bytes: u64,
         lsq_store_bytes: u64,
         rename_map_entries: usize,
@@ -303,6 +307,8 @@ impl O3RuntimeTraceRecord {
             lsq_loads,
             lsq_stores,
             lsq_occupancy: u64::try_from(lsq_occupancy).unwrap_or(u64::MAX),
+            lsq_load_address,
+            lsq_store_address,
             lsq_load_bytes,
             lsq_store_bytes,
             rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
@@ -352,6 +358,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_occupancy(self) -> u64 {
         self.lsq_occupancy
+    }
+
+    pub const fn lsq_load_address(self) -> Option<Address> {
+        self.lsq_load_address
+    }
+
+    pub const fn lsq_store_address(self) -> Option<Address> {
+        self.lsq_store_address
     }
 
     pub const fn lsq_load_bytes(self) -> u64 {
@@ -478,6 +492,10 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_access_bytes)
             .unwrap_or((0, 0));
+        let (lsq_load_address, lsq_store_address) = record
+            .memory_access()
+            .map(o3_lsq_access_addresses)
+            .unwrap_or((None, None));
         let rob_start = self.snapshot.reorder_buffer.len();
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
@@ -506,6 +524,8 @@ impl O3RuntimeState {
             lsq_loads,
             lsq_stores,
             lsq_occupancy,
+            lsq_load_address,
+            lsq_store_address,
             lsq_load_bytes,
             lsq_store_bytes,
             rename_map_entries,
@@ -1288,6 +1308,33 @@ fn o3_lsq_access_bytes(access: &MemoryAccessKind) -> (u64, u64) {
         MemoryAccessKind::AtomicMemory { width, .. } => {
             let bytes = usize_to_u64(width.bytes());
             (bytes, bytes)
+        }
+    }
+}
+
+fn o3_lsq_access_addresses(access: &MemoryAccessKind) -> (Option<Address>, Option<Address>) {
+    match access {
+        MemoryAccessKind::Load { address, .. }
+        | MemoryAccessKind::FloatLoad { address, .. }
+        | MemoryAccessKind::LoadReserved { address, .. }
+        | MemoryAccessKind::VectorLoadUnitStride { address, .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { address, .. }
+        | MemoryAccessKind::VectorLoadStrided { address, .. }
+        | MemoryAccessKind::VectorLoadIndexed { address, .. } => {
+            (Some(Address::new(*address)), None)
+        }
+        MemoryAccessKind::Store { address, .. }
+        | MemoryAccessKind::FloatStore { address, .. }
+        | MemoryAccessKind::StoreConditional { address, .. }
+        | MemoryAccessKind::VectorStoreUnitStride { address, .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { address, .. }
+        | MemoryAccessKind::VectorStoreStrided { address, .. }
+        | MemoryAccessKind::VectorStoreIndexed { address, .. } => {
+            (None, Some(Address::new(*address)))
+        }
+        MemoryAccessKind::AtomicMemory { address, .. } => {
+            let address = Address::new(*address);
+            (Some(address), Some(address))
         }
     }
 }
