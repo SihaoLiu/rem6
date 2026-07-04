@@ -68,11 +68,13 @@ struct Rem6O3TraceTotals {
     event_lsq_ordering_acquire_release: u64,
     event_branches: u64,
     event_branch_taken: u64,
+    event_branch_not_taken: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
     event_branch_link_writes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_taken_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_not_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
@@ -327,6 +329,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_taken = self
             .event_branch_taken
             .saturating_add(u64::from(event.branch_resolved_taken()));
+        self.event_branch_not_taken = self
+            .event_branch_not_taken
+            .saturating_add(u64::from(!event.branch_resolved_taken()));
         self.event_branch_mispredictions = self
             .event_branch_mispredictions
             .saturating_add(u64::from(event.branch_mispredicted()));
@@ -341,6 +346,9 @@ impl Rem6O3TraceTotals {
         if event.branch_resolved_taken() {
             self.event_branch_taken_kinds[index] =
                 self.event_branch_taken_kinds[index].saturating_add(1);
+        } else {
+            self.event_branch_not_taken_kinds[index] =
+                self.event_branch_not_taken_kinds[index].saturating_add(1);
         }
         if event.branch_resolved_target().is_some() {
             self.event_branch_resolved_target_kinds[index] =
@@ -501,6 +509,7 @@ impl Rem6O3TraceTotals {
             ),
             ("event.branches", self.event_branches),
             ("event.branch_taken", self.event_branch_taken),
+            ("event.branch_not_taken", self.event_branch_not_taken),
             (
                 "event.branch_mispredictions",
                 self.event_branch_mispredictions,
@@ -548,6 +557,16 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_taken_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_taken_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_not_taken_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_not_taken_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {
@@ -684,6 +703,21 @@ fn o3_branch_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
         BranchTargetKind::DirectUnconditional => "event.branch_taken_kind.direct_unconditional",
         BranchTargetKind::IndirectConditional => "event.branch_taken_kind.indirect_conditional",
         BranchTargetKind::IndirectUnconditional => "event.branch_taken_kind.indirect_unconditional",
+    }
+}
+
+fn o3_branch_not_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_not_taken_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_not_taken_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_not_taken_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_not_taken_kind.call_indirect",
+        BranchTargetKind::DirectConditional => "event.branch_not_taken_kind.direct_conditional",
+        BranchTargetKind::DirectUnconditional => "event.branch_not_taken_kind.direct_unconditional",
+        BranchTargetKind::IndirectConditional => "event.branch_not_taken_kind.indirect_conditional",
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_not_taken_kind.indirect_unconditional"
+        }
     }
 }
 
