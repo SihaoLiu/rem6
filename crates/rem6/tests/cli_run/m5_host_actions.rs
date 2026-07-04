@@ -908,6 +908,138 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
+    let path = multicore_hart1_detailed_o3_binary("m5-switch-cpu-hart1-detailed-o3-authority");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/cores")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu1",
+        None,
+        "detailed",
+        "execution-mode-switch-cpu1",
+    );
+    let execution_modes = host_actions
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing final execution-mode authority: {host_actions}"));
+    assert_eq!(
+        execution_modes.len(),
+        1,
+        "only hart 1 should own detailed execution-mode authority: {execution_modes:?}"
+    );
+    assert_eq!(
+        execution_modes[0]
+            .pointer("/target")
+            .and_then(Value::as_str),
+        Some("cpu1"),
+        "final execution-mode authority should target hart 1: {execution_modes:?}"
+    );
+    assert_eq!(
+        execution_modes[0].pointer("/mode").and_then(Value::as_str),
+        Some("detailed"),
+        "final execution-mode authority should keep hart 1 detailed: {execution_modes:?}"
+    );
+
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let cpu0_o3 = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
+    let cpu1_o3 = checkpoint_chunk_checksum(host_actions, 0, "cpu1", "o3-runtime-state");
+    assert_ne!(
+        cpu1_o3, cpu0_o3,
+        "hart 1 detailed O3 checkpoint payload should diverge from functional hart 0"
+    );
+    assert_json_stat_absent(&json, "sim.cpu0.o3.instructions");
+    assert_json_stat_at_least(&json, "sim.cpu1.o3.instructions", "Count", 8, "monotonic");
+    assert_json_stat_at_least(&json, "sim.cpu1.o3.lsq_load_bytes", "Byte", 4, "monotonic");
+    assert_json_stat_at_least(&json, "sim.cpu1.o3.lsq_store_bytes", "Byte", 4, "monotonic");
+    assert_json_stat_at_least(
+        &json,
+        "sim.cpu1.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_at_least(
+        &json,
+        "sim.cpu1.o3.fu_integer_div_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    let core0 = json
+        .pointer("/cores/0")
+        .unwrap_or_else(|| panic!("missing core 0 summary: {json}"));
+    let core1_o3 = json
+        .pointer("/cores/1/o3_runtime")
+        .unwrap_or_else(|| panic!("missing hart 1 O3 runtime summary: {json}"));
+    assert!(
+        core0.pointer("/o3_runtime").is_none(),
+        "functional hart 0 should not emit O3 runtime state: {core0}"
+    );
+    assert!(
+        core1_o3
+            .pointer("/instructions")
+            .and_then(Value::as_u64)
+            .is_some_and(|instructions| instructions >= 8),
+        "hart 1 O3 runtime should record detailed instructions: {core1_o3}"
+    );
+}
+
+#[test]
 fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
     let path = detailed_o3_dump_stats_binary("m5-switch-cpu-detailed-o3-dump-runtime-stats");
 
@@ -2657,6 +2789,37 @@ fn detailed_o3_runtime_stats_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 6, 0x17),                             // auipc x6, 0
+        i_type(data_start - auipc_pc, 6, 0x0, 6, 0x13), // addi x6, x6, data
+        i_type(42, 0, 0x0, 1, 0x13),                    // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),                     // addi x2, x0, 7
+        0x0220_81b3,                                    // mul x3, x1, x2
+        0x0220_c1b3,                                    // div x3, x1, x2
+        i_type(0, 6, 0b010, 12, 0x03),                  // lw x12, 0(x6)
+        s_type(4, 12, 6, 0b010),                        // sw x12, 4(x6)
+        m5op(M5_CHECKPOINT),                            // checkpoint cpu1 O3 runtime state
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
@@ -3354,6 +3517,40 @@ fn assert_json_stat(json: &Value, path: &str, unit: &str, value: u64, reset_poli
         sample.pointer("/value").and_then(Value::as_u64),
         Some(value),
         "unexpected value for {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/reset_policy").and_then(Value::as_str),
+        Some(reset_policy),
+        "unexpected reset policy for {path}: {sample}"
+    );
+}
+
+fn assert_json_stat_at_least(
+    json: &Value,
+    path: &str,
+    unit: &str,
+    minimum: u64,
+    reset_policy: &str,
+) {
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    let sample = stats
+        .iter()
+        .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        .unwrap_or_else(|| panic!("missing stat path {path} in {stats:?}"));
+    assert_eq!(
+        sample.pointer("/unit").and_then(Value::as_str),
+        Some(unit),
+        "unexpected unit for {path}: {sample}"
+    );
+    assert!(
+        sample
+            .pointer("/value")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value >= minimum),
+        "expected {path} to be at least {minimum}: {sample}"
     );
     assert_eq!(
         sample.pointer("/reset_policy").and_then(Value::as_str),

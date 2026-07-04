@@ -99,7 +99,7 @@ pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 pub(crate) use host_actions::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
     Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
     Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
     Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,

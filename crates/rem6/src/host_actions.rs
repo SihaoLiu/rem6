@@ -21,6 +21,7 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) checkpoint_restored_component_count: u64,
     pub(crate) checkpoint_restored_chunk_count: u64,
     pub(crate) checkpoint_restored_payload_bytes: u64,
+    pub(crate) execution_modes: Vec<Rem6HostExecutionModeSummary>,
     pub(crate) execution_mode_switch_count: u64,
     pub(crate) execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
     pub(crate) stops: Vec<Rem6HostStopActionSummary>,
@@ -224,6 +225,12 @@ pub(crate) struct Rem6HostExecutionModeSwitchSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostExecutionModeSummary {
+    pub(crate) target: String,
+    pub(crate) mode: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) manifest_label: String,
     pub(crate) manifest_tick: u64,
@@ -309,9 +316,17 @@ pub(crate) fn host_action_summary(
     if let Some(error) = controller.action_errors().first() {
         return Err(format!("host action failed: {error}"));
     }
-    Ok(Rem6HostActionSummary::from_outcomes(
-        controller.run().action_outcomes(),
-    ))
+    let mut summary = Rem6HostActionSummary::from_outcomes(controller.run().action_outcomes());
+    summary.execution_modes = controller
+        .executor()
+        .execution_modes()
+        .iter()
+        .map(|(target, mode)| Rem6HostExecutionModeSummary {
+            target: target.as_str().to_string(),
+            mode: execution_mode_name(*mode),
+        })
+        .collect();
+    Ok(summary)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
