@@ -71,6 +71,7 @@ struct Rem6O3TraceTotals {
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_squash_kinds: [u64; BranchTargetKind::COUNT],
     event_lsq_load_bytes: u64,
     event_lsq_store_bytes: u64,
@@ -330,6 +331,10 @@ impl Rem6O3TraceTotals {
             .saturating_add(u64::from(event.branch_squash()));
         let index = event.branch_kind().index();
         self.event_branch_kinds[index] = self.event_branch_kinds[index].saturating_add(1);
+        if event.branch_mispredicted() {
+            self.event_branch_misprediction_kinds[index] =
+                self.event_branch_misprediction_kinds[index].saturating_add(1);
+        }
         if event.branch_squash() {
             self.event_branch_squash_kinds[index] =
                 self.event_branch_squash_kinds[index].saturating_add(1);
@@ -520,6 +525,16 @@ impl Rem6O3TraceTotals {
                 continue;
             }
             stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_misprediction_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_misprediction_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
                 suffix: o3_branch_squash_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_squash_kinds[kind.index()],
@@ -606,6 +621,25 @@ fn o3_branch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
         BranchTargetKind::DirectUnconditional => "event.branch_kind.direct_unconditional",
         BranchTargetKind::IndirectConditional => "event.branch_kind.indirect_conditional",
         BranchTargetKind::IndirectUnconditional => "event.branch_kind.indirect_unconditional",
+    }
+}
+
+fn o3_branch_misprediction_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_misprediction_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_misprediction_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_misprediction_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_misprediction_kind.call_indirect",
+        BranchTargetKind::DirectConditional => "event.branch_misprediction_kind.direct_conditional",
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_misprediction_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_misprediction_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_misprediction_kind.indirect_unconditional"
+        }
     }
 }
 
