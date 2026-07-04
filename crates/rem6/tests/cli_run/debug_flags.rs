@@ -2777,6 +2777,25 @@ fn detailed_o3_vector_memory_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_atomic_lsq_debug_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 5, 0x17),
+        i_type(60, 5, 0x0, 5, 0x13),
+        i_type(5, 0, 0x0, 6, 0x13),
+        atomic_type(0x00, false, false, 6, 5, 0x3, 7),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([9, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
@@ -5329,6 +5348,8 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
     assert_o3_event(&events[3], 3, "0x80000010", 1, 1, 0, false);
     assert_o3_event(&events[4], 4, "0x80000014", 0, 0, 1, false);
     assert_o3_event(&events[5], 5, "0x80000018", 0, 0, 0, true);
+    assert_eq!(json_record_str(&events[3], "lsq_operation"), "load");
+    assert_eq!(json_record_str(&events[4], "lsq_operation"), "store");
 
     assert_stat(&stdout, "sim.debug.flags", "Count", 1, "constant");
     for (path, unit, value) in [
@@ -5370,6 +5391,8 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.event.rename_writes", "Count", 4),
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 1),
+        ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 1),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -5436,6 +5459,7 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
         .unwrap_or_else(|| panic!("missing vector load O3 event: {events:?}"));
     assert_eq!(json_record_u64(vector_load, "rename_writes"), 1);
     assert_eq!(json_record_u64(vector_load, "lsq_loads"), 1);
+    assert_eq!(json_record_str(vector_load, "lsq_operation"), "vector_load");
     assert_eq!(json_record_u64(vector_load, "lsq_load_bytes"), 8);
     assert_eq!(json_record_u64(vector_load, "lsq_stores"), 0);
     assert_eq!(json_record_u64(vector_load, "lsq_store_bytes"), 0);
@@ -5448,6 +5472,10 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
     assert_eq!(json_record_u64(vector_store, "lsq_loads"), 0);
     assert_eq!(json_record_u64(vector_store, "lsq_load_bytes"), 0);
     assert_eq!(json_record_u64(vector_store, "lsq_stores"), 1);
+    assert_eq!(
+        json_record_str(vector_store, "lsq_operation"),
+        "vector_store"
+    );
     assert_eq!(json_record_u64(vector_store, "lsq_store_bytes"), 8);
 
     for (path, unit, value) in [
@@ -5457,6 +5485,109 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
         ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store",
+            "Count",
+            1,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
+    let path = detailed_o3_atomic_lsq_debug_binary("debug-flags-o3-atomic-lsq-operation");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    for (field, value) in [
+        ("instructions", 5),
+        ("rename_writes", 4),
+        ("lsq_loads", 1),
+        ("lsq_stores", 1),
+        ("lsq_load_bytes", 8),
+        ("lsq_store_bytes", 8),
+        ("store_load_forwarding_candidates", 0),
+        ("store_load_forwarding_matches", 0),
+        ("max_lsq_occupancy", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(record, field),
+            value,
+            "O3 atomic trace field {field}"
+        );
+    }
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert_eq!(events.len(), 5);
+    let atomic = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
+        .unwrap_or_else(|| panic!("missing atomic O3 event: {events:?}"));
+    assert_eq!(json_record_str(atomic, "lsq_operation"), "atomic");
+    assert_eq!(json_record_u64(atomic, "rename_writes"), 1);
+    assert_eq!(json_record_u64(atomic, "lsq_loads"), 1);
+    assert_eq!(json_record_u64(atomic, "lsq_stores"), 1);
+    assert_eq!(json_record_u64(atomic, "lsq_occupancy"), 2);
+    assert_eq!(json_record_u64(atomic, "lsq_load_bytes"), 8);
+    assert_eq!(json_record_u64(atomic, "lsq_store_bytes"), 8);
+    assert_eq!(json_record_str(atomic, "lsq_load_address"), "0x80000040");
+    assert_eq!(json_record_str(atomic, "lsq_store_address"), "0x80000040");
+    assert_eq!(
+        json_record_bool(atomic, "store_load_forwarding_candidate"),
+        false
+    );
+    assert_eq!(
+        json_record_bool(atomic, "store_load_forwarding_match"),
+        false
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
+        ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 1),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -6186,6 +6317,39 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.rename_writes", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 0),
+        ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 0),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional",
+            "Count",
+            0,
+        ),
+        ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 0),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_load",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store",
+            "Count",
+            0,
+        ),
         ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 0),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 0),
         ("sim.debug.o3_trace.event.fu_latency_cycles", "Cycle", 0),

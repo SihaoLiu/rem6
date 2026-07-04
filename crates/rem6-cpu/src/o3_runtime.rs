@@ -250,6 +250,7 @@ pub struct O3RuntimeTraceRecord {
     lsq_loads: u64,
     lsq_stores: u64,
     lsq_occupancy: u64,
+    lsq_operation: O3RuntimeLsqOperation,
     lsq_load_address: Option<Address>,
     lsq_store_address: Option<Address>,
     lsq_load_bytes: u64,
@@ -268,11 +269,42 @@ pub enum O3RuntimeFuLatencyClass {
     ScalarIntegerDiv,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3RuntimeLsqOperation {
+    None,
+    Load,
+    Store,
+    LoadReserved,
+    StoreConditional,
+    Atomic,
+    FloatLoad,
+    FloatStore,
+    VectorLoad,
+    VectorStore,
+}
+
 impl O3RuntimeFuLatencyClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ScalarIntegerMul => "scalar_integer_mul",
             Self::ScalarIntegerDiv => "scalar_integer_div",
+        }
+    }
+}
+
+impl O3RuntimeLsqOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Load => "load",
+            Self::Store => "store",
+            Self::LoadReserved => "load_reserved",
+            Self::StoreConditional => "store_conditional",
+            Self::Atomic => "atomic",
+            Self::FloatLoad => "float_load",
+            Self::FloatStore => "float_store",
+            Self::VectorLoad => "vector_load",
+            Self::VectorStore => "vector_store",
         }
     }
 }
@@ -287,6 +319,7 @@ impl O3RuntimeTraceRecord {
         lsq_loads: u64,
         lsq_stores: u64,
         lsq_occupancy: usize,
+        lsq_operation: O3RuntimeLsqOperation,
         lsq_load_address: Option<Address>,
         lsq_store_address: Option<Address>,
         lsq_load_bytes: u64,
@@ -307,6 +340,7 @@ impl O3RuntimeTraceRecord {
             lsq_loads,
             lsq_stores,
             lsq_occupancy: u64::try_from(lsq_occupancy).unwrap_or(u64::MAX),
+            lsq_operation,
             lsq_load_address,
             lsq_store_address,
             lsq_load_bytes,
@@ -358,6 +392,10 @@ impl O3RuntimeTraceRecord {
 
     pub const fn lsq_occupancy(self) -> u64 {
         self.lsq_occupancy
+    }
+
+    pub const fn lsq_operation(self) -> O3RuntimeLsqOperation {
+        self.lsq_operation
     }
 
     pub const fn lsq_load_address(self) -> Option<Address> {
@@ -488,6 +526,10 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_access_counts)
             .unwrap_or((0, 0));
+        let lsq_operation = record
+            .memory_access()
+            .map(o3_lsq_operation)
+            .unwrap_or(O3RuntimeLsqOperation::None);
         let (lsq_load_bytes, lsq_store_bytes) = record
             .memory_access()
             .map(o3_lsq_access_bytes)
@@ -524,6 +566,7 @@ impl O3RuntimeState {
             lsq_loads,
             lsq_stores,
             lsq_occupancy,
+            lsq_operation,
             lsq_load_address,
             lsq_store_address,
             lsq_load_bytes,
@@ -1284,6 +1327,26 @@ const fn o3_lsq_access_counts(access: &MemoryAccessKind) -> (u64, u64) {
         | MemoryAccessKind::VectorStoreStrided { .. }
         | MemoryAccessKind::VectorStoreIndexed { .. } => (0, 1),
         MemoryAccessKind::AtomicMemory { .. } => (1, 1),
+    }
+}
+
+const fn o3_lsq_operation(access: &MemoryAccessKind) -> O3RuntimeLsqOperation {
+    match access {
+        MemoryAccessKind::Load { .. } => O3RuntimeLsqOperation::Load,
+        MemoryAccessKind::Store { .. } => O3RuntimeLsqOperation::Store,
+        MemoryAccessKind::LoadReserved { .. } => O3RuntimeLsqOperation::LoadReserved,
+        MemoryAccessKind::StoreConditional { .. } => O3RuntimeLsqOperation::StoreConditional,
+        MemoryAccessKind::AtomicMemory { .. } => O3RuntimeLsqOperation::Atomic,
+        MemoryAccessKind::FloatLoad { .. } => O3RuntimeLsqOperation::FloatLoad,
+        MemoryAccessKind::FloatStore { .. } => O3RuntimeLsqOperation::FloatStore,
+        MemoryAccessKind::VectorLoadUnitStride { .. }
+        | MemoryAccessKind::VectorLoadSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorLoadStrided { .. }
+        | MemoryAccessKind::VectorLoadIndexed { .. } => O3RuntimeLsqOperation::VectorLoad,
+        MemoryAccessKind::VectorStoreUnitStride { .. }
+        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
+        | MemoryAccessKind::VectorStoreStrided { .. }
+        | MemoryAccessKind::VectorStoreIndexed { .. } => O3RuntimeLsqOperation::VectorStore,
     }
 }
 

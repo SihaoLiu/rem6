@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster,
+    CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeStats, O3RuntimeTraceRecord,
+    RiscvCluster,
 };
 
 use crate::{formatting::json_escape, Rem6HostExecutionModeSummary};
@@ -53,6 +54,15 @@ struct Rem6O3TraceTotals {
     event_rename_writes: u64,
     event_lsq_loads: u64,
     event_lsq_stores: u64,
+    event_lsq_operation_load: u64,
+    event_lsq_operation_store: u64,
+    event_lsq_operation_load_reserved: u64,
+    event_lsq_operation_store_conditional: u64,
+    event_lsq_operation_atomic: u64,
+    event_lsq_operation_float_load: u64,
+    event_lsq_operation_float_store: u64,
+    event_lsq_operation_vector_load: u64,
+    event_lsq_operation_vector_store: u64,
     event_lsq_load_bytes: u64,
     event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
@@ -255,6 +265,7 @@ impl Rem6O3TraceTotals {
                 .saturating_add(event.rename_writes());
             self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
+            self.add_event_lsq_operation(event.lsq_operation());
             self.event_lsq_load_bytes = self
                 .event_lsq_load_bytes
                 .saturating_add(event.lsq_load_bytes());
@@ -288,6 +299,45 @@ impl Rem6O3TraceTotals {
                     }
                     None => {}
                 }
+            }
+        }
+    }
+
+    fn add_event_lsq_operation(&mut self, operation: O3RuntimeLsqOperation) {
+        match operation {
+            O3RuntimeLsqOperation::None => {}
+            O3RuntimeLsqOperation::Load => {
+                self.event_lsq_operation_load = self.event_lsq_operation_load.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::Store => {
+                self.event_lsq_operation_store = self.event_lsq_operation_store.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::LoadReserved => {
+                self.event_lsq_operation_load_reserved =
+                    self.event_lsq_operation_load_reserved.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::StoreConditional => {
+                self.event_lsq_operation_store_conditional =
+                    self.event_lsq_operation_store_conditional.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::Atomic => {
+                self.event_lsq_operation_atomic = self.event_lsq_operation_atomic.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::FloatLoad => {
+                self.event_lsq_operation_float_load =
+                    self.event_lsq_operation_float_load.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::FloatStore => {
+                self.event_lsq_operation_float_store =
+                    self.event_lsq_operation_float_store.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::VectorLoad => {
+                self.event_lsq_operation_vector_load =
+                    self.event_lsq_operation_vector_load.saturating_add(1);
+            }
+            O3RuntimeLsqOperation::VectorStore => {
+                self.event_lsq_operation_vector_store =
+                    self.event_lsq_operation_vector_store.saturating_add(1);
             }
         }
     }
@@ -334,6 +384,36 @@ impl Rem6O3TraceTotals {
             ("event.rename_writes", self.event_rename_writes),
             ("event.lsq_loads", self.event_lsq_loads),
             ("event.lsq_stores", self.event_lsq_stores),
+            ("event.lsq_operation.load", self.event_lsq_operation_load),
+            ("event.lsq_operation.store", self.event_lsq_operation_store),
+            (
+                "event.lsq_operation.load_reserved",
+                self.event_lsq_operation_load_reserved,
+            ),
+            (
+                "event.lsq_operation.store_conditional",
+                self.event_lsq_operation_store_conditional,
+            ),
+            (
+                "event.lsq_operation.atomic",
+                self.event_lsq_operation_atomic,
+            ),
+            (
+                "event.lsq_operation.float_load",
+                self.event_lsq_operation_float_load,
+            ),
+            (
+                "event.lsq_operation.float_store",
+                self.event_lsq_operation_float_store,
+            ),
+            (
+                "event.lsq_operation.vector_load",
+                self.event_lsq_operation_vector_load,
+            ),
+            (
+                "event.lsq_operation.vector_store",
+                self.event_lsq_operation_vector_store,
+            ),
             (
                 "event.store_load_forwarding_candidates",
                 self.event_store_load_forwarding_candidates,
@@ -438,7 +518,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
     let lsq_store_address =
         o3_optional_address_to_json(event.lsq_store_address().map(|address| address.get()));
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -449,6 +529,7 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.lsq_loads(),
         event.lsq_stores(),
         event.lsq_occupancy(),
+        event.lsq_operation().as_str(),
         lsq_load_address,
         lsq_store_address,
         event.lsq_load_bytes(),
