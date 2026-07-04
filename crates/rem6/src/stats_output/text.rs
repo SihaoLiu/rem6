@@ -51,6 +51,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_work_item_duration_alias_stats(output, snapshot);
     append_gem5_in_order_pipeline_alias_stats(output, snapshot);
     append_gem5_branch_prediction_alias_stats(output, snapshot);
+    append_gem5_o3_iq_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
     append_gem5_l1_prefetcher_formula_alias_stats(output, snapshot);
     append_gem5_ruby_network_alias_stats(output, snapshot);
@@ -601,6 +602,28 @@ fn append_gem5_branch_predictor_family_alias_stats(
                 &format!("{alias_prefix}.branchPred.{family}.{field}"),
                 "Count",
             );
+        }
+    }
+}
+
+fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let Some(core_count) = snapshot_value(snapshot, "sim.cores") else {
+        return;
+    };
+    for cpu in 0..core_count {
+        let alias_prefix = gem5_cpu_alias_prefix(core_count, cpu);
+        for (op_class, source_name) in [
+            ("IntMult", "fu_integer_mul_instructions"),
+            ("IntDiv", "fu_integer_div_instructions"),
+        ] {
+            let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
+            if let Some(value) = snapshot_value(snapshot, &source_path) {
+                append_derived_count_stat(
+                    output,
+                    &format!("{alias_prefix}.iq.issuedInstType_0::{op_class}"),
+                    value,
+                );
+            }
         }
     }
 }
