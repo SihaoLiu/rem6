@@ -21,6 +21,8 @@ pub struct O3RuntimeTraceRecord {
     lsq_load_bytes: u64,
     lsq_store_bytes: u64,
     lsq_store_conditional_failed: bool,
+    lsq_data_response_tick: u64,
+    lsq_data_latency_ticks: u64,
     rename_map_entries: u64,
     store_load_forwarding_candidate: bool,
     store_load_forwarding_match: bool,
@@ -134,6 +136,8 @@ impl O3RuntimeTraceRecord {
         lsq_load_bytes: u64,
         lsq_store_bytes: u64,
         lsq_store_conditional_failed: bool,
+        lsq_data_response_tick: u64,
+        lsq_data_latency_ticks: u64,
         rename_map_entries: usize,
         branch_kind: BranchTargetKind,
         branch_predicted_taken: bool,
@@ -164,6 +168,8 @@ impl O3RuntimeTraceRecord {
             lsq_load_bytes,
             lsq_store_bytes,
             lsq_store_conditional_failed,
+            lsq_data_response_tick,
+            lsq_data_latency_ticks,
             rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
             store_load_forwarding_candidate: false,
             store_load_forwarding_match: false,
@@ -257,6 +263,19 @@ impl O3RuntimeTraceRecord {
 
     pub(crate) fn set_lsq_store_conditional_failed(&mut self, failed: bool) {
         self.lsq_store_conditional_failed = failed;
+    }
+
+    pub const fn lsq_data_response_tick(self) -> u64 {
+        self.lsq_data_response_tick
+    }
+
+    pub const fn lsq_data_latency_ticks(self) -> u64 {
+        self.lsq_data_latency_ticks
+    }
+
+    pub(crate) fn set_lsq_data_response(&mut self, response_tick: u64, latency_ticks: u64) {
+        self.lsq_data_response_tick = response_tick;
+        self.lsq_data_latency_ticks = latency_ticks;
     }
 
     pub const fn rename_map_entries(self) -> u64 {

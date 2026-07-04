@@ -249,7 +249,7 @@ pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
     trace_records: Vec<O3RuntimeTraceRecord>,
-    trace_store_conditional_sequences: BTreeMap<MemoryRequestId, u64>,
+    trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
     next_sequence: u64,
     next_physical_register: u32,
@@ -262,7 +262,7 @@ impl O3RuntimeState {
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
         self.trace_records.clear();
-        self.trace_store_conditional_sequences.clear();
+        self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         Ok(())
     }
@@ -289,28 +289,37 @@ impl O3RuntimeState {
         &self.trace_records
     }
 
-    pub(crate) fn record_data_access_outcome(&mut self, execution: &RiscvCpuExecutionEvent) {
+    #[cfg(test)]
+    pub(crate) fn pending_trace_data_access_outcomes(&self) -> usize {
+        self.trace_data_access_sequences.len()
+    }
+
+    pub(crate) fn record_data_access_outcome(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        response_tick: u64,
+        latency_ticks: u64,
+    ) {
         let Some(sequence) = self
-            .trace_store_conditional_sequences
+            .trace_data_access_sequences
             .remove(&execution.fetch().request_id())
         else {
             return;
         };
-        if !o3_store_conditional_failed(execution) {
-            return;
+        self.mark_trace_data_access_outcome(sequence, response_tick, latency_ticks);
+        if o3_store_conditional_failed(execution) {
+            self.mark_trace_store_conditional_failed(sequence);
         }
-        self.mark_trace_store_conditional_failed(sequence);
     }
 
     pub(crate) fn discard_data_access_outcome(&mut self, fetch_request: MemoryRequestId) {
-        self.trace_store_conditional_sequences
-            .remove(&fetch_request);
+        self.trace_data_access_sequences.remove(&fetch_request);
     }
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.trace_records.clear();
-        self.trace_store_conditional_sequences.clear();
+        self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
 
@@ -331,7 +340,7 @@ impl O3RuntimeState {
         );
         trace_record.set_store_load_forwarding(observation.candidate, observation.matched);
         if trace_enabled {
-            self.record_trace_store_conditional_sequence(execution, trace_record.sequence());
+            self.record_trace_data_access_sequence(execution, trace_record.sequence());
             self.trace_records.push(trace_record);
         }
     }
@@ -413,6 +422,8 @@ impl O3RuntimeState {
             lsq_load_bytes,
             lsq_store_bytes,
             o3_store_conditional_failed(execution),
+            0,
+            0,
             rename_map_entries,
             branch_kind,
             branch_predicted_taken,
@@ -575,17 +586,29 @@ impl O3RuntimeState {
         }
     }
 
-    fn record_trace_store_conditional_sequence(
+    fn record_trace_data_access_sequence(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         trace_sequence: u64,
     ) {
-        if matches!(
-            execution.execution().memory_access(),
-            Some(MemoryAccessKind::StoreConditional { .. })
-        ) {
-            self.trace_store_conditional_sequences
+        if execution.execution().memory_access().is_some() {
+            self.trace_data_access_sequences
                 .insert(execution.fetch().request_id(), trace_sequence);
+        }
+    }
+
+    fn mark_trace_data_access_outcome(
+        &mut self,
+        sequence: u64,
+        response_tick: u64,
+        latency_ticks: u64,
+    ) {
+        if let Some(record) = self
+            .trace_records
+            .iter_mut()
+            .find(|record| record.sequence() == sequence)
+        {
+            record.set_lsq_data_response(response_tick, latency_ticks);
         }
     }
 
@@ -628,7 +651,7 @@ impl Default for O3RuntimeState {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
             trace_records: Vec::new(),
-            trace_store_conditional_sequences: BTreeMap::new(),
+            trace_data_access_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             next_sequence: 0,
             next_physical_register: 1,
@@ -1367,12 +1390,16 @@ mod tests {
         runtime.record_retired_instruction_with_trace(&first, true);
         runtime.record_retired_instruction_with_trace(&second, true);
         first.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
-        runtime.record_data_access_outcome(&first);
+        runtime.record_data_access_outcome(&first, 41, 7);
 
         let trace = runtime.trace_records();
         assert_eq!(trace.len(), 2);
         assert!(trace[0].lsq_store_conditional_failed());
+        assert_eq!(trace[0].lsq_data_response_tick(), 41);
+        assert_eq!(trace[0].lsq_data_latency_ticks(), 7);
         assert!(!trace[1].lsq_store_conditional_failed());
+        assert_eq!(trace[1].lsq_data_response_tick(), 0);
+        assert_eq!(trace[1].lsq_data_latency_ticks(), 0);
     }
 
     #[test]
@@ -1381,14 +1408,16 @@ mod tests {
         let mut event = store_conditional_event(0x8000, 10);
 
         runtime.record_retired_instruction_with_trace(&event, true);
-        assert_eq!(runtime.trace_store_conditional_sequences.len(), 1);
+        assert_eq!(runtime.trace_data_access_sequences.len(), 1);
 
         runtime.discard_data_access_outcome(event.fetch().request_id());
-        assert!(runtime.trace_store_conditional_sequences.is_empty());
+        assert!(runtime.trace_data_access_sequences.is_empty());
 
         event.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
-        runtime.record_data_access_outcome(&event);
+        runtime.record_data_access_outcome(&event, 41, 7);
         assert!(!runtime.trace_records()[0].lsq_store_conditional_failed());
+        assert_eq!(runtime.trace_records()[0].lsq_data_response_tick(), 0);
+        assert_eq!(runtime.trace_records()[0].lsq_data_latency_ticks(), 0);
     }
 
     fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {

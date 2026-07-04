@@ -4560,6 +4560,82 @@ fn o3_event_u64s(events: &[Value], field: &str) -> Vec<u64> {
         .collect()
 }
 
+#[derive(Debug)]
+struct O3LsqDataLatencyTrace {
+    stdout: String,
+    memory_system: Option<String>,
+    load_event_tick: u64,
+    load_response_tick: u64,
+    load_latency: u64,
+    store_event_tick: u64,
+    store_response_tick: u64,
+    store_latency: u64,
+    event_latency_sum: u64,
+}
+
+fn o3_lsq_data_latency_trace(path: &Path, memory_system: Option<&str>) -> O3LsqDataLatencyTrace {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "260",
+        "--stats-format",
+        "json",
+        "--execute",
+        "--debug-flags",
+        "O3",
+    ]);
+    if let Some(memory_system) = memory_system {
+        command.args(["--memory-system", memory_system]);
+    }
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    let by_pc = |pc: &str| {
+        trace
+            .iter()
+            .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+            .unwrap_or_else(|| panic!("missing O3 event at {pc}: {trace:?}"))
+    };
+    let load = by_pc("0x80000010");
+    let store = by_pc("0x80000014");
+    let load_event_tick = json_record_u64(load, "tick");
+    let load_response_tick = json_record_u64(load, "lsq_data_response_tick");
+    let load_latency = json_record_u64(load, "lsq_data_latency_ticks");
+    let store_event_tick = json_record_u64(store, "tick");
+    let store_response_tick = json_record_u64(store, "lsq_data_response_tick");
+    let store_latency = json_record_u64(store, "lsq_data_latency_ticks");
+
+    O3LsqDataLatencyTrace {
+        stdout,
+        memory_system: json
+            .pointer("/simulation/memory_system")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        load_event_tick,
+        load_response_tick,
+        load_latency,
+        store_event_tick,
+        store_response_tick,
+        store_latency,
+        event_latency_sum: load_latency + store_latency,
+    }
+}
+
 fn json_record_u64(record: &Value, field: &str) -> u64 {
     record
         .get(field)
@@ -5805,6 +5881,39 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
+    let path = detailed_o3_runtime_debug_binary("debug-flags-o3-lsq-data-latency");
+    let direct = o3_lsq_data_latency_trace(&path, Some("direct"));
+    let cache = o3_lsq_data_latency_trace(&path, None);
+
+    assert_eq!(direct.memory_system.as_deref(), Some("direct"));
+    assert_eq!(cache.memory_system.as_deref(), Some("cache-fabric-dram"));
+    for trace in [&direct, &cache] {
+        assert!(trace.load_latency > 0, "{trace:?}");
+        assert!(trace.store_latency > 0, "{trace:?}");
+        assert!(
+            trace.load_response_tick > trace.load_event_tick,
+            "{trace:?}"
+        );
+        assert!(
+            trace.store_response_tick > trace.store_event_tick,
+            "{trace:?}"
+        );
+        assert_stat(
+            &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_data_latency_ticks",
+            "Tick",
+            trace.event_latency_sum,
+            "monotonic",
+        );
+    }
+    assert!(
+        cache.event_latency_sum >= direct.event_latency_sum,
+        "cache-backed O3 LSQ latency should include at least the direct-path latency: direct={direct:?}, cache={cache:?}"
+    );
 }
 
 #[test]
@@ -9461,6 +9570,7 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
+        ("sim.debug.o3_trace.event.lsq_data_latency_ticks", "Tick", 0),
         ("sim.debug.o3_trace.event.max_rob_occupancy", "Count", 0),
         ("sim.debug.o3_trace.event.max_lsq_occupancy", "Count", 0),
         (

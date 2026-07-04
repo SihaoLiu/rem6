@@ -512,12 +512,18 @@ impl RiscvCore {
             }
             ResponseStatus::Retry => {
                 state
+                    .o3_runtime
+                    .discard_data_access_outcome(access.fetch_request);
+                state
                     .data_events
                     .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
             }
             ResponseStatus::StoreConditionalFailed => {
                 let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
                     debug_assert!(false, "store-conditional failure for non-SC access");
+                    state
+                        .o3_runtime
+                        .discard_data_access_outcome(access.fetch_request);
                     state
                         .data_events
                         .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
@@ -622,16 +628,18 @@ fn record_data_retire_cycle(
         return;
     };
     state.events[index].set_data_access_event_kind(kind);
+    let data_wait_cycles = completion_tick.saturating_sub(access.tick);
     let completed_event = state.events[index].clone();
-    state
-        .o3_runtime
-        .record_data_access_outcome(&completed_event);
+    state.o3_runtime.record_data_access_outcome(
+        &completed_event,
+        completion_tick,
+        data_wait_cycles,
+    );
     if state.events[index].in_order_pipeline_cycle().is_some()
         || !state.events[index].counts_as_retired_instruction()
     {
         return;
     }
-    let data_wait_cycles = completion_tick.saturating_sub(access.tick);
     let attributed_data_wait_cycles = retag_existing_fetch_wait_cycles_for_data_access(
         state,
         access.fetch_request,
@@ -1106,6 +1114,156 @@ fn record_load_completion(
         state
             .o3_runtime
             .record_completed_load_data(access.fetch_request, &access.access, data);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord};
+    use rem6_kernel::PartitionedScheduler;
+    use rem6_memory::{AgentId, MemoryResponse};
+    use rem6_transport::{
+        MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+    };
+
+    use super::*;
+    use crate::{
+        CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState,
+        RiscvCpuExecutionEvent,
+    };
+
+    #[test]
+    fn retry_response_discards_pending_o3_trace_data_access_outcome() {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = RiscvCore::with_data(
+            cpu_core(fetch_route, 0x8000),
+            CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        );
+        let instruction = rem6_isa_riscv::RiscvInstruction::Load {
+            rd: reg(5),
+            rs1: reg(2),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let access = MemoryAccessKind::Load {
+            rd: reg(5),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let event = RiscvCpuExecutionEvent::new(
+            fetch_event(0x8000, 1),
+            instruction,
+            RiscvExecutionRecord::new(instruction, 0x8000, 0x8004, Vec::new(), Some(access)),
+        );
+        core.record_o3_retired_instruction_with_trace(&event, true);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state.events.push(event);
+            assert_eq!(state.o3_runtime.pending_trace_data_access_outcomes(), 1);
+        }
+
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
+        )
+        .unwrap()
+        .unwrap();
+        scheduler.run_until_idle_conservative();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.outstanding_data.is_empty());
+        assert_eq!(state.o3_runtime.pending_trace_data_access_outcomes(), 0);
+        let trace = state.o3_runtime.trace_records();
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].lsq_data_response_tick(), 0);
+        assert_eq!(trace[0].lsq_data_latency_ticks(), 0);
+    }
+
+    fn memory_routes() -> (
+        PartitionedScheduler,
+        MemoryTransport,
+        MemoryRouteId,
+        MemoryRouteId,
+    ) {
+        let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+        let mut transport = MemoryTransport::new();
+        let fetch_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.ifetch"),
+                    PartitionId::new(0),
+                    endpoint("l1i0"),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let data_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.dmem"),
+                    PartitionId::new(0),
+                    endpoint("l1d0"),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        (scheduler, transport, fetch_route, data_route)
+    }
+
+    fn cpu_core(route: MemoryRouteId, entry: u64) -> CpuCore {
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                route,
+                line_layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap()
+    }
+
+    fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
+        CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                10 + sequence,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                MemoryRequestId::new(AgentId::new(7), sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            0x0000_0013u32.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn line_layout() -> CacheLineLayout {
+        CacheLineLayout::new(16).unwrap()
+    }
+
+    fn endpoint(name: &str) -> TransportEndpointId {
+        TransportEndpointId::new(name).unwrap()
+    }
+
+    fn reg(index: u8) -> Register {
+        Register::new(index).unwrap()
     }
 }
 
