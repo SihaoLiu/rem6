@@ -27,6 +27,14 @@ pub(crate) struct Rem6O3TraceStat {
     value: u64,
 }
 
+const fn average_ticks(total: u64, samples: u64) -> u64 {
+    if samples == 0 {
+        0
+    } else {
+        total / samples
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreScope {
     count: u64,
@@ -91,6 +99,7 @@ struct Rem6O3TraceTotals {
     event_lsq_ordering_release: u64,
     event_lsq_ordering_acquire_release: u64,
     event_lsq_store_conditional_failures: u64,
+    event_lsq_data_latency_samples: u64,
     event_lsq_data_latency_ticks: u64,
     event_lsq_data_latency_max_ticks: u64,
     event_lsq_operation_load_latency_ticks: u64,
@@ -415,7 +424,12 @@ impl Rem6O3TraceTotals {
             self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
             let lsq_data_latency_ticks = event.lsq_data_latency_ticks();
-            self.add_event_lsq_operation(event.lsq_operation(), lsq_data_latency_ticks);
+            let lsq_operation = event.lsq_operation();
+            if lsq_operation != O3RuntimeLsqOperation::None {
+                self.event_lsq_data_latency_samples =
+                    self.event_lsq_data_latency_samples.saturating_add(1);
+            }
+            self.add_event_lsq_operation(lsq_operation, lsq_data_latency_ticks);
             self.add_event_lsq_ordering(event.lsq_ordering());
             self.event_lsq_store_conditional_failures = self
                 .event_lsq_store_conditional_failures
@@ -996,9 +1010,22 @@ impl Rem6O3TraceTotals {
             value: self.event_lsq_data_latency_ticks,
         });
         stats.push(Rem6O3TraceStat {
+            suffix: "event.lsq_data_latency_samples",
+            unit: "Count",
+            value: self.event_lsq_data_latency_samples,
+        });
+        stats.push(Rem6O3TraceStat {
             suffix: "event.lsq_data_latency_max_ticks",
             unit: "Tick",
             value: self.event_lsq_data_latency_max_ticks,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.lsq_data_latency_avg_ticks",
+            unit: "Tick",
+            value: average_ticks(
+                self.event_lsq_data_latency_ticks,
+                self.event_lsq_data_latency_samples,
+            ),
         });
         for (suffix, value) in [
             (
@@ -1086,6 +1113,59 @@ impl Rem6O3TraceTotals {
                 suffix,
                 unit: "Tick",
                 value,
+            });
+        }
+        for (suffix, total, samples) in [
+            (
+                "event.lsq_operation.load_latency_avg_ticks",
+                self.event_lsq_operation_load_latency_ticks,
+                self.event_lsq_operation_load,
+            ),
+            (
+                "event.lsq_operation.store_latency_avg_ticks",
+                self.event_lsq_operation_store_latency_ticks,
+                self.event_lsq_operation_store,
+            ),
+            (
+                "event.lsq_operation.load_reserved_latency_avg_ticks",
+                self.event_lsq_operation_load_reserved_latency_ticks,
+                self.event_lsq_operation_load_reserved,
+            ),
+            (
+                "event.lsq_operation.store_conditional_latency_avg_ticks",
+                self.event_lsq_operation_store_conditional_latency_ticks,
+                self.event_lsq_operation_store_conditional,
+            ),
+            (
+                "event.lsq_operation.atomic_latency_avg_ticks",
+                self.event_lsq_operation_atomic_latency_ticks,
+                self.event_lsq_operation_atomic,
+            ),
+            (
+                "event.lsq_operation.float_load_latency_avg_ticks",
+                self.event_lsq_operation_float_load_latency_ticks,
+                self.event_lsq_operation_float_load,
+            ),
+            (
+                "event.lsq_operation.float_store_latency_avg_ticks",
+                self.event_lsq_operation_float_store_latency_ticks,
+                self.event_lsq_operation_float_store,
+            ),
+            (
+                "event.lsq_operation.vector_load_latency_avg_ticks",
+                self.event_lsq_operation_vector_load_latency_ticks,
+                self.event_lsq_operation_vector_load,
+            ),
+            (
+                "event.lsq_operation.vector_store_latency_avg_ticks",
+                self.event_lsq_operation_vector_store_latency_ticks,
+                self.event_lsq_operation_vector_store,
+            ),
+        ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Tick",
+                value: average_ticks(total, samples),
             });
         }
         stats.push(Rem6O3TraceStat {

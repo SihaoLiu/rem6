@@ -4570,6 +4570,7 @@ struct O3LsqDataLatencyTrace {
     store_event_tick: u64,
     store_response_tick: u64,
     store_latency: u64,
+    event_latency_samples: u64,
     event_latency_sum: u64,
     event_latency_max: u64,
 }
@@ -4633,8 +4634,17 @@ fn o3_lsq_data_latency_trace(path: &Path, memory_system: Option<&str>) -> O3LsqD
         store_event_tick,
         store_response_tick,
         store_latency,
+        event_latency_samples: 2,
         event_latency_sum: load_latency + store_latency,
         event_latency_max: load_latency.max(store_latency),
+    }
+}
+
+const fn latency_average_ticks(total: u64, samples: u64) -> u64 {
+    if samples == 0 {
+        0
+    } else {
+        total / samples
     }
 }
 
@@ -5913,9 +5923,23 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         );
         assert_stat(
             &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_data_latency_samples",
+            "Count",
+            trace.event_latency_samples,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
             "sim.debug.o3_trace.event.lsq_data_latency_max_ticks",
             "Tick",
             trace.event_latency_max,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_data_latency_avg_ticks",
+            "Tick",
+            latency_average_ticks(trace.event_latency_sum, trace.event_latency_samples),
             "monotonic",
         );
         assert_stat(
@@ -5934,6 +5958,13 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         );
         assert_stat(
             &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_operation.load_latency_avg_ticks",
+            "Tick",
+            trace.load_latency,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
             "sim.debug.o3_trace.event.lsq_operation.store_latency_ticks",
             "Tick",
             trace.store_latency,
@@ -5942,6 +5973,13 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         assert_stat(
             &trace.stdout,
             "sim.debug.o3_trace.event.lsq_operation.store_latency_max_ticks",
+            "Tick",
+            trace.store_latency,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_operation.store_latency_avg_ticks",
             "Tick",
             trace.store_latency,
             "monotonic",
@@ -6700,6 +6738,8 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
     assert_eq!(json_record_u64(vector_load, "lsq_load_bytes"), 8);
     assert_eq!(json_record_u64(vector_load, "lsq_stores"), 0);
     assert_eq!(json_record_u64(vector_load, "lsq_store_bytes"), 0);
+    let vector_load_latency = json_record_u64(vector_load, "lsq_data_latency_ticks");
+    assert!(vector_load_latency > 0, "{vector_load:?}");
 
     let vector_store = events
         .iter()
@@ -6714,6 +6754,8 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
         "vector_store"
     );
     assert_eq!(json_record_u64(vector_store, "lsq_store_bytes"), 8);
+    let vector_store_latency = json_record_u64(vector_store, "lsq_data_latency_ticks");
+    assert!(vector_store_latency > 0, "{vector_store:?}");
 
     for (path, unit, value) in [
         ("sim.cpu0.o3.lsq_load_bytes", "Byte", 8),
@@ -6731,6 +6773,16 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
             "sim.debug.o3_trace.event.lsq_operation.vector_store",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load_latency_avg_ticks",
+            "Tick",
+            vector_load_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_avg_ticks",
+            "Tick",
+            vector_store_latency,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -6812,6 +6864,8 @@ fn rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape() {
     assert_eq!(json_record_u64(float_load, "lsq_load_bytes"), 8);
     assert_eq!(json_record_u64(float_load, "lsq_stores"), 0);
     assert_eq!(json_record_u64(float_load, "lsq_store_bytes"), 0);
+    let float_load_latency = json_record_u64(float_load, "lsq_data_latency_ticks");
+    assert!(float_load_latency > 0, "{float_load:?}");
 
     let float_store = events
         .iter()
@@ -6827,6 +6881,8 @@ fn rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape() {
         "0x80000048"
     );
     assert_eq!(json_record_u64(float_store, "lsq_store_bytes"), 8);
+    let float_store_latency = json_record_u64(float_store, "lsq_data_latency_ticks");
+    assert!(float_store_latency > 0, "{float_store:?}");
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 8),
@@ -6844,6 +6900,16 @@ fn rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape() {
             "sim.debug.o3_trace.event.lsq_operation.float_store",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_load_latency_avg_ticks",
+            "Tick",
+            float_load_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store_latency_avg_ticks",
+            "Tick",
+            float_store_latency,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -6923,6 +6989,8 @@ fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
     assert_eq!(json_record_u64(atomic, "lsq_store_bytes"), 8);
     assert_eq!(json_record_str(atomic, "lsq_load_address"), "0x80000040");
     assert_eq!(json_record_str(atomic, "lsq_store_address"), "0x80000040");
+    let atomic_latency = json_record_u64(atomic, "lsq_data_latency_ticks");
+    assert!(atomic_latency > 0, "{atomic:?}");
     assert_eq!(
         json_record_bool(atomic, "store_load_forwarding_candidate"),
         false
@@ -6938,6 +7006,11 @@ fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
         ("sim.debug.o3_trace.event.lsq_load_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 8),
         ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_avg_ticks",
+            "Tick",
+            atomic_latency,
+        ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -7034,6 +7107,12 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         assert_eq!(json_record_bool(event, "lsq_acquire"), acquire);
         assert_eq!(json_record_bool(event, "lsq_release"), release);
     }
+    let load_reserved_latency = json_record_u64(by_pc("0x80000014"), "lsq_data_latency_ticks");
+    let store_conditional_latency = json_record_u64(by_pc("0x8000001c"), "lsq_data_latency_ticks");
+    let atomic_latency = json_record_u64(by_pc("0x80000024"), "lsq_data_latency_ticks");
+    assert!(load_reserved_latency > 0, "{events:?}");
+    assert!(store_conditional_latency > 0, "{events:?}");
+    assert!(atomic_latency > 0, "{events:?}");
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 24),
@@ -7058,6 +7137,21 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
             "sim.debug.o3_trace.event.lsq_ordering.acquire_release",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved_latency_avg_ticks",
+            "Tick",
+            load_reserved_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional_latency_avg_ticks",
+            "Tick",
+            store_conditional_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_avg_ticks",
+            "Tick",
+            atomic_latency,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -9609,7 +9703,17 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
         ("sim.debug.o3_trace.event.lsq_data_latency_ticks", "Tick", 0),
         (
+            "sim.debug.o3_trace.event.lsq_data_latency_samples",
+            "Count",
+            0,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_data_latency_max_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_data_latency_avg_ticks",
             "Tick",
             0,
         ),
@@ -9700,6 +9804,51 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_max_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_load_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load_latency_avg_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_avg_ticks",
             "Tick",
             0,
         ),
