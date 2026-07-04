@@ -185,7 +185,7 @@ impl Rem6DebugSummary {
                 config.cores() as u32,
                 &host_actions.execution_modes,
                 host_actions.stats_resets.last(),
-                host_actions.checkpoint_restores.last(),
+                &host_actions.checkpoint_restores,
             )
         } else {
             Vec::new()

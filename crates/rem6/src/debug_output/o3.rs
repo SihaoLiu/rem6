@@ -29,6 +29,7 @@ pub(crate) struct Rem6O3TraceStat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreScope {
+    count: u64,
     label: String,
     tick: u64,
     manifest_tick: u64,
@@ -182,22 +183,29 @@ impl Rem6O3TraceRecord {
             |restore| format!("\"{}\"", json_escape(&restore.label)),
         );
         let (
+            checkpoint_restore_count,
             checkpoint_restore_tick,
             checkpoint_restore_manifest_tick,
             checkpoint_restore_payload_bytes,
         ) = self
             .checkpoint_restore
             .as_ref()
-            .map_or((0, 0, 0), |restore| {
-                (restore.tick, restore.manifest_tick, restore.payload_bytes)
+            .map_or((0, 0, 0, 0), |restore| {
+                (
+                    restore.count,
+                    restore.tick,
+                    restore.manifest_tick,
+                    restore.payload_bytes,
+                )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
             self.stats_epoch,
             self.stats_reset_tick,
+            checkpoint_restore_count,
             checkpoint_restore_label,
             checkpoint_restore_tick,
             checkpoint_restore_manifest_tick,
@@ -245,12 +253,12 @@ pub(super) fn o3_trace_records(
     core_count: u32,
     execution_modes: &[Rem6HostExecutionModeSummary],
     latest_stats_reset: Option<&Rem6HostStatsResetSummary>,
-    latest_checkpoint_restore: Option<&Rem6HostCheckpointSummary>,
+    checkpoint_restores: &[Rem6HostCheckpointSummary],
 ) -> Vec<Rem6O3TraceRecord> {
     let mut records = Vec::new();
     let stats_epoch = latest_stats_reset.map_or(0, |reset| reset.epoch);
     let stats_reset_tick = latest_stats_reset.map_or(0, |reset| reset.tick);
-    let checkpoint_restore = latest_checkpoint_restore.map(Rem6O3CheckpointRestoreScope::from);
+    let checkpoint_restore = Rem6O3CheckpointRestoreScope::from_summaries(checkpoint_restores);
     for cpu_index in 0..core_count {
         let cpu = CpuId::new(cpu_index);
         let Ok(core) = cluster.core(cpu) else {
@@ -295,7 +303,7 @@ impl Rem6O3TraceTotals {
         self.stats_epoch = self.stats_epoch.max(record.stats_epoch());
         self.stats_reset_tick = self.stats_reset_tick.max(record.stats_reset_tick());
         if let Some(restore) = record.checkpoint_restore() {
-            self.checkpoint_restores = 1;
+            self.checkpoint_restores = self.checkpoint_restores.max(restore.count);
             self.checkpoint_restore_tick = self.checkpoint_restore_tick.max(restore.tick);
             self.checkpoint_restore_payload_bytes = self
                 .checkpoint_restore_payload_bytes
@@ -894,14 +902,16 @@ impl Rem6O3TraceTotals {
     }
 }
 
-impl From<&Rem6HostCheckpointSummary> for Rem6O3CheckpointRestoreScope {
-    fn from(summary: &Rem6HostCheckpointSummary) -> Self {
-        Self {
+impl Rem6O3CheckpointRestoreScope {
+    fn from_summaries(summaries: &[Rem6HostCheckpointSummary]) -> Option<Self> {
+        let summary = summaries.last()?;
+        Some(Self {
+            count: summaries.len() as u64,
             label: summary.label.clone(),
             tick: summary.tick,
             manifest_tick: summary.manifest_tick,
             payload_bytes: summary.payload_bytes,
-        }
+        })
     }
 }
 

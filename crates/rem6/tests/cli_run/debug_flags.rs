@@ -5641,6 +5641,7 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("cpu", 0),
         ("stats_epoch", 0),
         ("stats_reset_tick", 0),
+        ("checkpoint_restore_count", 0),
         ("instructions", 6),
         ("rob_allocations", 6),
         ("rob_commits", 6),
@@ -5907,6 +5908,7 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
         .expect("debug O3 trace array");
     assert_eq!(trace.len(), 1);
     let record = &trace[0];
+    assert_eq!(json_record_u64(record, "checkpoint_restore_count"), 1);
     assert_eq!(
         record
             .get("checkpoint_restore_label")
@@ -5966,6 +5968,145 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             restored_payload_bytes,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_counts_multiple_checkpoint_restore_scopes() {
+    let path =
+        detailed_o3_scheduled_restore_debug_binary("debug-flags-o3-multi-checkpoint-restore-scope");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "700",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--host-checkpoint",
+            "8:debug-baseline",
+            "--host-restore-checkpoint",
+            "70:debug-baseline",
+            "--host-restore-checkpoint",
+            "190:debug-baseline",
+            "--dump-memory",
+            "0x800002c0:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a00000000000000")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let restores = json
+        .pointer("/host_actions/checkpoint_restores")
+        .and_then(Value::as_array)
+        .expect("host checkpoint restore array");
+    assert_eq!(restores.len(), 2);
+    let latest_restore = &restores[1];
+    let latest_restore_tick = json_record_u64(latest_restore, "tick");
+    let latest_manifest_tick = json_record_u64(latest_restore, "manifest_tick");
+    let latest_payload_bytes = json_record_u64(latest_restore, "payload_bytes");
+    assert_eq!(
+        latest_restore.pointer("/label").and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert!(
+        latest_payload_bytes > 0,
+        "restore payload: {latest_restore}"
+    );
+
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    assert_eq!(json_record_u64(record, "checkpoint_restore_count"), 2);
+    assert_eq!(
+        record
+            .get("checkpoint_restore_label")
+            .and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_tick"),
+        latest_restore_tick
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_manifest_tick"),
+        latest_manifest_tick
+    );
+    assert_eq!(
+        json_record_u64(record, "checkpoint_restore_payload_bytes"),
+        latest_payload_bytes
+    );
+
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert!(!events.is_empty(), "restored O3 replay events: {record}");
+    assert!(
+        events
+            .iter()
+            .all(|event| json_record_u64(event, "tick") > latest_restore_tick),
+        "O3 trace should only include events replayed after the latest restore: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            json_record_str(event, "pc") == "0x80000070"
+                && json_record_str(event, "lsq_operation") == "store"
+                && json_record_str(event, "lsq_store_address") == "0x800002c0"
+        }),
+        "restored O3 replay events: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            json_record_str(event, "pc") == "0x80000074"
+                && json_record_str(event, "lsq_operation") == "load"
+                && json_record_str(event, "lsq_load_address") == "0x800002c0"
+        }),
+        "restored O3 replay events: {events:?}"
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.checkpoint_restores", "Count", 2),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_tick",
+            "Tick",
+            latest_restore_tick,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
+            "Byte",
+            latest_payload_bytes,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
