@@ -938,6 +938,25 @@ fn emit_o3_runtime_stats(
         )?;
     }
     for (name, value) in [
+        ("insts_issued", o3.instructions()),
+        (
+            "mem_insts_issued",
+            o3.lsq_loads().saturating_add(o3.lsq_stores()),
+        ),
+        ("issued_inst_type.mem_read", o3.lsq_loads()),
+        ("issued_inst_type.mem_write", o3.lsq_stores()),
+        ("issued_inst_type.int_mul", o3.fu_integer_mul_instructions()),
+        ("issued_inst_type.int_div", o3.fu_integer_div_instructions()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.iq.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (name, value) in [
         ("lsq_load_bytes", o3.lsq_load_bytes()),
         ("lsq_store_bytes", o3.lsq_store_bytes()),
     ] {
