@@ -1,6 +1,6 @@
 use rem6_cpu::{
-    CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats,
-    O3RuntimeTraceRecord, RiscvCluster,
+    BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster,
 };
 
 use crate::{formatting::json_escape, Rem6HostExecutionModeSummary};
@@ -66,6 +66,10 @@ struct Rem6O3TraceTotals {
     event_lsq_ordering_acquire: u64,
     event_lsq_ordering_release: u64,
     event_lsq_ordering_acquire_release: u64,
+    event_branches: u64,
+    event_branch_taken: u64,
+    event_branch_mispredictions: u64,
+    event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_lsq_load_bytes: u64,
     event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
@@ -270,6 +274,7 @@ impl Rem6O3TraceTotals {
             self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
             self.add_event_lsq_operation(event.lsq_operation());
             self.add_event_lsq_ordering(event.lsq_ordering());
+            self.add_event_branch(event);
             self.event_lsq_load_bytes = self
                 .event_lsq_load_bytes
                 .saturating_add(event.lsq_load_bytes());
@@ -305,6 +310,21 @@ impl Rem6O3TraceTotals {
                 }
             }
         }
+    }
+
+    fn add_event_branch(&mut self, event: &O3RuntimeTraceRecord) {
+        if !event.branch_event() {
+            return;
+        }
+        self.event_branches = self.event_branches.saturating_add(1);
+        self.event_branch_taken = self
+            .event_branch_taken
+            .saturating_add(u64::from(event.branch_resolved_taken()));
+        self.event_branch_mispredictions = self
+            .event_branch_mispredictions
+            .saturating_add(u64::from(event.branch_mispredicted()));
+        let index = event.branch_kind().index();
+        self.event_branch_kinds[index] = self.event_branch_kinds[index].saturating_add(1);
     }
 
     fn add_event_lsq_ordering(&mut self, ordering: O3RuntimeLsqOrdering) {
@@ -446,6 +466,12 @@ impl Rem6O3TraceTotals {
                 "event.lsq_ordering.acquire_release",
                 self.event_lsq_ordering_acquire_release,
             ),
+            ("event.branches", self.event_branches),
+            ("event.branch_taken", self.event_branch_taken),
+            (
+                "event.branch_mispredictions",
+                self.event_branch_mispredictions,
+            ),
             (
                 "event.store_load_forwarding_candidates",
                 self.event_store_load_forwarding_candidates,
@@ -467,6 +493,16 @@ impl Rem6O3TraceTotals {
                 suffix,
                 unit: "Count",
                 value,
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_kinds[kind.index()],
             });
         }
         stats.push(Rem6O3TraceStat {
@@ -540,6 +576,19 @@ impl Rem6O3TraceTotals {
     }
 }
 
+fn o3_branch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_kind.call_indirect",
+        BranchTargetKind::DirectConditional => "event.branch_kind.direct_conditional",
+        BranchTargetKind::DirectUnconditional => "event.branch_kind.direct_unconditional",
+        BranchTargetKind::IndirectConditional => "event.branch_kind.indirect_conditional",
+        BranchTargetKind::IndirectUnconditional => "event.branch_kind.indirect_unconditional",
+    }
+}
+
 fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
     let fu_latency_class = event.fu_latency_class().map_or_else(
         || "null".to_string(),
@@ -549,8 +598,12 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         o3_optional_address_to_json(event.lsq_load_address().map(|address| address.get()));
     let lsq_store_address =
         o3_optional_address_to_json(event.lsq_store_address().map(|address| address.get()));
+    let branch_predicted_target =
+        o3_optional_address_to_json(event.branch_predicted_target().map(|address| address.get()));
+    let branch_resolved_target =
+        o3_optional_address_to_json(event.branch_resolved_target().map(|address| address.get()));
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -572,6 +625,13 @@ fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.rename_map_entries(),
         event.store_load_forwarding_candidate(),
         event.store_load_forwarding_match(),
+        event.branch_event(),
+        event.branch_kind().canonical_stat_name(),
+        event.branch_predicted_taken(),
+        event.branch_resolved_taken(),
+        event.branch_mispredicted(),
+        branch_predicted_target,
+        branch_resolved_target,
         fu_latency_class,
         event.fu_latency_cycles(),
         event.system_event(),

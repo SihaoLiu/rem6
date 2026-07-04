@@ -5,11 +5,16 @@ use std::fmt;
 use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
+use crate::branch_predictor::BranchTargetKind;
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::{
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineError, O3PipelineStage,
     O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
+use crate::o3_runtime_trace::{
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+};
+use crate::riscv_branch_kind::riscv_branch_target_kind;
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 
 #[path = "o3_runtime_checkpoint.rs"]
@@ -238,256 +243,6 @@ impl O3RuntimeSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct O3RuntimeTraceRecord {
-    sequence: u64,
-    tick: u64,
-    pc: Address,
-    rob_allocated: bool,
-    rob_committed: bool,
-    rob_occupancy: u64,
-    rename_writes: u64,
-    lsq_loads: u64,
-    lsq_stores: u64,
-    lsq_occupancy: u64,
-    lsq_operation: O3RuntimeLsqOperation,
-    lsq_ordering: O3RuntimeLsqOrdering,
-    lsq_load_address: Option<Address>,
-    lsq_store_address: Option<Address>,
-    lsq_load_bytes: u64,
-    lsq_store_bytes: u64,
-    rename_map_entries: u64,
-    store_load_forwarding_candidate: bool,
-    store_load_forwarding_match: bool,
-    fu_latency_class: Option<O3RuntimeFuLatencyClass>,
-    fu_latency_cycles: u64,
-    system_event: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum O3RuntimeFuLatencyClass {
-    ScalarIntegerMul,
-    ScalarIntegerDiv,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum O3RuntimeLsqOperation {
-    None,
-    Load,
-    Store,
-    LoadReserved,
-    StoreConditional,
-    Atomic,
-    FloatLoad,
-    FloatStore,
-    VectorLoad,
-    VectorStore,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum O3RuntimeLsqOrdering {
-    None,
-    Acquire,
-    Release,
-    AcquireRelease,
-}
-
-impl O3RuntimeFuLatencyClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ScalarIntegerMul => "scalar_integer_mul",
-            Self::ScalarIntegerDiv => "scalar_integer_div",
-        }
-    }
-}
-
-impl O3RuntimeLsqOperation {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Load => "load",
-            Self::Store => "store",
-            Self::LoadReserved => "load_reserved",
-            Self::StoreConditional => "store_conditional",
-            Self::Atomic => "atomic",
-            Self::FloatLoad => "float_load",
-            Self::FloatStore => "float_store",
-            Self::VectorLoad => "vector_load",
-            Self::VectorStore => "vector_store",
-        }
-    }
-}
-
-impl O3RuntimeLsqOrdering {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Acquire => "acquire",
-            Self::Release => "release",
-            Self::AcquireRelease => "acquire_release",
-        }
-    }
-
-    pub const fn acquire(self) -> bool {
-        match self {
-            Self::Acquire | Self::AcquireRelease => true,
-            Self::None | Self::Release => false,
-        }
-    }
-
-    pub const fn release(self) -> bool {
-        match self {
-            Self::Release | Self::AcquireRelease => true,
-            Self::None | Self::Acquire => false,
-        }
-    }
-}
-
-impl O3RuntimeTraceRecord {
-    fn new(
-        sequence: u64,
-        tick: u64,
-        pc: Address,
-        rob_occupancy: usize,
-        rename_writes: u64,
-        lsq_loads: u64,
-        lsq_stores: u64,
-        lsq_occupancy: usize,
-        lsq_operation: O3RuntimeLsqOperation,
-        lsq_ordering: O3RuntimeLsqOrdering,
-        lsq_load_address: Option<Address>,
-        lsq_store_address: Option<Address>,
-        lsq_load_bytes: u64,
-        lsq_store_bytes: u64,
-        rename_map_entries: usize,
-        fu_latency_class: Option<O3RuntimeFuLatencyClass>,
-        fu_latency_cycles: u64,
-        system_event: bool,
-    ) -> Self {
-        Self {
-            sequence,
-            tick,
-            pc,
-            rob_allocated: true,
-            rob_committed: true,
-            rob_occupancy: u64::try_from(rob_occupancy).unwrap_or(u64::MAX),
-            rename_writes,
-            lsq_loads,
-            lsq_stores,
-            lsq_occupancy: u64::try_from(lsq_occupancy).unwrap_or(u64::MAX),
-            lsq_operation,
-            lsq_ordering,
-            lsq_load_address,
-            lsq_store_address,
-            lsq_load_bytes,
-            lsq_store_bytes,
-            rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
-            store_load_forwarding_candidate: false,
-            store_load_forwarding_match: false,
-            fu_latency_class,
-            fu_latency_cycles,
-            system_event,
-        }
-    }
-
-    pub const fn sequence(self) -> u64 {
-        self.sequence
-    }
-
-    pub const fn tick(self) -> u64 {
-        self.tick
-    }
-
-    pub const fn pc(self) -> Address {
-        self.pc
-    }
-
-    pub const fn rob_allocated(self) -> bool {
-        self.rob_allocated
-    }
-
-    pub const fn rob_committed(self) -> bool {
-        self.rob_committed
-    }
-
-    pub const fn rob_occupancy(self) -> u64 {
-        self.rob_occupancy
-    }
-
-    pub const fn rename_writes(self) -> u64 {
-        self.rename_writes
-    }
-
-    pub const fn lsq_loads(self) -> u64 {
-        self.lsq_loads
-    }
-
-    pub const fn lsq_stores(self) -> u64 {
-        self.lsq_stores
-    }
-
-    pub const fn lsq_occupancy(self) -> u64 {
-        self.lsq_occupancy
-    }
-
-    pub const fn lsq_operation(self) -> O3RuntimeLsqOperation {
-        self.lsq_operation
-    }
-
-    pub const fn lsq_ordering(self) -> O3RuntimeLsqOrdering {
-        self.lsq_ordering
-    }
-
-    pub const fn lsq_load_address(self) -> Option<Address> {
-        self.lsq_load_address
-    }
-
-    pub const fn lsq_store_address(self) -> Option<Address> {
-        self.lsq_store_address
-    }
-
-    pub const fn lsq_load_bytes(self) -> u64 {
-        self.lsq_load_bytes
-    }
-
-    pub const fn lsq_store_bytes(self) -> u64 {
-        self.lsq_store_bytes
-    }
-
-    pub const fn rename_map_entries(self) -> u64 {
-        self.rename_map_entries
-    }
-
-    pub const fn store_load_forwarding_candidate(self) -> bool {
-        self.store_load_forwarding_candidate
-    }
-
-    pub const fn store_load_forwarding_match(self) -> bool {
-        self.store_load_forwarding_match
-    }
-
-    pub const fn fu_latency_class(self) -> Option<O3RuntimeFuLatencyClass> {
-        self.fu_latency_class
-    }
-
-    pub const fn fu_latency_cycles(self) -> u64 {
-        self.fu_latency_cycles
-    }
-
-    pub const fn system_event(self) -> bool {
-        self.system_event
-    }
-
-    fn set_store_load_forwarding(&mut self, observation: O3StoreForwardingObservation) {
-        self.store_load_forwarding_candidate = observation.candidate;
-        self.store_load_forwarding_match = observation.matched;
-    }
-
-    fn mark_store_load_forwarding_match(&mut self) {
-        self.store_load_forwarding_match = true;
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
@@ -552,7 +307,7 @@ impl O3RuntimeState {
             execution,
             trace_enabled.then_some(trace_record.sequence()),
         );
-        trace_record.set_store_load_forwarding(observation);
+        trace_record.set_store_load_forwarding(observation.candidate, observation.matched);
         if trace_enabled {
             self.trace_records.push(trace_record);
         }
@@ -582,6 +337,14 @@ impl O3RuntimeState {
             .memory_access()
             .map(o3_lsq_access_addresses)
             .unwrap_or((None, None));
+        let branch_update = execution.branch_update();
+        let branch_kind = branch_update
+            .map(|_| riscv_branch_target_kind(record.instruction()))
+            .unwrap_or(BranchTargetKind::NoBranch);
+        let branch_predicted_taken = branch_update.is_some_and(|update| update.predicted_taken());
+        let branch_resolved_taken = branch_update.is_some_and(|update| update.actual_taken());
+        let branch_predicted_target = branch_update.and_then(|update| update.predicted_target());
+        let branch_resolved_target = branch_update.and_then(|update| update.actual_target());
         let rob_start = self.snapshot.reorder_buffer.len();
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
@@ -617,6 +380,11 @@ impl O3RuntimeState {
             lsq_load_bytes,
             lsq_store_bytes,
             rename_map_entries,
+            branch_kind,
+            branch_predicted_taken,
+            branch_resolved_taken,
+            branch_predicted_target,
+            branch_resolved_target,
             o3_fu_latency_class(execution.instruction()),
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
             record.system_event().is_some(),

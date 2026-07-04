@@ -83,8 +83,10 @@ pub use crate::o3_pipeline::{
 };
 pub use crate::o3_runtime::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
-    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
-    O3RuntimeLsqOrdering, O3RuntimeSnapshot, O3RuntimeStats, O3RuntimeTraceRecord,
+    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
+};
+pub use crate::o3_runtime_trace::{
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
 };
 pub use crate::return_address_stack::{
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
