@@ -20,6 +20,7 @@ pub(super) fn emit_run_host_action_stats(
     struct SwitchTransferChunkStats {
         chunks: u64,
         payload_bytes: u64,
+        payload_checksum_accumulator: u64,
     }
 
     let mut guest_host_call_arguments = 0;
@@ -70,6 +71,9 @@ pub(super) fn emit_run_host_action_stats(
                     .or_default();
                 chunk_stats.chunks += 1;
                 chunk_stats.payload_bytes += chunk.payload_bytes;
+                chunk_stats.payload_checksum_accumulator = chunk_stats
+                    .payload_checksum_accumulator
+                    .wrapping_add(chunk.payload_checksum);
             }
         }
     }
@@ -216,6 +220,15 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_bytes,
         )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            ),
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_checksum_accumulator,
+        )?;
     }
     for (work_id, buckets) in roi_duration_histograms(summary) {
         let buckets = buckets.into_iter().collect::<Vec<_>>();
@@ -281,8 +294,8 @@ mod tests {
             total_action_count: 2,
             execution_mode_switch_count: 2,
             execution_mode_switches: vec![
-                switch_with_transfer_component_chunk("cpu-0", "pipe-0", 11),
-                switch_with_transfer_component_chunk("cpu_0", "pipe_0", 13),
+                switch_with_transfer_component_chunk("cpu-0", "pipe-0", 11, 17),
+                switch_with_transfer_component_chunk("cpu_0", "pipe_0", 13, 19),
             ],
             ..Rem6HostActionSummary::default()
         };
@@ -325,12 +338,20 @@ mod tests {
             StatResetPolicy::Monotonic,
             24,
         );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch_state_transfer.component.cpu_0.chunk.pipe_0.payload_checksum_accumulator",
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            36,
+        );
     }
 
     fn switch_with_transfer_component_chunk(
         component: &str,
         chunk: &str,
         payload_bytes: u64,
+        payload_checksum: u64,
     ) -> Rem6HostExecutionModeSwitchSummary {
         Rem6HostExecutionModeSwitchSummary {
             tick: 0,
@@ -362,7 +383,7 @@ mod tests {
                     chunks: vec![Rem6HostCheckpointChunkSummary {
                         name: chunk.to_string(),
                         payload_bytes,
-                        payload_checksum: 0,
+                        payload_checksum,
                     }],
                 }],
             }),

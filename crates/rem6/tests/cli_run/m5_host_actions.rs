@@ -650,6 +650,117 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_stats_expose_m5_switch_cpu_arch_and_o3_transfer_checksums() {
+    let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 5, 0x13),  // addi x5, x0, 7 before switch
+        m5op(M5_SWITCH_CPU),         // capture architectural baseline, enter detailed
+        i_type(1, 5, 0x0, 5, 0x13),  // addi x5, x5, 1 in detailed mode
+        i_type(2, 5, 0x0, 6, 0x13),  // addi x6, x5, 2 in detailed mode
+        m5op(M5_SWITCH_CPU),         // capture changed xregs plus O3 runtime state
+        i_type(3, 6, 0x0, 7, 0x13),  // addi x7, x6, 3 after second switch
+        i_type(0, 0, 0x0, 10, 0x13), // addi a0, x0, 0
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-arch-o3-transfer-checksums", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/registers/x5")
+            .and_then(Value::as_str),
+        Some("0x8")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/registers/x6")
+            .and_then(Value::as_str),
+        Some("0xa")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/registers/x7")
+            .and_then(Value::as_str),
+        Some("0xd")
+    );
+    assert!(
+        json.pointer("/cores/0/o3_runtime/instructions")
+            .and_then(Value::as_u64)
+            .is_some_and(|instructions| instructions >= 5),
+        "detailed-mode switch should record post-switch O3 instructions: {json}"
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    let first_xregs =
+        execution_mode_switch_transfer_component_chunk_checksum(host_actions, 0, "cpu0", "xregs");
+    let second_xregs =
+        execution_mode_switch_transfer_component_chunk_checksum(host_actions, 1, "cpu0", "xregs");
+    let first_o3 = execution_mode_switch_transfer_component_chunk_checksum(
+        host_actions,
+        0,
+        "cpu0",
+        "o3-runtime-state",
+    );
+    let second_o3 = execution_mode_switch_transfer_component_chunk_checksum(
+        host_actions,
+        1,
+        "cpu0",
+        "o3-runtime-state",
+    );
+    assert_ne!(
+        second_xregs, first_xregs,
+        "second switch should capture changed architectural registers: {host_actions}"
+    );
+    assert_ne!(
+        second_o3, first_o3,
+        "second switch should capture changed detailed O3 runtime state: {host_actions}"
+    );
+
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunk.xregs.payload_checksum_accumulator",
+        "Unspecified",
+        parse_hex_u64(&first_xregs).wrapping_add(parse_hex_u64(&second_xregs)),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
+        "Unspecified",
+        parse_hex_u64(&first_o3).wrapping_add(parse_hex_u64(&second_o3)),
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     let path = detailed_o3_runtime_stats_binary("m5-switch-cpu-detailed-o3-runtime-stats");
 
@@ -3139,6 +3250,43 @@ fn execution_mode_switch_transfer_component_chunk_total(
             }
         })
         .sum()
+}
+
+fn execution_mode_switch_transfer_component_chunk_checksum(
+    host_actions: &Value,
+    switch_index: usize,
+    component: &str,
+    chunk: &str,
+) -> String {
+    let components = host_actions
+        .pointer(&format!(
+            "/execution_mode_switches/{switch_index}/state_transfer/components"
+        ))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer components {switch_index}"));
+    let component = components
+        .iter()
+        .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing switch transfer component {component}"));
+    let chunks = component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer chunks for {component}"));
+    chunks
+        .iter()
+        .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        .and_then(|entry| entry.pointer("/payload_checksum"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing switch transfer chunk checksum {component}/{chunk}"))
+        .to_string()
+}
+
+fn parse_hex_u64(value: &str) -> u64 {
+    let digits = value
+        .strip_prefix("0x")
+        .unwrap_or_else(|| panic!("checksum should use 0x prefix: {value}"));
+    u64::from_str_radix(digits, 16)
+        .unwrap_or_else(|error| panic!("invalid checksum {value}: {error}"))
 }
 
 fn assert_json_stat(json: &Value, path: &str, unit: &str, value: u64, reset_policy: &str) {
