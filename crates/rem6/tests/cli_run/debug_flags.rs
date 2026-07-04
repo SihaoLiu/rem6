@@ -4572,6 +4572,7 @@ struct O3LsqDataLatencyTrace {
     store_latency: u64,
     event_latency_samples: u64,
     event_latency_sum: u64,
+    event_latency_min: u64,
     event_latency_max: u64,
 }
 
@@ -4636,6 +4637,7 @@ fn o3_lsq_data_latency_trace(path: &Path, memory_system: Option<&str>) -> O3LsqD
         store_latency,
         event_latency_samples: 2,
         event_latency_sum: load_latency + store_latency,
+        event_latency_min: load_latency.min(store_latency),
         event_latency_max: load_latency.max(store_latency),
     }
 }
@@ -5937,6 +5939,13 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         );
         assert_stat(
             &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_data_latency_min_ticks",
+            "Tick",
+            trace.event_latency_min,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
             "sim.debug.o3_trace.event.lsq_data_latency_avg_ticks",
             "Tick",
             latency_average_ticks(trace.event_latency_sum, trace.event_latency_samples),
@@ -5958,6 +5967,13 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         );
         assert_stat(
             &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_operation.load_latency_min_ticks",
+            "Tick",
+            trace.load_latency,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
             "sim.debug.o3_trace.event.lsq_operation.load_latency_avg_ticks",
             "Tick",
             trace.load_latency,
@@ -5973,6 +5989,13 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
         assert_stat(
             &trace.stdout,
             "sim.debug.o3_trace.event.lsq_operation.store_latency_max_ticks",
+            "Tick",
+            trace.store_latency,
+            "monotonic",
+        );
+        assert_stat(
+            &trace.stdout,
+            "sim.debug.o3_trace.event.lsq_operation.store_latency_min_ticks",
             "Tick",
             trace.store_latency,
             "monotonic",
@@ -6780,7 +6803,17 @@ fn rem6_run_o3_debug_flag_emits_vector_lsq_byte_events() {
             vector_load_latency,
         ),
         (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load_latency_min_ticks",
+            "Tick",
+            vector_load_latency,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_avg_ticks",
+            "Tick",
+            vector_store_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_min_ticks",
             "Tick",
             vector_store_latency,
         ),
@@ -6907,7 +6940,17 @@ fn rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape() {
             float_load_latency,
         ),
         (
+            "sim.debug.o3_trace.event.lsq_operation.float_load_latency_min_ticks",
+            "Tick",
+            float_load_latency,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_operation.float_store_latency_avg_ticks",
+            "Tick",
+            float_store_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store_latency_min_ticks",
             "Tick",
             float_store_latency,
         ),
@@ -7008,6 +7051,11 @@ fn rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape() {
         ("sim.debug.o3_trace.event.lsq_operation.atomic", "Count", 1),
         (
             "sim.debug.o3_trace.event.lsq_operation.atomic_latency_avg_ticks",
+            "Tick",
+            atomic_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_min_ticks",
             "Tick",
             atomic_latency,
         ),
@@ -7144,12 +7192,27 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
             load_reserved_latency,
         ),
         (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved_latency_min_ticks",
+            "Tick",
+            load_reserved_latency,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_operation.store_conditional_latency_avg_ticks",
             "Tick",
             store_conditional_latency,
         ),
         (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional_latency_min_ticks",
+            "Tick",
+            store_conditional_latency,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_operation.atomic_latency_avg_ticks",
+            "Tick",
+            atomic_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_min_ticks",
             "Tick",
             atomic_latency,
         ),
@@ -9713,6 +9776,11 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
             0,
         ),
         (
+            "sim.debug.o3_trace.event.lsq_data_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
             "sim.debug.o3_trace.event.lsq_data_latency_avg_ticks",
             "Tick",
             0,
@@ -9804,6 +9872,51 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_max_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.load_reserved_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.store_conditional_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.atomic_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_load_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.float_store_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_load_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.lsq_operation.vector_store_latency_min_ticks",
             "Tick",
             0,
         ),
