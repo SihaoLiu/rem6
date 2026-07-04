@@ -5,16 +5,16 @@ use super::{
     Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact,
     Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
-    Rem6InstructionProbeSummary, Rem6MemoryDump, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
-    Rem6PcCountTrackerSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
-    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
-    Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
+    Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
+    Rem6MemoryDump, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
+    Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary,
+    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
 use gups::gups_response_stats_json;
@@ -1484,9 +1484,33 @@ impl Rem6HostStatsResetSummary {
 
 impl Rem6HostStatsDumpSummary {
     fn to_json(&self) -> String {
+        let samples = self
+            .samples
+            .iter()
+            .map(Rem6HostStatsDumpSampleSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"id\":{},\"tick\":{},\"epoch\":{},\"reset_tick\":{}}}",
-            self.id, self.tick, self.epoch, self.reset_tick
+            "{{\"id\":{},\"tick\":{},\"epoch\":{},\"reset_tick\":{},\"sample_count\":{},\"samples\":[{}]}}",
+            self.id,
+            self.tick,
+            self.epoch,
+            self.reset_tick,
+            self.samples.len(),
+            samples
+        )
+    }
+}
+
+impl Rem6HostStatsDumpSampleSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"path\":\"{}\",\"kind\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\"}}",
+            json_escape(&self.path),
+            json_escape(&self.kind),
+            json_escape(&self.unit),
+            self.value,
+            json_escape(&self.reset_policy)
         )
     }
 }

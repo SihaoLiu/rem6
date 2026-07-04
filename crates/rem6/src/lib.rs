@@ -19,7 +19,7 @@ use rem6_stats::{
 };
 use rem6_system::{
     GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvGuestFileIdentity,
-    RiscvInstructionStats, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvInstructionStats, RiscvO3RuntimeStats, RiscvSeAuxvEntry, RiscvSeStartupConfig,
     RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
     RISCV_LINUX_AT_ENTRY,
 };
@@ -100,8 +100,9 @@ pub(crate) use host_actions::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
+    Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 pub(crate) use instruction_probe_summary::{
     instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,
@@ -856,6 +857,14 @@ fn execute_riscv(
         HostEventPolicy,
         StatsRegistry::new(),
     )));
+    let o3_runtime_stats = {
+        let mut controller = controller.lock().unwrap();
+        RiscvO3RuntimeStats::register_for_cpus(
+            controller.executor_mut().stats_mut(),
+            (0..core_count).map(CpuId::new),
+        )
+        .map_err(stats_error)?
+    };
     {
         let mut controller = controller.lock().unwrap();
         for response in config.guest_host_call_responses() {
@@ -890,6 +899,7 @@ fn execute_riscv(
     )
     .map_err(stats_error)?;
     let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats)
+        .with_o3_runtime_stats(o3_runtime_stats)
         .with_data_access_stats(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
@@ -1174,51 +1184,6 @@ fn cli_instruction_stats(
 ) -> RiscvInstructionStats {
     RiscvInstructionStats::for_cpus((0..core_count).map(CpuId::new))
         .with_pc_count_targets(pc_count_targets.iter().copied())
-}
-
-fn data_access_probe_summary(
-    run: &RiscvSystemRun,
-    line_layout: CacheLineLayout,
-    page_bytes: u64,
-) -> Rem6DataAccessProbeSummary {
-    run.data_access_probes()
-        .map(|probes| {
-            let stack_distance = probes.stack_distance();
-            let histograms = stack_distance.histograms();
-            let infinite_samples = stack_distance.infinite_samples();
-            let finite_samples = stack_distance.finite_samples();
-            let footprint = probes.memory_footprint();
-            Rem6DataAccessProbeSummary {
-                sample_count: infinite_samples.saturating_add(finite_samples),
-                stack_distance_infinite_samples: infinite_samples,
-                stack_distance_finite_samples: finite_samples,
-                stack_distance_stack_depth: stack_distance.stack().len() as u64,
-                stack_distance_read_linear: histograms.read_linear().to_vec(),
-                stack_distance_write_linear: histograms.write_linear().to_vec(),
-                stack_distance_read_log: histograms.read_log().to_vec(),
-                stack_distance_write_log: histograms.write_log().to_vec(),
-                memory_footprint_cache_line_bytes: footprint
-                    .map(|snapshot| {
-                        (snapshot.cache_lines().len() as u64).saturating_mul(line_layout.bytes())
-                    })
-                    .unwrap_or(0),
-                memory_footprint_cache_line_total_bytes: footprint
-                    .map(|snapshot| {
-                        (snapshot.cache_lines_total().len() as u64)
-                            .saturating_mul(line_layout.bytes())
-                    })
-                    .unwrap_or(0),
-                memory_footprint_page_bytes: footprint
-                    .map(|snapshot| (snapshot.pages().len() as u64).saturating_mul(page_bytes))
-                    .unwrap_or(0),
-                memory_footprint_page_total_bytes: footprint
-                    .map(|snapshot| {
-                        (snapshot.pages_total().len() as u64).saturating_mul(page_bytes)
-                    })
-                    .unwrap_or(0),
-            }
-        })
-        .unwrap_or_default()
 }
 
 fn guest_trap_name(kind: GuestTrapKind) -> &'static str {

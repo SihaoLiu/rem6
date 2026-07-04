@@ -748,6 +748,127 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
+    let path = detailed_o3_dump_stats_binary("m5-switch-cpu-detailed-o3-dump-runtime-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    assert_eq!(dump.pointer("/epoch").and_then(Value::as_u64), Some(0));
+    assert_eq!(dump.pointer("/reset_tick").and_then(Value::as_u64), Some(0));
+    let samples = dump
+        .pointer("/samples")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("stats dump should include snapshot samples: {dump}"));
+    assert_eq!(
+        dump.pointer("/sample_count").and_then(Value::as_u64),
+        Some(samples.len() as u64)
+    );
+    assert_stats_dump_sample_absent(dump, "sim.cpu0.o3.instructions");
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.instructions",
+        "counter",
+        "Count",
+        6,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.rob_allocations",
+        "counter",
+        "Count",
+        6,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.rob_commits",
+        "counter",
+        "Count",
+        6,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.rename_writes",
+        "counter",
+        "Count",
+        4,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_load_bytes",
+        "counter",
+        "Byte",
+        4,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_bytes",
+        "counter",
+        "Byte",
+        4,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_stats_dump_sample_absent(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.rename_map_entries",
+    );
+    assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 8, "monotonic");
+    assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 5, "monotonic");
+}
+
+#[test]
 fn rem6_run_m5_reset_stats_clears_detailed_o3_runtime_stats() {
     let path = detailed_o3_reset_stats_binary("m5-switch-cpu-detailed-o3-reset-runtime-stats");
 
@@ -2200,6 +2321,28 @@ fn detailed_o3_runtime_stats_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
+        u_type(0, 5, 0x17),            // auipc x5, 0
+        i_type(60, 5, 0x0, 5, 0x13),   // addi x5, x5, data
+        i_type(7, 0, 0x0, 11, 0x13),   // addi x11, x0, 7
+        i_type(0, 5, 0b010, 12, 0x03), // lw x12, 0(x5)
+        s_type(4, 12, 5, 0b010),       // sw x12, 4(x5)
+        m5op(M5_DUMP_STATS),           // dump live detailed-mode stats
+        i_type(99, 0, 0x0, 13, 0x13),  // addi x13, x0, 99 after dump
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_reset_stats_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
@@ -2848,6 +2991,48 @@ fn assert_stats_dump(
         action.pointer("/reset_tick").and_then(Value::as_u64),
         Some(reset_tick),
         "stats dump action {index}: {action}"
+    );
+}
+
+fn assert_stats_dump_sample(
+    dump: &Value,
+    path: &str,
+    kind: &str,
+    unit: &str,
+    value: u64,
+    reset_policy: &str,
+) {
+    let sample = dump
+        .pointer("/samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| {
+            samples
+                .iter()
+                .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        })
+        .unwrap_or_else(|| panic!("missing stats dump sample {path}: {dump}"));
+    assert_eq!(sample.pointer("/kind").and_then(Value::as_str), Some(kind));
+    assert_eq!(sample.pointer("/unit").and_then(Value::as_str), Some(unit));
+    assert_eq!(
+        sample.pointer("/value").and_then(Value::as_u64),
+        Some(value)
+    );
+    assert_eq!(
+        sample.pointer("/reset_policy").and_then(Value::as_str),
+        Some(reset_policy)
+    );
+}
+
+fn assert_stats_dump_sample_absent(dump: &Value, path: &str) {
+    let samples = dump
+        .pointer("/samples")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats dump samples: {dump}"));
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.pointer("/path").and_then(Value::as_str) != Some(path)),
+        "unexpected stats dump sample {path}: {dump}"
     );
 }
 

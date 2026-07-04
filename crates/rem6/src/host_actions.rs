@@ -1,4 +1,4 @@
-use rem6_stats::{StatDumpRecord, StatsResetRecord};
+use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
     ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
@@ -368,6 +368,7 @@ pub(crate) struct Rem6HostStatsDumpSummary {
     pub(crate) tick: u64,
     pub(crate) epoch: u64,
     pub(crate) reset_tick: u64,
+    pub(crate) samples: Vec<Rem6HostStatsDumpSampleSummary>,
 }
 
 impl Rem6HostStatsDumpSummary {
@@ -377,6 +378,33 @@ impl Rem6HostStatsDumpSummary {
             tick: record.tick(),
             epoch: record.epoch(),
             reset_tick: record.reset_tick(),
+            samples: record
+                .snapshot()
+                .samples()
+                .iter()
+                .map(Rem6HostStatsDumpSampleSummary::from_sample)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostStatsDumpSampleSummary {
+    pub(crate) path: String,
+    pub(crate) kind: String,
+    pub(crate) unit: String,
+    pub(crate) value: u64,
+    pub(crate) reset_policy: String,
+}
+
+impl Rem6HostStatsDumpSampleSummary {
+    fn from_sample(sample: &StatSample) -> Self {
+        Self {
+            path: sample.path().to_string(),
+            kind: sample.kind().to_string(),
+            unit: sample.unit().to_string(),
+            value: sample.value(),
+            reset_policy: sample.reset_policy().to_string(),
         }
     }
 }

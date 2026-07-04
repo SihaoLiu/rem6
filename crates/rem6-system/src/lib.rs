@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_coherence::ParallelCoherenceRunSummary;
 use rem6_cpu::{
@@ -50,6 +50,7 @@ mod riscv_debug_layout;
 mod riscv_debug_page_table;
 mod riscv_debug_pmp;
 mod riscv_instruction_stats;
+mod riscv_o3_runtime_stats;
 mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_driver;
@@ -199,6 +200,7 @@ pub use riscv_debug::{
     RiscvGdbRemotePacketError,
 };
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
+pub use riscv_o3_runtime_stats::RiscvO3RuntimeStats;
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use riscv_sbi::{
     RiscvSbiFirmware, RiscvSbiHsmRecord, RiscvSbiHsmStatusRecord, RiscvSbiHsmWakeRecord,
@@ -727,6 +729,7 @@ impl RiscvSystemRun {
 pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
     instruction_stats: Option<RiscvInstructionStats>,
+    o3_runtime_stats: Option<RiscvO3RuntimeStats>,
     data_access_stats: Option<RiscvDataAccessStats>,
     riscv_sbi_firmware: Option<RiscvSbiFirmware>,
     riscv_syscall_emulation: Option<RiscvSyscallEmulation>,
@@ -794,6 +797,9 @@ impl RiscvSystemRunDriver {
     fn reset_runtime_stats(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
+        }
+        if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
+            o3_runtime_stats.reset_snapshots();
         }
         for cpu in cluster.core_ids() {
             cluster
@@ -1164,6 +1170,7 @@ impl RiscvSystemRunDriver {
                 .collect::<Vec<_>>()
         };
 
+        let mut updated_cpus = BTreeSet::new();
         for (cpu, instruction) in detailed_retired {
             cluster
                 .core(cpu)
@@ -1172,6 +1179,20 @@ impl RiscvSystemRunDriver {
                     instruction,
                     self.o3_runtime_trace_enabled,
                 );
+            updated_cpus.insert(cpu);
+        }
+        if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
+            let controller = self.trap_port.controller();
+            let mut controller = controller.lock().expect("system host controller lock");
+            for cpu in updated_cpus {
+                let snapshot = cluster
+                    .core(cpu)
+                    .map_err(SystemError::RiscvCluster)?
+                    .o3_runtime_stats();
+                o3_runtime_stats
+                    .record_cpu_snapshot(controller.executor_mut().stats_mut(), cpu, snapshot)
+                    .map_err(SystemError::Stats)?;
+            }
         }
         Ok(())
     }

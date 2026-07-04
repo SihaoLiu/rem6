@@ -1,10 +1,11 @@
-use crate::{RiscvInstructionStats, RiscvSystemRunDriver, RiscvTrapEventPort};
+use crate::{RiscvInstructionStats, RiscvO3RuntimeStats, RiscvSystemRunDriver, RiscvTrapEventPort};
 
 impl RiscvSystemRunDriver {
     pub const fn new(trap_port: RiscvTrapEventPort) -> Self {
         Self {
             trap_port,
             instruction_stats: None,
+            o3_runtime_stats: None,
             data_access_stats: None,
             riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
@@ -19,6 +20,7 @@ impl RiscvSystemRunDriver {
         Self {
             trap_port,
             instruction_stats: Some(instruction_stats),
+            o3_runtime_stats: None,
             data_access_stats: None,
             riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
@@ -28,6 +30,11 @@ impl RiscvSystemRunDriver {
 
     pub const fn with_o3_runtime_trace_enabled(mut self, enabled: bool) -> Self {
         self.o3_runtime_trace_enabled = enabled;
+        self
+    }
+
+    pub fn with_o3_runtime_stats(mut self, o3_runtime_stats: RiscvO3RuntimeStats) -> Self {
+        self.o3_runtime_stats = Some(o3_runtime_stats);
         self
     }
 
