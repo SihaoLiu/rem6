@@ -69,12 +69,16 @@ struct Rem6O3TraceTotals {
     event_branches: u64,
     event_branch_taken: u64,
     event_branch_not_taken: u64,
+    event_branch_predicted_taken: u64,
+    event_branch_predicted_target_matches: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
     event_branch_link_writes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_not_taken_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_predicted_taken_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
@@ -332,6 +336,15 @@ impl Rem6O3TraceTotals {
         self.event_branch_not_taken = self
             .event_branch_not_taken
             .saturating_add(u64::from(!event.branch_resolved_taken()));
+        self.event_branch_predicted_taken = self
+            .event_branch_predicted_taken
+            .saturating_add(u64::from(event.branch_predicted_taken()));
+        let predicted_target_matches = event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) == event.branch_resolved_target());
+        self.event_branch_predicted_target_matches = self
+            .event_branch_predicted_target_matches
+            .saturating_add(u64::from(predicted_target_matches));
         self.event_branch_mispredictions = self
             .event_branch_mispredictions
             .saturating_add(u64::from(event.branch_mispredicted()));
@@ -349,6 +362,14 @@ impl Rem6O3TraceTotals {
         } else {
             self.event_branch_not_taken_kinds[index] =
                 self.event_branch_not_taken_kinds[index].saturating_add(1);
+        }
+        if event.branch_predicted_taken() {
+            self.event_branch_predicted_taken_kinds[index] =
+                self.event_branch_predicted_taken_kinds[index].saturating_add(1);
+        }
+        if predicted_target_matches {
+            self.event_branch_predicted_target_match_kinds[index] =
+                self.event_branch_predicted_target_match_kinds[index].saturating_add(1);
         }
         if event.branch_resolved_target().is_some() {
             self.event_branch_resolved_target_kinds[index] =
@@ -511,6 +532,14 @@ impl Rem6O3TraceTotals {
             ("event.branch_taken", self.event_branch_taken),
             ("event.branch_not_taken", self.event_branch_not_taken),
             (
+                "event.branch_predicted_taken",
+                self.event_branch_predicted_taken,
+            ),
+            (
+                "event.branch_predicted_target_matches",
+                self.event_branch_predicted_target_matches,
+            ),
+            (
                 "event.branch_mispredictions",
                 self.event_branch_mispredictions,
             ),
@@ -567,6 +596,26 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_not_taken_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_not_taken_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_predicted_taken_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_predicted_taken_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_predicted_target_match_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_predicted_target_match_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {
@@ -717,6 +766,48 @@ fn o3_branch_not_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str 
         BranchTargetKind::IndirectConditional => "event.branch_not_taken_kind.indirect_conditional",
         BranchTargetKind::IndirectUnconditional => {
             "event.branch_not_taken_kind.indirect_unconditional"
+        }
+    }
+}
+
+fn o3_branch_predicted_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_predicted_taken_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_predicted_taken_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_predicted_taken_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_predicted_taken_kind.call_indirect",
+        BranchTargetKind::DirectConditional => {
+            "event.branch_predicted_taken_kind.direct_conditional"
+        }
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_predicted_taken_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_predicted_taken_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_predicted_taken_kind.indirect_unconditional"
+        }
+    }
+}
+
+fn o3_branch_predicted_target_match_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_predicted_target_match_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_predicted_target_match_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_predicted_target_match_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_predicted_target_match_kind.call_indirect",
+        BranchTargetKind::DirectConditional => {
+            "event.branch_predicted_target_match_kind.direct_conditional"
+        }
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_predicted_target_match_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_predicted_target_match_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_predicted_target_match_kind.indirect_unconditional"
         }
     }
 }
