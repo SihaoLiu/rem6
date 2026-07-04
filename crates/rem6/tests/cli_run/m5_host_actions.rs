@@ -722,6 +722,27 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         1,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.dispatched_insts",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.insts_to_commit",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.dispatchedInsts",
+        "Count",
+        6,
+        "monotonic",
+    );
     let o3_runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
@@ -1487,8 +1508,10 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_byte_stat(&stdout, "sim.cpu0.o3.lsq_store_bytes", 4);
     assert_text_count_stat(&stdout, "system.cpu.rename.renamedInsts", 6);
     assert_text_count_stat(&stdout, "system.cpu.rename.renamedOperands", 4);
+    assert_text_count_stat(&stdout, "system.cpu.iew.dispatchedInsts", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
+    assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit::total", 6);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
@@ -1636,6 +1659,9 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.mem_write");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_mul");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_div");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
+    assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
     assert!(
         json.pointer("/cores/0/o3_runtime").is_none(),
         "timing-mode run should not emit inactive O3 runtime state: {json}"
@@ -1700,8 +1726,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iq.issued_inst_type.int_div",
         "system.cpu.rename.renamedInsts",
         "system.cpu.rename.renamedOperands",
+        "system.cpu.iew.dispatchedInsts",
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
+        "system.cpu.iew.instsToCommit::total",
         "system.cpu.lsq0.addedLoadsAndStores",
         "system.cpu.lsq0.loadBytes",
         "system.cpu.lsq0.storeBytes",

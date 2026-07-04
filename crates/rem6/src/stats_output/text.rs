@@ -646,6 +646,15 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 );
             }
         }
+        if let Some(insts_to_commit) =
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.insts_to_commit"))
+        {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.instsToCommit::total"),
+                insts_to_commit,
+            );
+        }
     }
 }
 

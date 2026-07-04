@@ -957,6 +957,18 @@ fn emit_o3_runtime_stats(
         )?;
     }
     for (name, value) in [
+        ("dispatched_insts", o3.instructions()),
+        ("insts_to_commit", o3.rob_commits()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.iew.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (name, value) in [
         ("lsq_load_bytes", o3.lsq_load_bytes()),
         ("lsq_store_bytes", o3.lsq_store_bytes()),
     ] {
@@ -973,6 +985,7 @@ fn emit_o3_runtime_stats(
         ("rob.reads", o3.rob_commits()),
         ("rename.renamedInsts", o3.instructions()),
         ("rename.renamedOperands", o3.rename_writes()),
+        ("iew.dispatchedInsts", o3.instructions()),
         ("iew.dispLoadInsts", o3.lsq_loads()),
         ("iew.dispStoreInsts", o3.lsq_stores()),
         (
