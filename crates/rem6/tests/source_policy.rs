@@ -578,6 +578,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.pipeline_trace.cpu.cpu0.records",
         "sim.debug.o3_trace.event.system_events",
         "sim.debug.o3_trace.event.branch_predicted_not_taken",
+        "sim.debug.o3_trace.event.branch_predicted_targets",
         "sim.debug.o3_trace.event.branch_resolved_targets",
         "sim.debug.o3_trace.event.branch_squashed_targets",
         "sim.debug.host_action_trace.records",

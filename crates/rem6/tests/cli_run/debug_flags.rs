@@ -9039,6 +9039,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
     );
     assert_eq!(json_record_bool(branch, "branch_squash"), false);
     assert_eq!(branch.get("branch_squashed_target"), Some(&Value::Null));
+    let branch_predicted_targets = events
+        .iter()
+        .filter(|event| {
+            json_record_bool(event, "branch_event")
+                && event
+                    .get("branch_predicted_target")
+                    .is_some_and(|target| !target.is_null())
+        })
+        .count() as u64;
+    assert_eq!(branch_predicted_targets, 1);
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),
@@ -9047,6 +9057,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
             "sim.debug.o3_trace.event.branch_predicted_taken",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_targets",
+            "Count",
+            branch_predicted_targets,
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_target_matches",
@@ -11676,6 +11691,11 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_not_taken_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_targets",
             "Count",
             0,
         ),

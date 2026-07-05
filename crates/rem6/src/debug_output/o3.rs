@@ -346,6 +346,7 @@ struct Rem6O3TraceTotals {
     event_branch_not_taken: u64,
     event_branch_predicted_taken: u64,
     event_branch_predicted_not_taken: u64,
+    event_branch_predicted_targets: u64,
     event_branch_predicted_target_matches: u64,
     event_branch_predicted_target_mismatches: u64,
     event_branch_targetless_mismatches: u64,
@@ -721,6 +722,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_predicted_not_taken = self
             .event_branch_predicted_not_taken
             .saturating_add(u64::from(!event.branch_predicted_taken()));
+        self.event_branch_predicted_targets = self
+            .event_branch_predicted_targets
+            .saturating_add(u64::from(event.branch_predicted_target().is_some()));
         let predicted_target_matches = event
             .branch_predicted_target()
             .is_some_and(|target| Some(target) == event.branch_resolved_target());
@@ -1064,6 +1068,10 @@ impl Rem6O3TraceTotals {
             (
                 "event.branch_predicted_not_taken",
                 self.event_branch_predicted_not_taken,
+            ),
+            (
+                "event.branch_predicted_targets",
+                self.event_branch_predicted_targets,
             ),
             (
                 "event.branch_predicted_target_matches",
