@@ -1992,6 +1992,127 @@ fn rem6_run_records_o3_float_misc_fu_latency_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
+    let path = detailed_o3_float_extended_fu_latency_binary(
+        "m5-switch-cpu-detailed-o3-float-extended-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert_eq!(
+        o3_runtime
+            .pointer("/fu_latency_instructions")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+
+    for class in [
+        "float_add",
+        "float_fma",
+        "float_sqrt",
+        "vector_float_add",
+        "vector_float_fma",
+        "vector_float_sqrt",
+    ] {
+        let instruction_path = format!("/fu_{class}_instructions");
+        let latency_path = format!("/fu_{class}_latency_cycles");
+        let stat_instruction_path = format!("sim.cpu0.o3.fu_{class}_instructions");
+        let stat_latency_path = format!("sim.cpu0.o3.fu_{class}_latency_cycles");
+        let runtime_instructions = o3_runtime
+            .pointer(&instruction_path)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {instruction_path}: {o3_runtime}")
+            });
+        let runtime_latency_cycles = o3_runtime
+            .pointer(&latency_path)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {latency_path}: {o3_runtime}")
+            });
+        assert_eq!(
+            runtime_instructions, 1,
+            "structured O3 runtime JSON should count {instruction_path}: {o3_runtime}"
+        );
+        assert!(
+            runtime_latency_cycles > 0,
+            "structured O3 runtime JSON should count positive {latency_path}: {o3_runtime}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &stat_instruction_path),
+            runtime_instructions,
+            "stat registry should match structured runtime {instruction_path}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &stat_latency_path),
+            runtime_latency_cycles,
+            "stat registry should match structured runtime {latency_path}"
+        );
+    }
+    for class in [
+        "float_mul",
+        "float_div",
+        "vector_float_mul",
+        "vector_float_div",
+    ] {
+        let instruction_path = format!("/fu_{class}_instructions");
+        let latency_path = format!("/fu_{class}_latency_cycles");
+        assert_eq!(
+            o3_runtime
+                .pointer(&instruction_path)
+                .and_then(Value::as_u64),
+            Some(0),
+            "structured O3 runtime JSON should expose inactive {instruction_path}: {o3_runtime}"
+        );
+        assert_eq!(
+            o3_runtime.pointer(&latency_path).and_then(Value::as_u64),
+            Some(0),
+            "structured O3 runtime JSON should expose inactive {latency_path}: {o3_runtime}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &format!("sim.cpu0.o3.fu_{class}_instructions")),
+            0,
+            "stat registry should expose inactive {instruction_path}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &format!("sim.cpu0.o3.fu_{class}_latency_cycles")),
+            0,
+            "stat registry should expose inactive {latency_path}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
     let path = detailed_o3_checkpoint_state_binary("m5-switch-cpu-detailed-o3-checkpoint-state");
 
@@ -3618,6 +3739,16 @@ fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
         | 0x53
 }
 
+fn fp_r4_type(rs3: u8, funct2: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (u32::from(rs3) << 27)
+        | (funct2 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
 fn run_m5_checkpoint_memory_checksums(name: &str, dram_memory: bool) -> (String, String) {
     let words = [
         m5op(M5_CHECKPOINT),
@@ -3876,6 +4007,31 @@ fn detailed_o3_float_misc_fu_latency_binary(name: &str) -> std::path::PathBuf {
         fp_r_type(0x10, 2, 1, 0x0, 4),                  // fsgnj.s f4, f1, f2
         vector_arith_type(0b010010, 0b001, 1, 0x02, 3), // vfsgnj.vv v3, v2, v1
         vector_arith_type(0b001000, 0b001, 2, 1, 4),    // vfsgnj.vv v4, v1, v2
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_float_extended_fu_latency_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        u_type(0x3f80_0000, 8, 0x37),                // lui x8, 1.0f bits
+        fp_r_type(0x78, 0, 8, 0x0, 1),               // fmv.w.x f1, x8
+        fp_r_type(0x78, 0, 8, 0x0, 2),               // fmv.w.x f2, x8
+        fp_r_type(0x78, 0, 8, 0x0, 3),               // fmv.w.x f3, x8
+        i_type(2, 0, 0x0, 10, 0x13),                 // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                   // e32, m1, vl=2
+        vector_arith_type(0b010111, 0b100, 0, 8, 1), // vfmv.v.f v1, f8
+        vector_arith_type(0b010111, 0b100, 0, 8, 2), // vfmv.v.f v2, f8
+        vector_arith_type(0b010111, 0b100, 0, 8, 4), // vfmv.v.f v4, f8
+        m5op(M5_SWITCH_CPU),                         // switch cpu0 to detailed
+        fp_r_type(0x00, 2, 1, 0x0, 4),               // fadd.s f4, f1, f2
+        fp_r4_type(3, 0x0, 2, 1, 0x0, 5, 0x43),      // fmadd.s f5, f1, f2, f3
+        fp_r_type(0x2c, 0, 1, 0x0, 6),               // fsqrt.s f6, f1
+        vector_arith_type(0b000000, 0b001, 2, 1, 3), // vfadd.vv v3, v2, v1
+        vector_arith_type(0b101100, 0b001, 2, 1, 4), // vfmacc.vv v4, v2, v1
+        vector_arith_type(0b010011, 0b001, 1, 0, 5), // vfsqrt.v v5, v1
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
