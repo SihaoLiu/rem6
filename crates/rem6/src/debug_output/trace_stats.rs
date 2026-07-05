@@ -112,6 +112,7 @@ struct PipelineStageResourceTraceStatSummary {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PipelineStageFlushTraceStatSummary {
     flushed: u64,
+    flushed_cycles: u64,
 }
 
 impl Rem6ExecTraceStat {
@@ -441,16 +442,22 @@ impl PipelineStageResourceTraceStatSummary {
 }
 
 impl PipelineStageFlushTraceStatSummary {
-    fn add_record(&mut self, flushed: u64) {
+    fn add_record(&mut self, flushed: u64, flushed_cycles: u64) {
         self.flushed = self.flushed.saturating_add(flushed);
+        self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
     }
 
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
-        stats.push(Rem6PipelineTraceStat {
-            path: format!("{prefix}.flushed"),
-            unit: "Count",
-            value: self.flushed,
-        });
+        for (suffix, unit, value) in [
+            ("flushed", "Count", self.flushed),
+            ("flushed_cycles", "Cycle", self.flushed_cycles),
+        ] {
+            stats.push(Rem6PipelineTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit,
+                value,
+            });
+        }
     }
 }
 
@@ -620,7 +627,7 @@ pub(super) fn pipeline_trace_stats(
                 flush_cause_stages
                     .entry((cause, stage))
                     .or_default()
-                    .add_record(flushed);
+                    .add_record(flushed, 1);
             }
         }
         if let Some(cause) = record.redirect_cause {
