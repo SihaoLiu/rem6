@@ -84,6 +84,52 @@ pub enum O3RuntimeLsqOrdering {
 }
 
 impl O3RuntimeFuLatencyClass {
+    pub const COUNT: usize = 18;
+
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::ScalarIntegerMul,
+        Self::ScalarIntegerDiv,
+        Self::ScalarFloatAdd,
+        Self::ScalarFloatCompare,
+        Self::ScalarFloatMisc,
+        Self::ScalarFloatMul,
+        Self::ScalarFloatFma,
+        Self::ScalarFloatDiv,
+        Self::ScalarFloatSqrt,
+        Self::VectorIntegerMul,
+        Self::VectorIntegerDiv,
+        Self::VectorFloatAdd,
+        Self::VectorFloatCompare,
+        Self::VectorFloatMisc,
+        Self::VectorFloatMul,
+        Self::VectorFloatFma,
+        Self::VectorFloatDiv,
+        Self::VectorFloatSqrt,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::ScalarIntegerMul => 0,
+            Self::ScalarIntegerDiv => 1,
+            Self::ScalarFloatAdd => 2,
+            Self::ScalarFloatCompare => 3,
+            Self::ScalarFloatMisc => 4,
+            Self::ScalarFloatMul => 5,
+            Self::ScalarFloatFma => 6,
+            Self::ScalarFloatDiv => 7,
+            Self::ScalarFloatSqrt => 8,
+            Self::VectorIntegerMul => 9,
+            Self::VectorIntegerDiv => 10,
+            Self::VectorFloatAdd => 11,
+            Self::VectorFloatCompare => 12,
+            Self::VectorFloatMisc => 13,
+            Self::VectorFloatMul => 14,
+            Self::VectorFloatFma => 15,
+            Self::VectorFloatDiv => 16,
+            Self::VectorFloatSqrt => 17,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ScalarIntegerMul => "scalar_integer_mul",

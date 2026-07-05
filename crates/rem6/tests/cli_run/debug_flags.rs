@@ -10504,6 +10504,8 @@ fn rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events() {
     ];
     let mut scalar_float_misc_cycles = 0;
     let mut vector_float_misc_cycles = 0;
+    let mut scalar_float_misc_latencies = Vec::new();
+    let mut vector_float_misc_latencies = Vec::new();
     for (pc, sequence, class, rename_writes) in expected_events {
         let event = events
             .iter()
@@ -10512,8 +10514,14 @@ fn rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events() {
         let latency = json_record_u64(event, "fu_latency_cycles");
         assert!(latency > 0, "{event:?}");
         match class {
-            "scalar_float_misc" => scalar_float_misc_cycles += latency,
-            "vector_float_misc" => vector_float_misc_cycles += latency,
+            "scalar_float_misc" => {
+                scalar_float_misc_cycles += latency;
+                scalar_float_misc_latencies.push(latency);
+            }
+            "vector_float_misc" => {
+                vector_float_misc_cycles += latency;
+                vector_float_misc_latencies.push(latency);
+            }
             _ => unreachable!("covered class literal"),
         }
         assert_o3_event_with_fu(
@@ -10528,6 +10536,12 @@ fn rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events() {
             false,
         );
     }
+    let scalar_float_misc_count = scalar_float_misc_latencies.len() as u64;
+    let vector_float_misc_count = vector_float_misc_latencies.len() as u64;
+    let scalar_float_misc_max = scalar_float_misc_latencies.iter().copied().max().unwrap();
+    let scalar_float_misc_min = scalar_float_misc_latencies.iter().copied().min().unwrap();
+    let vector_float_misc_max = vector_float_misc_latencies.iter().copied().max().unwrap();
+    let vector_float_misc_min = vector_float_misc_latencies.iter().copied().min().unwrap();
     let misc_cycles = scalar_float_misc_cycles + vector_float_misc_cycles;
     assert_eq!(
         json_record_u64(record, "fu_latency_cycles"),
@@ -10560,6 +10574,21 @@ fn rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events() {
             scalar_float_misc_cycles,
         ),
         (
+            "sim.debug.o3_trace.event.fu_float_misc_latency_max_cycles",
+            "Cycle",
+            scalar_float_misc_max,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_misc_latency_min_cycles",
+            "Cycle",
+            scalar_float_misc_min,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_misc_latency_avg_cycles",
+            "Cycle",
+            scalar_float_misc_cycles / scalar_float_misc_count,
+        ),
+        (
             "sim.debug.o3_trace.event.fu_vector_float_misc_instructions",
             "Count",
             2,
@@ -10568,6 +10597,21 @@ fn rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events() {
             "sim.debug.o3_trace.event.fu_vector_float_misc_latency_cycles",
             "Cycle",
             vector_float_misc_cycles,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_misc_latency_max_cycles",
+            "Cycle",
+            vector_float_misc_max,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_misc_latency_min_cycles",
+            "Cycle",
+            vector_float_misc_min,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_misc_latency_avg_cycles",
+            "Cycle",
+            vector_float_misc_cycles / vector_float_misc_count,
         ),
         (
             "sim.debug.o3_trace.event.fu_float_add_instructions",

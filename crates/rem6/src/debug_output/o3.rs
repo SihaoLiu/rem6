@@ -61,22 +61,188 @@ const fn min_latency_ticks(current: Option<u64>, latency: u64) -> Option<u64> {
     })
 }
 
-fn add_latency_bucket(instructions: &mut u64, cycles: &mut u64, latency: u64) {
-    *instructions = instructions.saturating_add(1);
-    *cycles = cycles.saturating_add(latency);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6O3FuLatencyClassTotals {
+    instructions: u64,
+    cycles: u64,
+    max_cycles: u64,
+    min_cycles: Option<u64>,
 }
 
-fn add_latency_bucket_with_extrema(
-    instructions: &mut u64,
-    cycles: &mut u64,
-    max_cycles: &mut u64,
-    min_cycles: &mut Option<u64>,
-    latency: u64,
-) {
-    add_latency_bucket(instructions, cycles, latency);
-    *max_cycles = (*max_cycles).max(latency);
-    *min_cycles = min_latency_ticks(*min_cycles, latency);
+impl Rem6O3FuLatencyClassTotals {
+    fn add(&mut self, latency: u64) {
+        self.instructions = self.instructions.saturating_add(1);
+        self.cycles = self.cycles.saturating_add(latency);
+        self.max_cycles = self.max_cycles.max(latency);
+        self.min_cycles = min_latency_ticks(self.min_cycles, latency);
+    }
+
+    fn min_cycles_value(self) -> u64 {
+        self.min_cycles.unwrap_or(0)
+    }
+
+    fn avg_cycles(self) -> u64 {
+        average_ticks(self.cycles, self.instructions)
+    }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Rem6O3FuLatencyClassStatNames {
+    class: O3RuntimeFuLatencyClass,
+    instructions: &'static str,
+    cycles: &'static str,
+    max_cycles: &'static str,
+    min_cycles: &'static str,
+    avg_cycles: &'static str,
+}
+
+const REM6_O3_FU_LATENCY_CLASS_STATS: [Rem6O3FuLatencyClassStatNames;
+    O3RuntimeFuLatencyClass::COUNT] = [
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarIntegerMul,
+        instructions: "event.fu_integer_mul_instructions",
+        cycles: "event.fu_integer_mul_latency_cycles",
+        max_cycles: "event.fu_integer_mul_latency_max_cycles",
+        min_cycles: "event.fu_integer_mul_latency_min_cycles",
+        avg_cycles: "event.fu_integer_mul_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarIntegerDiv,
+        instructions: "event.fu_integer_div_instructions",
+        cycles: "event.fu_integer_div_latency_cycles",
+        max_cycles: "event.fu_integer_div_latency_max_cycles",
+        min_cycles: "event.fu_integer_div_latency_min_cycles",
+        avg_cycles: "event.fu_integer_div_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatAdd,
+        instructions: "event.fu_float_add_instructions",
+        cycles: "event.fu_float_add_latency_cycles",
+        max_cycles: "event.fu_float_add_latency_max_cycles",
+        min_cycles: "event.fu_float_add_latency_min_cycles",
+        avg_cycles: "event.fu_float_add_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatCompare,
+        instructions: "event.fu_float_compare_instructions",
+        cycles: "event.fu_float_compare_latency_cycles",
+        max_cycles: "event.fu_float_compare_latency_max_cycles",
+        min_cycles: "event.fu_float_compare_latency_min_cycles",
+        avg_cycles: "event.fu_float_compare_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatMisc,
+        instructions: "event.fu_float_misc_instructions",
+        cycles: "event.fu_float_misc_latency_cycles",
+        max_cycles: "event.fu_float_misc_latency_max_cycles",
+        min_cycles: "event.fu_float_misc_latency_min_cycles",
+        avg_cycles: "event.fu_float_misc_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatMul,
+        instructions: "event.fu_float_mul_instructions",
+        cycles: "event.fu_float_mul_latency_cycles",
+        max_cycles: "event.fu_float_mul_latency_max_cycles",
+        min_cycles: "event.fu_float_mul_latency_min_cycles",
+        avg_cycles: "event.fu_float_mul_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatFma,
+        instructions: "event.fu_float_fma_instructions",
+        cycles: "event.fu_float_fma_latency_cycles",
+        max_cycles: "event.fu_float_fma_latency_max_cycles",
+        min_cycles: "event.fu_float_fma_latency_min_cycles",
+        avg_cycles: "event.fu_float_fma_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatDiv,
+        instructions: "event.fu_float_div_instructions",
+        cycles: "event.fu_float_div_latency_cycles",
+        max_cycles: "event.fu_float_div_latency_max_cycles",
+        min_cycles: "event.fu_float_div_latency_min_cycles",
+        avg_cycles: "event.fu_float_div_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::ScalarFloatSqrt,
+        instructions: "event.fu_float_sqrt_instructions",
+        cycles: "event.fu_float_sqrt_latency_cycles",
+        max_cycles: "event.fu_float_sqrt_latency_max_cycles",
+        min_cycles: "event.fu_float_sqrt_latency_min_cycles",
+        avg_cycles: "event.fu_float_sqrt_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorIntegerMul,
+        instructions: "event.fu_vector_integer_mul_instructions",
+        cycles: "event.fu_vector_integer_mul_latency_cycles",
+        max_cycles: "event.fu_vector_integer_mul_latency_max_cycles",
+        min_cycles: "event.fu_vector_integer_mul_latency_min_cycles",
+        avg_cycles: "event.fu_vector_integer_mul_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorIntegerDiv,
+        instructions: "event.fu_vector_integer_div_instructions",
+        cycles: "event.fu_vector_integer_div_latency_cycles",
+        max_cycles: "event.fu_vector_integer_div_latency_max_cycles",
+        min_cycles: "event.fu_vector_integer_div_latency_min_cycles",
+        avg_cycles: "event.fu_vector_integer_div_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatAdd,
+        instructions: "event.fu_vector_float_add_instructions",
+        cycles: "event.fu_vector_float_add_latency_cycles",
+        max_cycles: "event.fu_vector_float_add_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_add_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_add_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatCompare,
+        instructions: "event.fu_vector_float_compare_instructions",
+        cycles: "event.fu_vector_float_compare_latency_cycles",
+        max_cycles: "event.fu_vector_float_compare_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_compare_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_compare_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatMisc,
+        instructions: "event.fu_vector_float_misc_instructions",
+        cycles: "event.fu_vector_float_misc_latency_cycles",
+        max_cycles: "event.fu_vector_float_misc_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_misc_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_misc_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatMul,
+        instructions: "event.fu_vector_float_mul_instructions",
+        cycles: "event.fu_vector_float_mul_latency_cycles",
+        max_cycles: "event.fu_vector_float_mul_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_mul_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_mul_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatFma,
+        instructions: "event.fu_vector_float_fma_instructions",
+        cycles: "event.fu_vector_float_fma_latency_cycles",
+        max_cycles: "event.fu_vector_float_fma_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_fma_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_fma_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatDiv,
+        instructions: "event.fu_vector_float_div_instructions",
+        cycles: "event.fu_vector_float_div_latency_cycles",
+        max_cycles: "event.fu_vector_float_div_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_div_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_div_latency_avg_cycles",
+    },
+    Rem6O3FuLatencyClassStatNames {
+        class: O3RuntimeFuLatencyClass::VectorFloatSqrt,
+        instructions: "event.fu_vector_float_sqrt_instructions",
+        cycles: "event.fu_vector_float_sqrt_latency_cycles",
+        max_cycles: "event.fu_vector_float_sqrt_latency_max_cycles",
+        min_cycles: "event.fu_vector_float_sqrt_latency_min_cycles",
+        avg_cycles: "event.fu_vector_float_sqrt_latency_avg_cycles",
+    },
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreScope {
@@ -204,46 +370,7 @@ struct Rem6O3TraceTotals {
     event_fu_latency_cycles: u64,
     event_fu_latency_max_cycles: u64,
     event_fu_latency_min_cycles: Option<u64>,
-    event_fu_integer_mul_instructions: u64,
-    event_fu_integer_mul_latency_cycles: u64,
-    event_fu_integer_mul_latency_max_cycles: u64,
-    event_fu_integer_mul_latency_min_cycles: Option<u64>,
-    event_fu_integer_div_instructions: u64,
-    event_fu_integer_div_latency_cycles: u64,
-    event_fu_integer_div_latency_max_cycles: u64,
-    event_fu_integer_div_latency_min_cycles: Option<u64>,
-    event_fu_float_add_instructions: u64,
-    event_fu_float_add_latency_cycles: u64,
-    event_fu_float_compare_instructions: u64,
-    event_fu_float_compare_latency_cycles: u64,
-    event_fu_float_misc_instructions: u64,
-    event_fu_float_misc_latency_cycles: u64,
-    event_fu_float_mul_instructions: u64,
-    event_fu_float_mul_latency_cycles: u64,
-    event_fu_float_fma_instructions: u64,
-    event_fu_float_fma_latency_cycles: u64,
-    event_fu_float_div_instructions: u64,
-    event_fu_float_div_latency_cycles: u64,
-    event_fu_float_sqrt_instructions: u64,
-    event_fu_float_sqrt_latency_cycles: u64,
-    event_fu_vector_integer_mul_instructions: u64,
-    event_fu_vector_integer_mul_latency_cycles: u64,
-    event_fu_vector_integer_div_instructions: u64,
-    event_fu_vector_integer_div_latency_cycles: u64,
-    event_fu_vector_float_add_instructions: u64,
-    event_fu_vector_float_add_latency_cycles: u64,
-    event_fu_vector_float_compare_instructions: u64,
-    event_fu_vector_float_compare_latency_cycles: u64,
-    event_fu_vector_float_misc_instructions: u64,
-    event_fu_vector_float_misc_latency_cycles: u64,
-    event_fu_vector_float_mul_instructions: u64,
-    event_fu_vector_float_mul_latency_cycles: u64,
-    event_fu_vector_float_fma_instructions: u64,
-    event_fu_vector_float_fma_latency_cycles: u64,
-    event_fu_vector_float_div_instructions: u64,
-    event_fu_vector_float_div_latency_cycles: u64,
-    event_fu_vector_float_sqrt_instructions: u64,
-    event_fu_vector_float_sqrt_latency_cycles: u64,
+    event_fu_latency_classes: [Rem6O3FuLatencyClassTotals; O3RuntimeFuLatencyClass::COUNT],
 }
 
 impl Rem6O3TraceRecord {
@@ -560,138 +687,8 @@ impl Rem6O3TraceTotals {
                     self.event_fu_latency_max_cycles.max(fu_latency_cycles);
                 self.event_fu_latency_min_cycles =
                     min_latency_ticks(self.event_fu_latency_min_cycles, fu_latency_cycles);
-                match event.fu_latency_class() {
-                    Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
-                        add_latency_bucket_with_extrema(
-                            &mut self.event_fu_integer_mul_instructions,
-                            &mut self.event_fu_integer_mul_latency_cycles,
-                            &mut self.event_fu_integer_mul_latency_max_cycles,
-                            &mut self.event_fu_integer_mul_latency_min_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
-                        add_latency_bucket_with_extrema(
-                            &mut self.event_fu_integer_div_instructions,
-                            &mut self.event_fu_integer_div_latency_cycles,
-                            &mut self.event_fu_integer_div_latency_max_cycles,
-                            &mut self.event_fu_integer_div_latency_min_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatAdd) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_add_instructions,
-                            &mut self.event_fu_float_add_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatCompare) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_compare_instructions,
-                            &mut self.event_fu_float_compare_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatMisc) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_misc_instructions,
-                            &mut self.event_fu_float_misc_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatMul) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_mul_instructions,
-                            &mut self.event_fu_float_mul_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatFma) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_fma_instructions,
-                            &mut self.event_fu_float_fma_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatDiv) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_div_instructions,
-                            &mut self.event_fu_float_div_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::ScalarFloatSqrt) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_float_sqrt_instructions,
-                            &mut self.event_fu_float_sqrt_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorIntegerMul) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_integer_mul_instructions,
-                            &mut self.event_fu_vector_integer_mul_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorIntegerDiv) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_integer_div_instructions,
-                            &mut self.event_fu_vector_integer_div_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatAdd) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_add_instructions,
-                            &mut self.event_fu_vector_float_add_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatCompare) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_compare_instructions,
-                            &mut self.event_fu_vector_float_compare_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatMisc) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_misc_instructions,
-                            &mut self.event_fu_vector_float_misc_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatMul) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_mul_instructions,
-                            &mut self.event_fu_vector_float_mul_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatFma) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_fma_instructions,
-                            &mut self.event_fu_vector_float_fma_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatDiv) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_div_instructions,
-                            &mut self.event_fu_vector_float_div_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    Some(O3RuntimeFuLatencyClass::VectorFloatSqrt) => {
-                        add_latency_bucket(
-                            &mut self.event_fu_vector_float_sqrt_instructions,
-                            &mut self.event_fu_vector_float_sqrt_latency_cycles,
-                            fu_latency_cycles,
-                        );
-                    }
-                    None => {}
+                if let Some(class) = event.fu_latency_class() {
+                    self.event_fu_latency_classes[class.index()].add(fu_latency_cycles);
                 }
             }
         }
@@ -1071,22 +1068,6 @@ impl Rem6O3TraceTotals {
                 "event.fu_latency_instructions",
                 self.event_fu_latency_instructions,
             ),
-            (
-                "event.fu_integer_mul_instructions",
-                self.event_fu_integer_mul_instructions,
-            ),
-            (
-                "event.fu_integer_div_instructions",
-                self.event_fu_integer_div_instructions,
-            ),
-            (
-                "event.fu_vector_integer_mul_instructions",
-                self.event_fu_vector_integer_mul_instructions,
-            ),
-            (
-                "event.fu_vector_integer_div_instructions",
-                self.event_fu_vector_integer_div_instructions,
-            ),
         ] {
             stats.push(Rem6O3TraceStat {
                 suffix,
@@ -1094,69 +1075,14 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
-        let mut push_count = |suffix, value| {
+        for class_stats in REM6_O3_FU_LATENCY_CLASS_STATS {
+            let value = self.event_fu_latency_classes[class_stats.class.index()].instructions;
             stats.push(Rem6O3TraceStat {
-                suffix,
+                suffix: class_stats.instructions,
                 unit: "Count",
                 value,
             });
-        };
-        push_count(
-            "event.fu_float_add_instructions",
-            self.event_fu_float_add_instructions,
-        );
-        push_count(
-            "event.fu_float_compare_instructions",
-            self.event_fu_float_compare_instructions,
-        );
-        push_count(
-            "event.fu_float_misc_instructions",
-            self.event_fu_float_misc_instructions,
-        );
-        push_count(
-            "event.fu_float_mul_instructions",
-            self.event_fu_float_mul_instructions,
-        );
-        push_count(
-            "event.fu_float_fma_instructions",
-            self.event_fu_float_fma_instructions,
-        );
-        push_count(
-            "event.fu_float_div_instructions",
-            self.event_fu_float_div_instructions,
-        );
-        push_count(
-            "event.fu_float_sqrt_instructions",
-            self.event_fu_float_sqrt_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_add_instructions",
-            self.event_fu_vector_float_add_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_compare_instructions",
-            self.event_fu_vector_float_compare_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_misc_instructions",
-            self.event_fu_vector_float_misc_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_mul_instructions",
-            self.event_fu_vector_float_mul_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_fma_instructions",
-            self.event_fu_vector_float_fma_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_div_instructions",
-            self.event_fu_vector_float_div_instructions,
-        );
-        push_count(
-            "event.fu_vector_float_sqrt_instructions",
-            self.event_fu_vector_float_sqrt_instructions,
-        );
+        }
         for kind in BranchTargetKind::ALL {
             if matches!(kind, BranchTargetKind::NoBranch) {
                 continue;
@@ -1572,114 +1498,27 @@ impl Rem6O3TraceTotals {
                     self.event_fu_latency_instructions,
                 ),
             ),
-            (
-                "event.fu_integer_mul_latency_cycles",
-                self.event_fu_integer_mul_latency_cycles,
-            ),
-            (
-                "event.fu_integer_mul_latency_max_cycles",
-                self.event_fu_integer_mul_latency_max_cycles,
-            ),
-            (
-                "event.fu_integer_mul_latency_min_cycles",
-                self.event_fu_integer_mul_latency_min_cycles.unwrap_or(0),
-            ),
-            (
-                "event.fu_integer_mul_latency_avg_cycles",
-                average_ticks(
-                    self.event_fu_integer_mul_latency_cycles,
-                    self.event_fu_integer_mul_instructions,
-                ),
-            ),
-            (
-                "event.fu_integer_div_latency_cycles",
-                self.event_fu_integer_div_latency_cycles,
-            ),
-            (
-                "event.fu_integer_div_latency_max_cycles",
-                self.event_fu_integer_div_latency_max_cycles,
-            ),
-            (
-                "event.fu_integer_div_latency_min_cycles",
-                self.event_fu_integer_div_latency_min_cycles.unwrap_or(0),
-            ),
-            (
-                "event.fu_integer_div_latency_avg_cycles",
-                average_ticks(
-                    self.event_fu_integer_div_latency_cycles,
-                    self.event_fu_integer_div_instructions,
-                ),
-            ),
-            (
-                "event.fu_float_add_latency_cycles",
-                self.event_fu_float_add_latency_cycles,
-            ),
-            (
-                "event.fu_float_compare_latency_cycles",
-                self.event_fu_float_compare_latency_cycles,
-            ),
-            (
-                "event.fu_float_misc_latency_cycles",
-                self.event_fu_float_misc_latency_cycles,
-            ),
-            (
-                "event.fu_float_mul_latency_cycles",
-                self.event_fu_float_mul_latency_cycles,
-            ),
-            (
-                "event.fu_float_fma_latency_cycles",
-                self.event_fu_float_fma_latency_cycles,
-            ),
-            (
-                "event.fu_float_div_latency_cycles",
-                self.event_fu_float_div_latency_cycles,
-            ),
-            (
-                "event.fu_float_sqrt_latency_cycles",
-                self.event_fu_float_sqrt_latency_cycles,
-            ),
-            (
-                "event.fu_vector_integer_mul_latency_cycles",
-                self.event_fu_vector_integer_mul_latency_cycles,
-            ),
-            (
-                "event.fu_vector_integer_div_latency_cycles",
-                self.event_fu_vector_integer_div_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_add_latency_cycles",
-                self.event_fu_vector_float_add_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_compare_latency_cycles",
-                self.event_fu_vector_float_compare_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_misc_latency_cycles",
-                self.event_fu_vector_float_misc_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_mul_latency_cycles",
-                self.event_fu_vector_float_mul_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_fma_latency_cycles",
-                self.event_fu_vector_float_fma_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_div_latency_cycles",
-                self.event_fu_vector_float_div_latency_cycles,
-            ),
-            (
-                "event.fu_vector_float_sqrt_latency_cycles",
-                self.event_fu_vector_float_sqrt_latency_cycles,
-            ),
         ] {
             stats.push(Rem6O3TraceStat {
                 suffix,
                 unit: "Cycle",
                 value,
             });
+        }
+        for class_stats in REM6_O3_FU_LATENCY_CLASS_STATS {
+            let totals = self.event_fu_latency_classes[class_stats.class.index()];
+            for (suffix, value) in [
+                (class_stats.cycles, totals.cycles),
+                (class_stats.max_cycles, totals.max_cycles),
+                (class_stats.min_cycles, totals.min_cycles_value()),
+                (class_stats.avg_cycles, totals.avg_cycles()),
+            ] {
+                stats.push(Rem6O3TraceStat {
+                    suffix,
+                    unit: "Cycle",
+                    value,
+                });
+            }
         }
         stats
     }
