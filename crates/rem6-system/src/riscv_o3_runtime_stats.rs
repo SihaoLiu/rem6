@@ -127,6 +127,15 @@ struct RiscvO3RuntimeBranchRepairStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeLsqLatencyStats {
+    samples: StatId,
+    ticks: StatId,
+    max_ticks: StatId,
+    min_ticks: StatId,
+    avg_ticks: StatId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvO3RuntimeCpuStats {
     instructions: StatId,
     rob_allocations: StatId,
@@ -139,6 +148,8 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
+    lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
     lsq_store_conditional_failures: StatId,
     branch_repair_targetless_mismatches: StatId,
@@ -178,6 +189,12 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             lsq_operation_counts: register_o3_lsq_operation_counters(registry, &prefix)?,
+            lsq_data_latency: register_o3_lsq_latency_counters(
+                registry,
+                &prefix,
+                "lsq_data_latency",
+            )?,
+            lsq_operation_latency: register_o3_lsq_operation_latency_counters(registry, &prefix)?,
             lsq_ordering_counts: register_o3_lsq_ordering_counters(registry, &prefix)?,
             lsq_store_conditional_failures: register_o3_counter(
                 registry,
@@ -371,6 +388,7 @@ impl RiscvO3RuntimeCpuStats {
                 registry.increment(self.lsq_operation_counts[operation.index()], delta)?;
             }
         }
+        self.set_lsq_latency_snapshot(registry, current)?;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
             let delta = current
                 .lsq_ordering_count(ordering)
@@ -457,6 +475,7 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_operation_count(operation),
             )?;
         }
+        self.set_lsq_latency_snapshot(registry, snapshot)?;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
             registry.set_resettable_counter(
                 self.lsq_ordering_counts[ordering.index()],
@@ -499,6 +518,34 @@ impl RiscvO3RuntimeCpuStats {
         }
         Ok(())
     }
+
+    fn set_lsq_latency_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        set_o3_lsq_latency_counters(
+            registry,
+            self.lsq_data_latency,
+            snapshot.lsq_data_latency_samples(),
+            snapshot.lsq_data_latency_ticks(),
+            snapshot.lsq_data_latency_max_ticks(),
+            snapshot.lsq_data_latency_min_ticks(),
+            snapshot.lsq_data_latency_avg_ticks(),
+        )?;
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            set_o3_lsq_latency_counters(
+                registry,
+                self.lsq_operation_latency[operation.index()],
+                snapshot.lsq_operation_latency_samples(operation),
+                snapshot.lsq_operation_latency_ticks(operation),
+                snapshot.lsq_operation_latency_max_ticks(operation),
+                snapshot.lsq_operation_latency_min_ticks(operation),
+                snapshot.lsq_operation_latency_avg_ticks(operation),
+            )?;
+        }
+        Ok(())
+    }
 }
 
 fn register_o3_counter(
@@ -524,6 +571,63 @@ fn register_o3_lsq_operation_counters(
         )?;
     }
     Ok(stats)
+}
+
+fn register_o3_lsq_latency_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    stem: &str,
+) -> Result<RiscvO3RuntimeLsqLatencyStats, StatsError> {
+    Ok(RiscvO3RuntimeLsqLatencyStats {
+        samples: register_o3_counter(registry, prefix, &format!("{stem}_samples"), "Count")?,
+        ticks: register_o3_counter(registry, prefix, &format!("{stem}_ticks"), "Tick")?,
+        max_ticks: register_o3_counter(registry, prefix, &format!("{stem}_max_ticks"), "Tick")?,
+        min_ticks: register_o3_counter(registry, prefix, &format!("{stem}_min_ticks"), "Tick")?,
+        avg_ticks: register_o3_counter(registry, prefix, &format!("{stem}_avg_ticks"), "Tick")?,
+    })
+}
+
+fn register_o3_lsq_operation_latency_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let empty = RiscvO3RuntimeLsqLatencyStats {
+        samples: StatId::new(0),
+        ticks: StatId::new(0),
+        max_ticks: StatId::new(0),
+        min_ticks: StatId::new(0),
+        avg_ticks: StatId::new(0),
+    };
+    let mut stats = [empty; O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_lsq_latency_counters(
+            registry,
+            prefix,
+            &format!("lsq_operation.{}_latency", operation.as_str()),
+        )?;
+    }
+    Ok(stats)
+}
+
+fn set_o3_lsq_latency_counters(
+    registry: &mut StatsRegistry,
+    stats: RiscvO3RuntimeLsqLatencyStats,
+    samples: u64,
+    ticks: u64,
+    max_ticks: u64,
+    min_ticks: u64,
+    avg_ticks: u64,
+) -> Result<(), StatsError> {
+    for (stat, value) in [
+        (stats.samples, samples),
+        (stats.ticks, ticks),
+        (stats.max_ticks, max_ticks),
+        (stats.min_ticks, min_ticks),
+        (stats.avg_ticks, avg_ticks),
+    ] {
+        registry.set_resettable_counter(stat, value)?;
+    }
+    Ok(())
 }
 
 fn register_o3_lsq_ordering_counters(

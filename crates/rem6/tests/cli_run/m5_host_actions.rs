@@ -2053,6 +2053,85 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
             "resettable",
         );
     }
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_samples",
+            "Count",
+            7,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_ticks",
+            "Tick",
+            14,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_max_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_min_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_avg_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_latency_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_latency_samples",
+            "Count",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_latency_ticks",
+            "Tick",
+            6,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved_latency_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional_latency_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic_latency_ticks",
+            "Tick",
+            2,
+        ),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", unit, value, "resettable");
+    }
 
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
@@ -2109,6 +2188,65 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
             value,
             "resettable",
         );
+    }
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_samples",
+            "Count",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_max_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_avg_ticks",
+            "Tick",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_latency_samples",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_latency_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_latency_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional_latency_samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional_latency_ticks",
+            "Tick",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", unit, value, "resettable");
     }
 
     assert_json_stat(
@@ -5891,15 +6029,25 @@ fn assert_stats_dump_sample(
                 .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
         })
         .unwrap_or_else(|| panic!("missing stats dump sample {path}: {dump}"));
-    assert_eq!(sample.pointer("/kind").and_then(Value::as_str), Some(kind));
-    assert_eq!(sample.pointer("/unit").and_then(Value::as_str), Some(unit));
+    assert_eq!(
+        sample.pointer("/kind").and_then(Value::as_str),
+        Some(kind),
+        "stats dump sample {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/unit").and_then(Value::as_str),
+        Some(unit),
+        "stats dump sample {path}: {sample}"
+    );
     assert_eq!(
         sample.pointer("/value").and_then(Value::as_u64),
-        Some(value)
+        Some(value),
+        "stats dump sample {path}: {sample}"
     );
     assert_eq!(
         sample.pointer("/reset_policy").and_then(Value::as_str),
-        Some(reset_policy)
+        Some(reset_policy),
+        "stats dump sample {path}: {sample}"
     );
 }
 
