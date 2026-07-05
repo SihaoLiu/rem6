@@ -36,6 +36,36 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::FloatLessThanD { .. }
         | RiscvInstruction::FloatEqualS { .. }
         | RiscvInstruction::FloatEqualD { .. } => Some(O3RuntimeFuLatencyClass::ScalarFloatCompare),
+        RiscvInstruction::FloatMoveXFromS { .. }
+        | RiscvInstruction::FloatMoveXFromD { .. }
+        | RiscvInstruction::FloatMoveSFromX { .. }
+        | RiscvInstruction::FloatMoveDFromX { .. }
+        | RiscvInstruction::FloatConvertSFromW { .. }
+        | RiscvInstruction::FloatConvertSFromWu { .. }
+        | RiscvInstruction::FloatConvertSFromL { .. }
+        | RiscvInstruction::FloatConvertSFromLu { .. }
+        | RiscvInstruction::FloatConvertWFromS { .. }
+        | RiscvInstruction::FloatConvertWuFromS { .. }
+        | RiscvInstruction::FloatConvertLFromS { .. }
+        | RiscvInstruction::FloatConvertLuFromS { .. }
+        | RiscvInstruction::FloatConvertSFromD { .. }
+        | RiscvInstruction::FloatConvertDFromS { .. }
+        | RiscvInstruction::FloatConvertDFromW { .. }
+        | RiscvInstruction::FloatConvertDFromWu { .. }
+        | RiscvInstruction::FloatConvertDFromL { .. }
+        | RiscvInstruction::FloatConvertDFromLu { .. }
+        | RiscvInstruction::FloatConvertWFromD { .. }
+        | RiscvInstruction::FloatConvertWuFromD { .. }
+        | RiscvInstruction::FloatConvertLFromD { .. }
+        | RiscvInstruction::FloatConvertLuFromD { .. }
+        | RiscvInstruction::FloatSignInjectS { .. }
+        | RiscvInstruction::FloatSignInjectD { .. }
+        | RiscvInstruction::FloatSignInjectNegS { .. }
+        | RiscvInstruction::FloatSignInjectNegD { .. }
+        | RiscvInstruction::FloatSignInjectXorS { .. }
+        | RiscvInstruction::FloatSignInjectXorD { .. }
+        | RiscvInstruction::FloatClassS { .. }
+        | RiscvInstruction::FloatClassD { .. } => Some(O3RuntimeFuLatencyClass::ScalarFloatMisc),
         RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
             Some(O3RuntimeFuLatencyClass::ScalarFloatMul)
         }
@@ -116,6 +146,25 @@ pub(crate) const fn o3_fu_latency_class(
             | RiscvVectorFloatInstruction::MaskLessEqualVv { .. }
             | RiscvVectorFloatInstruction::MaskLessEqualVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatCompare),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV { .. }
+            | RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV { .. }
+            | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatV { .. }
+            | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV { .. }
+            | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV { .. }
+            | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV { .. }
+            | RiscvVectorFloatInstruction::MergeVf { .. }
+            | RiscvVectorFloatInstruction::MoveVf { .. }
+            | RiscvVectorFloatInstruction::MoveFv { .. }
+            | RiscvVectorFloatInstruction::MoveSv { .. }
+            | RiscvVectorFloatInstruction::SignInjectVv { .. }
+            | RiscvVectorFloatInstruction::SignInjectVf { .. }
+            | RiscvVectorFloatInstruction::SignInjectNegVv { .. }
+            | RiscvVectorFloatInstruction::SignInjectNegVf { .. }
+            | RiscvVectorFloatInstruction::SignInjectXorVv { .. }
+            | RiscvVectorFloatInstruction::SignInjectXorVf { .. }
+            | RiscvVectorFloatInstruction::ClassV { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatMisc),
         RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatMul),

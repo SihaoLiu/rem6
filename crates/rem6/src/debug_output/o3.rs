@@ -216,6 +216,8 @@ struct Rem6O3TraceTotals {
     event_fu_float_add_latency_cycles: u64,
     event_fu_float_compare_instructions: u64,
     event_fu_float_compare_latency_cycles: u64,
+    event_fu_float_misc_instructions: u64,
+    event_fu_float_misc_latency_cycles: u64,
     event_fu_float_mul_instructions: u64,
     event_fu_float_mul_latency_cycles: u64,
     event_fu_float_fma_instructions: u64,
@@ -232,6 +234,8 @@ struct Rem6O3TraceTotals {
     event_fu_vector_float_add_latency_cycles: u64,
     event_fu_vector_float_compare_instructions: u64,
     event_fu_vector_float_compare_latency_cycles: u64,
+    event_fu_vector_float_misc_instructions: u64,
+    event_fu_vector_float_misc_latency_cycles: u64,
     event_fu_vector_float_mul_instructions: u64,
     event_fu_vector_float_mul_latency_cycles: u64,
     event_fu_vector_float_fma_instructions: u64,
@@ -589,6 +593,13 @@ impl Rem6O3TraceTotals {
                             fu_latency_cycles,
                         );
                     }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatMisc) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_misc_instructions,
+                            &mut self.event_fu_float_misc_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
                     Some(O3RuntimeFuLatencyClass::ScalarFloatMul) => {
                         add_latency_bucket(
                             &mut self.event_fu_float_mul_instructions,
@@ -642,6 +653,13 @@ impl Rem6O3TraceTotals {
                         add_latency_bucket(
                             &mut self.event_fu_vector_float_compare_instructions,
                             &mut self.event_fu_vector_float_compare_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatMisc) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_misc_instructions,
+                            &mut self.event_fu_vector_float_misc_latency_cycles,
                             fu_latency_cycles,
                         );
                     }
@@ -1092,6 +1110,10 @@ impl Rem6O3TraceTotals {
             self.event_fu_float_compare_instructions,
         );
         push_count(
+            "event.fu_float_misc_instructions",
+            self.event_fu_float_misc_instructions,
+        );
+        push_count(
             "event.fu_float_mul_instructions",
             self.event_fu_float_mul_instructions,
         );
@@ -1114,6 +1136,10 @@ impl Rem6O3TraceTotals {
         push_count(
             "event.fu_vector_float_compare_instructions",
             self.event_fu_vector_float_compare_instructions,
+        );
+        push_count(
+            "event.fu_vector_float_misc_instructions",
+            self.event_fu_vector_float_misc_instructions,
         );
         push_count(
             "event.fu_vector_float_mul_instructions",
@@ -1593,6 +1619,10 @@ impl Rem6O3TraceTotals {
                 self.event_fu_float_compare_latency_cycles,
             ),
             (
+                "event.fu_float_misc_latency_cycles",
+                self.event_fu_float_misc_latency_cycles,
+            ),
+            (
                 "event.fu_float_mul_latency_cycles",
                 self.event_fu_float_mul_latency_cycles,
             ),
@@ -1623,6 +1653,10 @@ impl Rem6O3TraceTotals {
             (
                 "event.fu_vector_float_compare_latency_cycles",
                 self.event_fu_vector_float_compare_latency_cycles,
+            ),
+            (
+                "event.fu_vector_float_misc_latency_cycles",
+                self.event_fu_vector_float_misc_latency_cycles,
             ),
             (
                 "event.fu_vector_float_mul_latency_cycles",
