@@ -638,6 +638,30 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",
         );
+        let branch_mispredict_stats = [
+            snapshot_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),
+            ),
+            snapshot_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.o3.branch_repair_wrong_targets"),
+            ),
+            snapshot_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.o3.branch_repair_direction_only_mismatches"),
+            ),
+        ];
+        if branch_mispredict_stats.iter().any(Option::is_some) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.branchMispredicts"),
+                branch_mispredict_stats
+                    .into_iter()
+                    .flatten()
+                    .fold(0_u64, u64::saturating_add),
+            );
+        }
         for (op_class, source_name) in [("MemRead", "lsq_loads"), ("MemWrite", "lsq_stores")] {
             let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
             if let Some(value) = snapshot_value(snapshot, &source_path) {
@@ -1507,5 +1531,32 @@ mod tests {
         assert!(!text.contains("system.cpu.main.commitStats0.ipc"));
         assert!(!text.contains("system.cpu1.ipc"));
         assert!(!text.contains("system.cpu1.commitStats0.ipc"));
+    }
+
+    #[test]
+    fn stats_output_saturates_o3_branch_mispredict_alias_total() {
+        let mut stats = StatsRegistry::new();
+        let cores = stats.register_counter("sim.cores", "Count").unwrap();
+        let targetless = stats
+            .register_counter("sim.cpu0.o3.branch_repair_targetless_mismatches", "Count")
+            .unwrap();
+        let wrong_targets = stats
+            .register_counter("sim.cpu0.o3.branch_repair_wrong_targets", "Count")
+            .unwrap();
+        let direction_only = stats
+            .register_counter(
+                "sim.cpu0.o3.branch_repair_direction_only_mismatches",
+                "Count",
+            )
+            .unwrap();
+        stats.increment(cores, 1).unwrap();
+        stats.increment(targetless, u64::MAX).unwrap();
+        stats.increment(wrong_targets, 1).unwrap();
+        stats.increment(direction_only, 1).unwrap();
+
+        let text = stats_snapshot_text(&stats.snapshot(0));
+
+        assert!(text.contains("system.cpu.iew.branchMispredicts"));
+        assert!(text.contains("18446744073709551615 # kind=derived unit=Count"));
     }
 }
