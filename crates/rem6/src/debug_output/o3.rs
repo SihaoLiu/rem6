@@ -19,7 +19,9 @@ use o3_branch_stats::{
     o3_branch_predicted_target_mismatch_kind_stat_suffix,
     o3_branch_resolved_target_kind_stat_suffix, o3_branch_squash_kind_stat_suffix,
     o3_branch_squashed_target_kind_stat_suffix, o3_branch_taken_kind_stat_suffix,
-    o3_branch_targetless_mismatch_kind_stat_suffix, o3_branch_wrong_target_kind_stat_suffix,
+    o3_branch_targetless_mismatch_kind_stat_suffix,
+    o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
+    o3_branch_wrong_target_kind_stat_suffix,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -350,6 +352,7 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_matches: u64,
     event_branch_predicted_target_mismatches: u64,
     event_branch_targetless_mismatches: u64,
+    event_branch_targetless_mismatch_squashed_targets: u64,
     event_branch_wrong_targets: u64,
     event_branch_resolved_targets: u64,
     event_branch_mispredictions: u64,
@@ -365,6 +368,7 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_targetless_mismatch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_link_write_kinds: [u64; BranchTargetKind::COUNT],
@@ -733,6 +737,8 @@ impl Rem6O3TraceTotals {
             .branch_predicted_target()
             .is_some_and(|target| Some(target) != event.branch_resolved_target());
         let targetless_mismatch = o3_branch_targetless_mismatch(event);
+        let targetless_mismatch_squashed_target =
+            targetless_mismatch && event.branch_squashed_target().is_some();
         let wrong_target = o3_branch_wrong_target(event);
         self.event_branch_predicted_target_matches = self
             .event_branch_predicted_target_matches
@@ -743,6 +749,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_targetless_mismatches = self
             .event_branch_targetless_mismatches
             .saturating_add(u64::from(targetless_mismatch));
+        self.event_branch_targetless_mismatch_squashed_targets = self
+            .event_branch_targetless_mismatch_squashed_targets
+            .saturating_add(u64::from(targetless_mismatch_squashed_target));
         self.event_branch_wrong_targets = self
             .event_branch_wrong_targets
             .saturating_add(u64::from(wrong_target));
@@ -792,6 +801,11 @@ impl Rem6O3TraceTotals {
         if targetless_mismatch {
             self.event_branch_targetless_mismatch_kinds[index] =
                 self.event_branch_targetless_mismatch_kinds[index].saturating_add(1);
+        }
+        if targetless_mismatch_squashed_target {
+            self.event_branch_targetless_mismatch_squashed_target_kinds[index] = self
+                .event_branch_targetless_mismatch_squashed_target_kinds[index]
+                .saturating_add(1);
         }
         if wrong_target {
             self.event_branch_wrong_target_kinds[index] =
@@ -1091,6 +1105,10 @@ impl Rem6O3TraceTotals {
                 self.event_branch_targetless_mismatches,
             ),
             (
+                "event.branch_targetless_mismatch_squashed_targets",
+                self.event_branch_targetless_mismatch_squashed_targets,
+            ),
+            (
                 "event.branch_wrong_targets",
                 self.event_branch_wrong_targets,
             ),
@@ -1223,6 +1241,16 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_targetless_mismatch_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_targetless_mismatch_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_targetless_mismatch_squashed_target_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {
