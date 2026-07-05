@@ -7663,6 +7663,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
             "Count",
             branch_squashed_targets,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_writes",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_writes",
+            "Count",
+            0,
+        ),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
         (
             "sim.debug.o3_trace.event.branch_kind.call_indirect",
@@ -7688,6 +7698,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
             "sim.debug.o3_trace.event.branch_link_write_kind.call_indirect",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_write_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_write_kind.call_indirect",
+            "Count",
+            0,
         ),
         (
             "sim.debug.o3_trace.event.branch_misprediction_kind.call_indirect",
@@ -8065,6 +8085,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
             branch_resolved_targets,
         ),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_writes",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 0),
         (
             "sim.debug.o3_trace.event.branch_kind.indirect_unconditional",
@@ -8085,6 +8115,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_targets() {
             "sim.debug.o3_trace.event.branch_link_write_kind.indirect_unconditional",
             "Count",
             0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_write_kind.indirect_unconditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_write_kind.indirect_unconditional",
+            "Count",
+            1,
         ),
         (
             "sim.debug.o3_trace.event.branch_misprediction_kind.indirect_unconditional",
@@ -11875,6 +11915,26 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_squashed_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_link_write_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_without_link_write_kind.indirect_unconditional",
             "Count",
             0,
         ),

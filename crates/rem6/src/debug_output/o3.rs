@@ -10,6 +10,8 @@ use crate::{
 
 #[path = "o3_branch_stats.rs"]
 mod o3_branch_stats;
+#[path = "o3_event_json.rs"]
+mod o3_event_json;
 
 use o3_branch_stats::{
     o3_branch_kind_stat_suffix, o3_branch_link_write_kind_stat_suffix,
@@ -18,8 +20,10 @@ use o3_branch_stats::{
     o3_branch_predicted_target_kind_stat_suffix, o3_branch_predicted_target_match_kind_stat_suffix,
     o3_branch_predicted_target_mismatch_kind_stat_suffix,
     o3_branch_resolved_target_kind_stat_suffix, o3_branch_squash_kind_stat_suffix,
-    o3_branch_squashed_target_kind_stat_suffix, o3_branch_taken_kind_stat_suffix,
-    o3_branch_targetless_mismatch_kind_stat_suffix,
+    o3_branch_squashed_target_kind_stat_suffix,
+    o3_branch_squashed_target_link_write_kind_stat_suffix,
+    o3_branch_squashed_target_without_link_write_kind_stat_suffix,
+    o3_branch_taken_kind_stat_suffix, o3_branch_targetless_mismatch_kind_stat_suffix,
     o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
     o3_branch_targetless_mismatch_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_targetless_mismatch_without_link_write_kind_stat_suffix,
@@ -29,6 +33,7 @@ use o3_branch_stats::{
     o3_branch_wrong_target_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
+use o3_event_json::{o3_branch_targetless_mismatch, o3_branch_wrong_target, o3_event_to_json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
@@ -369,6 +374,7 @@ struct Rem6O3TraceTotals {
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
     event_branch_squashed_targets: u64,
+    event_branch_squashed_target_without_link_writes: u64,
     event_branch_link_writes: u64,
     event_branch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_taken_kinds: [u64; BranchTargetKind::COUNT],
@@ -393,6 +399,7 @@ struct Rem6O3TraceTotals {
     event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_squash_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_squashed_target_without_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_lsq_load_bytes: u64,
     event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
@@ -766,6 +773,9 @@ impl Rem6O3TraceTotals {
         let wrong_target_squashed_target_without_link_write =
             wrong_target_squashed_target && !event.branch_link_register_write();
         let wrong_target_link_write = wrong_target && event.branch_link_register_write();
+        let squashed_target = event.branch_squashed_target().is_some();
+        let squashed_target_without_link_write =
+            squashed_target && !event.branch_link_register_write();
         self.event_branch_predicted_target_matches = self
             .event_branch_predicted_target_matches
             .saturating_add(u64::from(predicted_target_matches));
@@ -809,7 +819,10 @@ impl Rem6O3TraceTotals {
             .saturating_add(u64::from(event.branch_squash()));
         self.event_branch_squashed_targets = self
             .event_branch_squashed_targets
-            .saturating_add(u64::from(event.branch_squashed_target().is_some()));
+            .saturating_add(u64::from(squashed_target));
+        self.event_branch_squashed_target_without_link_writes = self
+            .event_branch_squashed_target_without_link_writes
+            .saturating_add(u64::from(squashed_target_without_link_write));
         self.event_branch_link_writes = self
             .event_branch_link_writes
             .saturating_add(u64::from(event.branch_link_register_write()));
@@ -897,6 +910,10 @@ impl Rem6O3TraceTotals {
         if event.branch_squashed_target().is_some() {
             self.event_branch_squashed_target_kinds[index] =
                 self.event_branch_squashed_target_kinds[index].saturating_add(1);
+        }
+        if squashed_target_without_link_write {
+            self.event_branch_squashed_target_without_link_write_kinds[index] =
+                self.event_branch_squashed_target_without_link_write_kinds[index].saturating_add(1);
         }
     }
 
@@ -1224,6 +1241,15 @@ impl Rem6O3TraceTotals {
                 "event.branch_squashed_targets",
                 self.event_branch_squashed_targets,
             ),
+            (
+                "event.branch_squashed_target_without_link_writes",
+                self.event_branch_squashed_target_without_link_writes,
+            ),
+            (
+                "event.branch_squashed_target_link_writes",
+                self.event_branch_squashed_targets
+                    .saturating_sub(self.event_branch_squashed_target_without_link_writes),
+            ),
             ("event.branch_link_writes", self.event_branch_link_writes),
             (
                 "event.store_load_forwarding_candidates",
@@ -1372,6 +1398,20 @@ impl Rem6O3TraceTotals {
             &mut stats,
             o3_branch_squashed_target_kind_stat_suffix,
             |kind| self.event_branch_squashed_target_kinds[kind.index()],
+        );
+        push_o3_branch_kind_count_stats(
+            &mut stats,
+            o3_branch_squashed_target_without_link_write_kind_stat_suffix,
+            |kind| self.event_branch_squashed_target_without_link_write_kinds[kind.index()],
+        );
+        push_o3_branch_kind_count_stats(
+            &mut stats,
+            o3_branch_squashed_target_link_write_kind_stat_suffix,
+            |kind| {
+                self.event_branch_squashed_target_kinds[kind.index()].saturating_sub(
+                    self.event_branch_squashed_target_without_link_write_kinds[kind.index()],
+                )
+            },
         );
         stats.push(Rem6O3TraceStat {
             suffix: "fu_latency_cycles",
@@ -1709,83 +1749,4 @@ impl Rem6O3CheckpointRestoreScope {
             payload_bytes: summary.payload_bytes,
         })
     }
-}
-
-fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
-    let fu_latency_class = event.fu_latency_class().map_or_else(
-        || "null".to_string(),
-        |class| format!("\"{}\"", class.as_str()),
-    );
-    let lsq_load_address =
-        o3_optional_address_to_json(event.lsq_load_address().map(|address| address.get()));
-    let lsq_store_address =
-        o3_optional_address_to_json(event.lsq_store_address().map(|address| address.get()));
-    let branch_predicted_target =
-        o3_optional_address_to_json(event.branch_predicted_target().map(|address| address.get()));
-    let branch_resolved_target =
-        o3_optional_address_to_json(event.branch_resolved_target().map(|address| address.get()));
-    let branch_squashed_target =
-        o3_optional_address_to_json(event.branch_squashed_target().map(|address| address.get()));
-    let branch_targetless_mismatch = o3_branch_targetless_mismatch(event);
-    let branch_wrong_target = o3_branch_wrong_target(event);
-    format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"lsq_store_conditional_failed\":{},\"lsq_data_response_tick\":{},\"lsq_data_latency_ticks\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_targetless_mismatch\":{},\"branch_wrong_target\":{},\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
-        event.sequence(),
-        event.tick(),
-        event.pc().get(),
-        event.rob_allocated(),
-        event.rob_committed(),
-        event.rob_occupancy(),
-        event.rename_writes(),
-        event.lsq_loads(),
-        event.lsq_stores(),
-        event.lsq_occupancy(),
-        event.lsq_operation().as_str(),
-        event.lsq_ordering().as_str(),
-        event.lsq_ordering().acquire(),
-        event.lsq_ordering().release(),
-        lsq_load_address,
-        lsq_store_address,
-        event.lsq_load_bytes(),
-        event.lsq_store_bytes(),
-        event.lsq_store_conditional_failed(),
-        event.lsq_data_response_tick(),
-        event.lsq_data_latency_ticks(),
-        event.rename_map_entries(),
-        event.store_load_forwarding_candidate(),
-        event.store_load_forwarding_match(),
-        event.branch_event(),
-        event.branch_kind().canonical_stat_name(),
-        event.branch_predicted_taken(),
-        event.branch_resolved_taken(),
-        event.branch_mispredicted(),
-        branch_targetless_mismatch,
-        branch_wrong_target,
-        event.branch_link_register_write(),
-        branch_predicted_target,
-        branch_resolved_target,
-        event.branch_squash(),
-        branch_squashed_target,
-        fu_latency_class,
-        event.fu_latency_cycles(),
-        event.system_event(),
-    )
-}
-
-fn o3_branch_wrong_target(event: &O3RuntimeTraceRecord) -> bool {
-    event
-        .branch_predicted_target()
-        .zip(event.branch_resolved_target())
-        .is_some_and(|(predicted, resolved)| predicted != resolved)
-}
-
-fn o3_branch_targetless_mismatch(event: &O3RuntimeTraceRecord) -> bool {
-    event.branch_predicted_target().is_some() && event.branch_resolved_target().is_none()
-}
-
-fn o3_optional_address_to_json(address: Option<u64>) -> String {
-    address.map_or_else(
-        || "null".to_string(),
-        |address| format!("\"0x{address:x}\""),
-    )
 }
