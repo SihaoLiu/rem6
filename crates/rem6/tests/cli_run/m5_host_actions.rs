@@ -1935,6 +1935,198 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
 }
 
 #[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
+    let path = detailed_o3_lsq_matrix_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-lsq-matrix-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:16",
+            "--dump-memory",
+            "0x80000090:16",
+            "--dump-memory",
+            "0x800000a0:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("04000000000000000900000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some("00000000000000000300000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/2/hex").and_then(Value::as_str),
+        Some("88776655443322110100000000000000")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        pre_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0),
+        "dump-reset should snapshot the LSQ epoch before resetting: {pre_reset_dump}"
+    );
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load", 1),
+        ("sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store", 3),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.acquire",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.release",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.acquire_release",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_conditional_failures",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        post_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1),
+        "post-reset dump should belong to the reset epoch: {post_reset_dump}"
+    );
+    assert!(
+        post_reset_dump
+            .pointer("/reset_tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|tick| tick > 0),
+        "post-reset dump should record the reset tick: {post_reset_dump}"
+    );
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load", 0),
+        ("sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store", 1),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.acquire",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.release",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_ordering.acquire_release",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_conditional_failures",
+            1,
+        ),
+    ] {
+        assert_stats_dump_sample(
+            post_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.lsq_operation.store_conditional",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.lsq_store_conditional_failures",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
     let path =
         detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-detailed-o3-lsq-store-load-match");
@@ -4415,6 +4607,43 @@ fn detailed_o3_branch_repair_dump_reset_stats_binary(name: &str) -> std::path::P
         words.push(0);
     }
     words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_lsq_matrix_dump_reset_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0, 5, 0b011, 6, 0x03),                   // ld x6, 0(x5)
+        s_type(8, 6, 5, 0b011),                         // sd x6, 8(x5)
+        atomic_type(0x02, true, false, 0, 5, 0x3, 7),   // lr.d.aq x7, (x5)
+        i_type(3, 0, 0x0, 8, 0x13),                     // addi x8, x0, 3
+        atomic_type(0x03, false, true, 8, 5, 0x3, 9),   // sc.d.rl x9, x8, (x5)
+        i_type(4, 0, 0x0, 10, 0x13),                    // addi x10, x0, 4
+        atomic_type(0x01, true, true, 10, 5, 0x3, 11),  // amoswap.d.aqrl x11, x10, (x5)
+        s_type(16, 9, 5, 0b011),                        // sd x9, 16(x5)
+        s_type(24, 11, 5, 0b011),                       // sd x11, 24(x5)
+        i_type(0, 0, 0x0, 10, 0x13),                    // addi x10, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),                    // addi x11, x0, 0
+        m5op(M5_DUMP_RESET_STATS),
+        i_type(32, 5, 0x0, 14, 0x13),   // addi x14, x5, sc-fail data
+        i_type(0x2a, 0, 0x0, 13, 0x13), // addi x13, x0, 0x2a
+        atomic_type(0x03, false, false, 13, 14, 0x3, 15), // sc.d x15, x13, (x14)
+        s_type(40, 15, 5, 0b011),       // sd x15, 40(x5)
+        i_type(0, 0, 0x0, 10, 0x13),    // addi x10, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),    // addi x11, x0, 0
+        m5op(M5_DUMP_STATS),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([9, 0, 0, 0, 0, 0, 0, 0, 0x5566_7788, 0x1122_3344, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

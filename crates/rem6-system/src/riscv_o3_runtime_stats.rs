@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats};
+use rem6_cpu::{
+    BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeStats,
+};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 #[derive(Clone, Debug)]
@@ -135,6 +138,9 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_bytes: StatId,
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
+    lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
+    lsq_store_conditional_failures: StatId,
     branch_repair_targetless_mismatches: StatId,
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
@@ -169,6 +175,14 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "lsq_store_to_load_forwarding_matches",
+                "Count",
+            )?,
+            lsq_operation_counts: register_o3_lsq_operation_counters(registry, &prefix)?,
+            lsq_ordering_counts: register_o3_lsq_ordering_counters(registry, &prefix)?,
+            lsq_store_conditional_failures: register_o3_counter(
+                registry,
+                &prefix,
+                "lsq_store_conditional_failures",
                 "Count",
             )?,
             branch_repair_targetless_mismatches: register_o3_counter(
@@ -274,6 +288,11 @@ impl RiscvO3RuntimeCpuStats {
                 current.lsq_store_to_load_forwarding_matches(),
             ),
             (
+                self.lsq_store_conditional_failures,
+                previous.lsq_store_conditional_failures(),
+                current.lsq_store_conditional_failures(),
+            ),
+            (
                 self.branch_repair_targetless_mismatches,
                 previous.branch_repair_targetless_mismatches(),
                 current.branch_repair_targetless_mismatches(),
@@ -344,6 +363,22 @@ impl RiscvO3RuntimeCpuStats {
                 }
             }
         }
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            let delta = current
+                .lsq_operation_count(operation)
+                .saturating_sub(previous.lsq_operation_count(operation));
+            if delta != 0 {
+                registry.increment(self.lsq_operation_counts[operation.index()], delta)?;
+            }
+        }
+        for ordering in O3RuntimeLsqOrdering::TRACKED {
+            let delta = current
+                .lsq_ordering_count(ordering)
+                .saturating_sub(previous.lsq_ordering_count(ordering));
+            if delta != 0 {
+                registry.increment(self.lsq_ordering_counts[ordering.index()], delta)?;
+            }
+        }
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
             for (stat, previous, current) in [
@@ -390,6 +425,10 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_store_to_load_forwarding_matches(),
             ),
             (
+                self.lsq_store_conditional_failures,
+                snapshot.lsq_store_conditional_failures(),
+            ),
+            (
                 self.branch_repair_targetless_mismatches,
                 snapshot.branch_repair_targetless_mismatches(),
             ),
@@ -411,6 +450,18 @@ impl RiscvO3RuntimeCpuStats {
             (self.rename_map_entries, snapshot.rename_map_entries()),
         ] {
             registry.set_resettable_counter(stat, value)?;
+        }
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            registry.set_resettable_counter(
+                self.lsq_operation_counts[operation.index()],
+                snapshot.lsq_operation_count(operation),
+            )?;
+        }
+        for ordering in O3RuntimeLsqOrdering::TRACKED {
+            registry.set_resettable_counter(
+                self.lsq_ordering_counts[ordering.index()],
+                snapshot.lsq_ordering_count(ordering),
+            )?;
         }
         for kind in BranchTargetKind::ALL {
             let repair_stats = self.branch_repair_kinds[kind.index()];
@@ -457,6 +508,38 @@ fn register_o3_counter(
     unit: &str,
 ) -> Result<StatId, StatsError> {
     registry.register_counter(format!("{prefix}.{name}"), unit)
+}
+
+fn register_o3_lsq_operation_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq_operation.{}", operation.as_str()),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn register_o3_lsq_ordering_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeLsqOrdering::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOrdering::COUNT];
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        stats[ordering.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq_ordering.{}", ordering.as_str()),
+            "Count",
+        )?;
+    }
+    Ok(stats)
 }
 
 fn register_o3_branch_repair_kind_counters(
