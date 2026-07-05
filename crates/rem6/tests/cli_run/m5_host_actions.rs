@@ -3847,6 +3847,7 @@ fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
     );
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingCandidates", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingMatches", 1);
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.forwLoads", 1);
 }
 
 #[test]
@@ -4066,6 +4067,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.lsq0.storeBytes",
         "system.cpu.lsq0.storeLoadForwardingCandidates",
         "system.cpu.lsq0.storeLoadForwardingMatches",
+        "system.cpu.lsq0.forwLoads",
         "system.cpu.iq.instsIssued",
         "system.cpu.iq.memInstsIssued",
         "system.cpu.iq.issuedInstType_0::MemRead",

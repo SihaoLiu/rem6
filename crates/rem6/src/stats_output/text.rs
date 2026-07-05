@@ -631,6 +631,13 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 loads.saturating_add(stores),
             );
         }
+        append_derived_stat_from_snapshot(
+            output,
+            snapshot,
+            &format!("sim.cpu{cpu}.o3.lsq_store_to_load_forwarding_matches"),
+            &format!("{alias_prefix}.lsq0.forwLoads"),
+            "Count",
+        );
         for (op_class, source_name) in [("MemRead", "lsq_loads"), ("MemWrite", "lsq_stores")] {
             let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
             if let Some(value) = snapshot_value(snapshot, &source_path) {
