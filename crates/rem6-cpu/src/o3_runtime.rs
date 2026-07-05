@@ -853,7 +853,11 @@ impl O3RuntimeStats {
                         .saturating_add(fu_latency_cycles);
                 }
                 Some(
-                    O3RuntimeFuLatencyClass::VectorIntegerMul
+                    O3RuntimeFuLatencyClass::ScalarFloatMul
+                    | O3RuntimeFuLatencyClass::ScalarFloatDiv
+                    | O3RuntimeFuLatencyClass::VectorFloatMul
+                    | O3RuntimeFuLatencyClass::VectorFloatDiv
+                    | O3RuntimeFuLatencyClass::VectorIntegerMul
                     | O3RuntimeFuLatencyClass::VectorIntegerDiv,
                 ) => {}
                 None => {}

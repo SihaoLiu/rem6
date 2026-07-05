@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{
-    RiscvInstruction, RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
+    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorWideningIntegerInstruction,
 };
 
 use crate::o3_runtime_trace::O3RuntimeFuLatencyClass;
@@ -21,6 +22,12 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+        RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
+            Some(O3RuntimeFuLatencyClass::ScalarFloatMul)
+        }
+        RiscvInstruction::FloatDivS { .. } | RiscvInstruction::FloatDivD { .. } => {
+            Some(O3RuntimeFuLatencyClass::ScalarFloatDiv)
+        }
         RiscvInstruction::VectorMultiplyLowVv { .. }
         | RiscvInstruction::VectorMultiplyLowVx { .. }
         | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
@@ -61,6 +68,14 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::VectorRemainderSignedVx { .. } => {
             Some(O3RuntimeFuLatencyClass::VectorIntegerDiv)
         }
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatMul),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::DivVv { .. }
+            | RiscvVectorFloatInstruction::DivVf { .. }
+            | RiscvVectorFloatInstruction::ReverseDivVf { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatDiv),
         _ => None,
     }
 }

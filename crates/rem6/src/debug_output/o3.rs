@@ -8,6 +8,19 @@ use crate::{
     Rem6HostStatsResetSummary,
 };
 
+#[path = "o3_branch_stats.rs"]
+mod o3_branch_stats;
+
+use o3_branch_stats::{
+    o3_branch_kind_stat_suffix, o3_branch_link_write_kind_stat_suffix,
+    o3_branch_misprediction_kind_stat_suffix, o3_branch_not_taken_kind_stat_suffix,
+    o3_branch_predicted_taken_kind_stat_suffix, o3_branch_predicted_target_match_kind_stat_suffix,
+    o3_branch_predicted_target_mismatch_kind_stat_suffix,
+    o3_branch_resolved_target_kind_stat_suffix, o3_branch_squash_kind_stat_suffix,
+    o3_branch_taken_kind_stat_suffix, o3_branch_targetless_mismatch_kind_stat_suffix,
+    o3_branch_wrong_target_kind_stat_suffix,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
     cpu: u32,
@@ -46,6 +59,23 @@ const fn min_latency_ticks(current: Option<u64>, latency: u64) -> Option<u64> {
         }
         None => latency,
     })
+}
+
+fn add_latency_bucket(instructions: &mut u64, cycles: &mut u64, latency: u64) {
+    *instructions = instructions.saturating_add(1);
+    *cycles = cycles.saturating_add(latency);
+}
+
+fn add_latency_bucket_with_extrema(
+    instructions: &mut u64,
+    cycles: &mut u64,
+    max_cycles: &mut u64,
+    min_cycles: &mut Option<u64>,
+    latency: u64,
+) {
+    add_latency_bucket(instructions, cycles, latency);
+    *max_cycles = (*max_cycles).max(latency);
+    *min_cycles = min_latency_ticks(*min_cycles, latency);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,10 +212,18 @@ struct Rem6O3TraceTotals {
     event_fu_integer_div_latency_cycles: u64,
     event_fu_integer_div_latency_max_cycles: u64,
     event_fu_integer_div_latency_min_cycles: Option<u64>,
+    event_fu_float_mul_instructions: u64,
+    event_fu_float_mul_latency_cycles: u64,
+    event_fu_float_div_instructions: u64,
+    event_fu_float_div_latency_cycles: u64,
     event_fu_vector_integer_mul_instructions: u64,
     event_fu_vector_integer_mul_latency_cycles: u64,
     event_fu_vector_integer_div_instructions: u64,
     event_fu_vector_integer_div_latency_cycles: u64,
+    event_fu_vector_float_mul_instructions: u64,
+    event_fu_vector_float_mul_latency_cycles: u64,
+    event_fu_vector_float_div_instructions: u64,
+    event_fu_vector_float_div_latency_cycles: u64,
 }
 
 impl Rem6O3TraceRecord {
@@ -504,48 +542,64 @@ impl Rem6O3TraceTotals {
                     min_latency_ticks(self.event_fu_latency_min_cycles, fu_latency_cycles);
                 match event.fu_latency_class() {
                     Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
-                        self.event_fu_integer_mul_instructions =
-                            self.event_fu_integer_mul_instructions.saturating_add(1);
-                        self.event_fu_integer_mul_latency_cycles = self
-                            .event_fu_integer_mul_latency_cycles
-                            .saturating_add(fu_latency_cycles);
-                        self.event_fu_integer_mul_latency_max_cycles = self
-                            .event_fu_integer_mul_latency_max_cycles
-                            .max(fu_latency_cycles);
-                        self.event_fu_integer_mul_latency_min_cycles = min_latency_ticks(
-                            self.event_fu_integer_mul_latency_min_cycles,
+                        add_latency_bucket_with_extrema(
+                            &mut self.event_fu_integer_mul_instructions,
+                            &mut self.event_fu_integer_mul_latency_cycles,
+                            &mut self.event_fu_integer_mul_latency_max_cycles,
+                            &mut self.event_fu_integer_mul_latency_min_cycles,
                             fu_latency_cycles,
                         );
                     }
                     Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
-                        self.event_fu_integer_div_instructions =
-                            self.event_fu_integer_div_instructions.saturating_add(1);
-                        self.event_fu_integer_div_latency_cycles = self
-                            .event_fu_integer_div_latency_cycles
-                            .saturating_add(fu_latency_cycles);
-                        self.event_fu_integer_div_latency_max_cycles = self
-                            .event_fu_integer_div_latency_max_cycles
-                            .max(fu_latency_cycles);
-                        self.event_fu_integer_div_latency_min_cycles = min_latency_ticks(
-                            self.event_fu_integer_div_latency_min_cycles,
+                        add_latency_bucket_with_extrema(
+                            &mut self.event_fu_integer_div_instructions,
+                            &mut self.event_fu_integer_div_latency_cycles,
+                            &mut self.event_fu_integer_div_latency_max_cycles,
+                            &mut self.event_fu_integer_div_latency_min_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatMul) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_mul_instructions,
+                            &mut self.event_fu_float_mul_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatDiv) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_div_instructions,
+                            &mut self.event_fu_float_div_latency_cycles,
                             fu_latency_cycles,
                         );
                     }
                     Some(O3RuntimeFuLatencyClass::VectorIntegerMul) => {
-                        self.event_fu_vector_integer_mul_instructions = self
-                            .event_fu_vector_integer_mul_instructions
-                            .saturating_add(1);
-                        self.event_fu_vector_integer_mul_latency_cycles = self
-                            .event_fu_vector_integer_mul_latency_cycles
-                            .saturating_add(fu_latency_cycles);
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_integer_mul_instructions,
+                            &mut self.event_fu_vector_integer_mul_latency_cycles,
+                            fu_latency_cycles,
+                        );
                     }
                     Some(O3RuntimeFuLatencyClass::VectorIntegerDiv) => {
-                        self.event_fu_vector_integer_div_instructions = self
-                            .event_fu_vector_integer_div_instructions
-                            .saturating_add(1);
-                        self.event_fu_vector_integer_div_latency_cycles = self
-                            .event_fu_vector_integer_div_latency_cycles
-                            .saturating_add(fu_latency_cycles);
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_integer_div_instructions,
+                            &mut self.event_fu_vector_integer_div_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatMul) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_mul_instructions,
+                            &mut self.event_fu_vector_float_mul_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatDiv) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_div_instructions,
+                            &mut self.event_fu_vector_float_div_latency_cycles,
+                            fu_latency_cycles,
+                        );
                     }
                     None => {}
                 }
@@ -950,6 +1004,29 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
+        let mut push_count = |suffix, value| {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Count",
+                value,
+            });
+        };
+        push_count(
+            "event.fu_float_mul_instructions",
+            self.event_fu_float_mul_instructions,
+        );
+        push_count(
+            "event.fu_float_div_instructions",
+            self.event_fu_float_div_instructions,
+        );
+        push_count(
+            "event.fu_vector_float_mul_instructions",
+            self.event_fu_vector_float_mul_instructions,
+        );
+        push_count(
+            "event.fu_vector_float_div_instructions",
+            self.event_fu_vector_float_div_instructions,
+        );
         for kind in BranchTargetKind::ALL {
             if matches!(kind, BranchTargetKind::NoBranch) {
                 continue;
@@ -1340,95 +1417,100 @@ impl Rem6O3TraceTotals {
                 value: value.unwrap_or(0),
             });
         }
-        stats.push(Rem6O3TraceStat {
-            suffix: "fu_integer_mul_latency_cycles",
-            unit: "Cycle",
-            value: self.fu_integer_mul_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "fu_integer_div_latency_cycles",
-            unit: "Cycle",
-            value: self.fu_integer_div_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_latency_cycles",
-            unit: "Cycle",
-            value: self.event_fu_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_latency_max_cycles",
-            unit: "Cycle",
-            value: self.event_fu_latency_max_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_latency_min_cycles",
-            unit: "Cycle",
-            value: self.event_fu_latency_min_cycles.unwrap_or(0),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_latency_avg_cycles",
-            unit: "Cycle",
-            value: average_ticks(
-                self.event_fu_latency_cycles,
-                self.event_fu_latency_instructions,
+        for (suffix, value) in [
+            (
+                "fu_integer_mul_latency_cycles",
+                self.fu_integer_mul_latency_cycles,
             ),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_mul_latency_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_mul_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_mul_latency_max_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_mul_latency_max_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_mul_latency_min_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_mul_latency_min_cycles.unwrap_or(0),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_mul_latency_avg_cycles",
-            unit: "Cycle",
-            value: average_ticks(
+            (
+                "fu_integer_div_latency_cycles",
+                self.fu_integer_div_latency_cycles,
+            ),
+            ("event.fu_latency_cycles", self.event_fu_latency_cycles),
+            (
+                "event.fu_latency_max_cycles",
+                self.event_fu_latency_max_cycles,
+            ),
+            (
+                "event.fu_latency_min_cycles",
+                self.event_fu_latency_min_cycles.unwrap_or(0),
+            ),
+            (
+                "event.fu_latency_avg_cycles",
+                average_ticks(
+                    self.event_fu_latency_cycles,
+                    self.event_fu_latency_instructions,
+                ),
+            ),
+            (
+                "event.fu_integer_mul_latency_cycles",
                 self.event_fu_integer_mul_latency_cycles,
-                self.event_fu_integer_mul_instructions,
             ),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_div_latency_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_div_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_div_latency_max_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_div_latency_max_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_div_latency_min_cycles",
-            unit: "Cycle",
-            value: self.event_fu_integer_div_latency_min_cycles.unwrap_or(0),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_integer_div_latency_avg_cycles",
-            unit: "Cycle",
-            value: average_ticks(
+            (
+                "event.fu_integer_mul_latency_max_cycles",
+                self.event_fu_integer_mul_latency_max_cycles,
+            ),
+            (
+                "event.fu_integer_mul_latency_min_cycles",
+                self.event_fu_integer_mul_latency_min_cycles.unwrap_or(0),
+            ),
+            (
+                "event.fu_integer_mul_latency_avg_cycles",
+                average_ticks(
+                    self.event_fu_integer_mul_latency_cycles,
+                    self.event_fu_integer_mul_instructions,
+                ),
+            ),
+            (
+                "event.fu_integer_div_latency_cycles",
                 self.event_fu_integer_div_latency_cycles,
-                self.event_fu_integer_div_instructions,
             ),
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_vector_integer_mul_latency_cycles",
-            unit: "Cycle",
-            value: self.event_fu_vector_integer_mul_latency_cycles,
-        });
-        stats.push(Rem6O3TraceStat {
-            suffix: "event.fu_vector_integer_div_latency_cycles",
-            unit: "Cycle",
-            value: self.event_fu_vector_integer_div_latency_cycles,
-        });
+            (
+                "event.fu_integer_div_latency_max_cycles",
+                self.event_fu_integer_div_latency_max_cycles,
+            ),
+            (
+                "event.fu_integer_div_latency_min_cycles",
+                self.event_fu_integer_div_latency_min_cycles.unwrap_or(0),
+            ),
+            (
+                "event.fu_integer_div_latency_avg_cycles",
+                average_ticks(
+                    self.event_fu_integer_div_latency_cycles,
+                    self.event_fu_integer_div_instructions,
+                ),
+            ),
+            (
+                "event.fu_float_mul_latency_cycles",
+                self.event_fu_float_mul_latency_cycles,
+            ),
+            (
+                "event.fu_float_div_latency_cycles",
+                self.event_fu_float_div_latency_cycles,
+            ),
+            (
+                "event.fu_vector_integer_mul_latency_cycles",
+                self.event_fu_vector_integer_mul_latency_cycles,
+            ),
+            (
+                "event.fu_vector_integer_div_latency_cycles",
+                self.event_fu_vector_integer_div_latency_cycles,
+            ),
+            (
+                "event.fu_vector_float_mul_latency_cycles",
+                self.event_fu_vector_float_mul_latency_cycles,
+            ),
+            (
+                "event.fu_vector_float_div_latency_cycles",
+                self.event_fu_vector_float_div_latency_cycles,
+            ),
+        ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Cycle",
+                value,
+            });
+        }
         stats
     }
 }
@@ -1447,226 +1529,6 @@ impl Rem6O3CheckpointRestoreScope {
             manifest_tick: summary.manifest_tick,
             payload_bytes: summary.payload_bytes,
         })
-    }
-}
-
-fn o3_branch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => "event.branch_kind.direct_unconditional",
-        BranchTargetKind::IndirectConditional => "event.branch_kind.indirect_conditional",
-        BranchTargetKind::IndirectUnconditional => "event.branch_kind.indirect_unconditional",
-    }
-}
-
-fn o3_branch_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_taken_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_taken_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_taken_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_taken_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_taken_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => "event.branch_taken_kind.direct_unconditional",
-        BranchTargetKind::IndirectConditional => "event.branch_taken_kind.indirect_conditional",
-        BranchTargetKind::IndirectUnconditional => "event.branch_taken_kind.indirect_unconditional",
-    }
-}
-
-fn o3_branch_not_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_not_taken_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_not_taken_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_not_taken_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_not_taken_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_not_taken_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => "event.branch_not_taken_kind.direct_unconditional",
-        BranchTargetKind::IndirectConditional => "event.branch_not_taken_kind.indirect_conditional",
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_not_taken_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_predicted_taken_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_predicted_taken_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_predicted_taken_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_predicted_taken_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_predicted_taken_kind.call_indirect",
-        BranchTargetKind::DirectConditional => {
-            "event.branch_predicted_taken_kind.direct_conditional"
-        }
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_predicted_taken_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_predicted_taken_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_predicted_taken_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_predicted_target_match_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_predicted_target_match_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_predicted_target_match_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_predicted_target_match_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_predicted_target_match_kind.call_indirect",
-        BranchTargetKind::DirectConditional => {
-            "event.branch_predicted_target_match_kind.direct_conditional"
-        }
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_predicted_target_match_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_predicted_target_match_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_predicted_target_match_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_predicted_target_mismatch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_predicted_target_mismatch_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_predicted_target_mismatch_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_predicted_target_mismatch_kind.call_direct",
-        BranchTargetKind::CallIndirect => {
-            "event.branch_predicted_target_mismatch_kind.call_indirect"
-        }
-        BranchTargetKind::DirectConditional => {
-            "event.branch_predicted_target_mismatch_kind.direct_conditional"
-        }
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_predicted_target_mismatch_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_predicted_target_mismatch_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_predicted_target_mismatch_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_targetless_mismatch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_targetless_mismatch_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_targetless_mismatch_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_targetless_mismatch_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_targetless_mismatch_kind.call_indirect",
-        BranchTargetKind::DirectConditional => {
-            "event.branch_targetless_mismatch_kind.direct_conditional"
-        }
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_targetless_mismatch_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_targetless_mismatch_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_targetless_mismatch_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_wrong_target_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_wrong_target_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_wrong_target_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_wrong_target_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_wrong_target_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_wrong_target_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_wrong_target_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_wrong_target_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_wrong_target_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_resolved_target_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_resolved_target_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_resolved_target_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_resolved_target_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_resolved_target_kind.call_indirect",
-        BranchTargetKind::DirectConditional => {
-            "event.branch_resolved_target_kind.direct_conditional"
-        }
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_resolved_target_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_resolved_target_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_resolved_target_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_link_write_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_link_write_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_link_write_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_link_write_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_link_write_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_link_write_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_link_write_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_link_write_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_link_write_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_misprediction_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_misprediction_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_misprediction_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_misprediction_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_misprediction_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_misprediction_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => {
-            "event.branch_misprediction_kind.direct_unconditional"
-        }
-        BranchTargetKind::IndirectConditional => {
-            "event.branch_misprediction_kind.indirect_conditional"
-        }
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_misprediction_kind.indirect_unconditional"
-        }
-    }
-}
-
-fn o3_branch_squash_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
-    match kind {
-        BranchTargetKind::NoBranch => "event.branch_squash_kind.no_branch",
-        BranchTargetKind::Return => "event.branch_squash_kind.return",
-        BranchTargetKind::CallDirect => "event.branch_squash_kind.call_direct",
-        BranchTargetKind::CallIndirect => "event.branch_squash_kind.call_indirect",
-        BranchTargetKind::DirectConditional => "event.branch_squash_kind.direct_conditional",
-        BranchTargetKind::DirectUnconditional => "event.branch_squash_kind.direct_unconditional",
-        BranchTargetKind::IndirectConditional => "event.branch_squash_kind.indirect_conditional",
-        BranchTargetKind::IndirectUnconditional => {
-            "event.branch_squash_kind.indirect_unconditional"
-        }
     }
 }
 
