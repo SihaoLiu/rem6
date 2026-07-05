@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats};
+use rem6_cpu::{BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 #[derive(Clone, Debug)]
@@ -117,6 +117,13 @@ struct RiscvO3RuntimeFuLatencyClassStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeBranchRepairStats {
+    targetless_mismatch: StatId,
+    wrong_target: StatId,
+    direction_only: StatId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvO3RuntimeCpuStats {
     instructions: StatId,
     rob_allocations: StatId,
@@ -128,6 +135,10 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_bytes: StatId,
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
+    branch_repair_targetless_mismatches: StatId,
+    branch_repair_wrong_targets: StatId,
+    branch_repair_direction_only_mismatches: StatId,
+    branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
@@ -160,6 +171,25 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq_store_to_load_forwarding_matches",
                 "Count",
             )?,
+            branch_repair_targetless_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_repair_targetless_mismatches",
+                "Count",
+            )?,
+            branch_repair_wrong_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_repair_wrong_targets",
+                "Count",
+            )?,
+            branch_repair_direction_only_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_repair_direction_only_mismatches",
+                "Count",
+            )?,
+            branch_repair_kinds: register_o3_branch_repair_kind_counters(registry, &prefix)?,
             fu_latency_instructions: register_o3_counter(
                 registry,
                 &prefix,
@@ -244,6 +274,21 @@ impl RiscvO3RuntimeCpuStats {
                 current.lsq_store_to_load_forwarding_matches(),
             ),
             (
+                self.branch_repair_targetless_mismatches,
+                previous.branch_repair_targetless_mismatches(),
+                current.branch_repair_targetless_mismatches(),
+            ),
+            (
+                self.branch_repair_wrong_targets,
+                previous.branch_repair_wrong_targets(),
+                current.branch_repair_wrong_targets(),
+            ),
+            (
+                self.branch_repair_direction_only_mismatches,
+                previous.branch_repair_direction_only_mismatches(),
+                current.branch_repair_direction_only_mismatches(),
+            ),
+            (
                 self.fu_latency_instructions,
                 previous.fu_latency_instructions(),
                 current.fu_latency_instructions(),
@@ -272,6 +317,31 @@ impl RiscvO3RuntimeCpuStats {
             let delta = current.saturating_sub(previous);
             if delta != 0 {
                 registry.increment(stat, delta)?;
+            }
+        }
+        for kind in BranchTargetKind::ALL {
+            let repair_stats = self.branch_repair_kinds[kind.index()];
+            for (stat, previous, current) in [
+                (
+                    repair_stats.targetless_mismatch,
+                    previous.branch_repair_targetless_mismatch_kind(kind),
+                    current.branch_repair_targetless_mismatch_kind(kind),
+                ),
+                (
+                    repair_stats.wrong_target,
+                    previous.branch_repair_wrong_target_kind(kind),
+                    current.branch_repair_wrong_target_kind(kind),
+                ),
+                (
+                    repair_stats.direction_only,
+                    previous.branch_repair_direction_only_kind(kind),
+                    current.branch_repair_direction_only_kind(kind),
+                ),
+            ] {
+                let delta = current.saturating_sub(previous);
+                if delta != 0 {
+                    registry.increment(stat, delta)?;
+                }
             }
         }
         for class in O3RuntimeFuLatencyClass::ALL {
@@ -320,6 +390,18 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_store_to_load_forwarding_matches(),
             ),
             (
+                self.branch_repair_targetless_mismatches,
+                snapshot.branch_repair_targetless_mismatches(),
+            ),
+            (
+                self.branch_repair_wrong_targets,
+                snapshot.branch_repair_wrong_targets(),
+            ),
+            (
+                self.branch_repair_direction_only_mismatches,
+                snapshot.branch_repair_direction_only_mismatches(),
+            ),
+            (
                 self.fu_latency_instructions,
                 snapshot.fu_latency_instructions(),
             ),
@@ -329,6 +411,25 @@ impl RiscvO3RuntimeCpuStats {
             (self.rename_map_entries, snapshot.rename_map_entries()),
         ] {
             registry.set_resettable_counter(stat, value)?;
+        }
+        for kind in BranchTargetKind::ALL {
+            let repair_stats = self.branch_repair_kinds[kind.index()];
+            for (stat, value) in [
+                (
+                    repair_stats.targetless_mismatch,
+                    snapshot.branch_repair_targetless_mismatch_kind(kind),
+                ),
+                (
+                    repair_stats.wrong_target,
+                    snapshot.branch_repair_wrong_target_kind(kind),
+                ),
+                (
+                    repair_stats.direction_only,
+                    snapshot.branch_repair_direction_only_kind(kind),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
         }
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
@@ -356,6 +457,41 @@ fn register_o3_counter(
     unit: &str,
 ) -> Result<StatId, StatsError> {
     registry.register_counter(format!("{prefix}.{name}"), unit)
+}
+
+fn register_o3_branch_repair_kind_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT], StatsError> {
+    let mut stats = [RiscvO3RuntimeBranchRepairStats {
+        targetless_mismatch: StatId::new(0),
+        wrong_target: StatId::new(0),
+        direction_only: StatId::new(0),
+    }; BranchTargetKind::COUNT];
+    for kind in BranchTargetKind::ALL {
+        let stat_name = kind.canonical_stat_name();
+        stats[kind.index()] = RiscvO3RuntimeBranchRepairStats {
+            targetless_mismatch: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair_targetless_mismatch_kind.{stat_name}"),
+                "Count",
+            )?,
+            wrong_target: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair_wrong_target_kind.{stat_name}"),
+                "Count",
+            )?,
+            direction_only: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair_direction_only_kind.{stat_name}"),
+                "Count",
+            )?,
+        };
+    }
+    Ok(stats)
 }
 
 fn register_o3_fu_latency_class_counters(

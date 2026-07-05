@@ -1771,6 +1771,170 @@ fn rem6_run_m5_dump_reset_stats_snapshots_then_resets_o3_fu_classes() {
 }
 
 #[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
+    let path = detailed_o3_branch_repair_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-branch-repair-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "340",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--dump-memory",
+            "0x80000080:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("0b000000000000000000000000000000")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        pre_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0),
+        "dump-reset should snapshot the branch-repair epoch before resetting: {pre_reset_dump}"
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatches",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_mismatches",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_wrong_targets",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatch_kind.direct_conditional",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        post_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1),
+        "post-reset dump should belong to the reset epoch: {post_reset_dump}"
+    );
+    assert!(
+        post_reset_dump
+            .pointer("/reset_tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|tick| tick > 0),
+        "post-reset dump should record the reset tick: {post_reset_dump}"
+    );
+    assert_stats_dump_sample(
+        post_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_instructions",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_wrong_targets",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatch_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_targetless_mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_direction_only_mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_wrong_targets",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
     let path =
         detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-detailed-o3-lsq-store-load-match");
@@ -4222,6 +4386,35 @@ fn detailed_o3_dump_reset_fu_stats_binary(name: &str) -> std::path::PathBuf {
     words.push(m5op(M5_DUMP_RESET_STATS));
     append_integer_mul_div_work(&mut words);
     append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_branch_repair_dump_reset_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        i_type(1, 0, 0x0, 7, 0x13),
+        i_type(1, 0, 0x0, 9, 0x13),
+        b_type(12, 0, 9, 0x1),
+        i_type(11, 0, 0x0, 6, 0x13),
+        j_type(16, 0),
+        m5op(M5_SWITCH_CPU),
+        i_type(0, 0, 0x0, 9, 0x13),
+        j_type(-20, 0),
+        u_type(0, 5, 0x17),
+        i_type(data_start - 32, 5, 0x0, 5, 0x13),
+        s_type(0, 6, 5, 0b011),
+        s_type(8, 9, 5, 0b011),
+        m5op(M5_DUMP_RESET_STATS),
+    ];
+    append_integer_mul_div_work(&mut words);
+    words.push(m5op(M5_DUMP_STATS));
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

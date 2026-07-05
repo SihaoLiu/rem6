@@ -13,7 +13,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 4;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 5;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS: u8 = 4;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS: u8 = 3;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS: u8 = 2;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS: u8 = 1;
@@ -62,6 +63,7 @@ impl O3RuntimeCheckpointPayload {
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -112,13 +114,16 @@ impl O3RuntimeCheckpointPayload {
 
         let stats = match version {
             O3_RUNTIME_CHECKPOINT_VERSION => {
-                read_o3_runtime_stats(payload, &mut offset, true, true)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, true)?
+            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => {
+                read_o3_runtime_stats(payload, &mut offset, true, true, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, false, false)?
+                read_o3_runtime_stats(payload, &mut offset, false, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
             _ => unreachable!("version was validated"),
@@ -282,6 +287,26 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     }
     payload.extend_from_slice(&stats.lsq_store_conditional_failures().to_le_bytes());
     for value in [
+        stats.branch_repair_targetless_mismatches(),
+        stats.branch_repair_wrong_targets(),
+        stats.branch_repair_direction_only_mismatches(),
+    ] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(
+            &stats
+                .branch_repair_targetless_mismatch_kind(kind)
+                .to_le_bytes(),
+        );
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(&stats.branch_repair_wrong_target_kind(kind).to_le_bytes());
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(&stats.branch_repair_direction_only_kind(kind).to_le_bytes());
+    }
+    for value in [
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
         stats.rename_map_entries(),
@@ -345,11 +370,15 @@ fn read_o3_runtime_stats(
     offset: &mut usize,
     has_class_stats: bool,
     has_lsq_matrix_stats: bool,
+    has_branch_repair_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_ordering_counts = [0; O3RuntimeLsqOrdering::COUNT];
+    let mut branch_repair_targetless_mismatch_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_repair_wrong_target_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_repair_direction_only_kinds = [0; crate::BranchTargetKind::COUNT];
     let instructions = read_u64(payload, offset)?;
     let rob_allocations = read_u64(payload, offset)?;
     let rob_commits = read_u64(payload, offset)?;
@@ -390,6 +419,27 @@ fn read_o3_runtime_stats(
     } else {
         0
     };
+    let (
+        branch_repair_targetless_mismatches,
+        branch_repair_wrong_targets,
+        branch_repair_direction_only_mismatches,
+    ) = if has_branch_repair_stats {
+        let targetless = read_u64(payload, offset)?;
+        let wrong_target = read_u64(payload, offset)?;
+        let direction_only = read_u64(payload, offset)?;
+        for kind in crate::BranchTargetKind::ALL {
+            branch_repair_targetless_mismatch_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        for kind in crate::BranchTargetKind::ALL {
+            branch_repair_wrong_target_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        for kind in crate::BranchTargetKind::ALL {
+            branch_repair_direction_only_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        (targetless, wrong_target, direction_only)
+    } else {
+        (0, 0, 0)
+    };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -404,6 +454,12 @@ fn read_o3_runtime_stats(
         lsq_operation_counts,
         lsq_ordering_counts,
         lsq_store_conditional_failures,
+        branch_repair_targetless_mismatches,
+        branch_repair_wrong_targets,
+        branch_repair_direction_only_mismatches,
+        branch_repair_targetless_mismatch_kinds,
+        branch_repair_wrong_target_kinds,
+        branch_repair_direction_only_kinds,
         fu_latency_instructions,
         fu_latency_cycles,
         fu_latency_class_instructions,

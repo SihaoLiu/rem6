@@ -1,5 +1,5 @@
 use rem6_cpu::{
-    CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
+    BranchTargetKind, CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3LoadStoreQueueEntry,
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
@@ -24,8 +24,11 @@ const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES + 4 * 4;
 const O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES: usize =
     (O3RuntimeLsqOperation::TRACKED.len() + O3RuntimeLsqOrdering::TRACKED.len() + 1) * 8;
-const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
-    (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8 + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES;
+const O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES: usize =
+    (3 + BranchTargetKind::COUNT * 3) * 8;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
+    + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
+    + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -173,7 +176,7 @@ fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
 }
 
 #[test]
-fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
+fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
     let core = RiscvCore::new(core(0x8000));
     for (sequence, instruction) in [
         (
@@ -204,10 +207,12 @@ fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
         .unwrap();
-    let lsq_matrix_offset = stats_offset + (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
+    let newer_stats_offset = stats_offset + (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
     let mut encoded = [
-        &encoded[..lsq_matrix_offset],
-        &encoded[lsq_matrix_offset + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES..],
+        &encoded[..newer_stats_offset],
+        &encoded[newer_stats_offset
+            + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
+            + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES..],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 3;
@@ -246,7 +251,7 @@ fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
 }
 
 #[test]
-fn o3_runtime_checkpoint_round_trips_v4_lsq_matrix_stats() {
+fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats() {
     let core = RiscvCore::new(core(0x8000));
     for (sequence, instruction, access) in [
         (
@@ -315,11 +320,25 @@ fn o3_runtime_checkpoint_round_trips_v4_lsq_matrix_stats() {
         ));
     }
 
-    let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let payload = core.o3_runtime_checkpoint_payload();
+    let encoded = payload.encode();
+    let stats_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    let branch_repair_offset = stats_offset
+        + (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
+        + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES;
+    let mut encoded = [
+        &encoded[..branch_repair_offset],
+        &encoded[branch_repair_offset + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES..],
+    ]
+    .concat();
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 4;
     let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
     let stats = decoded.stats();
 
-    assert_eq!(decoded.encode(), encoded);
+    assert_eq!(decoded.snapshot(), payload.snapshot());
     assert_eq!(
         stats.lsq_operation_count(O3RuntimeLsqOperation::LoadReserved),
         1
@@ -336,6 +355,9 @@ fn o3_runtime_checkpoint_round_trips_v4_lsq_matrix_stats() {
         1
     );
     assert_eq!(stats.lsq_store_conditional_failures(), 0);
+    assert_eq!(stats.branch_repair_targetless_mismatches(), 0);
+    assert_eq!(stats.branch_repair_wrong_targets(), 0);
+    assert_eq!(stats.branch_repair_direction_only_mismatches(), 0);
 }
 
 #[test]

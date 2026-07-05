@@ -900,6 +900,18 @@ fn emit_o3_runtime_stats(
             "lsq_store_to_load_forwarding_matches",
             o3.lsq_store_to_load_forwarding_matches(),
         ),
+        (
+            "branch_repair_targetless_mismatches",
+            o3.branch_repair_targetless_mismatches(),
+        ),
+        (
+            "branch_repair_wrong_targets",
+            o3.branch_repair_wrong_targets(),
+        ),
+        (
+            "branch_repair_direction_only_mismatches",
+            o3.branch_repair_direction_only_mismatches(),
+        ),
         ("fu_latency_instructions", o3.fu_latency_instructions()),
         ("max_rob_occupancy", o3.max_rob_occupancy()),
         ("max_lsq_occupancy", o3.max_lsq_occupancy()),
@@ -912,6 +924,34 @@ fn emit_o3_runtime_stats(
             StatResetPolicy::Monotonic,
             value,
         )?;
+    }
+    for kind in BranchTargetKind::ALL {
+        for (name, value) in [
+            (
+                "branch_repair_targetless_mismatch_kind",
+                o3.branch_repair_targetless_mismatch_kind(kind),
+            ),
+            (
+                "branch_repair_wrong_target_kind",
+                o3.branch_repair_wrong_target_kind(kind),
+            ),
+            (
+                "branch_repair_direction_only_kind",
+                o3.branch_repair_direction_only_kind(kind),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.{name}.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for class in O3RuntimeFuLatencyClass::ALL {
         increment_stat(
