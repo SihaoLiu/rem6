@@ -2348,6 +2348,212 @@ fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
 }
 
 #[test]
+fn rem6_run_m5_dump_stats_restores_o3_fu_class_snapshot_after_scheduled_restore() {
+    let path = detailed_o3_restore_fu_dump_stats_binary("m5-switch-cpu-o3-restore-fu-dump-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let first_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing first stats dump: {host_actions}"));
+    let restored_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing restored stats dump: {host_actions}"));
+    let restore_tick = host_actions
+        .pointer("/checkpoint_restores/0/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing checkpoint restore tick: {host_actions}"));
+    let first_dump_tick = first_dump
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing first dump tick: {first_dump}"));
+    let restored_dump_tick = restored_dump
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing restored dump tick: {restored_dump}"));
+    assert!(
+        first_dump_tick < restore_tick && restore_tick < restored_dump_tick,
+        "expected first dump before restore before restored dump, first={first_dump_tick}, restore={restore_tick}, restored={restored_dump_tick}"
+    );
+    for dump in [first_dump, restored_dump] {
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+            "counter",
+            "Count",
+            2,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_cycles",
+            "counter",
+            "Cycle",
+            21,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_instructions",
+            "counter",
+            "Count",
+            1,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_latency_cycles",
+            "counter",
+            "Cycle",
+            2,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_integer_div_instructions",
+            "counter",
+            "Count",
+            1,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_integer_div_latency_cycles",
+            "counter",
+            "Cycle",
+            19,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_float_misc_instructions",
+            "counter",
+            "Count",
+            0,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_float_misc_latency_cycles",
+            "counter",
+            "Cycle",
+            0,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_instructions",
+            "counter",
+            "Count",
+            0,
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_latency_cycles",
+            "counter",
+            "Cycle",
+            0,
+            "resettable",
+        );
+    }
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_instructions",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_cycles",
+        "Cycle",
+        27,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_div_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_vector_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_reports_scheduled_restore_missing_checkpoint_label() {
     let path = scheduled_host_restore_missing_label_binary("scheduled-restore-missing-label");
 
@@ -3800,6 +4006,37 @@ fn detailed_o3_restore_dump_stats_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_restore_fu_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        u_type(0x3f80_0000, 8, 0x37),                   // lui x8, 1.0f bits
+        fp_r_type(0x78, 0, 8, 0x0, 1),                  // fmv.w.x f1, x8
+        fp_r_type(0x78, 0, 8, 0x0, 2),                  // fmv.w.x f2, x8
+        i_type(3, 0, 0x0, 9, 0x13),                     // addi x9, x0, 3
+        i_type(2, 0, 0x0, 10, 0x13),                    // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                      // e32, m1, vl=2
+        vector_arith_type(0b010111, 0b100, 0, 1, 1),    // vfmv.v.f v1, f1
+        vector_arith_type(0b010111, 0b100, 0, 2, 2),    // vfmv.v.f v2, f2
+        m5op(M5_SWITCH_CPU),                            // switch cpu0 to detailed
+        i_type(42, 0, 0x0, 1, 0x13),                    // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),                     // addi x2, x0, 7
+        0x0220_81b3,                                    // mul x3, x1, x2
+        0x0220_c1b3,                                    // div x3, x1, x2
+        m5op(M5_CHECKPOINT),                            // checkpoint integer FU stats
+        m5op(M5_DUMP_STATS),                            // dump checkpoint-era stats
+        fp_r_type(0x68, 0, 9, 0x0, 3),                  // fcvt.s.w f3, x9
+        fp_r_type(0x10, 2, 1, 0x0, 4),                  // fsgnj.s f4, f1, f2
+        vector_arith_type(0b010010, 0b001, 1, 0x02, 3), // vfsgnj.vv v3, v2, v1
+        vector_arith_type(0b001000, 0b001, 2, 1, 4),    // vfsgnj.vv v4, v1, v2
+    ];
+    while words.len() < 220 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
