@@ -23,6 +23,7 @@ use o3_branch_stats::{
     o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
     o3_branch_wrong_target_kind_stat_suffix, o3_branch_wrong_target_link_write_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_kind_stat_suffix,
+    o3_branch_wrong_target_squashed_target_link_write_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
@@ -1157,6 +1158,13 @@ impl Rem6O3TraceTotals {
                 self.event_branch_wrong_target_squashed_target_without_link_writes,
             ),
             (
+                "event.branch_wrong_target_squashed_target_link_writes",
+                self.event_branch_wrong_target_squashed_targets
+                    .saturating_sub(
+                        self.event_branch_wrong_target_squashed_target_without_link_writes,
+                    ),
+            ),
+            (
                 "event.branch_wrong_target_link_writes",
                 self.event_branch_wrong_target_link_writes,
             ),
@@ -1266,6 +1274,16 @@ impl Rem6O3TraceTotals {
             |kind| {
                 self.event_branch_wrong_target_squashed_target_without_link_write_kinds
                     [kind.index()]
+            },
+        );
+        push_o3_branch_kind_count_stats(
+            &mut stats,
+            o3_branch_wrong_target_squashed_target_link_write_kind_stat_suffix,
+            |kind| {
+                self.event_branch_wrong_target_squashed_target_kinds[kind.index()].saturating_sub(
+                    self.event_branch_wrong_target_squashed_target_without_link_write_kinds
+                        [kind.index()],
+                )
             },
         );
         push_o3_branch_kind_count_stats(
