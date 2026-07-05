@@ -21,6 +21,7 @@ use o3_branch_stats::{
     o3_branch_squashed_target_kind_stat_suffix, o3_branch_taken_kind_stat_suffix,
     o3_branch_targetless_mismatch_kind_stat_suffix,
     o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
+    o3_branch_targetless_mismatch_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_wrong_target_kind_stat_suffix, o3_branch_wrong_target_link_write_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_link_write_kind_stat_suffix,
@@ -357,6 +358,7 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_mismatches: u64,
     event_branch_targetless_mismatches: u64,
     event_branch_targetless_mismatch_squashed_targets: u64,
+    event_branch_targetless_mismatch_squashed_target_without_link_writes: u64,
     event_branch_wrong_targets: u64,
     event_branch_wrong_target_squashed_targets: u64,
     event_branch_wrong_target_squashed_target_without_link_writes: u64,
@@ -376,6 +378,8 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_targetless_mismatch_squashed_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_squashed_target_without_link_write_kinds:
@@ -750,6 +754,8 @@ impl Rem6O3TraceTotals {
         let targetless_mismatch = o3_branch_targetless_mismatch(event);
         let targetless_mismatch_squashed_target =
             targetless_mismatch && event.branch_squashed_target().is_some();
+        let targetless_mismatch_squashed_target_without_link_write =
+            targetless_mismatch_squashed_target && !event.branch_link_register_write();
         let wrong_target = o3_branch_wrong_target(event);
         let wrong_target_squashed_target = wrong_target && event.branch_squashed_target().is_some();
         let wrong_target_squashed_target_without_link_write =
@@ -767,6 +773,11 @@ impl Rem6O3TraceTotals {
         self.event_branch_targetless_mismatch_squashed_targets = self
             .event_branch_targetless_mismatch_squashed_targets
             .saturating_add(u64::from(targetless_mismatch_squashed_target));
+        self.event_branch_targetless_mismatch_squashed_target_without_link_writes = self
+            .event_branch_targetless_mismatch_squashed_target_without_link_writes
+            .saturating_add(u64::from(
+                targetless_mismatch_squashed_target_without_link_write,
+            ));
         self.event_branch_wrong_targets = self
             .event_branch_wrong_targets
             .saturating_add(u64::from(wrong_target));
@@ -830,6 +841,12 @@ impl Rem6O3TraceTotals {
             self.event_branch_targetless_mismatch_squashed_target_kinds[index] = self
                 .event_branch_targetless_mismatch_squashed_target_kinds[index]
                 .saturating_add(1);
+        }
+        if targetless_mismatch_squashed_target_without_link_write {
+            self.event_branch_targetless_mismatch_squashed_target_without_link_write_kinds[index] =
+                self.event_branch_targetless_mismatch_squashed_target_without_link_write_kinds
+                    [index]
+                    .saturating_add(1);
         }
         if wrong_target {
             self.event_branch_wrong_target_kinds[index] =
@@ -1146,6 +1163,10 @@ impl Rem6O3TraceTotals {
                 self.event_branch_targetless_mismatch_squashed_targets,
             ),
             (
+                "event.branch_targetless_mismatch_squashed_target_without_link_writes",
+                self.event_branch_targetless_mismatch_squashed_target_without_link_writes,
+            ),
+            (
                 "event.branch_wrong_targets",
                 self.event_branch_wrong_targets,
             ),
@@ -1257,6 +1278,14 @@ impl Rem6O3TraceTotals {
             &mut stats,
             o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
             |kind| self.event_branch_targetless_mismatch_squashed_target_kinds[kind.index()],
+        );
+        push_o3_branch_kind_count_stats(
+            &mut stats,
+            o3_branch_targetless_mismatch_squashed_target_without_link_write_kind_stat_suffix,
+            |kind| {
+                self.event_branch_targetless_mismatch_squashed_target_without_link_write_kinds
+                    [kind.index()]
+            },
         );
         push_o3_branch_kind_count_stats(
             &mut stats,

@@ -9247,6 +9247,10 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     assert_eq!(json_record_bool(branch, "branch_wrong_target"), false);
     assert_eq!(json_record_bool(branch, "branch_targetless_mismatch"), true);
     assert_eq!(
+        json_record_bool(branch, "branch_link_register_write"),
+        false
+    );
+    assert_eq!(
         json_record_str(branch, "branch_predicted_target"),
         "0x80000014"
     );
@@ -9283,6 +9287,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         ),
         (
             "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_without_link_writes",
             "Count",
             1,
         ),
@@ -9326,6 +9335,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         ),
         (
             "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_without_link_write_kind.direct_conditional",
             "Count",
             1,
         ),
@@ -11776,6 +11790,16 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_without_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_without_link_write_kind.direct_conditional",
             "Count",
             0,
         ),
