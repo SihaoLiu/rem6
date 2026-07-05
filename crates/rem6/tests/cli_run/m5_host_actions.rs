@@ -3849,6 +3849,7 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     );
     assert_text_count_stat(&stdout, "sim.cpu0.o3.branch_repair_wrong_targets", 0);
     assert_text_count_stat(&stdout, "system.cpu.iew.branchMispredicts", 3);
+    assert_text_count_stat(&stdout, "system.cpu.commit.branchMispredicts", 3);
 }
 
 #[test]
@@ -4110,6 +4111,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.iew.instsToCommit::total",
         "system.cpu.iew.branchMispredicts",
+        "system.cpu.commit.branchMispredicts",
         "system.cpu.lsq0.addedLoadsAndStores",
         "system.cpu.lsq0.loadBytes",
         "system.cpu.lsq0.storeBytes",
