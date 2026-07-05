@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
+use rem6_isa_riscv::{MemoryAccessKind, Register};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
+use crate::o3_fu_latency::o3_fu_latency_class;
 use crate::o3_pipeline::{
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineError, O3PipelineStage,
     O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
@@ -958,45 +959,6 @@ struct O3LoadForwardingAccess {
     register: Register,
     address: Address,
     bytes: u32,
-}
-
-const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3RuntimeFuLatencyClass> {
-    match instruction {
-        RiscvInstruction::Mul { .. }
-        | RiscvInstruction::Mulh { .. }
-        | RiscvInstruction::Mulhsu { .. }
-        | RiscvInstruction::Mulhu { .. }
-        | RiscvInstruction::Mulw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerMul),
-        RiscvInstruction::Div { .. }
-        | RiscvInstruction::Divu { .. }
-        | RiscvInstruction::Rem { .. }
-        | RiscvInstruction::Remu { .. }
-        | RiscvInstruction::Divw { .. }
-        | RiscvInstruction::Divuw { .. }
-        | RiscvInstruction::Remw { .. }
-        | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
-        RiscvInstruction::VectorMultiplyLowVv { .. }
-        | RiscvInstruction::VectorMultiplyLowVx { .. }
-        | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighUnsignedVx { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedVx { .. } => {
-            Some(O3RuntimeFuLatencyClass::VectorIntegerMul)
-        }
-        RiscvInstruction::VectorDivideUnsignedVv { .. }
-        | RiscvInstruction::VectorDivideUnsignedVx { .. }
-        | RiscvInstruction::VectorDivideSignedVv { .. }
-        | RiscvInstruction::VectorDivideSignedVx { .. }
-        | RiscvInstruction::VectorRemainderUnsignedVv { .. }
-        | RiscvInstruction::VectorRemainderUnsignedVx { .. }
-        | RiscvInstruction::VectorRemainderSignedVv { .. }
-        | RiscvInstruction::VectorRemainderSignedVx { .. } => {
-            Some(O3RuntimeFuLatencyClass::VectorIntegerDiv)
-        }
-        _ => None,
-    }
 }
 
 fn o3_branch_link_register_write(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {

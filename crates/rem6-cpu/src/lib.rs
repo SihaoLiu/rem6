@@ -35,6 +35,7 @@ mod multiperspective_perceptron;
 mod multiperspective_perceptron_checkpoint;
 mod multiperspective_perceptron_snapshot;
 mod o3_dependency;
+mod o3_fu_latency;
 mod o3_pipeline;
 mod o3_runtime;
 mod o3_runtime_trace;
