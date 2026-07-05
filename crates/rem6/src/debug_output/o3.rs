@@ -21,7 +21,7 @@ use o3_branch_stats::{
     o3_branch_squashed_target_kind_stat_suffix, o3_branch_taken_kind_stat_suffix,
     o3_branch_targetless_mismatch_kind_stat_suffix,
     o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
-    o3_branch_wrong_target_kind_stat_suffix,
+    o3_branch_wrong_target_kind_stat_suffix, o3_branch_wrong_target_link_write_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_kind_stat_suffix,
 };
 
@@ -356,6 +356,7 @@ struct Rem6O3TraceTotals {
     event_branch_targetless_mismatch_squashed_targets: u64,
     event_branch_wrong_targets: u64,
     event_branch_wrong_target_squashed_targets: u64,
+    event_branch_wrong_target_link_writes: u64,
     event_branch_resolved_targets: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
@@ -373,6 +374,7 @@ struct Rem6O3TraceTotals {
     event_branch_targetless_mismatch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_wrong_target_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_wrong_target_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_misprediction_kinds: [u64; BranchTargetKind::COUNT],
@@ -744,6 +746,7 @@ impl Rem6O3TraceTotals {
             targetless_mismatch && event.branch_squashed_target().is_some();
         let wrong_target = o3_branch_wrong_target(event);
         let wrong_target_squashed_target = wrong_target && event.branch_squashed_target().is_some();
+        let wrong_target_link_write = wrong_target && event.branch_link_register_write();
         self.event_branch_predicted_target_matches = self
             .event_branch_predicted_target_matches
             .saturating_add(u64::from(predicted_target_matches));
@@ -762,6 +765,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_wrong_target_squashed_targets = self
             .event_branch_wrong_target_squashed_targets
             .saturating_add(u64::from(wrong_target_squashed_target));
+        self.event_branch_wrong_target_link_writes = self
+            .event_branch_wrong_target_link_writes
+            .saturating_add(u64::from(wrong_target_link_write));
         self.event_branch_resolved_targets = self
             .event_branch_resolved_targets
             .saturating_add(u64::from(event.branch_resolved_target().is_some()));
@@ -821,6 +827,10 @@ impl Rem6O3TraceTotals {
         if wrong_target_squashed_target {
             self.event_branch_wrong_target_squashed_target_kinds[index] =
                 self.event_branch_wrong_target_squashed_target_kinds[index].saturating_add(1);
+        }
+        if wrong_target_link_write {
+            self.event_branch_wrong_target_link_write_kinds[index] =
+                self.event_branch_wrong_target_link_write_kinds[index].saturating_add(1);
         }
         if event.branch_resolved_target().is_some() {
             self.event_branch_resolved_target_kinds[index] =
@@ -1128,6 +1138,10 @@ impl Rem6O3TraceTotals {
                 self.event_branch_wrong_target_squashed_targets,
             ),
             (
+                "event.branch_wrong_target_link_writes",
+                self.event_branch_wrong_target_link_writes,
+            ),
+            (
                 "event.branch_resolved_targets",
                 self.event_branch_resolved_targets,
             ),
@@ -1286,6 +1300,16 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_wrong_target_squashed_target_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_wrong_target_squashed_target_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_wrong_target_link_write_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_wrong_target_link_write_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {

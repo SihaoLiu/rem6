@@ -582,6 +582,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.o3_trace.event.branch_predicted_target_kind.direct_conditional",
         "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_targets",
         "sim.debug.o3_trace.event.branch_wrong_target_squashed_targets",
+        "sim.debug.o3_trace.event.branch_wrong_target_link_writes",
         "sim.debug.o3_trace.event.branch_resolved_targets",
         "sim.debug.o3_trace.event.branch_squashed_targets",
         "sim.debug.host_action_trace.records",
