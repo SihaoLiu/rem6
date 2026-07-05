@@ -22,11 +22,28 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+        RiscvInstruction::FloatAddS { .. }
+        | RiscvInstruction::FloatAddD { .. }
+        | RiscvInstruction::FloatSubS { .. }
+        | RiscvInstruction::FloatSubD { .. } => Some(O3RuntimeFuLatencyClass::ScalarFloatAdd),
         RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
             Some(O3RuntimeFuLatencyClass::ScalarFloatMul)
         }
+        RiscvInstruction::FloatMultiplyAddS { .. }
+        | RiscvInstruction::FloatMultiplyAddD { .. }
+        | RiscvInstruction::FloatMultiplySubtractS { .. }
+        | RiscvInstruction::FloatMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
+            Some(O3RuntimeFuLatencyClass::ScalarFloatFma)
+        }
         RiscvInstruction::FloatDivS { .. } | RiscvInstruction::FloatDivD { .. } => {
             Some(O3RuntimeFuLatencyClass::ScalarFloatDiv)
+        }
+        RiscvInstruction::FloatSqrtS { .. } | RiscvInstruction::FloatSqrtD { .. } => {
+            Some(O3RuntimeFuLatencyClass::ScalarFloatSqrt)
         }
         RiscvInstruction::VectorMultiplyLowVv { .. }
         | RiscvInstruction::VectorMultiplyLowVx { .. }
@@ -69,13 +86,27 @@ pub(crate) const fn o3_fu_latency_class(
             Some(O3RuntimeFuLatencyClass::VectorIntegerDiv)
         }
         RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::AddVv { .. }
+            | RiscvVectorFloatInstruction::AddVf { .. }
+            | RiscvVectorFloatInstruction::SubVv { .. }
+            | RiscvVectorFloatInstruction::SubVf { .. }
+            | RiscvVectorFloatInstruction::ReverseSubVf { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatAdd),
+        RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatMul),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulAddVv { .. }
+            | RiscvVectorFloatInstruction::MulAddVf { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatFma),
         RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::DivVv { .. }
             | RiscvVectorFloatInstruction::DivVf { .. }
             | RiscvVectorFloatInstruction::ReverseDivVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatDiv),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::SqrtV { .. }) => {
+            Some(O3RuntimeFuLatencyClass::VectorFloatSqrt)
+        }
         _ => None,
     }
 }

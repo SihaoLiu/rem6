@@ -43,12 +43,18 @@ pub struct O3RuntimeTraceRecord {
 pub enum O3RuntimeFuLatencyClass {
     ScalarIntegerMul,
     ScalarIntegerDiv,
+    ScalarFloatAdd,
     ScalarFloatMul,
+    ScalarFloatFma,
     ScalarFloatDiv,
+    ScalarFloatSqrt,
     VectorIntegerMul,
     VectorIntegerDiv,
+    VectorFloatAdd,
     VectorFloatMul,
+    VectorFloatFma,
     VectorFloatDiv,
+    VectorFloatSqrt,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,12 +84,18 @@ impl O3RuntimeFuLatencyClass {
         match self {
             Self::ScalarIntegerMul => "scalar_integer_mul",
             Self::ScalarIntegerDiv => "scalar_integer_div",
+            Self::ScalarFloatAdd => "scalar_float_add",
             Self::ScalarFloatMul => "scalar_float_mul",
+            Self::ScalarFloatFma => "scalar_float_fma",
             Self::ScalarFloatDiv => "scalar_float_div",
+            Self::ScalarFloatSqrt => "scalar_float_sqrt",
             Self::VectorIntegerMul => "vector_integer_mul",
             Self::VectorIntegerDiv => "vector_integer_div",
+            Self::VectorFloatAdd => "vector_float_add",
             Self::VectorFloatMul => "vector_float_mul",
+            Self::VectorFloatFma => "vector_float_fma",
             Self::VectorFloatDiv => "vector_float_div",
+            Self::VectorFloatSqrt => "vector_float_sqrt",
         }
     }
 }

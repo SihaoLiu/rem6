@@ -212,18 +212,30 @@ struct Rem6O3TraceTotals {
     event_fu_integer_div_latency_cycles: u64,
     event_fu_integer_div_latency_max_cycles: u64,
     event_fu_integer_div_latency_min_cycles: Option<u64>,
+    event_fu_float_add_instructions: u64,
+    event_fu_float_add_latency_cycles: u64,
     event_fu_float_mul_instructions: u64,
     event_fu_float_mul_latency_cycles: u64,
+    event_fu_float_fma_instructions: u64,
+    event_fu_float_fma_latency_cycles: u64,
     event_fu_float_div_instructions: u64,
     event_fu_float_div_latency_cycles: u64,
+    event_fu_float_sqrt_instructions: u64,
+    event_fu_float_sqrt_latency_cycles: u64,
     event_fu_vector_integer_mul_instructions: u64,
     event_fu_vector_integer_mul_latency_cycles: u64,
     event_fu_vector_integer_div_instructions: u64,
     event_fu_vector_integer_div_latency_cycles: u64,
+    event_fu_vector_float_add_instructions: u64,
+    event_fu_vector_float_add_latency_cycles: u64,
     event_fu_vector_float_mul_instructions: u64,
     event_fu_vector_float_mul_latency_cycles: u64,
+    event_fu_vector_float_fma_instructions: u64,
+    event_fu_vector_float_fma_latency_cycles: u64,
     event_fu_vector_float_div_instructions: u64,
     event_fu_vector_float_div_latency_cycles: u64,
+    event_fu_vector_float_sqrt_instructions: u64,
+    event_fu_vector_float_sqrt_latency_cycles: u64,
 }
 
 impl Rem6O3TraceRecord {
@@ -559,6 +571,13 @@ impl Rem6O3TraceTotals {
                             fu_latency_cycles,
                         );
                     }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatAdd) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_add_instructions,
+                            &mut self.event_fu_float_add_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
                     Some(O3RuntimeFuLatencyClass::ScalarFloatMul) => {
                         add_latency_bucket(
                             &mut self.event_fu_float_mul_instructions,
@@ -566,10 +585,24 @@ impl Rem6O3TraceTotals {
                             fu_latency_cycles,
                         );
                     }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatFma) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_fma_instructions,
+                            &mut self.event_fu_float_fma_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
                     Some(O3RuntimeFuLatencyClass::ScalarFloatDiv) => {
                         add_latency_bucket(
                             &mut self.event_fu_float_div_instructions,
                             &mut self.event_fu_float_div_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::ScalarFloatSqrt) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_float_sqrt_instructions,
+                            &mut self.event_fu_float_sqrt_latency_cycles,
                             fu_latency_cycles,
                         );
                     }
@@ -587,6 +620,13 @@ impl Rem6O3TraceTotals {
                             fu_latency_cycles,
                         );
                     }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatAdd) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_add_instructions,
+                            &mut self.event_fu_vector_float_add_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
                     Some(O3RuntimeFuLatencyClass::VectorFloatMul) => {
                         add_latency_bucket(
                             &mut self.event_fu_vector_float_mul_instructions,
@@ -594,10 +634,24 @@ impl Rem6O3TraceTotals {
                             fu_latency_cycles,
                         );
                     }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatFma) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_fma_instructions,
+                            &mut self.event_fu_vector_float_fma_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
                     Some(O3RuntimeFuLatencyClass::VectorFloatDiv) => {
                         add_latency_bucket(
                             &mut self.event_fu_vector_float_div_instructions,
                             &mut self.event_fu_vector_float_div_latency_cycles,
+                            fu_latency_cycles,
+                        );
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorFloatSqrt) => {
+                        add_latency_bucket(
+                            &mut self.event_fu_vector_float_sqrt_instructions,
+                            &mut self.event_fu_vector_float_sqrt_latency_cycles,
                             fu_latency_cycles,
                         );
                     }
@@ -1012,20 +1066,44 @@ impl Rem6O3TraceTotals {
             });
         };
         push_count(
+            "event.fu_float_add_instructions",
+            self.event_fu_float_add_instructions,
+        );
+        push_count(
             "event.fu_float_mul_instructions",
             self.event_fu_float_mul_instructions,
+        );
+        push_count(
+            "event.fu_float_fma_instructions",
+            self.event_fu_float_fma_instructions,
         );
         push_count(
             "event.fu_float_div_instructions",
             self.event_fu_float_div_instructions,
         );
         push_count(
+            "event.fu_float_sqrt_instructions",
+            self.event_fu_float_sqrt_instructions,
+        );
+        push_count(
+            "event.fu_vector_float_add_instructions",
+            self.event_fu_vector_float_add_instructions,
+        );
+        push_count(
             "event.fu_vector_float_mul_instructions",
             self.event_fu_vector_float_mul_instructions,
         );
         push_count(
+            "event.fu_vector_float_fma_instructions",
+            self.event_fu_vector_float_fma_instructions,
+        );
+        push_count(
             "event.fu_vector_float_div_instructions",
             self.event_fu_vector_float_div_instructions,
+        );
+        push_count(
+            "event.fu_vector_float_sqrt_instructions",
+            self.event_fu_vector_float_sqrt_instructions,
         );
         for kind in BranchTargetKind::ALL {
             if matches!(kind, BranchTargetKind::NoBranch) {
@@ -1481,12 +1559,24 @@ impl Rem6O3TraceTotals {
                 ),
             ),
             (
+                "event.fu_float_add_latency_cycles",
+                self.event_fu_float_add_latency_cycles,
+            ),
+            (
                 "event.fu_float_mul_latency_cycles",
                 self.event_fu_float_mul_latency_cycles,
             ),
             (
+                "event.fu_float_fma_latency_cycles",
+                self.event_fu_float_fma_latency_cycles,
+            ),
+            (
                 "event.fu_float_div_latency_cycles",
                 self.event_fu_float_div_latency_cycles,
+            ),
+            (
+                "event.fu_float_sqrt_latency_cycles",
+                self.event_fu_float_sqrt_latency_cycles,
             ),
             (
                 "event.fu_vector_integer_mul_latency_cycles",
@@ -1497,12 +1587,24 @@ impl Rem6O3TraceTotals {
                 self.event_fu_vector_integer_div_latency_cycles,
             ),
             (
+                "event.fu_vector_float_add_latency_cycles",
+                self.event_fu_vector_float_add_latency_cycles,
+            ),
+            (
                 "event.fu_vector_float_mul_latency_cycles",
                 self.event_fu_vector_float_mul_latency_cycles,
             ),
             (
+                "event.fu_vector_float_fma_latency_cycles",
+                self.event_fu_vector_float_fma_latency_cycles,
+            ),
+            (
                 "event.fu_vector_float_div_latency_cycles",
                 self.event_fu_vector_float_div_latency_cycles,
+            ),
+            (
+                "event.fu_vector_float_sqrt_latency_cycles",
+                self.event_fu_vector_float_sqrt_latency_cycles,
             ),
         ] {
             stats.push(Rem6O3TraceStat {
