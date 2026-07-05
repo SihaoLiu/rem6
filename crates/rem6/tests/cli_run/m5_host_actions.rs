@@ -1459,6 +1459,318 @@ fn rem6_run_m5_reset_stats_clears_detailed_o3_runtime_stats() {
 }
 
 #[test]
+fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
+    let path = detailed_o3_reset_fu_dump_stats_binary("m5-switch-cpu-o3-reset-fu-dump-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "280",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    assert_eq!(
+        dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1),
+        "post-reset dump should belong to the reset epoch: {dump}"
+    );
+    assert!(
+        dump.pointer("/reset_tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|tick| tick > 0),
+        "post-reset dump should record the reset tick: {dump}"
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_latency_cycles",
+        "counter",
+        "Cycle",
+        21,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_instructions",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_div_latency_cycles",
+        "counter",
+        "Cycle",
+        19,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_float_misc_instructions",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_instructions",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_cycles",
+        "Cycle",
+        21,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_div_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_float_misc_instructions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_vector_float_misc_instructions",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_snapshots_then_resets_o3_fu_classes() {
+    let path = detailed_o3_dump_reset_fu_stats_binary("m5-switch-cpu-o3-dump-reset-fu-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    assert_eq!(
+        dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0),
+        "dump-reset should snapshot the old epoch before resetting: {dump}"
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+        "counter",
+        "Count",
+        4,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_latency_cycles",
+        "counter",
+        "Cycle",
+        6,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_float_misc_instructions",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_instructions",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_instructions",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_div_instructions",
+        "counter",
+        "Count",
+        0,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.fu_integer_div_latency_cycles",
+        "counter",
+        "Cycle",
+        0,
+        "resettable",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_cycles",
+        "Cycle",
+        21,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_integer_div_latency_cycles",
+        "Cycle",
+        19,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_float_misc_instructions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_vector_float_misc_instructions",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
     let path =
         detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-detailed-o3-lsq-store-load-match");
@@ -3253,6 +3565,58 @@ fn detailed_o3_reset_stats_binary(name: &str) -> std::path::PathBuf {
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
+}
+
+fn detailed_o3_reset_fu_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = detailed_o3_float_misc_prefix_words();
+    words.push(m5op(M5_RESET_STATS));
+    append_integer_mul_div_work(&mut words);
+    words.push(m5op(M5_DUMP_STATS));
+    append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_dump_reset_fu_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = detailed_o3_float_misc_prefix_words();
+    words.push(m5op(M5_DUMP_RESET_STATS));
+    append_integer_mul_div_work(&mut words);
+    append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_float_misc_prefix_words() -> Vec<u32> {
+    vec![
+        u_type(0x3f80_0000, 8, 0x37),                   // lui x8, 1.0f bits
+        fp_r_type(0x78, 0, 8, 0x0, 1),                  // fmv.w.x f1, x8
+        fp_r_type(0x78, 0, 8, 0x0, 2),                  // fmv.w.x f2, x8
+        i_type(3, 0, 0x0, 9, 0x13),                     // addi x9, x0, 3
+        i_type(2, 0, 0x0, 10, 0x13),                    // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                      // e32, m1, vl=2
+        vector_arith_type(0b010111, 0b100, 0, 1, 1),    // vfmv.v.f v1, f1
+        vector_arith_type(0b010111, 0b100, 0, 2, 2),    // vfmv.v.f v2, f2
+        m5op(M5_SWITCH_CPU),                            // switch cpu0 to detailed
+        fp_r_type(0x68, 0, 9, 0x0, 3),                  // fcvt.s.w f3, x9
+        fp_r_type(0x10, 2, 1, 0x0, 4),                  // fsgnj.s f4, f1, f2
+        vector_arith_type(0b010010, 0b001, 1, 0x02, 3), // vfsgnj.vv v3, v2, v1
+        vector_arith_type(0b001000, 0b001, 2, 1, 4),    // vfsgnj.vv v4, v1, v2
+    ]
+}
+
+fn append_integer_mul_div_work(words: &mut Vec<u32>) {
+    words.extend([
+        i_type(42, 0, 0x0, 1, 0x13), // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),  // addi x2, x0, 7
+        0x0220_81b3,                 // mul x3, x1, x2
+        0x0220_c1b3,                 // div x3, x1, x2
+    ]);
+}
+
+fn append_host_stop(words: &mut Vec<u32>) {
+    words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
 }
 
 fn detailed_o3_lsq_store_load_match_binary(name: &str) -> std::path::PathBuf {
