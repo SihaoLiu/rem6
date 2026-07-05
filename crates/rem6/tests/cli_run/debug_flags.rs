@@ -7853,6 +7853,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatches",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.branch_wrong_targets", "Count", 1),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_squashed_targets",
@@ -7889,6 +7894,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_target_mismatch_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_unconditional",
             "Count",
             1,
         ),
@@ -8293,6 +8308,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
             "sim.debug.o3_trace.event.branch_predicted_target_mismatch_kind.indirect_unconditional",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.indirect_unconditional",
+            "Count",
+            0,
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_kind.indirect_unconditional",
@@ -9321,6 +9341,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             1,
         ),
         (
+            "sim.debug.o3_trace.event.branch_direction_mismatches",
+            "Count",
+            3,
+        ),
+        (
             "sim.debug.o3_trace.event.branch_targetless_mismatches",
             "Count",
             1,
@@ -9372,6 +9397,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "sim.debug.o3_trace.event.branch_predicted_target_mismatch_kind.direct_conditional",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_unconditional",
+            "Count",
+            2,
         ),
         (
             "sim.debug.o3_trace.event.branch_targetless_mismatch_kind.direct_conditional",
@@ -11825,6 +11860,16 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_conditional",
             "Count",
             0,
         ),

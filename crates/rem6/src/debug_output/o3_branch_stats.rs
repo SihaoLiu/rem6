@@ -173,6 +173,29 @@ pub(super) fn o3_branch_predicted_target_mismatch_kind_stat_suffix(
     }
 }
 
+pub(super) fn o3_branch_direction_mismatch_kind_stat_suffix(
+    kind: BranchTargetKind,
+) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_direction_mismatch_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_direction_mismatch_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_direction_mismatch_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_direction_mismatch_kind.call_indirect",
+        BranchTargetKind::DirectConditional => {
+            "event.branch_direction_mismatch_kind.direct_conditional"
+        }
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_direction_mismatch_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_direction_mismatch_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_direction_mismatch_kind.indirect_unconditional"
+        }
+    }
+}
+
 pub(super) fn o3_branch_targetless_mismatch_kind_stat_suffix(
     kind: BranchTargetKind,
 ) -> &'static str {
