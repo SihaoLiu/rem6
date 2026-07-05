@@ -10,12 +10,18 @@ use crate::{
 
 #[path = "o3_branch_direction_mismatch.rs"]
 mod o3_branch_direction_mismatch;
+#[path = "o3_branch_repair.rs"]
+mod o3_branch_repair;
 #[path = "o3_branch_stats.rs"]
 mod o3_branch_stats;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
 
 use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;
+use o3_branch_repair::{
+    o3_branch_repair_kind, o3_branch_targetless_mismatch, o3_branch_wrong_target,
+    Rem6O3BranchRepairTotals,
+};
 use o3_branch_stats::{
     o3_branch_kind_stat_suffix, o3_branch_link_write_kind_stat_suffix,
     o3_branch_misprediction_kind_stat_suffix, o3_branch_not_taken_kind_stat_suffix,
@@ -36,7 +42,7 @@ use o3_branch_stats::{
     o3_branch_wrong_target_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
-use o3_event_json::{o3_branch_targetless_mismatch, o3_branch_wrong_target, o3_event_to_json};
+use o3_event_json::o3_event_to_json;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
@@ -374,6 +380,7 @@ struct Rem6O3TraceTotals {
     event_branch_wrong_target_squashed_targets: u64,
     event_branch_wrong_target_squashed_target_without_link_writes: u64,
     event_branch_wrong_target_link_writes: u64,
+    event_branch_repairs: Rem6O3BranchRepairTotals,
     event_branch_resolved_targets: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
@@ -778,6 +785,7 @@ impl Rem6O3TraceTotals {
         let wrong_target_squashed_target_without_link_write =
             wrong_target_squashed_target && !event.branch_link_register_write();
         let wrong_target_link_write = wrong_target && event.branch_link_register_write();
+        let repair = o3_branch_repair_kind(event);
         let squashed_target = event.branch_squashed_target().is_some();
         let squashed_target_without_link_write =
             squashed_target && !event.branch_link_register_write();
@@ -818,6 +826,7 @@ impl Rem6O3TraceTotals {
         self.event_branch_wrong_target_link_writes = self
             .event_branch_wrong_target_link_writes
             .saturating_add(u64::from(wrong_target_link_write));
+        self.event_branch_repairs.add_event(event, repair);
         self.event_branch_resolved_targets = self
             .event_branch_resolved_targets
             .saturating_add(u64::from(event.branch_resolved_target().is_some()));
@@ -1290,6 +1299,7 @@ impl Rem6O3TraceTotals {
         }
         self.event_branch_direction_mismatches
             .push_stats(&mut stats);
+        self.event_branch_repairs.push_stats(&mut stats);
         push_o3_branch_kind_count_stats(&mut stats, o3_branch_kind_stat_suffix, |kind| {
             self.event_branch_kinds[kind.index()]
         });

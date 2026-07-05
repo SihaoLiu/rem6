@@ -7820,6 +7820,7 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
     assert_eq!(json_record_bool(branch, "branch_resolved_taken"), true);
     assert_eq!(json_record_bool(branch, "branch_mispredicted"), true);
     assert_eq!(json_record_bool(branch, "branch_wrong_target"), true);
+    assert_eq!(json_record_str(branch, "branch_repair"), "wrong_target");
     assert_eq!(json_record_bool(branch, "branch_link_register_write"), true);
     assert_eq!(
         json_record_str(branch, "branch_predicted_target"),
@@ -7889,6 +7890,21 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_mismatches",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 2),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 2),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
@@ -7944,6 +7960,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_link_write_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_target_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_kind.direct_unconditional",
             "Count",
             1,
         ),
@@ -8260,6 +8286,7 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
     assert_eq!(json_record_bool(branch, "branch_predicted_taken"), true);
     assert_eq!(json_record_bool(branch, "branch_resolved_taken"), true);
     assert_eq!(json_record_bool(branch, "branch_mispredicted"), true);
+    assert_eq!(json_record_str(branch, "branch_repair"), "wrong_target");
     assert_eq!(
         json_record_bool(branch, "branch_link_register_write"),
         false
@@ -8307,6 +8334,21 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_mismatches",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 2),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 2),
         (
@@ -8346,6 +8388,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_squashed_target_without_link_write_kind.indirect_unconditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_target_kind.indirect_unconditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_kind.direct_unconditional",
             "Count",
             1,
         ),
@@ -9327,6 +9379,10 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     assert_eq!(json_record_bool(branch, "branch_wrong_target"), false);
     assert_eq!(json_record_bool(branch, "branch_targetless_mismatch"), true);
     assert_eq!(
+        json_record_str(branch, "branch_repair"),
+        "targetless_mismatch"
+    );
+    assert_eq!(
         json_record_bool(branch, "branch_link_register_write"),
         false
     );
@@ -9340,6 +9396,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         json_record_str(branch, "branch_squashed_target"),
         "0x80000014"
     );
+    let mut direction_only_branch_pcs = events
+        .iter()
+        .filter(|event| {
+            json_record_str(event, "branch_kind") == "direct_unconditional"
+                && json_record_str(event, "branch_repair") == "direction_only"
+        })
+        .map(|event| json_record_str(event, "pc"))
+        .collect::<Vec<_>>();
+    direction_only_branch_pcs.sort_unstable();
+    assert_eq!(direction_only_branch_pcs, ["0x80000010", "0x8000001c"]);
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),
@@ -9401,6 +9467,21 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             1,
         ),
         ("sim.debug.o3_trace.event.branch_wrong_targets", "Count", 0),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatches",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_mismatches",
+            "Count",
+            2,
+        ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 3),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 3),
         (
@@ -9492,6 +9573,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_without_link_write_kind.direct_conditional",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatch_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_kind.direct_unconditional",
+            "Count",
+            2,
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_kind.direct_conditional",
@@ -12060,6 +12151,41 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_without_link_write_kind.indirect_unconditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_targetless_mismatch_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_target_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_wrong_target_kind.indirect_unconditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_repair_direction_only_kind.direct_unconditional",
             "Count",
             0,
         ),
