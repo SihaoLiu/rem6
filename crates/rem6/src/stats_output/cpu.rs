@@ -1185,6 +1185,19 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
+    let branch_mispredicts = o3
+        .branch_repair_targetless_mismatches()
+        .saturating_add(o3.branch_repair_wrong_targets())
+        .saturating_add(o3.branch_repair_direction_only_mismatches());
+    for name in ["iew.branchMispredicts", "commit.branchMispredicts"] {
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.{name}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            branch_mispredicts,
+        )?;
+    }
     Ok(())
 }
 

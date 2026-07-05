@@ -3850,6 +3850,79 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     assert_text_count_stat(&stdout, "sim.cpu0.o3.branch_repair_wrong_targets", 0);
     assert_text_count_stat(&stdout, "system.cpu.iew.branchMispredicts", 3);
     assert_text_count_stat(&stdout, "system.cpu.commit.branchMispredicts", 3);
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iew.branchMispredicts");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.commit.branchMispredicts");
+}
+
+#[test]
+fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
+    let path = detailed_o3_branch_repair_text_stats_binary(
+        "m5-switch-cpu-detailed-o3-branch-mispredict-json-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_targetless_mismatches",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_direction_only_mismatches",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_repair_wrong_targets",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchMispredicts",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.commit.branchMispredicts",
+        "Count",
+        3,
+        "monotonic",
+    );
 }
 
 #[test]
@@ -4042,6 +4115,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchMispredicts");
+    assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
     assert!(
         json.pointer("/cores/0/o3_runtime").is_none(),
         "timing-mode run should not emit inactive O3 runtime state: {json}"
@@ -5687,6 +5762,17 @@ fn assert_text_stat_absent(stdout: &str, path: &str) {
             .lines()
             .all(|line| line.split_whitespace().next() != Some(path)),
         "unexpected text stat {path} in stdout:\n{stdout}"
+    );
+}
+
+fn assert_text_stat_occurs_once(stdout: &str, path: &str) {
+    let count = stdout
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some(path))
+        .count();
+    assert_eq!(
+        count, 1,
+        "expected exactly one text stat {path}, found {count} in stdout:\n{stdout}"
     );
 }
 

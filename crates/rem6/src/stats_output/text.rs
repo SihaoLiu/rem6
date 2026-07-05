@@ -657,16 +657,12 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 .into_iter()
                 .flatten()
                 .fold(0_u64, u64::saturating_add);
-            append_derived_count_stat(
-                output,
-                &format!("{alias_prefix}.iew.branchMispredicts"),
-                branch_mispredicts,
-            );
-            append_derived_count_stat(
-                output,
-                &format!("{alias_prefix}.commit.branchMispredicts"),
-                branch_mispredicts,
-            );
+            for alias_name in ["iew.branchMispredicts", "commit.branchMispredicts"] {
+                let alias_path = format!("{alias_prefix}.{alias_name}");
+                if snapshot_value(snapshot, &alias_path).is_none() {
+                    append_derived_count_stat(output, &alias_path, branch_mispredicts);
+                }
+            }
         }
         for (op_class, source_name) in [("MemRead", "lsq_loads"), ("MemWrite", "lsq_stores")] {
             let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
