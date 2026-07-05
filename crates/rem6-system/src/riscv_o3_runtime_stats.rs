@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, O3RuntimeStats};
+use rem6_cpu::{CpuId, O3RuntimeFuLatencyClass, O3RuntimeStats};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 #[derive(Clone, Debug)]
 pub struct RiscvO3RuntimeStats {
     cpus: BTreeSet<CpuId>,
     stats: BTreeMap<CpuId, RiscvO3RuntimeCpuStats>,
+    active_cpus: Arc<Mutex<BTreeSet<CpuId>>>,
     previous: Arc<Mutex<BTreeMap<CpuId, O3RuntimeStats>>>,
 }
 
@@ -24,6 +25,7 @@ impl RiscvO3RuntimeStats {
         Ok(Self {
             cpus,
             stats,
+            active_cpus: Arc::new(Mutex::new(BTreeSet::new())),
             previous: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -52,6 +54,7 @@ impl RiscvO3RuntimeStats {
         let previous_snapshot = previous.entry(cpu).or_default();
         stats.increment_delta(registry, *previous_snapshot, snapshot)?;
         *previous_snapshot = snapshot;
+        self.mark_active_cpu(cpu, snapshot);
         Ok(())
     }
 
@@ -69,7 +72,26 @@ impl RiscvO3RuntimeStats {
             .lock()
             .expect("O3 runtime stats lock")
             .insert(cpu, snapshot);
+        self.mark_active_cpu(cpu, snapshot);
         Ok(())
+    }
+
+    pub(crate) fn active_cpu_indices(&self) -> Vec<u32> {
+        self.active_cpus
+            .lock()
+            .expect("O3 runtime stats lock")
+            .iter()
+            .map(|cpu| cpu.get())
+            .collect()
+    }
+
+    fn mark_active_cpu(&self, cpu: CpuId, snapshot: O3RuntimeStats) {
+        if snapshot.has_activity() {
+            self.active_cpus
+                .lock()
+                .expect("O3 runtime stats lock")
+                .insert(cpu);
+        }
     }
 }
 
@@ -78,9 +100,16 @@ impl Default for RiscvO3RuntimeStats {
         Self {
             cpus: BTreeSet::new(),
             stats: BTreeMap::new(),
+            active_cpus: Arc::new(Mutex::new(BTreeSet::new())),
             previous: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeFuLatencyClassStats {
+    instructions: StatId,
+    latency_cycles: StatId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,10 +126,7 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_to_load_forwarding_matches: StatId,
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
-    fu_integer_mul_instructions: StatId,
-    fu_integer_mul_latency_cycles: StatId,
-    fu_integer_div_instructions: StatId,
-    fu_integer_div_latency_cycles: StatId,
+    fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
@@ -142,30 +168,7 @@ impl RiscvO3RuntimeCpuStats {
                 "fu_latency_cycles",
                 "Cycle",
             )?,
-            fu_integer_mul_instructions: register_o3_counter(
-                registry,
-                &prefix,
-                "fu_integer_mul_instructions",
-                "Count",
-            )?,
-            fu_integer_mul_latency_cycles: register_o3_counter(
-                registry,
-                &prefix,
-                "fu_integer_mul_latency_cycles",
-                "Cycle",
-            )?,
-            fu_integer_div_instructions: register_o3_counter(
-                registry,
-                &prefix,
-                "fu_integer_div_instructions",
-                "Count",
-            )?,
-            fu_integer_div_latency_cycles: register_o3_counter(
-                registry,
-                &prefix,
-                "fu_integer_div_latency_cycles",
-                "Cycle",
-            )?,
+            fu_latency_classes: register_o3_fu_latency_class_counters(registry, &prefix)?,
             max_rob_occupancy: register_o3_counter(
                 registry,
                 &prefix,
@@ -247,26 +250,6 @@ impl RiscvO3RuntimeCpuStats {
                 current.fu_latency_cycles(),
             ),
             (
-                self.fu_integer_mul_instructions,
-                previous.fu_integer_mul_instructions(),
-                current.fu_integer_mul_instructions(),
-            ),
-            (
-                self.fu_integer_mul_latency_cycles,
-                previous.fu_integer_mul_latency_cycles(),
-                current.fu_integer_mul_latency_cycles(),
-            ),
-            (
-                self.fu_integer_div_instructions,
-                previous.fu_integer_div_instructions(),
-                current.fu_integer_div_instructions(),
-            ),
-            (
-                self.fu_integer_div_latency_cycles,
-                previous.fu_integer_div_latency_cycles(),
-                current.fu_integer_div_latency_cycles(),
-            ),
-            (
                 self.max_rob_occupancy,
                 previous.max_rob_occupancy(),
                 current.max_rob_occupancy(),
@@ -285,6 +268,26 @@ impl RiscvO3RuntimeCpuStats {
             let delta = current.saturating_sub(previous);
             if delta != 0 {
                 registry.increment(stat, delta)?;
+            }
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            let class_stats = self.fu_latency_classes[class.index()];
+            for (stat, previous, current) in [
+                (
+                    class_stats.instructions,
+                    previous.fu_latency_class_instructions(class),
+                    current.fu_latency_class_instructions(class),
+                ),
+                (
+                    class_stats.latency_cycles,
+                    previous.fu_latency_class_cycles(class),
+                    current.fu_latency_class_cycles(class),
+                ),
+            ] {
+                let delta = current.saturating_sub(previous);
+                if delta != 0 {
+                    registry.increment(stat, delta)?;
+                }
             }
         }
         Ok(())
@@ -317,27 +320,26 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.fu_latency_instructions(),
             ),
             (self.fu_latency_cycles, snapshot.fu_latency_cycles()),
-            (
-                self.fu_integer_mul_instructions,
-                snapshot.fu_integer_mul_instructions(),
-            ),
-            (
-                self.fu_integer_mul_latency_cycles,
-                snapshot.fu_integer_mul_latency_cycles(),
-            ),
-            (
-                self.fu_integer_div_instructions,
-                snapshot.fu_integer_div_instructions(),
-            ),
-            (
-                self.fu_integer_div_latency_cycles,
-                snapshot.fu_integer_div_latency_cycles(),
-            ),
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
             (self.rename_map_entries, snapshot.rename_map_entries()),
         ] {
             registry.set_resettable_counter(stat, value)?;
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            let class_stats = self.fu_latency_classes[class.index()];
+            for (stat, value) in [
+                (
+                    class_stats.instructions,
+                    snapshot.fu_latency_class_instructions(class),
+                ),
+                (
+                    class_stats.latency_cycles,
+                    snapshot.fu_latency_class_cycles(class),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
         }
         Ok(())
     }
@@ -350,4 +352,32 @@ fn register_o3_counter(
     unit: &str,
 ) -> Result<StatId, StatsError> {
     registry.register_counter(format!("{prefix}.{name}"), unit)
+}
+
+fn register_o3_fu_latency_class_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT], StatsError> {
+    let mut stats = [RiscvO3RuntimeFuLatencyClassStats {
+        instructions: StatId::new(0),
+        latency_cycles: StatId::new(0),
+    }; O3RuntimeFuLatencyClass::COUNT];
+    for class in O3RuntimeFuLatencyClass::ALL {
+        let stat_stem = class.stat_stem();
+        stats[class.index()] = RiscvO3RuntimeFuLatencyClassStats {
+            instructions: register_o3_counter(
+                registry,
+                prefix,
+                &format!("fu_{stat_stem}_instructions"),
+                "Count",
+            )?,
+            latency_cycles: register_o3_counter(
+                registry,
+                prefix,
+                &format!("fu_{stat_stem}_latency_cycles"),
+                "Cycle",
+            )?,
+        };
+    }
+    Ok(stats)
 }

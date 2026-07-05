@@ -275,7 +275,10 @@ pub enum SystemActionOutcome {
         thread_id: u64,
     },
     StatsReset(StatsResetRecord),
-    StatsDump(StatDumpRecord),
+    StatsDump {
+        record: StatDumpRecord,
+        active_o3_cpus: Vec<u32>,
+    },
     Checkpoint {
         tick: Tick,
         event: GuestEventId,
@@ -1499,11 +1502,20 @@ impl SystemActionExecutor {
                 .try_reset(record.tick())
                 .map(SystemActionOutcome::StatsReset)
                 .map_err(SystemError::Stats),
-            HostAction::DumpStats => self
-                .stats
-                .try_dump(record.tick())
-                .map(SystemActionOutcome::StatsDump)
-                .map_err(SystemError::Stats),
+            HostAction::DumpStats => {
+                let active_o3_cpus = self
+                    .riscv_o3_runtime_stats
+                    .as_ref()
+                    .map(RiscvO3RuntimeStats::active_cpu_indices)
+                    .unwrap_or_default();
+                self.stats
+                    .try_dump(record.tick())
+                    .map(|record| SystemActionOutcome::StatsDump {
+                        record,
+                        active_o3_cpus,
+                    })
+                    .map_err(SystemError::Stats)
+            }
             HostAction::SwitchExecutionMode { target, mode } => {
                 let state_transfer =
                     self.capture_execution_mode_switch_state_transfer(record, target)?;

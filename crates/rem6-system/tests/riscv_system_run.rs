@@ -1212,7 +1212,7 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
         .iter()
         .filter_map(|outcome| match outcome {
             SystemActionOutcome::StatsReset(record) => Some(("reset", record.tick())),
-            SystemActionOutcome::StatsDump(record) => Some(("dump", record.tick())),
+            SystemActionOutcome::StatsDump { record, .. } => Some(("dump", record.tick())),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1284,7 +1284,7 @@ fn riscv_system_run_driver_drops_periodic_gem5_stats_repeat_on_tick_overflow() {
         .iter()
         .filter_map(|outcome| match outcome {
             SystemActionOutcome::StatsReset(record) => Some(("reset", record.tick())),
-            SystemActionOutcome::StatsDump(record) => Some(("dump", record.tick())),
+            SystemActionOutcome::StatsDump { record, .. } => Some(("dump", record.tick())),
             _ => None,
         })
         .collect::<Vec<_>>();

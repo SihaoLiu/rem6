@@ -327,15 +327,18 @@ fn system_action_executor_applies_stats_reset_and_dump_actions() {
     );
     assert_eq!(
         executor.apply(&dump).unwrap(),
-        SystemActionOutcome::StatsDump(StatDumpRecord::new(
-            StatDumpId::new(0),
-            StatSnapshot::new(
-                14,
-                1,
-                10,
-                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+        SystemActionOutcome::StatsDump {
+            record: StatDumpRecord::new(
+                StatDumpId::new(0),
+                StatSnapshot::new(
+                    14,
+                    1,
+                    10,
+                    vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+                ),
             ),
-        ))
+            active_o3_cpus: Vec::new(),
+        }
     );
     assert_eq!(
         executor.stats().dump_records(),
@@ -1449,21 +1452,8 @@ fn system_run_controller_executes_delivered_stats_events() {
         .unwrap();
     assert_eq!(
         dump_outcomes,
-        vec![SystemActionOutcome::StatsDump(StatDumpRecord::new(
-            StatDumpId::new(0),
-            StatSnapshot::new(
-                48,
-                1,
-                40,
-                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
-            ),
-        ))]
-    );
-    assert_eq!(
-        controller.action_outcomes(),
-        &[
-            SystemActionOutcome::StatsReset(StatsResetRecord::new(40, 1, vec![(insts, 11)])),
-            SystemActionOutcome::StatsDump(StatDumpRecord::new(
+        vec![SystemActionOutcome::StatsDump {
+            record: StatDumpRecord::new(
                 StatDumpId::new(0),
                 StatSnapshot::new(
                     48,
@@ -1471,7 +1461,26 @@ fn system_run_controller_executes_delivered_stats_events() {
                     40,
                     vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
                 ),
-            )),
+            ),
+            active_o3_cpus: Vec::new(),
+        }]
+    );
+    assert_eq!(
+        controller.action_outcomes(),
+        &[
+            SystemActionOutcome::StatsReset(StatsResetRecord::new(40, 1, vec![(insts, 11)])),
+            SystemActionOutcome::StatsDump {
+                record: StatDumpRecord::new(
+                    StatDumpId::new(0),
+                    StatSnapshot::new(
+                        48,
+                        1,
+                        40,
+                        vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+                    ),
+                ),
+                active_o3_cpus: Vec::new(),
+            },
         ]
     );
     assert_eq!(
@@ -2163,15 +2172,18 @@ fn system_host_event_port_delivers_and_executes_actions() {
         controller.run().action_outcomes(),
         &[
             SystemActionOutcome::StatsReset(StatsResetRecord::new(7, 1, vec![(insts, 9)])),
-            SystemActionOutcome::StatsDump(StatDumpRecord::new(
-                StatDumpId::new(0),
-                StatSnapshot::new(
-                    11,
-                    1,
-                    7,
-                    vec![StatSample::new(insts, "cpu0.committed_insts", "count", 4)],
+            SystemActionOutcome::StatsDump {
+                record: StatDumpRecord::new(
+                    StatDumpId::new(0),
+                    StatSnapshot::new(
+                        11,
+                        1,
+                        7,
+                        vec![StatSample::new(insts, "cpu0.committed_insts", "count", 4)],
+                    ),
                 ),
-            )),
+                active_o3_cpus: Vec::new(),
+            },
         ]
     );
 }

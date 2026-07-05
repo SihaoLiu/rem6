@@ -2396,7 +2396,7 @@ fn workload_replay_executes_planned_host_actions() {
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,
-        SystemActionOutcome::StatsDump(record)
+        SystemActionOutcome::StatsDump { record, .. }
             if record.tick() == 2 && record.reset_tick() == 1
     )));
     assert_eq!(
@@ -2417,7 +2417,7 @@ fn workload_replay_executes_planned_host_actions() {
                     .host_action_outcomes()
                     .iter()
                     .find_map(|event| match event {
-                        SystemActionOutcome::StatsDump(record) => Some(record.clone()),
+                        SystemActionOutcome::StatsDump { record, .. } => Some(record.clone()),
                         _ => None,
                     })
                     .unwrap(),

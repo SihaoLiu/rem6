@@ -108,10 +108,16 @@ impl Rem6HostActionSummary {
                         .stats_resets
                         .push(Rem6HostStatsResetSummary::from_record(record));
                 }
-                SystemActionOutcome::StatsDump(record) => {
+                SystemActionOutcome::StatsDump {
+                    record,
+                    active_o3_cpus,
+                } => {
                     summary
                         .stats_dumps
-                        .push(Rem6HostStatsDumpSummary::from_record(record));
+                        .push(Rem6HostStatsDumpSummary::from_record(
+                            record,
+                            active_o3_cpus,
+                        ));
                 }
                 SystemActionOutcome::Checkpoint {
                     tick,
@@ -387,7 +393,7 @@ pub(crate) struct Rem6HostStatsDumpSummary {
 }
 
 impl Rem6HostStatsDumpSummary {
-    fn from_record(record: &StatDumpRecord) -> Self {
+    fn from_record(record: &StatDumpRecord, active_o3_cpus: &[u32]) -> Self {
         Self {
             id: record.id().get(),
             tick: record.tick(),
@@ -397,10 +403,28 @@ impl Rem6HostStatsDumpSummary {
                 .snapshot()
                 .samples()
                 .iter()
+                .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
                 .map(Rem6HostStatsDumpSampleSummary::from_sample)
                 .collect(),
         }
     }
+}
+
+fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {
+    let path = sample.path().to_string();
+    let Some(cpu) = o3_stats_dump_sample_cpu(&path) else {
+        return true;
+    };
+    active_o3_cpus.contains(&cpu)
+}
+
+fn o3_stats_dump_sample_cpu(path: &str) -> Option<u32> {
+    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
+    let (cpu, _suffix) = rest.split_once(".o3.")?;
+    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    cpu.parse().ok()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
