@@ -1,5 +1,24 @@
 use rem6_cpu::BranchTargetKind;
 
+use super::Rem6O3TraceStat;
+
+pub(super) fn push_o3_branch_kind_count_stats(
+    stats: &mut Vec<Rem6O3TraceStat>,
+    suffix: fn(BranchTargetKind) -> &'static str,
+    value: impl Fn(BranchTargetKind) -> u64,
+) {
+    for kind in BranchTargetKind::ALL {
+        if matches!(kind, BranchTargetKind::NoBranch) {
+            continue;
+        }
+        stats.push(Rem6O3TraceStat {
+            suffix: suffix(kind),
+            unit: "Count",
+            value: value(kind),
+        });
+    }
+}
+
 pub(super) fn o3_branch_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
     match kind {
         BranchTargetKind::NoBranch => "event.branch_kind.no_branch",
@@ -248,6 +267,37 @@ pub(super) fn o3_branch_wrong_target_squashed_target_kind_stat_suffix(
         }
         BranchTargetKind::IndirectUnconditional => {
             "event.branch_wrong_target_squashed_target_kind.indirect_unconditional"
+        }
+    }
+}
+
+pub(super) fn o3_branch_wrong_target_squashed_target_without_link_write_kind_stat_suffix(
+    kind: BranchTargetKind,
+) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.no_branch"
+        }
+        BranchTargetKind::Return => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.return"
+        }
+        BranchTargetKind::CallDirect => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.call_direct"
+        }
+        BranchTargetKind::CallIndirect => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.call_indirect"
+        }
+        BranchTargetKind::DirectConditional => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.direct_conditional"
+        }
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_wrong_target_squashed_target_without_link_write_kind.indirect_unconditional"
         }
     }
 }
