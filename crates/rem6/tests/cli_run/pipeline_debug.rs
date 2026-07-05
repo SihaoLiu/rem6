@@ -228,14 +228,23 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
         "branch flush records should preserve flushed stages: {flush_records:?}"
     );
 
-    for (stage, flushed) in stage_flushed {
+    for (stage, flushed) in &stage_flushed {
         assert_stat(
             &stdout,
             &format!(
                 "sim.debug.pipeline_trace.flush_cause.branch_prediction.stage.{stage}.flushed"
             ),
             "Count",
-            flushed,
+            *flushed,
+            "monotonic",
+        );
+    }
+    for (stage, cycles) in &stage_flushed_cycles {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.flushed_cycles"),
+            "Cycle",
+            *cycles,
             "monotonic",
         );
     }

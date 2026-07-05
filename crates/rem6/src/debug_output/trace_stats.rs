@@ -100,6 +100,7 @@ struct PipelineStageTraceStatSummary {
     advanced: u64,
     retired: u64,
     flushed: u64,
+    flushed_cycles: u64,
     resource_blocked: u64,
 }
 
@@ -395,20 +396,22 @@ impl PipelineStageTraceStatSummary {
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
     }
 
-    fn add_flushed(&mut self, flushed: u64) {
+    fn add_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
         self.flushed = self.flushed.saturating_add(flushed);
+        self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
     }
 
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
-        for (suffix, value) in [
-            ("advanced", self.advanced),
-            ("retired", self.retired),
-            ("flushed", self.flushed),
-            ("resource_blocked", self.resource_blocked),
+        for (suffix, unit, value) in [
+            ("advanced", "Count", self.advanced),
+            ("retired", "Count", self.retired),
+            ("flushed", "Count", self.flushed),
+            ("flushed_cycles", "Cycle", self.flushed_cycles),
+            ("resource_blocked", "Count", self.resource_blocked),
         ] {
             stats.push(Rem6PipelineTraceStat {
                 path: format!("{prefix}.{suffix}"),
-                unit: "Count",
+                unit,
                 value,
             });
         }
@@ -610,7 +613,7 @@ pub(super) fn pipeline_trace_stats(
             stages
                 .entry(stage.clone())
                 .or_default()
-                .add_flushed(*flushed);
+                .add_flushed(*flushed, 1);
         }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
