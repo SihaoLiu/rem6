@@ -304,6 +304,112 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
 }
 
 #[test]
+fn rem6_run_pipeline_debug_flag_attributes_in_flight_stage_cycles() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
+        i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
+        i_type(3, 0, 0x0, 7, 0x13),  // addi x7, x0, 3
+        i_type(4, 0, 0x0, 28, 0x13), // addi x28, x0, 4
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-debug-in-flight-stage-cycles", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "3",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Pipeline".to_string())])
+    );
+    assert!(stdout.contains("\"x5\":\"0x1\""));
+    assert!(stdout.contains("\"x6\":\"0x2\""));
+    assert!(stdout.contains("\"x7\":\"0x3\""));
+    assert!(stdout.contains("\"x28\":\"0x4\""));
+
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let before = stage_in_flight_counts(trace, "before_in_flight");
+    let after = stage_in_flight_counts(trace, "after_in_flight");
+    assert!(
+        before.values().any(|summary| summary.cycles > 0),
+        "widened pipeline run should emit before-in-flight stage cycles: {trace:?}"
+    );
+    assert!(
+        after.values().any(|summary| summary.cycles > 0),
+        "widened pipeline run should emit after-in-flight stage cycles: {trace:?}"
+    );
+    assert!(
+        before
+            .values()
+            .chain(after.values())
+            .any(|summary| summary.count > summary.cycles),
+        "stage in-flight instruction counts should stay distinct from per-record cycle counts: before={before:?} after={after:?}"
+    );
+
+    for (stage, summary) in before {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.before_in_flight"),
+            "Count",
+            summary.count,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.before_in_flight_cycles"),
+            "Cycle",
+            summary.cycles,
+            "monotonic",
+        );
+    }
+    for (stage, summary) in after {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.after_in_flight"),
+            "Count",
+            summary.count,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.after_in_flight_cycles"),
+            "Cycle",
+            summary.cycles,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
@@ -453,4 +559,30 @@ fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_else(|| panic!("missing array field {field} in record {record}"))
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct StageInFlightSummary {
+    count: u64,
+    cycles: u64,
+}
+
+fn stage_in_flight_counts(trace: &[Value], field: &str) -> BTreeMap<String, StageInFlightSummary> {
+    let mut summaries = BTreeMap::<String, StageInFlightSummary>::new();
+    for record in trace {
+        let mut stage_present = BTreeMap::<String, bool>::new();
+        for instruction in record_array(record, field) {
+            let stage = instruction
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing in-flight instruction stage: {instruction}"));
+            let stage = stat_path_segment(stage);
+            summaries.entry(stage.clone()).or_default().count += 1;
+            stage_present.insert(stage, true);
+        }
+        for stage in stage_present.keys() {
+            summaries.entry(stage.clone()).or_default().cycles += 1;
+        }
+    }
+    summaries
 }

@@ -97,6 +97,10 @@ struct PipelineTraceStatSummary {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PipelineStageTraceStatSummary {
+    before_in_flight: u64,
+    before_in_flight_cycles: u64,
+    after_in_flight: u64,
+    after_in_flight_cycles: u64,
     advanced: u64,
     retired: u64,
     flushed: u64,
@@ -386,6 +390,20 @@ impl PipelineTraceStatSummary {
 }
 
 impl PipelineStageTraceStatSummary {
+    fn add_before_in_flight(&mut self, before_in_flight: u64, before_in_flight_cycles: u64) {
+        self.before_in_flight = self.before_in_flight.saturating_add(before_in_flight);
+        self.before_in_flight_cycles = self
+            .before_in_flight_cycles
+            .saturating_add(before_in_flight_cycles);
+    }
+
+    fn add_after_in_flight(&mut self, after_in_flight: u64, after_in_flight_cycles: u64) {
+        self.after_in_flight = self.after_in_flight.saturating_add(after_in_flight);
+        self.after_in_flight_cycles = self
+            .after_in_flight_cycles
+            .saturating_add(after_in_flight_cycles);
+    }
+
     fn add_advance(&mut self, retires: bool) {
         self.advanced = self.advanced.saturating_add(1);
         if retires {
@@ -407,6 +425,18 @@ impl PipelineStageTraceStatSummary {
 
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
         for (suffix, unit, value) in [
+            ("before_in_flight", "Count", self.before_in_flight),
+            (
+                "before_in_flight_cycles",
+                "Cycle",
+                self.before_in_flight_cycles,
+            ),
+            ("after_in_flight", "Count", self.after_in_flight),
+            (
+                "after_in_flight_cycles",
+                "Cycle",
+                self.after_in_flight_cycles,
+            ),
             ("advanced", "Count", self.advanced),
             ("retired", "Count", self.retired),
             ("flushed", "Count", self.flushed),
@@ -596,6 +626,30 @@ pub(super) fn pipeline_trace_stats(
             .entry(pipeline_state_path(record.state_changed))
             .or_default()
             .add_record(record);
+        let mut stage_before_in_flight = BTreeMap::<String, u64>::new();
+        for instruction in &record.before_in_flight {
+            *stage_before_in_flight
+                .entry(stat_path_segment(instruction.stage()))
+                .or_default() += 1;
+        }
+        for (stage, before_in_flight) in &stage_before_in_flight {
+            stages
+                .entry(stage.clone())
+                .or_default()
+                .add_before_in_flight(*before_in_flight, 1);
+        }
+        let mut stage_after_in_flight = BTreeMap::<String, u64>::new();
+        for instruction in &record.after_in_flight {
+            *stage_after_in_flight
+                .entry(stat_path_segment(instruction.stage()))
+                .or_default() += 1;
+        }
+        for (stage, after_in_flight) in &stage_after_in_flight {
+            stages
+                .entry(stage.clone())
+                .or_default()
+                .add_after_in_flight(*after_in_flight, 1);
+        }
         for advance in &record.advanced {
             stages
                 .entry(stat_path_segment(advance.source_stage()))
