@@ -102,7 +102,9 @@ struct PipelineStageTraceStatSummary {
     after_in_flight: u64,
     after_in_flight_cycles: u64,
     advanced: u64,
+    advanced_cycles: u64,
     retired: u64,
+    retired_cycles: u64,
     flushed: u64,
     flushed_cycles: u64,
     resource_blocked: u64,
@@ -404,11 +406,17 @@ impl PipelineStageTraceStatSummary {
             .saturating_add(after_in_flight_cycles);
     }
 
-    fn add_advance(&mut self, retires: bool) {
-        self.advanced = self.advanced.saturating_add(1);
-        if retires {
-            self.retired = self.retired.saturating_add(1);
-        }
+    fn add_advanced(
+        &mut self,
+        advanced: u64,
+        advanced_cycles: u64,
+        retired: u64,
+        retired_cycles: u64,
+    ) {
+        self.advanced = self.advanced.saturating_add(advanced);
+        self.advanced_cycles = self.advanced_cycles.saturating_add(advanced_cycles);
+        self.retired = self.retired.saturating_add(retired);
+        self.retired_cycles = self.retired_cycles.saturating_add(retired_cycles);
     }
 
     fn add_resource_blocked(&mut self, resource_blocked: u64, resource_blocked_cycles: u64) {
@@ -438,7 +446,9 @@ impl PipelineStageTraceStatSummary {
                 self.after_in_flight_cycles,
             ),
             ("advanced", "Count", self.advanced),
+            ("advanced_cycles", "Cycle", self.advanced_cycles),
             ("retired", "Count", self.retired),
+            ("retired_cycles", "Cycle", self.retired_cycles),
             ("flushed", "Count", self.flushed),
             ("flushed_cycles", "Cycle", self.flushed_cycles),
             ("resource_blocked", "Count", self.resource_blocked),
@@ -650,11 +660,23 @@ pub(super) fn pipeline_trace_stats(
                 .or_default()
                 .add_after_in_flight(*after_in_flight, 1);
         }
+        let mut stage_advanced = BTreeMap::<String, (u64, u64)>::new();
         for advance in &record.advanced {
-            stages
+            let entry = stage_advanced
                 .entry(stat_path_segment(advance.source_stage()))
-                .or_default()
-                .add_advance(advance.retires);
+                .or_default();
+            entry.0 += 1;
+            if advance.retires {
+                entry.1 += 1;
+            }
+        }
+        for (stage, (advanced, retired)) in &stage_advanced {
+            stages.entry(stage.clone()).or_default().add_advanced(
+                *advanced,
+                1,
+                *retired,
+                u64::from(*retired > 0),
+            );
         }
         let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
         for instruction in &record.resource_blocked {

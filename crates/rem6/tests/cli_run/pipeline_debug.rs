@@ -410,6 +410,108 @@ fn rem6_run_pipeline_debug_flag_attributes_in_flight_stage_cycles() {
 }
 
 #[test]
+fn rem6_run_pipeline_debug_flag_attributes_advance_retire_stage_cycles() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
+        i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
+        i_type(3, 0, 0x0, 7, 0x13),  // addi x7, x0, 3
+        i_type(4, 0, 0x0, 28, 0x13), // addi x28, x0, 4
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-debug-advance-retire-stage-cycles", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "3",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Pipeline".to_string())])
+    );
+    assert!(stdout.contains("\"x5\":\"0x1\""));
+    assert!(stdout.contains("\"x6\":\"0x2\""));
+    assert!(stdout.contains("\"x7\":\"0x3\""));
+    assert!(stdout.contains("\"x28\":\"0x4\""));
+
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let movement = stage_movement_counts(trace);
+    assert!(
+        movement.values().any(|summary| summary.advanced_cycles > 0),
+        "widened pipeline run should emit advanced stage cycles: {trace:?}"
+    );
+    assert!(
+        movement.values().any(|summary| summary.retired_cycles > 0),
+        "widened pipeline run should emit retired stage cycles: {trace:?}"
+    );
+    assert!(
+        movement
+            .values()
+            .any(|summary| summary.advanced > summary.advanced_cycles),
+        "stage advancement counts should stay distinct from per-record cycle counts: {movement:?}"
+    );
+
+    for (stage, summary) in movement {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.advanced"),
+            "Count",
+            summary.advanced,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.advanced_cycles"),
+            "Cycle",
+            summary.advanced_cycles,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.retired"),
+            "Count",
+            summary.retired,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.retired_cycles"),
+            "Cycle",
+            summary.retired_cycles,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
@@ -553,6 +655,13 @@ fn json_record_u64(record: &Value, field: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing numeric field {field} in record {record}"))
 }
 
+fn json_record_bool(record: &Value, field: &str) -> bool {
+    record
+        .get(field)
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("missing bool field {field} in record {record}"))
+}
+
 fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
     record
         .get(field)
@@ -565,6 +674,14 @@ fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
 struct StageInFlightSummary {
     count: u64,
     cycles: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct StageMovementSummary {
+    advanced: u64,
+    advanced_cycles: u64,
+    retired: u64,
+    retired_cycles: u64,
 }
 
 fn stage_in_flight_counts(trace: &[Value], field: &str) -> BTreeMap<String, StageInFlightSummary> {
@@ -582,6 +699,34 @@ fn stage_in_flight_counts(trace: &[Value], field: &str) -> BTreeMap<String, Stag
         }
         for stage in stage_present.keys() {
             summaries.entry(stage.clone()).or_default().cycles += 1;
+        }
+    }
+    summaries
+}
+
+fn stage_movement_counts(trace: &[Value]) -> BTreeMap<String, StageMovementSummary> {
+    let mut summaries = BTreeMap::<String, StageMovementSummary>::new();
+    for record in trace {
+        let mut advanced_stage_present = BTreeMap::<String, bool>::new();
+        let mut retired_stage_present = BTreeMap::<String, bool>::new();
+        for advanced in record_array(record, "advanced") {
+            let stage = advanced
+                .get("source_stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing advanced instruction source stage: {advanced}"));
+            let stage = stat_path_segment(stage);
+            summaries.entry(stage.clone()).or_default().advanced += 1;
+            advanced_stage_present.insert(stage.clone(), true);
+            if json_record_bool(advanced, "retires") {
+                summaries.entry(stage.clone()).or_default().retired += 1;
+                retired_stage_present.insert(stage, true);
+            }
+        }
+        for stage in advanced_stage_present.keys() {
+            summaries.entry(stage.clone()).or_default().advanced_cycles += 1;
+        }
+        for stage in retired_stage_present.keys() {
+            summaries.entry(stage.clone()).or_default().retired_cycles += 1;
         }
     }
     summaries
