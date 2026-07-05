@@ -31,6 +31,10 @@ impl RiscvO3RuntimeStats {
     }
 
     pub fn reset_snapshots(&self) {
+        self.active_cpus
+            .lock()
+            .expect("O3 runtime stats lock")
+            .clear();
         let mut previous = self.previous.lock().expect("O3 runtime stats lock");
         previous.clear();
         previous.extend(
@@ -54,7 +58,7 @@ impl RiscvO3RuntimeStats {
         let previous_snapshot = previous.entry(cpu).or_default();
         stats.increment_delta(registry, *previous_snapshot, snapshot)?;
         *previous_snapshot = snapshot;
-        self.mark_active_cpu(cpu, snapshot);
+        self.sync_active_cpu(cpu, snapshot);
         Ok(())
     }
 
@@ -72,7 +76,7 @@ impl RiscvO3RuntimeStats {
             .lock()
             .expect("O3 runtime stats lock")
             .insert(cpu, snapshot);
-        self.mark_active_cpu(cpu, snapshot);
+        self.sync_active_cpu(cpu, snapshot);
         Ok(())
     }
 
@@ -85,12 +89,12 @@ impl RiscvO3RuntimeStats {
             .collect()
     }
 
-    fn mark_active_cpu(&self, cpu: CpuId, snapshot: O3RuntimeStats) {
+    fn sync_active_cpu(&self, cpu: CpuId, snapshot: O3RuntimeStats) {
+        let mut active_cpus = self.active_cpus.lock().expect("O3 runtime stats lock");
         if snapshot.has_activity() {
-            self.active_cpus
-                .lock()
-                .expect("O3 runtime stats lock")
-                .insert(cpu);
+            active_cpus.insert(cpu);
+        } else {
+            active_cpus.remove(&cpu);
         }
     }
 }
@@ -380,4 +384,104 @@ fn register_o3_fu_latency_class_counters(
         };
     }
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_cpu::{CpuCore, CpuFetchConfig, CpuResetState, RiscvCore, RiscvCpuExecutionEvent};
+    use rem6_isa_riscv::{Immediate, Register, RiscvExecutionRecord, RiscvInstruction};
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
+    use rem6_stats::StatsRegistry;
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    use super::*;
+
+    #[test]
+    fn reset_snapshots_clears_active_o3_dump_cpu_filter() {
+        let cpu = CpuId::new(0);
+        let mut registry = StatsRegistry::new();
+        let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu]).unwrap();
+        let core = active_o3_core(cpu);
+
+        o3_stats
+            .record_cpu_snapshot(&mut registry, cpu, core.o3_runtime_stats())
+            .unwrap();
+        assert_eq!(o3_stats.active_cpu_indices(), vec![0]);
+
+        o3_stats.reset_snapshots();
+
+        assert!(
+            o3_stats.active_cpu_indices().is_empty(),
+            "stats reset must clear active O3 dump CPU filter until new post-reset O3 work"
+        );
+
+        o3_stats
+            .record_cpu_snapshot(&mut registry, cpu, core.o3_runtime_stats())
+            .unwrap();
+        assert_eq!(o3_stats.active_cpu_indices(), vec![0]);
+    }
+
+    #[test]
+    fn sync_cpu_snapshot_clears_inactive_o3_dump_cpu_filter() {
+        let cpu = CpuId::new(0);
+        let mut registry = StatsRegistry::new();
+        let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu]).unwrap();
+
+        o3_stats
+            .record_cpu_snapshot(&mut registry, cpu, active_o3_core(cpu).o3_runtime_stats())
+            .unwrap();
+        assert_eq!(o3_stats.active_cpu_indices(), vec![0]);
+
+        o3_stats
+            .sync_cpu_snapshot(&mut registry, cpu, O3RuntimeStats::default())
+            .unwrap();
+
+        assert!(
+            o3_stats.active_cpu_indices().is_empty(),
+            "restoring an inactive O3 snapshot must remove stale dump-filter membership"
+        );
+    }
+
+    fn active_o3_core(cpu: CpuId) -> RiscvCore {
+        let reset = CpuResetState::new(
+            cpu,
+            PartitionId::new(cpu.get()),
+            AgentId::new(cpu.get() + 1),
+            Address::new(0x8000_0000),
+        );
+        let fetch = CpuFetchConfig::new(
+            TransportEndpointId::new(format!("cpu{}.ifetch", cpu.get())).unwrap(),
+            MemoryRouteId::new(0),
+            CacheLineLayout::new(16).unwrap(),
+            AccessSize::new(4).unwrap(),
+        );
+        let core = RiscvCore::new(CpuCore::new(reset, fetch).unwrap());
+        core.record_o3_retired_instruction(&addi_event(cpu));
+        core
+    }
+
+    fn addi_event(cpu: CpuId) -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Addi {
+            rd: Register::new(5).unwrap(),
+            rs1: Register::new(0).unwrap(),
+            imm: Immediate::new(7),
+        };
+        RiscvCpuExecutionEvent::new(
+            rem6_cpu::CpuFetchEvent::completed(
+                rem6_cpu::CpuFetchRecord::new(
+                    1,
+                    PartitionId::new(cpu.get()),
+                    MemoryRouteId::new(0),
+                    TransportEndpointId::new(format!("cpu{}.ifetch", cpu.get())).unwrap(),
+                    MemoryRequestId::new(AgentId::new(cpu.get() + 1), 0),
+                    Address::new(0x8000_0000),
+                    AccessSize::new(4).unwrap(),
+                ),
+                0x0070_0293_u32.to_le_bytes().to_vec(),
+            ),
+            instruction,
+            RiscvExecutionRecord::new(instruction, 0x8000_0000, 0x8000_0004, Vec::new(), None),
+        )
+    }
 }
