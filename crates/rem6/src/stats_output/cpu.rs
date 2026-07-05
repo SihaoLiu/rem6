@@ -978,18 +978,30 @@ fn emit_o3_runtime_stats(
             StatResetPolicy::Monotonic,
             o3.lsq_operation_count(operation),
         )?;
-        for (suffix, value) in [
-            ("latency_ticks", o3.lsq_operation_latency_ticks(operation)),
+        for (suffix, unit, value) in [
+            (
+                "latency_samples",
+                "Count",
+                o3.lsq_operation_latency_samples(operation),
+            ),
+            (
+                "latency_ticks",
+                "Tick",
+                o3.lsq_operation_latency_ticks(operation),
+            ),
             (
                 "latency_max_ticks",
+                "Tick",
                 o3.lsq_operation_latency_max_ticks(operation),
             ),
             (
                 "latency_min_ticks",
+                "Tick",
                 o3.lsq_operation_latency_min_ticks(operation),
             ),
             (
                 "latency_avg_ticks",
+                "Tick",
                 o3.lsq_operation_latency_avg_ticks(operation),
             ),
         ] {
@@ -1001,7 +1013,7 @@ fn emit_o3_runtime_stats(
                     operation.as_str(),
                     suffix
                 ),
-                "Tick",
+                unit,
                 StatResetPolicy::Monotonic,
                 value,
             )?;

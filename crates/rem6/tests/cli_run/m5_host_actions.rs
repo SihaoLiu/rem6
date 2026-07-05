@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
@@ -2474,35 +2475,66 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
         "m5-switch-cpu-detailed-o3-ordered-atomic-lsq-runtime-json",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "220",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--memory-system",
-            "direct",
-            "--dump-memory",
-            "0x80000080:16",
-            "--dump-memory",
-            "0x80000090:16",
-        ])
-        .output()
-        .unwrap();
+    let direct_json = ordered_atomic_lsq_runtime_json(&path, Some("direct"), "220");
+    let cache_json = ordered_atomic_lsq_runtime_json(&path, None, "320");
+
+    assert_eq!(
+        direct_json
+            .pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("direct")
+    );
+    assert_eq!(
+        cache_json
+            .pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    let direct_latency = assert_ordered_atomic_lsq_runtime_json(&direct_json);
+    let cache_latency = assert_ordered_atomic_lsq_runtime_json(&cache_json);
+    assert!(
+        cache_latency >= direct_latency,
+        "cache-backed LSQ latency should include at least the direct latency: direct={direct_latency}, cache={cache_latency}"
+    );
+}
+
+fn ordered_atomic_lsq_runtime_json(
+    path: &Path,
+    memory_system: Option<&str>,
+    max_tick: &str,
+) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        max_tick,
+        "--stats-format",
+        "json",
+        "--execute",
+        "--dump-memory",
+        "0x80000080:16",
+        "--dump-memory",
+        "0x80000090:16",
+    ]);
+    if let Some(memory_system) = memory_system {
+        command.args(["--memory-system", memory_system]);
+    }
+    let output = command.output().unwrap();
 
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host")
@@ -2564,10 +2596,17 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
         "store_conditional",
         "atomic",
     ] {
+        let samples_field = format!("lsq_operation_{operation}_latency_samples");
         let total_field = format!("lsq_operation_{operation}_latency_ticks");
         let max_field = format!("lsq_operation_{operation}_latency_max_ticks");
         let min_field = format!("lsq_operation_{operation}_latency_min_ticks");
         let avg_field = format!("lsq_operation_{operation}_latency_avg_ticks");
+        let samples = o3_runtime
+            .pointer(&format!("/{samples_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {samples_field}: {o3_runtime}")
+            });
         let total = o3_runtime
             .pointer(&format!("/{total_field}"))
             .and_then(Value::as_u64)
@@ -2592,6 +2631,10 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
             .unwrap_or_else(|| {
                 panic!("structured O3 runtime JSON should expose {avg_field}: {o3_runtime}")
             });
+        assert!(
+            samples > 0,
+            "{samples_field} should be positive: {o3_runtime}"
+        );
         assert!(total > 0, "{total_field} should be positive: {o3_runtime}");
         assert!(
             max >= min && min > 0,
@@ -2601,7 +2644,13 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
             avg >= min && avg <= max,
             "average latency should stay within bounds for {operation}: {o3_runtime}"
         );
+        assert_eq!(
+            avg,
+            total / samples,
+            "average latency should use the structured sample count for {operation}: {o3_runtime}"
+        );
         for (suffix, value) in [
+            ("latency_samples", samples),
             ("latency_ticks", total),
             ("latency_max_ticks", max),
             ("latency_min_ticks", min),
@@ -2619,6 +2668,7 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
     }
     for operation in ["float_load", "float_store", "vector_load", "vector_store"] {
         for field in [
+            "latency_samples",
             "latency_ticks",
             "latency_max_ticks",
             "latency_min_ticks",
@@ -2642,6 +2692,21 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
             );
         }
     }
+    [
+        "load",
+        "store",
+        "load_reserved",
+        "store_conditional",
+        "atomic",
+    ]
+    .into_iter()
+    .map(|operation| {
+        o3_runtime
+            .pointer(&format!("/lsq_operation_{operation}_latency_ticks"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing latency total for {operation}: {o3_runtime}"))
+    })
+    .sum()
 }
 
 #[test]

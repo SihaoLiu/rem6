@@ -87,6 +87,10 @@ fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
                     summary.o3_runtime.lsq_operation_latency_ticks(operation)
                 ),
                 format!(
+                    "\"lsq_operation_{name}_latency_samples\":{}",
+                    summary.o3_runtime.lsq_operation_latency_samples(operation)
+                ),
+                format!(
                     "\"lsq_operation_{name}_latency_max_ticks\":{}",
                     summary
                         .o3_runtime
