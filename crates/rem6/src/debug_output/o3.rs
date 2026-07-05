@@ -8,17 +8,19 @@ use crate::{
     Rem6HostStatsResetSummary,
 };
 
+#[path = "o3_branch_direction_mismatch.rs"]
+mod o3_branch_direction_mismatch;
 #[path = "o3_branch_stats.rs"]
 mod o3_branch_stats;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
 
+use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;
 use o3_branch_stats::{
-    o3_branch_direction_mismatch_kind_stat_suffix, o3_branch_kind_stat_suffix,
-    o3_branch_link_write_kind_stat_suffix, o3_branch_misprediction_kind_stat_suffix,
-    o3_branch_not_taken_kind_stat_suffix, o3_branch_predicted_not_taken_kind_stat_suffix,
-    o3_branch_predicted_taken_kind_stat_suffix, o3_branch_predicted_target_kind_stat_suffix,
-    o3_branch_predicted_target_match_kind_stat_suffix,
+    o3_branch_kind_stat_suffix, o3_branch_link_write_kind_stat_suffix,
+    o3_branch_misprediction_kind_stat_suffix, o3_branch_not_taken_kind_stat_suffix,
+    o3_branch_predicted_not_taken_kind_stat_suffix, o3_branch_predicted_taken_kind_stat_suffix,
+    o3_branch_predicted_target_kind_stat_suffix, o3_branch_predicted_target_match_kind_stat_suffix,
     o3_branch_predicted_target_mismatch_kind_stat_suffix,
     o3_branch_resolved_target_kind_stat_suffix, o3_branch_squash_kind_stat_suffix,
     o3_branch_squashed_target_kind_stat_suffix,
@@ -363,7 +365,7 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_targets: u64,
     event_branch_predicted_target_matches: u64,
     event_branch_predicted_target_mismatches: u64,
-    event_branch_direction_mismatches: u64,
+    event_branch_direction_mismatches: Rem6O3BranchDirectionMismatchTotals,
     event_branch_targetless_mismatches: u64,
     event_branch_targetless_mismatch_without_link_writes: u64,
     event_branch_targetless_mismatch_squashed_targets: u64,
@@ -386,7 +388,6 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
-    event_branch_direction_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_without_link_write_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
@@ -786,9 +787,11 @@ impl Rem6O3TraceTotals {
         self.event_branch_predicted_target_mismatches = self
             .event_branch_predicted_target_mismatches
             .saturating_add(u64::from(predicted_target_mismatches));
-        self.event_branch_direction_mismatches = self
-            .event_branch_direction_mismatches
-            .saturating_add(u64::from(direction_mismatch));
+        self.event_branch_direction_mismatches.add_event(
+            event,
+            direction_mismatch,
+            squashed_target,
+        );
         self.event_branch_targetless_mismatches = self
             .event_branch_targetless_mismatches
             .saturating_add(u64::from(targetless_mismatch));
@@ -860,10 +863,6 @@ impl Rem6O3TraceTotals {
         if predicted_target_mismatches {
             self.event_branch_predicted_target_mismatch_kinds[index] =
                 self.event_branch_predicted_target_mismatch_kinds[index].saturating_add(1);
-        }
-        if direction_mismatch {
-            self.event_branch_direction_mismatch_kinds[index] =
-                self.event_branch_direction_mismatch_kinds[index].saturating_add(1);
         }
         if targetless_mismatch {
             self.event_branch_targetless_mismatch_kinds[index] =
@@ -1196,10 +1195,6 @@ impl Rem6O3TraceTotals {
                 self.event_branch_predicted_target_mismatches,
             ),
             (
-                "event.branch_direction_mismatches",
-                self.event_branch_direction_mismatches,
-            ),
-            (
                 "event.branch_targetless_mismatches",
                 self.event_branch_targetless_mismatches,
             ),
@@ -1293,6 +1288,8 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
+        self.event_branch_direction_mismatches
+            .push_stats(&mut stats);
         push_o3_branch_kind_count_stats(&mut stats, o3_branch_kind_stat_suffix, |kind| {
             self.event_branch_kinds[kind.index()]
         });
@@ -1326,11 +1323,6 @@ impl Rem6O3TraceTotals {
             &mut stats,
             o3_branch_predicted_target_mismatch_kind_stat_suffix,
             |kind| self.event_branch_predicted_target_mismatch_kinds[kind.index()],
-        );
-        push_o3_branch_kind_count_stats(
-            &mut stats,
-            o3_branch_direction_mismatch_kind_stat_suffix,
-            |kind| self.event_branch_direction_mismatch_kinds[kind.index()],
         );
         push_o3_branch_kind_count_stats(
             &mut stats,

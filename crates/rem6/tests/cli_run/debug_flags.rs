@@ -7858,6 +7858,21 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_link_write_kind.call_indirect",
+            "Count",
+            0,
+        ),
         ("sim.debug.o3_trace.event.branch_wrong_targets", "Count", 1),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_squashed_targets",
@@ -7899,6 +7914,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ),
         (
             "sim.debug.o3_trace.event.branch_direction_mismatch_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_kind.call_indirect",
             "Count",
             0,
         ),
@@ -9346,6 +9366,21 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             3,
         ),
         (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_targets",
+            "Count",
+            3,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_without_link_writes",
+            "Count",
+            3,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_without_link_writes",
+            "Count",
+            3,
+        ),
+        (
             "sim.debug.o3_trace.event.branch_targetless_mismatches",
             "Count",
             1,
@@ -9404,7 +9439,37 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             1,
         ),
         (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_without_link_write_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_without_link_write_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
             "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_unconditional",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_kind.direct_unconditional",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_without_link_write_kind.direct_unconditional",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_without_link_write_kind.direct_unconditional",
             "Count",
             2,
         ),
@@ -11869,7 +11934,47 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
             0,
         ),
         (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_without_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_without_link_writes",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_link_writes",
+            "Count",
+            0,
+        ),
+        (
             "sim.debug.o3_trace.event.branch_direction_mismatch_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_without_link_write_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_without_link_write_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_direction_mismatch_squashed_target_link_write_kind.call_indirect",
             "Count",
             0,
         ),

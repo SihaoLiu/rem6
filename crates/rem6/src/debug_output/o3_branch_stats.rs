@@ -196,6 +196,46 @@ pub(super) fn o3_branch_direction_mismatch_kind_stat_suffix(
     }
 }
 
+macro_rules! o3_branch_direction_mismatch_suffix_fn {
+    ($name:ident, $prefix:literal) => {
+        pub(super) fn $name(kind: BranchTargetKind) -> &'static str {
+            match kind {
+                BranchTargetKind::NoBranch => concat!($prefix, ".no_branch"),
+                BranchTargetKind::Return => concat!($prefix, ".return"),
+                BranchTargetKind::CallDirect => concat!($prefix, ".call_direct"),
+                BranchTargetKind::CallIndirect => concat!($prefix, ".call_indirect"),
+                BranchTargetKind::DirectConditional => concat!($prefix, ".direct_conditional"),
+                BranchTargetKind::DirectUnconditional => concat!($prefix, ".direct_unconditional"),
+                BranchTargetKind::IndirectConditional => concat!($prefix, ".indirect_conditional"),
+                BranchTargetKind::IndirectUnconditional => {
+                    concat!($prefix, ".indirect_unconditional")
+                }
+            }
+        }
+    };
+}
+
+o3_branch_direction_mismatch_suffix_fn!(
+    o3_branch_direction_mismatch_link_write_kind_stat_suffix,
+    "event.branch_direction_mismatch_link_write_kind"
+);
+o3_branch_direction_mismatch_suffix_fn!(
+    o3_branch_direction_mismatch_without_link_write_kind_stat_suffix,
+    "event.branch_direction_mismatch_without_link_write_kind"
+);
+o3_branch_direction_mismatch_suffix_fn!(
+    o3_branch_direction_mismatch_squashed_target_kind_stat_suffix,
+    "event.branch_direction_mismatch_squashed_target_kind"
+);
+o3_branch_direction_mismatch_suffix_fn!(
+    o3_branch_direction_mismatch_squashed_target_link_write_kind_stat_suffix,
+    "event.branch_direction_mismatch_squashed_target_link_write_kind"
+);
+o3_branch_direction_mismatch_suffix_fn!(
+    o3_branch_direction_mismatch_squashed_target_without_link_write_kind_stat_suffix,
+    "event.branch_direction_mismatch_squashed_target_without_link_write_kind"
+);
+
 pub(super) fn o3_branch_targetless_mismatch_kind_stat_suffix(
     kind: BranchTargetKind,
 ) -> &'static str {
