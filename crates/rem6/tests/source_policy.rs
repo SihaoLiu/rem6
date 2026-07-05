@@ -576,6 +576,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
         "sim.debug.pipeline_trace.cpu.cpu0.records",
+        "sim.debug.o3_trace.event.system_events",
         "sim.debug.host_action_trace.records",
         "system.l2.overallMshrHits",
         "system.l3.overallMshrMissRate",

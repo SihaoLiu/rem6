@@ -7595,6 +7595,14 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
     assert_eq!(first.get("branch_resolved_target"), Some(&Value::Null));
     assert_eq!(first.get("branch_squashed_target"), Some(&Value::Null));
     assert_eq!(json_record_bool(&events[8], "system_event"), true);
+    let system_events = events
+        .iter()
+        .filter(|event| json_record_bool(event, "system_event"))
+        .count() as u64;
+    assert!(
+        system_events > 0,
+        "O3 events should include system work: {events:?}"
+    );
 
     let branch = events
         .iter()
@@ -7618,6 +7626,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
     );
 
     for (path, unit, value) in [
+        (
+            "sim.debug.o3_trace.event.system_events",
+            "Count",
+            system_events,
+        ),
         ("sim.debug.o3_trace.event.branches", "Count", 1),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 1),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
@@ -11348,6 +11361,7 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 0),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 0),
         ("sim.debug.o3_trace.event.records", "Count", 0),
+        ("sim.debug.o3_trace.event.system_events", "Count", 0),
         ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),

@@ -290,6 +290,7 @@ struct Rem6O3TraceTotals {
     event_max_rob_occupancy: u64,
     event_max_lsq_occupancy: u64,
     event_max_rename_map_entries: u64,
+    event_system_events: u64,
     event_rob_allocations: u64,
     event_rob_commits: u64,
     event_rename_writes: u64,
@@ -631,6 +632,9 @@ impl Rem6O3TraceTotals {
             self.event_max_rename_map_entries = self
                 .event_max_rename_map_entries
                 .max(event.rename_map_entries());
+            self.event_system_events = self
+                .event_system_events
+                .saturating_add(u64::from(event.system_event()));
             self.event_rob_allocations = self
                 .event_rob_allocations
                 .saturating_add(u64::from(event.rob_allocated()));
@@ -976,6 +980,7 @@ impl Rem6O3TraceTotals {
                 "event.max_rename_map_entries",
                 self.event_max_rename_map_entries,
             ),
+            ("event.system_events", self.event_system_events),
             ("event.rob_allocations", self.event_rob_allocations),
             ("event.rob_commits", self.event_rob_commits),
             ("event.rename_writes", self.event_rename_writes),
