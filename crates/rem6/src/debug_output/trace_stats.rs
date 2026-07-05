@@ -107,6 +107,10 @@ struct PipelineStageTraceStatSummary {
     retired_cycles: u64,
     flushed: u64,
     flushed_cycles: u64,
+    branch_prediction_flushed: u64,
+    branch_prediction_flushed_cycles: u64,
+    trap_redirect_flushed: u64,
+    trap_redirect_flushed_cycles: u64,
     resource_blocked: u64,
     resource_blocked_cycles: u64,
 }
@@ -431,6 +435,20 @@ impl PipelineStageTraceStatSummary {
         self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
     }
 
+    fn add_branch_prediction_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.branch_prediction_flushed = self.branch_prediction_flushed.saturating_add(flushed);
+        self.branch_prediction_flushed_cycles = self
+            .branch_prediction_flushed_cycles
+            .saturating_add(flushed_cycles);
+    }
+
+    fn add_trap_redirect_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.trap_redirect_flushed = self.trap_redirect_flushed.saturating_add(flushed);
+        self.trap_redirect_flushed_cycles = self
+            .trap_redirect_flushed_cycles
+            .saturating_add(flushed_cycles);
+    }
+
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
         for (suffix, unit, value) in [
             ("before_in_flight", "Count", self.before_in_flight),
@@ -451,6 +469,22 @@ impl PipelineStageTraceStatSummary {
             ("retired_cycles", "Cycle", self.retired_cycles),
             ("flushed", "Count", self.flushed),
             ("flushed_cycles", "Cycle", self.flushed_cycles),
+            (
+                "branch_prediction_flushed",
+                "Count",
+                self.branch_prediction_flushed,
+            ),
+            (
+                "branch_prediction_flushed_cycles",
+                "Cycle",
+                self.branch_prediction_flushed_cycles,
+            ),
+            ("trap_redirect_flushed", "Count", self.trap_redirect_flushed),
+            (
+                "trap_redirect_flushed_cycles",
+                "Cycle",
+                self.trap_redirect_flushed_cycles,
+            ),
             ("resource_blocked", "Count", self.resource_blocked),
             (
                 "resource_blocked_cycles",
@@ -701,6 +735,25 @@ pub(super) fn pipeline_trace_stats(
                 .entry(stage.clone())
                 .or_default()
                 .add_flushed(*flushed, 1);
+        }
+        match record.flush_cause {
+            Some("branch_prediction") => {
+                for (stage, flushed) in &stage_flushed {
+                    stages
+                        .entry(stage.clone())
+                        .or_default()
+                        .add_branch_prediction_flushed(*flushed, 1);
+                }
+            }
+            Some("trap_redirect") => {
+                for (stage, flushed) in &stage_flushed {
+                    stages
+                        .entry(stage.clone())
+                        .or_default()
+                        .add_trap_redirect_flushed(*flushed, 1);
+                }
+            }
+            Some(_) | None => {}
         }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);

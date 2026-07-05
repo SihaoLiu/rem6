@@ -269,6 +269,13 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
     for (stage, flushed) in &stage_flushed {
         assert_stat(
             &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.trap_redirect_flushed"),
+            "Count",
+            *flushed,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
             &format!("sim.debug.pipeline_trace.redirect_cause.trap_redirect.stage.{stage}.flushed"),
             "Count",
             *flushed,
@@ -276,6 +283,13 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
         );
     }
     for (stage, cycles) in stage_flushed_cycles {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.trap_redirect_flushed_cycles"),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
         assert_stat(
             &stdout,
             &format!(
@@ -300,6 +314,13 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
     assert!(
         branch_redirect_stage_flushed_cycles.is_empty(),
         "trap-only run should not emit branch_prediction redirect-cause stage flushed-cycle stats: {branch_redirect_stage_flushed_cycles:?}"
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.stage.commit.branch_prediction_flushed_cycles",
+        "Cycle",
+        0,
+        "monotonic",
     );
 }
 
@@ -603,6 +624,13 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
     for (stage, flushed) in &stage_flushed {
         assert_stat(
             &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.branch_prediction_flushed"),
+            "Count",
+            *flushed,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
             &format!(
                 "sim.debug.pipeline_trace.flush_cause.branch_prediction.stage.{stage}.flushed"
             ),
@@ -612,6 +640,13 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
         );
     }
     for (stage, cycles) in &stage_flushed_cycles {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.branch_prediction_flushed_cycles"),
+            "Cycle",
+            *cycles,
+            "monotonic",
+        );
         assert_stat(
             &stdout,
             &format!("sim.debug.pipeline_trace.stage.{stage}.flushed_cycles"),
@@ -645,6 +680,13 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
     assert!(
         trap_redirect_stage_flushed_cycles.is_empty(),
         "branch-only run should not emit trap_redirect stage flushed-cycle stats: {trap_redirect_stage_flushed_cycles:?}"
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.stage.commit.trap_redirect_flushed_cycles",
+        "Cycle",
+        0,
+        "monotonic",
     );
 }
 
