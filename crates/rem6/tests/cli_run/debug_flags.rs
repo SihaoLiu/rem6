@@ -7834,6 +7834,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             1,
         ),
         ("sim.debug.o3_trace.event.branch_wrong_targets", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.branch_wrong_target_squashed_targets",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 2),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 2),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
@@ -7859,6 +7864,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ),
         (
             "sim.debug.o3_trace.event.branch_wrong_target_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_wrong_target_squashed_target_kind.call_indirect",
             "Count",
             1,
         ),
@@ -11726,6 +11736,16 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_targetless_mismatch_squashed_target_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_wrong_target_squashed_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_wrong_target_squashed_target_kind.call_indirect",
             "Count",
             0,
         ),
