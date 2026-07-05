@@ -2113,6 +2113,308 @@ fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
+    let path = detailed_o3_ordered_atomic_lsq_binary(
+        "m5-switch-cpu-detailed-o3-ordered-atomic-lsq-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:16",
+            "--dump-memory",
+            "0x80000090:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("04000000000000000900000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some("00000000000000000300000000000000")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+    for (field, value) in [
+        ("lsq_operation_load", 1),
+        ("lsq_operation_store", 3),
+        ("lsq_operation_load_reserved", 1),
+        ("lsq_operation_store_conditional", 1),
+        ("lsq_operation_atomic", 1),
+        ("lsq_operation_float_load", 0),
+        ("lsq_operation_float_store", 0),
+        ("lsq_operation_vector_load", 0),
+        ("lsq_operation_vector_store", 0),
+        ("lsq_ordering_acquire", 1),
+        ("lsq_ordering_release", 1),
+        ("lsq_ordering_acquire_release", 1),
+        ("lsq_store_conditional_failures", 0),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose {field}: {o3_runtime}"
+        );
+        let stat_path = field
+            .strip_prefix("lsq_operation_")
+            .map(|operation| format!("sim.cpu0.o3.lsq_operation.{operation}"))
+            .or_else(|| {
+                field
+                    .strip_prefix("lsq_ordering_")
+                    .map(|ordering| format!("sim.cpu0.o3.lsq_ordering.{ordering}"))
+            })
+            .unwrap_or_else(|| format!("sim.cpu0.o3.{field}"));
+        assert_eq!(
+            json_stat_value(&json, &stat_path),
+            value,
+            "stat registry should match structured runtime {field}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_o3_runtime_json_counts_store_conditional_failures() {
+    let path = detailed_o3_store_conditional_failure_binary(
+        "m5-switch-cpu-detailed-o3-store-conditional-failure-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("88776655443322110100000000000000")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+    for (field, value) in [
+        ("lsq_operation_store", 1),
+        ("lsq_operation_store_conditional", 1),
+        ("lsq_ordering_acquire", 0),
+        ("lsq_ordering_release", 0),
+        ("lsq_ordering_acquire_release", 0),
+        ("lsq_store_conditional_failures", 1),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose {field}: {o3_runtime}"
+        );
+        let stat_path = field
+            .strip_prefix("lsq_operation_")
+            .map(|operation| format!("sim.cpu0.o3.lsq_operation.{operation}"))
+            .or_else(|| {
+                field
+                    .strip_prefix("lsq_ordering_")
+                    .map(|ordering| format!("sim.cpu0.o3.lsq_ordering.{ordering}"))
+            })
+            .unwrap_or_else(|| format!("sim.cpu0.o3.{field}"));
+        assert_eq!(
+            json_stat_value(&json, &stat_path),
+            value,
+            "stat registry should match structured runtime {field}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_does_not_record_o3_store_conditional_failure_after_functional_run() {
+    let path = functional_store_conditional_failure_binary(
+        "functional-store-conditional-failure-omits-o3-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("88776655443322110100000000000000")
+    );
+    assert!(
+        json.pointer("/cores/0/o3_runtime").is_none(),
+        "functional failed SC run should not emit O3 runtime state: {json}"
+    );
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_conditional_failures");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_operation.store_conditional");
+}
+
+#[test]
+fn rem6_run_o3_runtime_json_exposes_float_vector_lsq_matrix() {
+    let path = detailed_o3_float_vector_lsq_binary(
+        "m5-switch-cpu-detailed-o3-float-vector-lsq-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:16",
+            "--dump-memory",
+            "0x80000090:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("000000000000f03f000000000000f03f")
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some("44332211887766554433221188776655")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+    for (field, value) in [
+        ("lsq_operation_float_load", 1),
+        ("lsq_operation_float_store", 1),
+        ("lsq_operation_vector_load", 1),
+        ("lsq_operation_vector_store", 1),
+        ("lsq_operation_atomic", 0),
+        ("lsq_operation_store_conditional", 0),
+        ("lsq_ordering_acquire", 0),
+        ("lsq_ordering_release", 0),
+        ("lsq_ordering_acquire_release", 0),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose {field}: {o3_runtime}"
+        );
+        let stat_path = field
+            .strip_prefix("lsq_operation_")
+            .map(|operation| format!("sim.cpu0.o3.lsq_operation.{operation}"))
+            .or_else(|| {
+                field
+                    .strip_prefix("lsq_ordering_")
+                    .map(|ordering| format!("sim.cpu0.o3.lsq_ordering.{ordering}"))
+            })
+            .unwrap_or_else(|| format!("sim.cpu0.o3.{field}"));
+        assert_eq!(
+            json_stat_value(&json, &stat_path),
+            value,
+            "stat registry should match structured runtime {field}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
     let path = detailed_o3_checkpoint_state_binary("m5-switch-cpu-detailed-o3-checkpoint-state");
 
@@ -3975,6 +4277,137 @@ fn detailed_o3_lsq_store_load_match_binary(name: &str) -> std::path::PathBuf {
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
+}
+
+fn detailed_o3_ordered_atomic_lsq_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 128_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0, 5, 0b011, 6, 0x03),                   // ld x6, 0(x5)
+        s_type(8, 6, 5, 0b011),                         // sd x6, 8(x5)
+        atomic_type(0x02, true, false, 0, 5, 0x3, 7),   // lr.d.aq x7, (x5)
+        i_type(3, 0, 0x0, 8, 0x13),                     // addi x8, x0, 3
+        atomic_type(0x03, false, true, 8, 5, 0x3, 9),   // sc.d.rl x9, x8, (x5)
+        i_type(4, 0, 0x0, 10, 0x13),                    // addi x10, x0, 4
+        atomic_type(0x01, true, true, 10, 5, 0x3, 11),  // amoswap.d.aqrl x11, x10, (x5)
+        s_type(16, 9, 5, 0b011),                        // sd x9, 16(x5)
+        s_type(24, 11, 5, 0b011),                       // sd x11, 24(x5)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([9, 0, 0, 0, 0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_store_conditional_failure_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x2a, 0, 0x0, 6, 0x13),                  // addi x6, x0, 0x2a
+        atomic_type(0x03, false, false, 6, 5, 0x3, 7),  // sc.d x7, x6, (x5)
+        s_type(8, 7, 5, 0b011),                         // sd x7, 8(x5)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x5566_7788, 0x1122_3344, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_float_vector_lsq_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 128_i32;
+    words.extend([
+        u_type(0, 10, 0x17),                               // auipc x10, 0
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),  // addi x10, x10, data
+        i_type(0, 10, 0x3, 1, 0x07),                       // fld f1, 0(x10)
+        float_store_type(8, 1, 10, 0x3),                   // fsd f1, 8(x10)
+        i_type(16, 10, 0x0, 12, 0x13),                     // addi x12, x10, vector src
+        i_type(24, 10, 0x0, 16, 0x13),                     // addi x16, x10, vector dst
+        i_type(2, 0, 0x0, 11, 0x13),                       // addi x11, x0, 2
+        vsetvli_type(0xd0, 11, 5),                         // e32, m1, vl=2
+        vector_unit_stride_load_type(true, 0b110, 12, 1),  // vle v1, (x12)
+        vector_unit_stride_store_type(true, 0b110, 16, 1), // vse v1, (x16)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    let mut program = riscv64_program(&words);
+    program.extend_from_slice(&1.0f64.to_bits().to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    program.extend(
+        [0x1122_3344, 0x5566_7788, 0, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes),
+    );
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn functional_store_conditional_failure_binary(name: &str) -> std::path::PathBuf {
+    let mut words = Vec::new();
+    let auipc_pc = 0_i32;
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x2a, 0, 0x0, 6, 0x13),                  // addi x6, x0, 0x2a
+        atomic_type(0x03, false, false, 6, 5, 0x3, 7),  // sc.d x7, x6, (x5)
+        s_type(8, 7, 5, 0b011),                         // sd x7, 8(x5)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x5566_7788, 0x1122_3344, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) -> u32 {
+    (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vd) << 7)
+        | 0x07
+}
+
+fn vector_unit_stride_store_type(vm_unmasked: bool, width: u32, rs1: u8, vs3: u8) -> u32 {
+    (u32::from(vm_unmasked) << 25)
+        | (u32::from(rs1) << 15)
+        | (width << 12)
+        | (u32::from(vs3) << 7)
+        | 0x27
+}
+
+fn float_store_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = (imm as u32) & 0xfff;
+    ((imm >> 5) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x27
 }
 
 fn detailed_o3_fu_latency_binary(name: &str) -> std::path::PathBuf {

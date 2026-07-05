@@ -250,6 +250,7 @@ pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
     trace_records: Vec<O3RuntimeTraceRecord>,
+    data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
     next_sequence: u64,
@@ -263,6 +264,7 @@ impl O3RuntimeState {
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
         self.trace_records.clear();
+        self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         Ok(())
@@ -301,25 +303,32 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
     ) {
-        let Some(sequence) = self
+        let runtime_sequence = self
+            .data_access_sequences
+            .remove(&execution.fetch().request_id());
+        let trace_sequence = self
             .trace_data_access_sequences
-            .remove(&execution.fetch().request_id())
-        else {
-            return;
-        };
-        self.mark_trace_data_access_outcome(sequence, response_tick, latency_ticks);
-        if o3_store_conditional_failed(execution) {
-            self.mark_trace_store_conditional_failed(sequence);
+            .remove(&execution.fetch().request_id());
+        if let Some(sequence) = trace_sequence {
+            self.mark_trace_data_access_outcome(sequence, response_tick, latency_ticks);
+        }
+        if runtime_sequence.is_some() && o3_store_conditional_failed(execution) {
+            self.stats.record_store_conditional_failure();
+            if let Some(sequence) = trace_sequence {
+                self.mark_trace_store_conditional_failed(sequence);
+            }
         }
     }
 
     pub(crate) fn discard_data_access_outcome(&mut self, fetch_request: MemoryRequestId) {
+        self.data_access_sequences.remove(&fetch_request);
         self.trace_data_access_sequences.remove(&fetch_request);
     }
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.trace_records.clear();
+        self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
@@ -340,6 +349,7 @@ impl O3RuntimeState {
             trace_enabled.then_some(trace_record.sequence()),
         );
         trace_record.set_store_load_forwarding(observation.candidate, observation.matched);
+        self.record_data_access_sequence(execution, trace_record.sequence());
         if trace_enabled {
             self.record_trace_data_access_sequence(execution, trace_record.sequence());
             self.trace_records.push(trace_record);
@@ -587,6 +597,13 @@ impl O3RuntimeState {
         }
     }
 
+    fn record_data_access_sequence(&mut self, execution: &RiscvCpuExecutionEvent, sequence: u64) {
+        if execution.execution().memory_access().is_some() {
+            self.data_access_sequences
+                .insert(execution.fetch().request_id(), sequence);
+        }
+    }
+
     fn record_trace_data_access_sequence(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -652,6 +669,7 @@ impl Default for O3RuntimeState {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
             trace_records: Vec::new(),
+            data_access_sequences: BTreeMap::new(),
             trace_data_access_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             next_sequence: 0,
@@ -700,6 +718,9 @@ pub struct O3RuntimeStats {
     lsq_store_bytes: u64,
     lsq_store_to_load_forwarding_candidates: u64,
     lsq_store_to_load_forwarding_matches: u64,
+    lsq_operation_counts: [u64; O3RuntimeLsqOperation::COUNT],
+    lsq_ordering_counts: [u64; O3RuntimeLsqOrdering::COUNT],
+    lsq_store_conditional_failures: u64,
     fu_latency_instructions: u64,
     fu_latency_cycles: u64,
     fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
@@ -748,6 +769,18 @@ impl O3RuntimeStats {
 
     pub const fn lsq_store_to_load_forwarding_matches(self) -> u64 {
         self.lsq_store_to_load_forwarding_matches
+    }
+
+    pub fn lsq_operation_count(self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.lsq_operation_counts[operation.index()]
+    }
+
+    pub fn lsq_ordering_count(self, ordering: O3RuntimeLsqOrdering) -> u64 {
+        self.lsq_ordering_counts[ordering.index()]
+    }
+
+    pub const fn lsq_store_conditional_failures(self) -> u64 {
+        self.lsq_store_conditional_failures
     }
 
     pub const fn fu_latency_instructions(self) -> u64 {
@@ -805,6 +838,7 @@ impl O3RuntimeStats {
             || self.lsq_store_bytes != 0
             || self.lsq_store_to_load_forwarding_candidates != 0
             || self.lsq_store_to_load_forwarding_matches != 0
+            || self.lsq_store_conditional_failures != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.max_rob_occupancy != 0
@@ -859,7 +893,23 @@ impl O3RuntimeStats {
             let (load_bytes, store_bytes) = o3_lsq_access_bytes(access);
             self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(load_bytes);
             self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(store_bytes);
+
+            let operation = o3_lsq_operation(access);
+            let operation_index = operation.index();
+            self.lsq_operation_counts[operation_index] =
+                self.lsq_operation_counts[operation_index].saturating_add(1);
+
+            let ordering = o3_lsq_ordering(access);
+            if ordering != O3RuntimeLsqOrdering::None {
+                let ordering_index = ordering.index();
+                self.lsq_ordering_counts[ordering_index] =
+                    self.lsq_ordering_counts[ordering_index].saturating_add(1);
+            }
         }
+    }
+
+    fn record_store_conditional_failure(&mut self) {
+        self.lsq_store_conditional_failures = self.lsq_store_conditional_failures.saturating_add(1);
     }
 
     fn record_store_to_load_forwarding(
@@ -1347,7 +1397,7 @@ fn usize_to_u64(value: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use rem6_isa_riscv::{MemoryWidth, RiscvExecutionRecord};
+    use rem6_isa_riscv::{MemoryWidth, RiscvExecutionRecord, RiscvInstruction};
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -1392,6 +1442,51 @@ mod tests {
         assert!(!runtime.trace_records()[0].lsq_store_conditional_failed());
         assert_eq!(runtime.trace_records()[0].lsq_data_response_tick(), 0);
         assert_eq!(runtime.trace_records()[0].lsq_data_latency_ticks(), 0);
+    }
+
+    #[test]
+    fn failed_store_conditional_stats_count_failed_operation() {
+        let mut runtime = O3RuntimeState::default();
+        let mut event = store_conditional_event(0x8000, 10);
+
+        runtime.record_retired_instruction(&event);
+        event.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
+        runtime.record_data_access_outcome(&event, 41, 7);
+
+        let stats = runtime.stats();
+
+        assert_eq!(
+            stats.lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
+            1
+        );
+        assert_eq!(stats.lsq_store_conditional_failures(), 1);
+    }
+
+    #[test]
+    fn failed_store_conditional_checkpoint_round_trips_failure_count() {
+        let mut runtime = O3RuntimeState::default();
+        let mut event = store_conditional_event(0x8000, 10);
+
+        runtime.record_retired_instruction(&event);
+        event.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
+        runtime.record_data_access_outcome(&event, 41, 7);
+
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            runtime.snapshot(),
+            runtime.stats(),
+        )
+        .unwrap();
+        let encoded = payload.encode();
+        let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+
+        assert_eq!(decoded.encode(), encoded);
+        assert_eq!(decoded.stats().lsq_store_conditional_failures(), 1);
+        assert_eq!(
+            decoded
+                .stats()
+                .lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
+            1
+        );
     }
 
     fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {

@@ -1,4 +1,7 @@
-use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass};
+use rem6_cpu::{
+    BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
+    O3RuntimeLsqOrdering,
+};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
@@ -923,6 +926,35 @@ fn emit_o3_runtime_stats(
             o3.fu_latency_class_instructions(class),
         )?;
     }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.lsq_operation.{}",
+                core.cpu,
+                operation.as_str()
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            o3.lsq_operation_count(operation),
+        )?;
+    }
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.lsq_ordering.{}", core.cpu, ordering.as_str()),
+            "Count",
+            StatResetPolicy::Monotonic,
+            o3.lsq_ordering_count(ordering),
+        )?;
+    }
+    increment_stat(
+        stats,
+        &format!("sim.cpu{}.o3.lsq_store_conditional_failures", core.cpu),
+        "Count",
+        StatResetPolicy::Monotonic,
+        o3.lsq_store_conditional_failures(),
+    )?;
     increment_stat(
         stats,
         &format!("sim.cpu{}.o3.fu_latency_cycles", core.cpu),

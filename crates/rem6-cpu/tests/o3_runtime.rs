@@ -3,8 +3,9 @@ use rem6_cpu::{
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3LoadStoreQueueEntry,
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
-    O3RuntimeFuLatencyClass, O3RuntimeStats, O3ScopedReadyInstruction, O3WritebackCompletion,
-    O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats,
+    O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
+    O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
@@ -21,7 +22,10 @@ const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES + 4 * 4;
-const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
+const O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES: usize =
+    (O3RuntimeLsqOperation::TRACKED.len() + O3RuntimeLsqOrdering::TRACKED.len() + 1) * 8;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
+    (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8 + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -103,6 +107,18 @@ fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
 
     assert_eq!(decoded.snapshot(), payload.snapshot());
     assert_eq!(decoded.stats(), O3RuntimeStats::default());
+    assert_eq!(
+        decoded
+            .stats()
+            .lsq_operation_count(O3RuntimeLsqOperation::Atomic),
+        0
+    );
+    assert_eq!(
+        decoded
+            .stats()
+            .lsq_ordering_count(O3RuntimeLsqOrdering::AcquireRelease),
+        0
+    );
 }
 
 #[test]
@@ -149,6 +165,11 @@ fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
     assert_eq!(stats.max_rob_occupancy(), 9);
     assert_eq!(stats.max_lsq_occupancy(), 8);
     assert_eq!(stats.rename_map_entries(), 7);
+    assert_eq!(stats.lsq_operation_count(O3RuntimeLsqOperation::Atomic), 0);
+    assert_eq!(
+        stats.lsq_ordering_count(O3RuntimeLsqOrdering::AcquireRelease),
+        0
+    );
 }
 
 #[test]
@@ -179,10 +200,20 @@ fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
     }
 
     let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let stats_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    let lsq_matrix_offset = stats_offset + (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
+    let mut encoded = [
+        &encoded[..lsq_matrix_offset],
+        &encoded[lsq_matrix_offset + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES..],
+    ]
+    .concat();
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 3;
     let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
     let stats = decoded.stats();
 
-    assert_eq!(decoded.encode(), encoded);
     assert_eq!(stats.fu_latency_instructions(), 2);
     assert_eq!(stats.fu_latency_cycles(), 4);
     assert_eq!(
@@ -203,6 +234,108 @@ fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
     );
     assert_eq!(stats.fu_integer_mul_instructions(), 0);
     assert_eq!(stats.fu_integer_div_instructions(), 0);
+    assert_eq!(stats.max_rob_occupancy(), 1);
+    assert_eq!(stats.max_lsq_occupancy(), 0);
+    assert_eq!(stats.rename_map_entries(), 0);
+    assert_eq!(stats.lsq_operation_count(O3RuntimeLsqOperation::Atomic), 0);
+    assert_eq!(
+        stats.lsq_ordering_count(O3RuntimeLsqOrdering::AcquireRelease),
+        0
+    );
+    assert_eq!(stats.lsq_store_conditional_failures(), 0);
+}
+
+#[test]
+fn o3_runtime_checkpoint_round_trips_v4_lsq_matrix_stats() {
+    let core = RiscvCore::new(core(0x8000));
+    for (sequence, instruction, access) in [
+        (
+            1,
+            RiscvInstruction::LoadReserved {
+                rd: reg(7),
+                rs1: reg(5),
+                width: MemoryWidth::Doubleword,
+                acquire: true,
+                release: false,
+            },
+            MemoryAccessKind::LoadReserved {
+                rd: reg(7),
+                address: 0x9000,
+                width: MemoryWidth::Doubleword,
+                acquire: true,
+                release: false,
+            },
+        ),
+        (
+            2,
+            RiscvInstruction::StoreConditional {
+                rd: reg(8),
+                rs1: reg(5),
+                rs2: reg(6),
+                width: MemoryWidth::Doubleword,
+                acquire: false,
+                release: true,
+            },
+            MemoryAccessKind::StoreConditional {
+                rd: reg(8),
+                address: 0x9000,
+                width: MemoryWidth::Doubleword,
+                value: 3,
+                acquire: false,
+                release: true,
+            },
+        ),
+        (
+            3,
+            RiscvInstruction::AtomicMemory {
+                rd: reg(9),
+                rs1: reg(5),
+                rs2: reg(6),
+                width: MemoryWidth::Doubleword,
+                op: AtomicMemoryOp::Swap,
+                acquire: true,
+                release: true,
+            },
+            MemoryAccessKind::AtomicMemory {
+                rd: reg(9),
+                address: 0x9000,
+                width: MemoryWidth::Doubleword,
+                op: AtomicMemoryOp::Swap,
+                value: 4,
+                acquire: true,
+                release: true,
+            },
+        ),
+    ] {
+        let pc = 0x8000 + sequence * 4;
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+        ));
+    }
+
+    let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    let stats = decoded.stats();
+
+    assert_eq!(decoded.encode(), encoded);
+    assert_eq!(
+        stats.lsq_operation_count(O3RuntimeLsqOperation::LoadReserved),
+        1
+    );
+    assert_eq!(
+        stats.lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
+        1
+    );
+    assert_eq!(stats.lsq_operation_count(O3RuntimeLsqOperation::Atomic), 1);
+    assert_eq!(stats.lsq_ordering_count(O3RuntimeLsqOrdering::Acquire), 1);
+    assert_eq!(stats.lsq_ordering_count(O3RuntimeLsqOrdering::Release), 1);
+    assert_eq!(
+        stats.lsq_ordering_count(O3RuntimeLsqOrdering::AcquireRelease),
+        1
+    );
+    assert_eq!(stats.lsq_store_conditional_failures(), 0);
 }
 
 #[test]

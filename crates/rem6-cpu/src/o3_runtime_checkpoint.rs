@@ -2,7 +2,9 @@ use rem6_memory::Address;
 
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateCheckpointPayload;
-use crate::o3_runtime_trace::O3RuntimeFuLatencyClass;
+use crate::o3_runtime_trace::{
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+};
 
 use super::{
     encode_register_class, encode_u32, validate_runtime_snapshot, O3LoadStoreQueueEntry,
@@ -11,7 +13,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 3;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 4;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS: u8 = 3;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS: u8 = 2;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS: u8 = 1;
 const U32_BYTES: usize = 4;
@@ -58,6 +61,7 @@ impl O3RuntimeCheckpointPayload {
             version,
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -107,9 +111,14 @@ impl O3RuntimeCheckpointPayload {
         }
 
         let stats = match version {
-            O3_RUNTIME_CHECKPOINT_VERSION => read_o3_runtime_stats(payload, &mut offset, true)?,
+            O3_RUNTIME_CHECKPOINT_VERSION => {
+                read_o3_runtime_stats(payload, &mut offset, true, true)?
+            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => {
+                read_o3_runtime_stats(payload, &mut offset, true, false)?
+            }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, false)?
+                read_o3_runtime_stats(payload, &mut offset, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
             _ => unreachable!("version was validated"),
@@ -265,6 +274,13 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     for class in O3RuntimeFuLatencyClass::ALL {
         payload.extend_from_slice(&stats.fu_latency_class_cycles(class).to_le_bytes());
     }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(&stats.lsq_operation_count(operation).to_le_bytes());
+    }
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        payload.extend_from_slice(&stats.lsq_ordering_count(ordering).to_le_bytes());
+    }
+    payload.extend_from_slice(&stats.lsq_store_conditional_failures().to_le_bytes());
     for value in [
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
@@ -328,9 +344,12 @@ fn read_o3_runtime_stats(
     payload: &[u8],
     offset: &mut usize,
     has_class_stats: bool,
+    has_lsq_matrix_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
+    let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_ordering_counts = [0; O3RuntimeLsqOrdering::COUNT];
     let instructions = read_u64(payload, offset)?;
     let rob_allocations = read_u64(payload, offset)?;
     let rob_commits = read_u64(payload, offset)?;
@@ -360,6 +379,17 @@ fn read_o3_runtime_stats(
         fu_latency_class_cycles[O3RuntimeFuLatencyClass::ScalarIntegerDiv.index()] =
             read_u64(payload, offset)?;
     }
+    let lsq_store_conditional_failures = if has_lsq_matrix_stats {
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            lsq_operation_counts[operation.index()] = read_u64(payload, offset)?;
+        }
+        for ordering in O3RuntimeLsqOrdering::TRACKED {
+            lsq_ordering_counts[ordering.index()] = read_u64(payload, offset)?;
+        }
+        read_u64(payload, offset)?
+    } else {
+        0
+    };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -371,6 +401,9 @@ fn read_o3_runtime_stats(
         lsq_store_bytes,
         lsq_store_to_load_forwarding_candidates,
         lsq_store_to_load_forwarding_matches,
+        lsq_operation_counts,
+        lsq_ordering_counts,
+        lsq_store_conditional_failures,
         fu_latency_instructions,
         fu_latency_cycles,
         fu_latency_class_instructions,

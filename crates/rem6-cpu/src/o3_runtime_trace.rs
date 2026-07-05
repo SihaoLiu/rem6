@@ -178,6 +178,34 @@ impl O3RuntimeFuLatencyClass {
 }
 
 impl O3RuntimeLsqOperation {
+    pub const COUNT: usize = 10;
+    pub const TRACKED: [Self; 9] = [
+        Self::Load,
+        Self::Store,
+        Self::LoadReserved,
+        Self::StoreConditional,
+        Self::Atomic,
+        Self::FloatLoad,
+        Self::FloatStore,
+        Self::VectorLoad,
+        Self::VectorStore,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Load => 1,
+            Self::Store => 2,
+            Self::LoadReserved => 3,
+            Self::StoreConditional => 4,
+            Self::Atomic => 5,
+            Self::FloatLoad => 6,
+            Self::FloatStore => 7,
+            Self::VectorLoad => 8,
+            Self::VectorStore => 9,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -195,6 +223,18 @@ impl O3RuntimeLsqOperation {
 }
 
 impl O3RuntimeLsqOrdering {
+    pub const COUNT: usize = 4;
+    pub const TRACKED: [Self; 3] = [Self::Acquire, Self::Release, Self::AcquireRelease];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Acquire => 1,
+            Self::Release => 2,
+            Self::AcquireRelease => 3,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
