@@ -159,6 +159,13 @@ struct RiscvO3RuntimeCpuStats {
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
+    iq_insts_issued: StatId,
+    iq_mem_insts_issued: StatId,
+    iq_issued_inst_type_mem_read: StatId,
+    iq_issued_inst_type_mem_write: StatId,
+    iq_issued_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
+    iew_dispatched_insts: StatId,
+    iew_insts_to_commit: StatId,
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
@@ -234,6 +241,40 @@ impl RiscvO3RuntimeCpuStats {
                 "Cycle",
             )?,
             fu_latency_classes: register_o3_fu_latency_class_counters(registry, &prefix)?,
+            iq_insts_issued: register_o3_counter(registry, &prefix, "iq.insts_issued", "Count")?,
+            iq_mem_insts_issued: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.mem_insts_issued",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_read: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.issued_inst_type.mem_read",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_write: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.issued_inst_type.mem_write",
+                "Count",
+            )?,
+            iq_issued_inst_type_fu_classes: register_o3_iq_fu_latency_class_counters(
+                registry, &prefix,
+            )?,
+            iew_dispatched_insts: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.dispatched_insts",
+                "Count",
+            )?,
+            iew_insts_to_commit: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.insts_to_commit",
+                "Count",
+            )?,
             max_rob_occupancy: register_o3_counter(
                 registry,
                 &prefix,
@@ -335,6 +376,36 @@ impl RiscvO3RuntimeCpuStats {
                 current.fu_latency_cycles(),
             ),
             (
+                self.iq_insts_issued,
+                previous.instructions(),
+                current.instructions(),
+            ),
+            (
+                self.iq_mem_insts_issued,
+                previous.lsq_loads().saturating_add(previous.lsq_stores()),
+                current.lsq_loads().saturating_add(current.lsq_stores()),
+            ),
+            (
+                self.iq_issued_inst_type_mem_read,
+                previous.lsq_loads(),
+                current.lsq_loads(),
+            ),
+            (
+                self.iq_issued_inst_type_mem_write,
+                previous.lsq_stores(),
+                current.lsq_stores(),
+            ),
+            (
+                self.iew_dispatched_insts,
+                previous.instructions(),
+                current.instructions(),
+            ),
+            (
+                self.iew_insts_to_commit,
+                previous.rob_commits(),
+                current.rob_commits(),
+            ),
+            (
                 self.max_rob_occupancy,
                 previous.max_rob_occupancy(),
                 current.max_rob_occupancy(),
@@ -378,6 +449,14 @@ impl RiscvO3RuntimeCpuStats {
                 if delta != 0 {
                     registry.increment(stat, delta)?;
                 }
+            }
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            let delta = current
+                .fu_latency_class_instructions(class)
+                .saturating_sub(previous.fu_latency_class_instructions(class));
+            if delta != 0 {
+                registry.increment(self.iq_issued_inst_type_fu_classes[class.index()], delta)?;
             }
         }
         for operation in O3RuntimeLsqOperation::TRACKED {
@@ -463,6 +542,15 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.fu_latency_instructions(),
             ),
             (self.fu_latency_cycles, snapshot.fu_latency_cycles()),
+            (self.iq_insts_issued, snapshot.instructions()),
+            (
+                self.iq_mem_insts_issued,
+                snapshot.lsq_loads().saturating_add(snapshot.lsq_stores()),
+            ),
+            (self.iq_issued_inst_type_mem_read, snapshot.lsq_loads()),
+            (self.iq_issued_inst_type_mem_write, snapshot.lsq_stores()),
+            (self.iew_dispatched_insts, snapshot.instructions()),
+            (self.iew_insts_to_commit, snapshot.rob_commits()),
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
             (self.rename_map_entries, snapshot.rename_map_entries()),
@@ -515,6 +603,12 @@ impl RiscvO3RuntimeCpuStats {
             ] {
                 registry.set_resettable_counter(stat, value)?;
             }
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            registry.set_resettable_counter(
+                self.iq_issued_inst_type_fu_classes[class.index()],
+                snapshot.fu_latency_class_instructions(class),
+            )?;
         }
         Ok(())
     }
@@ -707,6 +801,30 @@ fn register_o3_fu_latency_class_counters(
         };
     }
     Ok(stats)
+}
+
+fn register_o3_iq_fu_latency_class_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
+    for class in O3RuntimeFuLatencyClass::ALL {
+        stats[class.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("iq.issued_inst_type.{}", o3_iq_fu_latency_class_stem(class)),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn o3_iq_fu_latency_class_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+    match class {
+        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
+        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
+        _ => class.stat_stem(),
+    }
 }
 
 #[cfg(test)]

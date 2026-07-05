@@ -1161,6 +1161,25 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         3,
         "resettable",
     );
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.iq.insts_issued", 6),
+        ("sim.host_actions.stats_dump.cpu0.o3.iq.mem_insts_issued", 2),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.mem_read",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.mem_write",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iew.dispatched_insts",
+            6,
+        ),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 6),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
     assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 8, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 5, "monotonic");
 }
@@ -1570,6 +1589,33 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
         0,
         "resettable",
     );
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.iq.insts_issued", 5),
+        ("sim.host_actions.stats_dump.cpu0.o3.iq.mem_insts_issued", 0),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.int_mul",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.int_div",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.iew.dispatched_insts",
+            5,
+        ),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 5),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.fu_latency_instructions",
