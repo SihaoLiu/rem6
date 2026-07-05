@@ -36,6 +36,8 @@ mod m5_periodic_checkpoint;
 mod multi_run;
 #[path = "cli_run/pc_count_probes.rs"]
 mod pc_count_probes;
+#[path = "cli_run/pipeline_debug.rs"]
+mod pipeline_debug;
 #[path = "cli_run/power_import.rs"]
 mod power_import;
 #[path = "cli_run/readfile_resource.rs"]
