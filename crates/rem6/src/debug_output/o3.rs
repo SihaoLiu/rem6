@@ -350,6 +350,7 @@ struct Rem6O3TraceTotals {
     event_branch_predicted_target_mismatches: u64,
     event_branch_targetless_mismatches: u64,
     event_branch_wrong_targets: u64,
+    event_branch_resolved_targets: u64,
     event_branch_mispredictions: u64,
     event_branch_squashes: u64,
     event_branch_squashed_targets: u64,
@@ -740,6 +741,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_wrong_targets = self
             .event_branch_wrong_targets
             .saturating_add(u64::from(wrong_target));
+        self.event_branch_resolved_targets = self
+            .event_branch_resolved_targets
+            .saturating_add(u64::from(event.branch_resolved_target().is_some()));
         self.event_branch_mispredictions = self
             .event_branch_mispredictions
             .saturating_add(u64::from(event.branch_mispredicted()));
@@ -1076,6 +1080,10 @@ impl Rem6O3TraceTotals {
             (
                 "event.branch_wrong_targets",
                 self.event_branch_wrong_targets,
+            ),
+            (
+                "event.branch_resolved_targets",
+                self.event_branch_resolved_targets,
             ),
             (
                 "event.branch_mispredictions",
