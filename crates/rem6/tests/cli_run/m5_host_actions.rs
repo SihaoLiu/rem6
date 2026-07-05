@@ -1924,6 +1924,22 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         2,
         "resettable",
     );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_taken_incorrect",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
 
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
@@ -1954,6 +1970,8 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_wrong_targets",
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatch_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_taken_incorrect",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_not_taken_incorrect",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
@@ -1975,6 +1993,20 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
     assert_json_stat(
         &json,
         "sim.cpu0.o3.branch_repair_wrong_targets",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.predicted_taken_incorrect",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "Count",
         0,
         "monotonic",
@@ -3836,6 +3868,9 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let predicted_taken_incorrect = 1;
+    let predicted_not_taken_incorrect = 2;
+    let branch_mispredicts = predicted_taken_incorrect + predicted_not_taken_incorrect;
 
     assert_text_count_stat(
         &stdout,
@@ -3848,8 +3883,38 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         2,
     );
     assert_text_count_stat(&stdout, "sim.cpu0.o3.branch_repair_wrong_targets", 0);
-    assert_text_count_stat(&stdout, "system.cpu.iew.branchMispredicts", 3);
-    assert_text_count_stat(&stdout, "system.cpu.commit.branchMispredicts", 3);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.iew.predicted_taken_incorrect",
+        predicted_taken_incorrect,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
+        predicted_not_taken_incorrect,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.iew.predictedTakenIncorrect",
+        predicted_taken_incorrect,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.iew.predictedNotTakenIncorrect",
+        predicted_not_taken_incorrect,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.iew.branchMispredicts",
+        branch_mispredicts,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.commit.branchMispredicts",
+        branch_mispredicts,
+    );
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iew.predictedTakenIncorrect");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.branchMispredicts");
     assert_text_stat_occurs_once(&stdout, "system.cpu.commit.branchMispredicts");
 }
@@ -3887,6 +3952,21 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     );
     let json: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let predicted_taken_incorrect = 1;
+    let predicted_not_taken_incorrect = 2;
+    let branch_mispredicts = predicted_taken_incorrect + predicted_not_taken_incorrect;
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iew_predicted_taken_incorrect")
+            .and_then(Value::as_u64),
+        Some(predicted_taken_incorrect),
+        "structured O3 runtime JSON should expose predicted-taken split: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iew_predicted_not_taken_incorrect")
+            .and_then(Value::as_u64),
+        Some(predicted_not_taken_incorrect),
+        "structured O3 runtime JSON should expose predicted-not-taken split: {json}"
+    );
 
     assert_json_stat(
         &json,
@@ -3911,16 +3991,44 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.iew.predicted_taken_incorrect",
+        "Count",
+        predicted_taken_incorrect,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "Count",
+        predicted_not_taken_incorrect,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.predictedTakenIncorrect",
+        "Count",
+        predicted_taken_incorrect,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.predictedNotTakenIncorrect",
+        "Count",
+        predicted_not_taken_incorrect,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "system.cpu.iew.branchMispredicts",
         "Count",
-        3,
+        branch_mispredicts,
         "monotonic",
     );
     assert_json_stat(
         &json,
         "system.cpu.commit.branchMispredicts",
         "Count",
-        3,
+        branch_mispredicts,
         "monotonic",
     );
 }
@@ -4114,7 +4222,11 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_div");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_taken_incorrect");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_not_taken_incorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
+    assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
+    assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
     assert!(
@@ -4185,6 +4297,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.iew.instsToCommit::total",
+        "sim.cpu0.o3.iew.predicted_taken_incorrect",
+        "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "system.cpu.iew.predictedTakenIncorrect",
+        "system.cpu.iew.predictedNotTakenIncorrect",
         "system.cpu.iew.branchMispredicts",
         "system.cpu.commit.branchMispredicts",
         "system.cpu.lsq0.addedLoadsAndStores",

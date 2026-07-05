@@ -1123,6 +1123,14 @@ fn emit_o3_runtime_stats(
     for (name, value) in [
         ("dispatched_insts", o3.instructions()),
         ("insts_to_commit", o3.rob_commits()),
+        (
+            "predicted_taken_incorrect",
+            o3.iew_predicted_taken_incorrect(),
+        ),
+        (
+            "predicted_not_taken_incorrect",
+            o3.iew_predicted_not_taken_incorrect(),
+        ),
     ] {
         increment_stat(
             stats,
@@ -1152,6 +1160,14 @@ fn emit_o3_runtime_stats(
         ("iew.dispatchedInsts", o3.instructions()),
         ("iew.dispLoadInsts", o3.lsq_loads()),
         ("iew.dispStoreInsts", o3.lsq_stores()),
+        (
+            "iew.predictedTakenIncorrect",
+            o3.iew_predicted_taken_incorrect(),
+        ),
+        (
+            "iew.predictedNotTakenIncorrect",
+            o3.iew_predicted_not_taken_incorrect(),
+        ),
         (
             "lsq0.addedLoadsAndStores",
             o3.lsq_loads().saturating_add(o3.lsq_stores()),

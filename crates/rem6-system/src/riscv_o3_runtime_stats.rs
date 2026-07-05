@@ -166,6 +166,8 @@ struct RiscvO3RuntimeCpuStats {
     iq_issued_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
     iew_dispatched_insts: StatId,
     iew_insts_to_commit: StatId,
+    iew_predicted_taken_incorrect: StatId,
+    iew_predicted_not_taken_incorrect: StatId,
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
@@ -273,6 +275,18 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "iew.insts_to_commit",
+                "Count",
+            )?,
+            iew_predicted_taken_incorrect: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.predicted_taken_incorrect",
+                "Count",
+            )?,
+            iew_predicted_not_taken_incorrect: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.predicted_not_taken_incorrect",
                 "Count",
             )?,
             max_rob_occupancy: register_o3_counter(
@@ -404,6 +418,16 @@ impl RiscvO3RuntimeCpuStats {
                 self.iew_insts_to_commit,
                 previous.rob_commits(),
                 current.rob_commits(),
+            ),
+            (
+                self.iew_predicted_taken_incorrect,
+                previous.iew_predicted_taken_incorrect(),
+                current.iew_predicted_taken_incorrect(),
+            ),
+            (
+                self.iew_predicted_not_taken_incorrect,
+                previous.iew_predicted_not_taken_incorrect(),
+                current.iew_predicted_not_taken_incorrect(),
             ),
             (
                 self.max_rob_occupancy,
@@ -551,6 +575,14 @@ impl RiscvO3RuntimeCpuStats {
             (self.iq_issued_inst_type_mem_write, snapshot.lsq_stores()),
             (self.iew_dispatched_insts, snapshot.instructions()),
             (self.iew_insts_to_commit, snapshot.rob_commits()),
+            (
+                self.iew_predicted_taken_incorrect,
+                snapshot.iew_predicted_taken_incorrect(),
+            ),
+            (
+                self.iew_predicted_not_taken_incorrect,
+                snapshot.iew_predicted_not_taken_incorrect(),
+            ),
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
             (self.rename_map_entries, snapshot.rename_map_entries()),

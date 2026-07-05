@@ -13,7 +13,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 7;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 8;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS: u8 = 7;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS: u8 = 6;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS: u8 = 5;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS: u8 = 4;
@@ -68,6 +69,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -118,23 +120,40 @@ impl O3RuntimeCheckpointPayload {
 
         let stats = match version {
             O3_RUNTIME_CHECKPOINT_VERSION => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, true, true, true)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, true, true, true)?
+            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS => {
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, true, true, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, true, true, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, true, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, true, false, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, false, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, false, false, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, false, false, false, false)?
             }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, false, false, false, false)?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, false, false, false, false, false)?
-            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => read_o3_runtime_stats(
+                payload,
+                &mut offset,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
+                payload,
+                &mut offset,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
             _ => unreachable!("version was validated"),
         };
@@ -345,6 +364,12 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         payload.extend_from_slice(&stats.branch_repair_direction_only_kind(kind).to_le_bytes());
     }
     for value in [
+        stats.iew_predicted_taken_incorrect(),
+        stats.iew_predicted_not_taken_incorrect(),
+    ] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
         stats.rename_map_entries(),
@@ -411,6 +436,7 @@ fn read_o3_runtime_stats(
     has_branch_repair_stats: bool,
     has_lsq_latency_stats: bool,
     has_lsq_data_latency_stats: bool,
+    has_iew_branch_mispredict_split_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
@@ -508,6 +534,12 @@ fn read_o3_runtime_stats(
     } else {
         (0, 0, 0)
     };
+    let (iew_predicted_taken_incorrect, iew_predicted_not_taken_incorrect) =
+        if has_iew_branch_mispredict_split_stats {
+            (read_u64(payload, offset)?, read_u64(payload, offset)?)
+        } else {
+            (0, 0)
+        };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -536,6 +568,8 @@ fn read_o3_runtime_stats(
         branch_repair_targetless_mismatch_kinds,
         branch_repair_wrong_target_kinds,
         branch_repair_direction_only_kinds,
+        iew_predicted_taken_incorrect,
+        iew_predicted_not_taken_incorrect,
         fu_latency_instructions,
         fu_latency_cycles,
         fu_latency_class_instructions,
@@ -624,12 +658,15 @@ mod tests {
     const LSQ_DATA_LATENCY_STATS_BYTES: usize = 4 * U64_BYTES;
     const LSQ_ORDERING_STATS_BYTES: usize = (O3RuntimeLsqOrdering::TRACKED.len() + 1) * U64_BYTES;
     const BRANCH_REPAIR_STATS_BYTES: usize = (3 + crate::BranchTargetKind::COUNT * 3) * U64_BYTES;
+    const IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 * U64_BYTES;
+    const MAX_OCCUPANCY_STATS_BYTES: usize = 3 * U64_BYTES;
     const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
         + LSQ_OPERATION_STATS_BYTES
         + LSQ_OPERATION_LATENCY_STATS_BYTES
         + LSQ_DATA_LATENCY_STATS_BYTES
         + LSQ_ORDERING_STATS_BYTES
-        + BRANCH_REPAIR_STATS_BYTES;
+        + BRANCH_REPAIR_STATS_BYTES
+        + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES;
 
     #[test]
     fn checkpoint_v6_payloads_decode_without_aggregate_lsq_data_latency_stats() {
@@ -663,9 +700,13 @@ mod tests {
             + BASE_AND_FU_STATS_BYTES
             + LSQ_OPERATION_STATS_BYTES
             + LSQ_OPERATION_LATENCY_STATS_BYTES;
+        let split_offset = stats_offset + CURRENT_STATS_BYTES
+            - IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
         let mut v6_encoded = [
             &encoded[..data_latency_offset],
-            &encoded[data_latency_offset + LSQ_DATA_LATENCY_STATS_BYTES..],
+            &encoded[data_latency_offset + LSQ_DATA_LATENCY_STATS_BYTES..split_offset],
+            &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..],
         ]
         .concat();
         v6_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
@@ -684,5 +725,36 @@ mod tests {
         assert_eq!(stats.lsq_data_latency_max_ticks(), 0);
         assert_eq!(stats.lsq_data_latency_min_ticks(), 0);
         assert_eq!(stats.lsq_data_latency_avg_ticks(), 0);
+    }
+
+    #[test]
+    fn checkpoint_v7_payloads_decode_without_iew_branch_mispredict_split_stats() {
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            super::super::default_o3_runtime_snapshot(),
+            O3RuntimeStats {
+                iew_predicted_taken_incorrect: 3,
+                iew_predicted_not_taken_incorrect: 5,
+                ..O3RuntimeStats::default()
+            },
+        )
+        .unwrap();
+        let encoded = payload.encode();
+        let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let split_offset = stats_offset + CURRENT_STATS_BYTES
+            - IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
+        let mut v7_encoded = [
+            &encoded[..split_offset],
+            &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..],
+        ]
+        .concat();
+        v7_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS;
+
+        let decoded = O3RuntimeCheckpointPayload::decode(&v7_encoded).unwrap();
+        let stats = decoded.stats();
+
+        assert_eq!(stats.iew_predicted_taken_incorrect(), 0);
+        assert_eq!(stats.iew_predicted_not_taken_incorrect(), 0);
     }
 }

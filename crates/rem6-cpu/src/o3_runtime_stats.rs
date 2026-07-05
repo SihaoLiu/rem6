@@ -32,6 +32,8 @@ pub struct O3RuntimeStats {
     pub(crate) branch_repair_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_direction_only_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) iew_predicted_taken_incorrect: u64,
+    pub(crate) iew_predicted_not_taken_incorrect: u64,
     pub(crate) fu_latency_instructions: u64,
     pub(crate) fu_latency_cycles: u64,
     pub(crate) fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
@@ -175,6 +177,14 @@ impl O3RuntimeStats {
         self.branch_repair_direction_only_kinds[kind.index()]
     }
 
+    pub const fn iew_predicted_taken_incorrect(self) -> u64 {
+        self.iew_predicted_taken_incorrect
+    }
+
+    pub const fn iew_predicted_not_taken_incorrect(self) -> u64 {
+        self.iew_predicted_not_taken_incorrect
+    }
+
     pub const fn fu_latency_instructions(self) -> u64 {
         self.fu_latency_instructions
     }
@@ -238,6 +248,8 @@ impl O3RuntimeStats {
             || self.branch_repair_targetless_mismatches != 0
             || self.branch_repair_wrong_targets != 0
             || self.branch_repair_direction_only_mismatches != 0
+            || self.iew_predicted_taken_incorrect != 0
+            || self.iew_predicted_not_taken_incorrect != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.max_rob_occupancy != 0

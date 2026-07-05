@@ -163,7 +163,7 @@ impl Rem6CoreSummary {
             let lsq_operations = o3_runtime_lsq_operation_json(self);
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -174,6 +174,8 @@ impl Rem6CoreSummary {
                 self.o3_runtime.lsq_store_bytes(),
                 self.o3_runtime.lsq_store_to_load_forwarding_candidates(),
                 self.o3_runtime.lsq_store_to_load_forwarding_matches(),
+                self.o3_runtime.iew_predicted_taken_incorrect(),
+                self.o3_runtime.iew_predicted_not_taken_incorrect(),
                 self.o3_runtime.fu_latency_instructions(),
                 self.o3_runtime.fu_latency_cycles(),
                 fu_latency_classes,

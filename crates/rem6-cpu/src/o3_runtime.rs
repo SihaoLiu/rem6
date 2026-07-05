@@ -819,11 +819,14 @@ impl O3RuntimeStats {
             return;
         }
         let index = event.branch_kind().index();
-        if event.branch_predicted_target().is_some() && event.branch_resolved_target().is_none() {
+        let repaired = if event.branch_predicted_target().is_some()
+            && event.branch_resolved_target().is_none()
+        {
             self.branch_repair_targetless_mismatches =
                 self.branch_repair_targetless_mismatches.saturating_add(1);
             self.branch_repair_targetless_mismatch_kinds[index] =
                 self.branch_repair_targetless_mismatch_kinds[index].saturating_add(1);
+            true
         } else if event
             .branch_predicted_target()
             .zip(event.branch_resolved_target())
@@ -832,12 +835,29 @@ impl O3RuntimeStats {
             self.branch_repair_wrong_targets = self.branch_repair_wrong_targets.saturating_add(1);
             self.branch_repair_wrong_target_kinds[index] =
                 self.branch_repair_wrong_target_kinds[index].saturating_add(1);
+            true
         } else if event.branch_predicted_taken() != event.branch_resolved_taken() {
             self.branch_repair_direction_only_mismatches = self
                 .branch_repair_direction_only_mismatches
                 .saturating_add(1);
             self.branch_repair_direction_only_kinds[index] =
                 self.branch_repair_direction_only_kinds[index].saturating_add(1);
+            true
+        } else {
+            false
+        };
+        if repaired {
+            self.record_iew_branch_mispredict_split(event);
+        }
+    }
+
+    fn record_iew_branch_mispredict_split(&mut self, event: O3RuntimeTraceRecord) {
+        if event.branch_predicted_taken() {
+            self.iew_predicted_taken_incorrect =
+                self.iew_predicted_taken_incorrect.saturating_add(1);
+        } else {
+            self.iew_predicted_not_taken_incorrect =
+                self.iew_predicted_not_taken_incorrect.saturating_add(1);
         }
     }
 
@@ -1523,6 +1543,8 @@ mod tests {
             branch_repair_targetless_mismatch_kinds: targetless_kinds,
             branch_repair_wrong_target_kinds: wrong_target_kinds,
             branch_repair_direction_only_kinds: direction_only_kinds,
+            iew_predicted_taken_incorrect: 5,
+            iew_predicted_not_taken_incorrect: 6,
             ..O3RuntimeStats::default()
         };
         let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
@@ -1555,6 +1577,8 @@ mod tests {
                 .branch_repair_direction_only_kind(BranchTargetKind::DirectUnconditional),
             4
         );
+        assert_eq!(decoded.stats().iew_predicted_taken_incorrect(), 5);
+        assert_eq!(decoded.stats().iew_predicted_not_taken_incorrect(), 6);
     }
 
     fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {
