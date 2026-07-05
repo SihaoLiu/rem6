@@ -23,6 +23,7 @@ use o3_branch_stats::{
     o3_branch_targetless_mismatch_squashed_target_kind_stat_suffix,
     o3_branch_wrong_target_kind_stat_suffix, o3_branch_wrong_target_link_write_kind_stat_suffix,
     o3_branch_wrong_target_squashed_target_kind_stat_suffix,
+    o3_branch_wrong_target_without_link_write_kind_stat_suffix,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1142,6 +1143,11 @@ impl Rem6O3TraceTotals {
                 self.event_branch_wrong_target_link_writes,
             ),
             (
+                "event.branch_wrong_target_without_link_writes",
+                self.event_branch_wrong_targets
+                    .saturating_sub(self.event_branch_wrong_target_link_writes),
+            ),
+            (
                 "event.branch_resolved_targets",
                 self.event_branch_resolved_targets,
             ),
@@ -1310,6 +1316,17 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_wrong_target_link_write_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_wrong_target_link_write_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_wrong_target_without_link_write_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_wrong_target_kinds[kind.index()]
+                    .saturating_sub(self.event_branch_wrong_target_link_write_kinds[kind.index()]),
             });
         }
         for kind in BranchTargetKind::ALL {
