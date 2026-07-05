@@ -2718,6 +2718,16 @@ fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
     (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
 }
 
+fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) -> u32 {
     (u32::from(vm_unmasked) << 25)
         | (u32::from(rs1) << 15)
@@ -3193,6 +3203,20 @@ fn detailed_o3_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
         0x0220_c1b3,
         m5op(M5_EXIT),
         i_type(77, 0, 0x0, 13, 0x13),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_vector_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        i_type(2, 0, 0x0, 10, 0x13),
+        vsetvli_type(0xd0, 10, 5),
+        vector_mvv_type(0b100101, 2, 1, 3),
+        vector_mvv_type(0b100000, 2, 1, 4),
+        m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -9238,6 +9262,134 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
 }
 
 #[test]
+fn rem6_run_o3_debug_flag_classifies_vector_integer_fu_latency_events() {
+    let path =
+        detailed_o3_vector_fu_latency_debug_binary("debug-flags-o3-vector-fu-latency-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .expect("debug O3 trace array");
+    assert_eq!(trace.len(), 1);
+    let record = &trace[0];
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+    assert!(
+        events.len() >= 5,
+        "expected vector FU latency events: {events:?}"
+    );
+
+    let vector_mul = events
+        .iter()
+        .find(|event| json_record_str(event, "pc") == "0x8000000c")
+        .unwrap_or_else(|| panic!("missing vector mul O3 event: {events:?}"));
+    let vector_div = events
+        .iter()
+        .find(|event| json_record_str(event, "pc") == "0x80000010")
+        .unwrap_or_else(|| panic!("missing vector div O3 event: {events:?}"));
+    let vector_mul_latency = json_record_u64(vector_mul, "fu_latency_cycles");
+    let vector_div_latency = json_record_u64(vector_div, "fu_latency_cycles");
+    assert_o3_event_with_fu(
+        vector_mul,
+        2,
+        "0x8000000c",
+        0,
+        0,
+        0,
+        vector_mul_latency,
+        Some("vector_integer_mul"),
+        false,
+    );
+    assert_o3_event_with_fu(
+        vector_div,
+        3,
+        "0x80000010",
+        0,
+        0,
+        0,
+        vector_div_latency,
+        Some("vector_integer_div"),
+        false,
+    );
+    assert!(vector_mul_latency > 0, "{vector_mul:?}");
+    assert!(
+        vector_div_latency > vector_mul_latency,
+        "vector div should model a longer FU latency than vector mul: mul={vector_mul_latency}, div={vector_div_latency}"
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.fu_latency_instructions", "Count", 2),
+        (
+            "sim.debug.o3_trace.fu_latency_cycles",
+            "Cycle",
+            vector_mul_latency + vector_div_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_latency_instructions",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_latency_cycles",
+            "Cycle",
+            vector_mul_latency + vector_div_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_latency_cycles",
+            "Cycle",
+            vector_mul_latency,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_latency_cycles",
+            "Cycle",
+            vector_div_latency,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
     let path = detailed_o3_store_forwarding_debug_binary("debug-flags-o3-store-forwarding-runtime");
 
@@ -10119,6 +10271,26 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.fu_integer_div_latency_avg_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_latency_cycles",
             "Cycle",
             0,
         ),

@@ -851,6 +851,10 @@ impl O3RuntimeStats {
                         .fu_integer_div_latency_cycles
                         .saturating_add(fu_latency_cycles);
                 }
+                Some(
+                    O3RuntimeFuLatencyClass::VectorIntegerMul
+                    | O3RuntimeFuLatencyClass::VectorIntegerDiv,
+                ) => {}
                 None => {}
             }
         }
@@ -971,6 +975,26 @@ const fn o3_fu_latency_class(instruction: RiscvInstruction) -> Option<O3RuntimeF
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+        RiscvInstruction::VectorMultiplyLowVv { .. }
+        | RiscvInstruction::VectorMultiplyLowVx { .. }
+        | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighUnsignedVx { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedVx { .. } => {
+            Some(O3RuntimeFuLatencyClass::VectorIntegerMul)
+        }
+        RiscvInstruction::VectorDivideUnsignedVv { .. }
+        | RiscvInstruction::VectorDivideUnsignedVx { .. }
+        | RiscvInstruction::VectorDivideSignedVv { .. }
+        | RiscvInstruction::VectorDivideSignedVx { .. }
+        | RiscvInstruction::VectorRemainderUnsignedVv { .. }
+        | RiscvInstruction::VectorRemainderUnsignedVx { .. }
+        | RiscvInstruction::VectorRemainderSignedVv { .. }
+        | RiscvInstruction::VectorRemainderSignedVx { .. } => {
+            Some(O3RuntimeFuLatencyClass::VectorIntegerDiv)
+        }
         _ => None,
     }
 }

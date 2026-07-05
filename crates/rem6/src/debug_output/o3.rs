@@ -182,6 +182,10 @@ struct Rem6O3TraceTotals {
     event_fu_integer_div_latency_cycles: u64,
     event_fu_integer_div_latency_max_cycles: u64,
     event_fu_integer_div_latency_min_cycles: Option<u64>,
+    event_fu_vector_integer_mul_instructions: u64,
+    event_fu_vector_integer_mul_latency_cycles: u64,
+    event_fu_vector_integer_div_instructions: u64,
+    event_fu_vector_integer_div_latency_cycles: u64,
 }
 
 impl Rem6O3TraceRecord {
@@ -526,6 +530,22 @@ impl Rem6O3TraceTotals {
                             self.event_fu_integer_div_latency_min_cycles,
                             fu_latency_cycles,
                         );
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorIntegerMul) => {
+                        self.event_fu_vector_integer_mul_instructions = self
+                            .event_fu_vector_integer_mul_instructions
+                            .saturating_add(1);
+                        self.event_fu_vector_integer_mul_latency_cycles = self
+                            .event_fu_vector_integer_mul_latency_cycles
+                            .saturating_add(fu_latency_cycles);
+                    }
+                    Some(O3RuntimeFuLatencyClass::VectorIntegerDiv) => {
+                        self.event_fu_vector_integer_div_instructions = self
+                            .event_fu_vector_integer_div_instructions
+                            .saturating_add(1);
+                        self.event_fu_vector_integer_div_latency_cycles = self
+                            .event_fu_vector_integer_div_latency_cycles
+                            .saturating_add(fu_latency_cycles);
                     }
                     None => {}
                 }
@@ -914,6 +934,14 @@ impl Rem6O3TraceTotals {
             (
                 "event.fu_integer_div_instructions",
                 self.event_fu_integer_div_instructions,
+            ),
+            (
+                "event.fu_vector_integer_mul_instructions",
+                self.event_fu_vector_integer_mul_instructions,
+            ),
+            (
+                "event.fu_vector_integer_div_instructions",
+                self.event_fu_vector_integer_div_instructions,
             ),
         ] {
             stats.push(Rem6O3TraceStat {
@@ -1390,6 +1418,16 @@ impl Rem6O3TraceTotals {
                 self.event_fu_integer_div_latency_cycles,
                 self.event_fu_integer_div_instructions,
             ),
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_vector_integer_mul_latency_cycles",
+            unit: "Cycle",
+            value: self.event_fu_vector_integer_mul_latency_cycles,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.fu_vector_integer_div_latency_cycles",
+            unit: "Cycle",
+            value: self.event_fu_vector_integer_div_latency_cycles,
         });
         stats
     }
