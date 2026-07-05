@@ -7611,6 +7611,16 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         })
         .count() as u64;
     assert_eq!(branch_predicted_not_taken, 1);
+    let branch_squashed_targets = events
+        .iter()
+        .filter(|event| {
+            json_record_bool(event, "branch_event")
+                && event
+                    .get("branch_squashed_target")
+                    .is_some_and(|target| !target.is_null())
+        })
+        .count() as u64;
+    assert_eq!(branch_squashed_targets, 1);
 
     let branch = events
         .iter()
@@ -7648,6 +7658,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_targets",
+            "Count",
+            branch_squashed_targets,
+        ),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
         (
             "sim.debug.o3_trace.event.branch_kind.call_indirect",
@@ -7681,6 +7696,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         ),
         (
             "sim.debug.o3_trace.event.branch_squash_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_kind.call_indirect",
             "Count",
             1,
         ),
@@ -11641,6 +11661,16 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_not_taken_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_squashed_target_kind.call_indirect",
             "Count",
             0,
         ),
