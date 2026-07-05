@@ -3328,6 +3328,25 @@ fn detailed_o3_float_extended_fu_latency_debug_binary(name: &str) -> std::path::
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_float_compare_fu_latency_debug_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        u_type(0x3f80_0000, 8, 0x37),
+        fp_r_type(0x78, 0, 8, 0x0, 1),
+        fp_r_type(0x78, 0, 8, 0x0, 2),
+        i_type(2, 0, 0x0, 10, 0x13),
+        vsetvli_type(0xd0, 10, 5),
+        vector_arith_type(0b010111, 0b100, 0, 8, 1),
+        vector_arith_type(0b010111, 0b100, 0, 8, 2),
+        m5op(M5_SWITCH_CPU),
+        fp_r_type(0x50, 2, 1, 0x2, 5),
+        vector_arith_type(0b011000, 0b001, 2, 1, 3),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
@@ -10106,6 +10125,267 @@ fn rem6_run_o3_debug_flag_classifies_extended_float_fu_latency_events() {
         ),
         (
             "sim.debug.o3_trace.event.fu_vector_float_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_integer_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_integer_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_debug_flag_classifies_float_compare_fu_latency_events() {
+    let path =
+        detailed_o3_float_compare_fu_latency_debug_binary("debug-flags-o3-float-compare-runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let record = json
+        .pointer("/debug/o3_trace/0")
+        .expect("first O3 trace record");
+    assert_eq!(json_record_u64(record, "fu_latency_instructions"), 2);
+    let events = record
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .expect("O3 trace events array");
+
+    let expected_events = [
+        ("0x80000020", 0, "scalar_float_compare", 1),
+        ("0x80000024", 1, "vector_float_compare", 0),
+    ];
+    let mut scalar_float_compare_cycles = 0;
+    let mut vector_float_compare_cycles = 0;
+    for (pc, sequence, class, rename_writes) in expected_events {
+        let event = events
+            .iter()
+            .find(|event| json_record_str(event, "pc") == pc)
+            .unwrap_or_else(|| panic!("missing float compare O3 event at {pc}: {events:?}"));
+        let latency = json_record_u64(event, "fu_latency_cycles");
+        assert!(latency > 0, "{event:?}");
+        match class {
+            "scalar_float_compare" => scalar_float_compare_cycles += latency,
+            "vector_float_compare" => vector_float_compare_cycles += latency,
+            _ => unreachable!("covered class literal"),
+        }
+        assert_o3_event_with_fu(
+            event,
+            sequence,
+            pc,
+            rename_writes,
+            0,
+            0,
+            latency,
+            Some(class),
+            false,
+        );
+    }
+    let compare_cycles = scalar_float_compare_cycles + vector_float_compare_cycles;
+    assert_eq!(
+        json_record_u64(record, "fu_latency_cycles"),
+        compare_cycles,
+        "{record:?}"
+    );
+
+    for (path, unit, value) in [
+        ("sim.debug.o3_trace.records", "Count", 1),
+        ("sim.debug.o3_trace.fu_latency_instructions", "Count", 2),
+        (
+            "sim.debug.o3_trace.fu_latency_cycles",
+            "Cycle",
+            compare_cycles,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_latency_instructions",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_latency_cycles",
+            "Cycle",
+            compare_cycles,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_compare_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_compare_latency_cycles",
+            "Cycle",
+            scalar_float_compare_cycles,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_compare_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_compare_latency_cycles",
+            "Cycle",
+            vector_float_compare_cycles,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_add_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_add_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_fma_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_fma_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_sqrt_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_float_sqrt_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_add_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_add_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_mul_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_mul_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_fma_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_fma_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_div_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_div_latency_cycles",
+            "Cycle",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_sqrt_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.fu_vector_float_sqrt_latency_cycles",
             "Cycle",
             0,
         ),

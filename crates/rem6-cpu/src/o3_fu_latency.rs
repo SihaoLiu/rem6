@@ -26,6 +26,16 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::FloatAddD { .. }
         | RiscvInstruction::FloatSubS { .. }
         | RiscvInstruction::FloatSubD { .. } => Some(O3RuntimeFuLatencyClass::ScalarFloatAdd),
+        RiscvInstruction::FloatMinS { .. }
+        | RiscvInstruction::FloatMinD { .. }
+        | RiscvInstruction::FloatMaxS { .. }
+        | RiscvInstruction::FloatMaxD { .. }
+        | RiscvInstruction::FloatLessOrEqualS { .. }
+        | RiscvInstruction::FloatLessOrEqualD { .. }
+        | RiscvInstruction::FloatLessThanS { .. }
+        | RiscvInstruction::FloatLessThanD { .. }
+        | RiscvInstruction::FloatEqualS { .. }
+        | RiscvInstruction::FloatEqualD { .. } => Some(O3RuntimeFuLatencyClass::ScalarFloatCompare),
         RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
             Some(O3RuntimeFuLatencyClass::ScalarFloatMul)
         }
@@ -92,6 +102,20 @@ pub(crate) const fn o3_fu_latency_class(
             | RiscvVectorFloatInstruction::SubVf { .. }
             | RiscvVectorFloatInstruction::ReverseSubVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatAdd),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MinVv { .. }
+            | RiscvVectorFloatInstruction::MinVf { .. }
+            | RiscvVectorFloatInstruction::MaxVv { .. }
+            | RiscvVectorFloatInstruction::MaxVf { .. }
+            | RiscvVectorFloatInstruction::MaskEqualVv { .. }
+            | RiscvVectorFloatInstruction::MaskEqualVf { .. }
+            | RiscvVectorFloatInstruction::MaskNotEqualVv { .. }
+            | RiscvVectorFloatInstruction::MaskNotEqualVf { .. }
+            | RiscvVectorFloatInstruction::MaskLessThanVv { .. }
+            | RiscvVectorFloatInstruction::MaskLessThanVf { .. }
+            | RiscvVectorFloatInstruction::MaskLessEqualVv { .. }
+            | RiscvVectorFloatInstruction::MaskLessEqualVf { .. },
+        ) => Some(O3RuntimeFuLatencyClass::VectorFloatCompare),
         RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. },
         ) => Some(O3RuntimeFuLatencyClass::VectorFloatMul),

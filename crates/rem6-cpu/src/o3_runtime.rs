@@ -854,11 +854,13 @@ impl O3RuntimeStats {
                 }
                 Some(
                     O3RuntimeFuLatencyClass::ScalarFloatAdd
+                    | O3RuntimeFuLatencyClass::ScalarFloatCompare
                     | O3RuntimeFuLatencyClass::ScalarFloatMul
                     | O3RuntimeFuLatencyClass::ScalarFloatFma
                     | O3RuntimeFuLatencyClass::ScalarFloatDiv
                     | O3RuntimeFuLatencyClass::ScalarFloatSqrt
                     | O3RuntimeFuLatencyClass::VectorFloatAdd
+                    | O3RuntimeFuLatencyClass::VectorFloatCompare
                     | O3RuntimeFuLatencyClass::VectorFloatMul
                     | O3RuntimeFuLatencyClass::VectorFloatFma
                     | O3RuntimeFuLatencyClass::VectorFloatDiv
