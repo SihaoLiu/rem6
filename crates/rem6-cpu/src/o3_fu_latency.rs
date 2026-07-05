@@ -1,4 +1,6 @@
-use rem6_isa_riscv::{RiscvInstruction, RiscvVectorWideningIntegerInstruction};
+use rem6_isa_riscv::{
+    RiscvInstruction, RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
+};
 
 use crate::o3_runtime_trace::O3RuntimeFuLatencyClass;
 
@@ -27,6 +29,10 @@ pub(crate) const fn o3_fu_latency_class(
         | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
         | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
         | RiscvInstruction::VectorMultiplyHighSignedVx { .. }
+        | RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::MulSignedFractionalVv { .. }
+            | RiscvVectorSaturatingInstruction::MulSignedFractionalVx { .. },
+        )
         | RiscvInstruction::VectorIntegerMultiplyAdd(_) => {
             Some(O3RuntimeFuLatencyClass::VectorIntegerMul)
         }
