@@ -152,6 +152,29 @@ impl O3RuntimeFuLatencyClass {
             Self::VectorFloatSqrt => "vector_float_sqrt",
         }
     }
+
+    pub const fn stat_stem(self) -> &'static str {
+        match self {
+            Self::ScalarIntegerMul => "integer_mul",
+            Self::ScalarIntegerDiv => "integer_div",
+            Self::ScalarFloatAdd => "float_add",
+            Self::ScalarFloatCompare => "float_compare",
+            Self::ScalarFloatMisc => "float_misc",
+            Self::ScalarFloatMul => "float_mul",
+            Self::ScalarFloatFma => "float_fma",
+            Self::ScalarFloatDiv => "float_div",
+            Self::ScalarFloatSqrt => "float_sqrt",
+            Self::VectorIntegerMul => "vector_integer_mul",
+            Self::VectorIntegerDiv => "vector_integer_div",
+            Self::VectorFloatAdd => "vector_float_add",
+            Self::VectorFloatCompare => "vector_float_compare",
+            Self::VectorFloatMisc => "vector_float_misc",
+            Self::VectorFloatMul => "vector_float_mul",
+            Self::VectorFloatFma => "vector_float_fma",
+            Self::VectorFloatDiv => "vector_float_div",
+            Self::VectorFloatSqrt => "vector_float_sqrt",
+        }
+    }
 }
 
 impl O3RuntimeLsqOperation {

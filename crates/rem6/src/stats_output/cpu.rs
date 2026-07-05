@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
@@ -898,14 +898,6 @@ fn emit_o3_runtime_stats(
             o3.lsq_store_to_load_forwarding_matches(),
         ),
         ("fu_latency_instructions", o3.fu_latency_instructions()),
-        (
-            "fu_integer_mul_instructions",
-            o3.fu_integer_mul_instructions(),
-        ),
-        (
-            "fu_integer_div_instructions",
-            o3.fu_integer_div_instructions(),
-        ),
         ("max_rob_occupancy", o3.max_rob_occupancy()),
         ("max_lsq_occupancy", o3.max_lsq_occupancy()),
         ("rename_map_entries", o3.rename_map_entries()),
@@ -918,23 +910,37 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
-    for (name, value) in [
-        ("fu_latency_cycles", o3.fu_latency_cycles()),
-        (
-            "fu_integer_mul_latency_cycles",
-            o3.fu_integer_mul_latency_cycles(),
-        ),
-        (
-            "fu_integer_div_latency_cycles",
-            o3.fu_integer_div_latency_cycles(),
-        ),
-    ] {
+    for class in O3RuntimeFuLatencyClass::ALL {
         increment_stat(
             stats,
-            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            &format!(
+                "sim.cpu{}.o3.fu_{}_instructions",
+                core.cpu,
+                class.stat_stem()
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            o3.fu_latency_class_instructions(class),
+        )?;
+    }
+    increment_stat(
+        stats,
+        &format!("sim.cpu{}.o3.fu_latency_cycles", core.cpu),
+        "Cycle",
+        StatResetPolicy::Monotonic,
+        o3.fu_latency_cycles(),
+    )?;
+    for class in O3RuntimeFuLatencyClass::ALL {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.fu_{}_latency_cycles",
+                core.cpu,
+                class.stat_stem()
+            ),
             "Cycle",
             StatResetPolicy::Monotonic,
-            value,
+            o3.fu_latency_class_cycles(class),
         )?;
     }
     for (name, value) in [
@@ -945,8 +951,6 @@ fn emit_o3_runtime_stats(
         ),
         ("issued_inst_type.mem_read", o3.lsq_loads()),
         ("issued_inst_type.mem_write", o3.lsq_stores()),
-        ("issued_inst_type.int_mul", o3.fu_integer_mul_instructions()),
-        ("issued_inst_type.int_div", o3.fu_integer_div_instructions()),
     ] {
         increment_stat(
             stats,
@@ -954,6 +958,19 @@ fn emit_o3_runtime_stats(
             "Count",
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.iq.issued_inst_type.{}",
+                core.cpu,
+                o3_iq_fu_latency_class_stem(class)
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            o3.fu_latency_class_instructions(class),
         )?;
     }
     for (name, value) in [
@@ -1022,6 +1039,14 @@ fn emit_o3_runtime_stats(
         )?;
     }
     Ok(())
+}
+
+fn o3_iq_fu_latency_class_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+    match class {
+        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
+        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
+        _ => class.stat_stem(),
+    }
 }
 
 fn emit_branch_predictor_counter_stats<const N: usize>(

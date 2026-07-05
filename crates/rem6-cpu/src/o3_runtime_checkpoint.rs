@@ -2,6 +2,7 @@ use rem6_memory::Address;
 
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateCheckpointPayload;
+use crate::o3_runtime_trace::O3RuntimeFuLatencyClass;
 
 use super::{
     encode_register_class, encode_u32, validate_runtime_snapshot, O3LoadStoreQueueEntry,
@@ -10,7 +11,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 2;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 3;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS: u8 = 2;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS: u8 = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
@@ -52,9 +54,12 @@ impl O3RuntimeCheckpointPayload {
 
         let mut offset = O3_RUNTIME_CHECKPOINT_MAGIC.len();
         let version = read_u8(payload, &mut offset)?;
-        if version != O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS
-            && version != O3_RUNTIME_CHECKPOINT_VERSION
-        {
+        if !matches!(
+            version,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION
+        ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
         }
 
@@ -101,10 +106,13 @@ impl O3RuntimeCheckpointPayload {
             rename_map.push(read_rename_entry(payload, &mut offset)?);
         }
 
-        let stats = if version == O3_RUNTIME_CHECKPOINT_VERSION {
-            read_o3_runtime_stats(payload, &mut offset)?
-        } else {
-            O3RuntimeStats::default()
+        let stats = match version {
+            O3_RUNTIME_CHECKPOINT_VERSION => read_o3_runtime_stats(payload, &mut offset, true)?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => {
+                read_o3_runtime_stats(payload, &mut offset, false)?
+            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
+            _ => unreachable!("version was validated"),
         };
 
         if offset != payload.len() {
@@ -248,10 +256,16 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         stats.lsq_store_to_load_forwarding_matches(),
         stats.fu_latency_instructions(),
         stats.fu_latency_cycles(),
-        stats.fu_integer_mul_instructions(),
-        stats.fu_integer_mul_latency_cycles(),
-        stats.fu_integer_div_instructions(),
-        stats.fu_integer_div_latency_cycles(),
+    ] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        payload.extend_from_slice(&stats.fu_latency_class_instructions(class).to_le_bytes());
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        payload.extend_from_slice(&stats.fu_latency_class_cycles(class).to_le_bytes());
+    }
+    for value in [
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
         stats.rename_map_entries(),
@@ -313,24 +327,54 @@ fn read_rename_entry(
 fn read_o3_runtime_stats(
     payload: &[u8],
     offset: &mut usize,
+    has_class_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
+    let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
+    let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
+    let instructions = read_u64(payload, offset)?;
+    let rob_allocations = read_u64(payload, offset)?;
+    let rob_commits = read_u64(payload, offset)?;
+    let rename_writes = read_u64(payload, offset)?;
+    let lsq_loads = read_u64(payload, offset)?;
+    let lsq_stores = read_u64(payload, offset)?;
+    let lsq_load_bytes = read_u64(payload, offset)?;
+    let lsq_store_bytes = read_u64(payload, offset)?;
+    let lsq_store_to_load_forwarding_candidates = read_u64(payload, offset)?;
+    let lsq_store_to_load_forwarding_matches = read_u64(payload, offset)?;
+    let fu_latency_instructions = read_u64(payload, offset)?;
+    let fu_latency_cycles = read_u64(payload, offset)?;
+    if has_class_stats {
+        for class in O3RuntimeFuLatencyClass::ALL {
+            fu_latency_class_instructions[class.index()] = read_u64(payload, offset)?;
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            fu_latency_class_cycles[class.index()] = read_u64(payload, offset)?;
+        }
+    } else {
+        fu_latency_class_instructions[O3RuntimeFuLatencyClass::ScalarIntegerMul.index()] =
+            read_u64(payload, offset)?;
+        fu_latency_class_cycles[O3RuntimeFuLatencyClass::ScalarIntegerMul.index()] =
+            read_u64(payload, offset)?;
+        fu_latency_class_instructions[O3RuntimeFuLatencyClass::ScalarIntegerDiv.index()] =
+            read_u64(payload, offset)?;
+        fu_latency_class_cycles[O3RuntimeFuLatencyClass::ScalarIntegerDiv.index()] =
+            read_u64(payload, offset)?;
+    }
     Ok(O3RuntimeStats {
-        instructions: read_u64(payload, offset)?,
-        rob_allocations: read_u64(payload, offset)?,
-        rob_commits: read_u64(payload, offset)?,
-        rename_writes: read_u64(payload, offset)?,
-        lsq_loads: read_u64(payload, offset)?,
-        lsq_stores: read_u64(payload, offset)?,
-        lsq_load_bytes: read_u64(payload, offset)?,
-        lsq_store_bytes: read_u64(payload, offset)?,
-        lsq_store_to_load_forwarding_candidates: read_u64(payload, offset)?,
-        lsq_store_to_load_forwarding_matches: read_u64(payload, offset)?,
-        fu_latency_instructions: read_u64(payload, offset)?,
-        fu_latency_cycles: read_u64(payload, offset)?,
-        fu_integer_mul_instructions: read_u64(payload, offset)?,
-        fu_integer_mul_latency_cycles: read_u64(payload, offset)?,
-        fu_integer_div_instructions: read_u64(payload, offset)?,
-        fu_integer_div_latency_cycles: read_u64(payload, offset)?,
+        instructions,
+        rob_allocations,
+        rob_commits,
+        rename_writes,
+        lsq_loads,
+        lsq_stores,
+        lsq_load_bytes,
+        lsq_store_bytes,
+        lsq_store_to_load_forwarding_candidates,
+        lsq_store_to_load_forwarding_matches,
+        fu_latency_instructions,
+        fu_latency_cycles,
+        fu_latency_class_instructions,
+        fu_latency_class_cycles,
         max_rob_occupancy: read_u64(payload, offset)?,
         max_lsq_occupancy: read_u64(payload, offset)?,
         rename_map_entries: read_u64(payload, offset)?,

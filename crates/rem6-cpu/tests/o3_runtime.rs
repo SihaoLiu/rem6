@@ -3,13 +3,13 @@ use rem6_cpu::{
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3LoadStoreQueueEntry,
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
-    O3RuntimeStats, O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
-    O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
+    O3RuntimeFuLatencyClass, O3RuntimeStats, O3ScopedReadyInstruction, O3WritebackCompletion,
+    O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
-    RiscvExecutionRecord, RiscvInstruction, RiscvVectorMaskMode, RiscvVectorMemoryInstruction,
-    VectorRegister,
+    AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
+    RegisterWrite, RiscvExecutionRecord, RiscvInstruction, RiscvVectorFloatInstruction,
+    RiscvVectorMaskMode, RiscvVectorMemoryInstruction, VectorRegister,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
@@ -21,7 +21,7 @@ const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES + 4 * 4;
-const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = 19 * 8;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -103,6 +103,106 @@ fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
 
     assert_eq!(decoded.snapshot(), payload.snapshot());
     assert_eq!(decoded.stats(), O3RuntimeStats::default());
+}
+
+#[test]
+fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
+    let payload = RiscvCore::default_o3_runtime_checkpoint_payload();
+    let mut encoded = payload.encode();
+    let stats_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    encoded.truncate(stats_offset);
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 2;
+    for value in [7, 7, 6, 5, 4, 3, 16, 12, 2, 1, 5, 44, 2, 4, 3, 40, 9, 8, 7] as [u64; 19] {
+        encoded.extend_from_slice(&value.to_le_bytes());
+    }
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    let stats = decoded.stats();
+
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(stats.instructions(), 7);
+    assert_eq!(stats.fu_latency_instructions(), 5);
+    assert_eq!(stats.fu_latency_cycles(), 44);
+    assert_eq!(
+        stats.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarIntegerMul),
+        2
+    );
+    assert_eq!(
+        stats.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarIntegerMul),
+        4
+    );
+    assert_eq!(
+        stats.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+        3
+    );
+    assert_eq!(
+        stats.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+        40
+    );
+    assert_eq!(
+        stats.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarFloatMisc),
+        0
+    );
+    assert_eq!(stats.max_rob_occupancy(), 9);
+    assert_eq!(stats.max_lsq_occupancy(), 8);
+    assert_eq!(stats.rename_map_entries(), 7);
+}
+
+#[test]
+fn o3_runtime_checkpoint_round_trips_v3_non_integer_fu_class_stats() {
+    let core = RiscvCore::new(core(0x8000));
+    for (sequence, instruction) in [
+        (
+            1,
+            RiscvInstruction::FloatClassS {
+                rd: reg(12),
+                rs1: freg(1),
+            },
+        ),
+        (
+            2,
+            RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::ClassV {
+                vd: vreg(3),
+                vs2: vreg(2),
+            }),
+        ),
+    ] {
+        let pc = 0x8000 + sequence * 4;
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), None),
+        ));
+    }
+
+    let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    let stats = decoded.stats();
+
+    assert_eq!(decoded.encode(), encoded);
+    assert_eq!(stats.fu_latency_instructions(), 2);
+    assert_eq!(stats.fu_latency_cycles(), 4);
+    assert_eq!(
+        stats.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarFloatMisc),
+        1
+    );
+    assert_eq!(
+        stats.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarFloatMisc),
+        2
+    );
+    assert_eq!(
+        stats.fu_latency_class_instructions(O3RuntimeFuLatencyClass::VectorFloatMisc),
+        1
+    );
+    assert_eq!(
+        stats.fu_latency_class_cycles(O3RuntimeFuLatencyClass::VectorFloatMisc),
+        2
+    );
+    assert_eq!(stats.fu_integer_mul_instructions(), 0);
+    assert_eq!(stats.fu_integer_div_instructions(), 0);
 }
 
 #[test]
@@ -683,6 +783,10 @@ fn scalar_load_access() -> MemoryAccessKind {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 fn vreg(index: u8) -> VectorRegister {

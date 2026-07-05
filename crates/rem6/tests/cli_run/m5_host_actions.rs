@@ -1361,6 +1361,84 @@ fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_records_o3_float_misc_fu_latency_stats_after_detailed_switch() {
+    let path =
+        detailed_o3_float_misc_fu_latency_binary("m5-switch-cpu-detailed-o3-float-misc-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_float_misc_latency_cycles",
+        "Cycle",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_vector_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_vector_float_misc_latency_cycles",
+        "Cycle",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iq.issued_inst_type.float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
     let path = detailed_o3_checkpoint_state_binary("m5-switch-cpu-detailed-o3-checkpoint-state");
 
@@ -1888,6 +1966,56 @@ fn rem6_run_text_stats_alias_o3_fu_latency_after_detailed_switch() {
     assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_integer_div_latency_cycles", 19);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntMult", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntDiv", 1);
+}
+
+#[test]
+fn rem6_run_text_stats_alias_o3_float_misc_fu_latency_after_detailed_switch() {
+    let path =
+        detailed_o3_float_misc_fu_latency_binary("m5-switch-cpu-detailed-o3-float-misc-text-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.fu_latency_instructions", 4);
+    assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_latency_cycles", 6);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.fu_float_misc_instructions", 2);
+    assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_float_misc_latency_cycles", 3);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.fu_vector_float_misc_instructions", 2);
+    assert_text_cycle_stat(
+        &stdout,
+        "sim.cpu0.o3.fu_vector_float_misc_latency_cycles",
+        3,
+    );
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.iq.issued_inst_type.float_misc", 2);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+        2,
+    );
+    assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::FloatMisc", 2);
+    assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::SimdFloatMisc", 2);
 }
 
 #[test]
@@ -2708,6 +2836,29 @@ fn m5op(function: u32) -> u32 {
     (function << 25) | 0x7b
 }
 
+fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
+    (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
+}
+
+fn vector_arith_type(funct6: u32, funct3: u32, vs2: u8, vs1_or_rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1_or_rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x53
+}
+
 fn run_m5_checkpoint_memory_checksums(name: &str, dram_memory: bool) -> (String, String) {
     let words = [
         m5op(M5_CHECKPOINT),
@@ -2893,6 +3044,28 @@ fn detailed_o3_fu_latency_binary(name: &str) -> std::path::PathBuf {
         0x0220_c1b3,                 // div x3, x1, x2
         m5op(M5_EXIT),
         i_type(77, 0, 0x0, 13, 0x13), // addi x13, x0, 77
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_float_misc_fu_latency_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        u_type(0x3f80_0000, 8, 0x37),                   // lui x8, 1.0f bits
+        fp_r_type(0x78, 0, 8, 0x0, 1),                  // fmv.w.x f1, x8
+        fp_r_type(0x78, 0, 8, 0x0, 2),                  // fmv.w.x f2, x8
+        i_type(3, 0, 0x0, 9, 0x13),                     // addi x9, x0, 3
+        i_type(2, 0, 0x0, 10, 0x13),                    // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                      // e32, m1, vl=2
+        vector_arith_type(0b010111, 0b100, 0, 1, 1),    // vfmv.v.f v1, f1
+        vector_arith_type(0b010111, 0b100, 0, 2, 2),    // vfmv.v.f v2, f2
+        m5op(M5_SWITCH_CPU),                            // switch cpu0 to detailed
+        fp_r_type(0x68, 0, 9, 0x0, 3),                  // fcvt.s.w f3, x9
+        fp_r_type(0x10, 2, 1, 0x0, 4),                  // fsgnj.s f4, f1, f2
+        vector_arith_type(0b010010, 0b001, 1, 0x02, 3), // vfsgnj.vv v3, v2, v1
+        vector_arith_type(0b001000, 0b001, 2, 1, 4),    // vfsgnj.vv v4, v1, v2
+        m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

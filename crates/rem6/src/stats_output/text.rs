@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
@@ -631,13 +631,37 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 loads.saturating_add(stores),
             );
         }
-        for (op_class, source_name) in [
-            ("MemRead", "lsq_loads"),
-            ("MemWrite", "lsq_stores"),
-            ("IntMult", "fu_integer_mul_instructions"),
-            ("IntDiv", "fu_integer_div_instructions"),
-        ] {
+        for (op_class, source_name) in [("MemRead", "lsq_loads"), ("MemWrite", "lsq_stores")] {
             let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
+            if let Some(value) = snapshot_value(snapshot, &source_path) {
+                append_derived_count_stat(
+                    output,
+                    &format!("{alias_prefix}.iq.issuedInstType_0::{op_class}"),
+                    value,
+                );
+            }
+        }
+        for (op_class, class) in [
+            ("IntMult", O3RuntimeFuLatencyClass::ScalarIntegerMul),
+            ("IntDiv", O3RuntimeFuLatencyClass::ScalarIntegerDiv),
+            ("FloatAdd", O3RuntimeFuLatencyClass::ScalarFloatAdd),
+            ("FloatCmp", O3RuntimeFuLatencyClass::ScalarFloatCompare),
+            ("FloatMisc", O3RuntimeFuLatencyClass::ScalarFloatMisc),
+            ("FloatMult", O3RuntimeFuLatencyClass::ScalarFloatMul),
+            ("FloatMultAcc", O3RuntimeFuLatencyClass::ScalarFloatFma),
+            ("FloatDiv", O3RuntimeFuLatencyClass::ScalarFloatDiv),
+            ("FloatSqrt", O3RuntimeFuLatencyClass::ScalarFloatSqrt),
+            ("SimdMult", O3RuntimeFuLatencyClass::VectorIntegerMul),
+            ("SimdDiv", O3RuntimeFuLatencyClass::VectorIntegerDiv),
+            ("SimdFloatAdd", O3RuntimeFuLatencyClass::VectorFloatAdd),
+            ("SimdFloatCmp", O3RuntimeFuLatencyClass::VectorFloatCompare),
+            ("SimdFloatMisc", O3RuntimeFuLatencyClass::VectorFloatMisc),
+            ("SimdFloatMult", O3RuntimeFuLatencyClass::VectorFloatMul),
+            ("SimdFloatMultAcc", O3RuntimeFuLatencyClass::VectorFloatFma),
+            ("SimdFloatDiv", O3RuntimeFuLatencyClass::VectorFloatDiv),
+            ("SimdFloatSqrt", O3RuntimeFuLatencyClass::VectorFloatSqrt),
+        ] {
+            let source_path = format!("sim.cpu{cpu}.o3.fu_{}_instructions", class.stat_stem());
             if let Some(value) = snapshot_value(snapshot, &source_path) {
                 append_derived_count_stat(
                     output,

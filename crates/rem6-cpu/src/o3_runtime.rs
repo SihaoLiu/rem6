@@ -702,10 +702,8 @@ pub struct O3RuntimeStats {
     lsq_store_to_load_forwarding_matches: u64,
     fu_latency_instructions: u64,
     fu_latency_cycles: u64,
-    fu_integer_mul_instructions: u64,
-    fu_integer_mul_latency_cycles: u64,
-    fu_integer_div_instructions: u64,
-    fu_integer_div_latency_cycles: u64,
+    fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
+    fu_latency_class_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     max_rob_occupancy: u64,
     max_lsq_occupancy: u64,
     rename_map_entries: u64,
@@ -760,20 +758,28 @@ impl O3RuntimeStats {
         self.fu_latency_cycles
     }
 
-    pub const fn fu_integer_mul_instructions(self) -> u64 {
-        self.fu_integer_mul_instructions
+    pub fn fu_latency_class_instructions(self, class: O3RuntimeFuLatencyClass) -> u64 {
+        self.fu_latency_class_instructions[class.index()]
     }
 
-    pub const fn fu_integer_mul_latency_cycles(self) -> u64 {
-        self.fu_integer_mul_latency_cycles
+    pub fn fu_latency_class_cycles(self, class: O3RuntimeFuLatencyClass) -> u64 {
+        self.fu_latency_class_cycles[class.index()]
     }
 
-    pub const fn fu_integer_div_instructions(self) -> u64 {
-        self.fu_integer_div_instructions
+    pub fn fu_integer_mul_instructions(self) -> u64 {
+        self.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarIntegerMul)
     }
 
-    pub const fn fu_integer_div_latency_cycles(self) -> u64 {
-        self.fu_integer_div_latency_cycles
+    pub fn fu_integer_mul_latency_cycles(self) -> u64 {
+        self.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarIntegerMul)
+    }
+
+    pub fn fu_integer_div_instructions(self) -> u64 {
+        self.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarIntegerDiv)
+    }
+
+    pub fn fu_integer_div_latency_cycles(self) -> u64 {
+        self.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarIntegerDiv)
     }
 
     pub const fn max_rob_occupancy(self) -> u64 {
@@ -801,10 +807,6 @@ impl O3RuntimeStats {
             || self.lsq_store_to_load_forwarding_matches != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
-            || self.fu_integer_mul_instructions != 0
-            || self.fu_integer_mul_latency_cycles != 0
-            || self.fu_integer_div_instructions != 0
-            || self.fu_integer_div_latency_cycles != 0
             || self.max_rob_occupancy != 0
             || self.max_lsq_occupancy != 0
             || self.rename_map_entries != 0
@@ -837,40 +839,12 @@ impl O3RuntimeStats {
         if fu_latency_cycles > 0 {
             self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
             self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);
-            match o3_fu_latency_class(record.instruction()) {
-                Some(O3RuntimeFuLatencyClass::ScalarIntegerMul) => {
-                    self.fu_integer_mul_instructions =
-                        self.fu_integer_mul_instructions.saturating_add(1);
-                    self.fu_integer_mul_latency_cycles = self
-                        .fu_integer_mul_latency_cycles
-                        .saturating_add(fu_latency_cycles);
-                }
-                Some(O3RuntimeFuLatencyClass::ScalarIntegerDiv) => {
-                    self.fu_integer_div_instructions =
-                        self.fu_integer_div_instructions.saturating_add(1);
-                    self.fu_integer_div_latency_cycles = self
-                        .fu_integer_div_latency_cycles
-                        .saturating_add(fu_latency_cycles);
-                }
-                Some(
-                    O3RuntimeFuLatencyClass::ScalarFloatAdd
-                    | O3RuntimeFuLatencyClass::ScalarFloatCompare
-                    | O3RuntimeFuLatencyClass::ScalarFloatMisc
-                    | O3RuntimeFuLatencyClass::ScalarFloatMul
-                    | O3RuntimeFuLatencyClass::ScalarFloatFma
-                    | O3RuntimeFuLatencyClass::ScalarFloatDiv
-                    | O3RuntimeFuLatencyClass::ScalarFloatSqrt
-                    | O3RuntimeFuLatencyClass::VectorFloatAdd
-                    | O3RuntimeFuLatencyClass::VectorFloatCompare
-                    | O3RuntimeFuLatencyClass::VectorFloatMisc
-                    | O3RuntimeFuLatencyClass::VectorFloatMul
-                    | O3RuntimeFuLatencyClass::VectorFloatFma
-                    | O3RuntimeFuLatencyClass::VectorFloatDiv
-                    | O3RuntimeFuLatencyClass::VectorFloatSqrt
-                    | O3RuntimeFuLatencyClass::VectorIntegerMul
-                    | O3RuntimeFuLatencyClass::VectorIntegerDiv,
-                ) => {}
-                None => {}
+            if let Some(class) = o3_fu_latency_class(record.instruction()) {
+                let index = class.index();
+                self.fu_latency_class_instructions[index] =
+                    self.fu_latency_class_instructions[index].saturating_add(1);
+                self.fu_latency_class_cycles[index] =
+                    self.fu_latency_class_cycles[index].saturating_add(fu_latency_cycles);
             }
         }
 
