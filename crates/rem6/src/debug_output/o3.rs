@@ -14,7 +14,8 @@ mod o3_branch_stats;
 use o3_branch_stats::{
     o3_branch_kind_stat_suffix, o3_branch_link_write_kind_stat_suffix,
     o3_branch_misprediction_kind_stat_suffix, o3_branch_not_taken_kind_stat_suffix,
-    o3_branch_predicted_taken_kind_stat_suffix, o3_branch_predicted_target_match_kind_stat_suffix,
+    o3_branch_predicted_not_taken_kind_stat_suffix, o3_branch_predicted_taken_kind_stat_suffix,
+    o3_branch_predicted_target_match_kind_stat_suffix,
     o3_branch_predicted_target_mismatch_kind_stat_suffix,
     o3_branch_resolved_target_kind_stat_suffix, o3_branch_squash_kind_stat_suffix,
     o3_branch_taken_kind_stat_suffix, o3_branch_targetless_mismatch_kind_stat_suffix,
@@ -344,6 +345,7 @@ struct Rem6O3TraceTotals {
     event_branch_taken: u64,
     event_branch_not_taken: u64,
     event_branch_predicted_taken: u64,
+    event_branch_predicted_not_taken: u64,
     event_branch_predicted_target_matches: u64,
     event_branch_predicted_target_mismatches: u64,
     event_branch_targetless_mismatches: u64,
@@ -355,6 +357,7 @@ struct Rem6O3TraceTotals {
     event_branch_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_not_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_taken_kinds: [u64; BranchTargetKind::COUNT],
+    event_branch_predicted_not_taken_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     event_branch_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
@@ -712,6 +715,9 @@ impl Rem6O3TraceTotals {
         self.event_branch_predicted_taken = self
             .event_branch_predicted_taken
             .saturating_add(u64::from(event.branch_predicted_taken()));
+        self.event_branch_predicted_not_taken = self
+            .event_branch_predicted_not_taken
+            .saturating_add(u64::from(!event.branch_predicted_taken()));
         let predicted_target_matches = event
             .branch_predicted_target()
             .is_some_and(|target| Some(target) == event.branch_resolved_target());
@@ -753,6 +759,9 @@ impl Rem6O3TraceTotals {
         if event.branch_predicted_taken() {
             self.event_branch_predicted_taken_kinds[index] =
                 self.event_branch_predicted_taken_kinds[index].saturating_add(1);
+        } else {
+            self.event_branch_predicted_not_taken_kinds[index] =
+                self.event_branch_predicted_not_taken_kinds[index].saturating_add(1);
         }
         if predicted_target_matches {
             self.event_branch_predicted_target_match_kinds[index] =
@@ -1040,6 +1049,10 @@ impl Rem6O3TraceTotals {
                 self.event_branch_predicted_taken,
             ),
             (
+                "event.branch_predicted_not_taken",
+                self.event_branch_predicted_not_taken,
+            ),
+            (
                 "event.branch_predicted_target_matches",
                 self.event_branch_predicted_target_matches,
             ),
@@ -1126,6 +1139,16 @@ impl Rem6O3TraceTotals {
                 suffix: o3_branch_predicted_taken_kind_stat_suffix(kind),
                 unit: "Count",
                 value: self.event_branch_predicted_taken_kinds[kind.index()],
+            });
+        }
+        for kind in BranchTargetKind::ALL {
+            if matches!(kind, BranchTargetKind::NoBranch) {
+                continue;
+            }
+            stats.push(Rem6O3TraceStat {
+                suffix: o3_branch_predicted_not_taken_kind_stat_suffix(kind),
+                unit: "Count",
+                value: self.event_branch_predicted_not_taken_kinds[kind.index()],
             });
         }
         for kind in BranchTargetKind::ALL {

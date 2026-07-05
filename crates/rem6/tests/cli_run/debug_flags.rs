@@ -7603,6 +7603,14 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         system_events > 0,
         "O3 events should include system work: {events:?}"
     );
+    let branch_predicted_not_taken = events
+        .iter()
+        .filter(|event| {
+            json_record_bool(event, "branch_event")
+                && !json_record_bool(event, "branch_predicted_taken")
+        })
+        .count() as u64;
+    assert_eq!(branch_predicted_not_taken, 1);
 
     let branch = events
         .iter()
@@ -7633,6 +7641,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         ),
         ("sim.debug.o3_trace.event.branches", "Count", 1),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 1),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_not_taken",
+            "Count",
+            branch_predicted_not_taken,
+        ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 1),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 1),
         ("sim.debug.o3_trace.event.branch_link_writes", "Count", 1),
@@ -7643,6 +7656,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
         ),
         (
             "sim.debug.o3_trace.event.branch_taken_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_not_taken_kind.call_indirect",
             "Count",
             1,
         ),
@@ -11613,6 +11631,16 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.lsq_store_conditional_failures",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_not_taken",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_not_taken_kind.call_indirect",
             "Count",
             0,
         ),
