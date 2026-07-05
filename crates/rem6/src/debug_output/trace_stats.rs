@@ -102,6 +102,7 @@ struct PipelineStageTraceStatSummary {
     flushed: u64,
     flushed_cycles: u64,
     resource_blocked: u64,
+    resource_blocked_cycles: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -392,8 +393,11 @@ impl PipelineStageTraceStatSummary {
         }
     }
 
-    fn add_resource_blocked(&mut self, resource_blocked: u64) {
+    fn add_resource_blocked(&mut self, resource_blocked: u64, resource_blocked_cycles: u64) {
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
+        self.resource_blocked_cycles = self
+            .resource_blocked_cycles
+            .saturating_add(resource_blocked_cycles);
     }
 
     fn add_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
@@ -408,6 +412,11 @@ impl PipelineStageTraceStatSummary {
             ("flushed", "Count", self.flushed),
             ("flushed_cycles", "Cycle", self.flushed_cycles),
             ("resource_blocked", "Count", self.resource_blocked),
+            (
+                "resource_blocked_cycles",
+                "Cycle",
+                self.resource_blocked_cycles,
+            ),
         ] {
             stats.push(Rem6PipelineTraceStat {
                 path: format!("{prefix}.{suffix}"),
@@ -601,7 +610,7 @@ pub(super) fn pipeline_trace_stats(
             stages
                 .entry(stage.clone())
                 .or_default()
-                .add_resource_blocked(*resource_blocked);
+                .add_resource_blocked(*resource_blocked, 1);
         }
         let mut stage_flushed = BTreeMap::<String, u64>::new();
         for instruction in &record.flushed {

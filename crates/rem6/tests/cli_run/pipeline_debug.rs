@@ -62,6 +62,29 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    let mut aggregate_stage_blocked = BTreeMap::<String, u64>::new();
+    let mut aggregate_stage_blocked_cycles = BTreeMap::<String, u64>::new();
+    for record in trace {
+        let mut stage_present = BTreeMap::<String, bool>::new();
+        for blocked in record_array(record, "resource_blocked") {
+            let stage = blocked
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing blocked instruction stage: {blocked}"));
+            let stage = stat_path_segment(stage);
+            *aggregate_stage_blocked.entry(stage.clone()).or_default() += 1;
+            stage_present.insert(stage, true);
+        }
+        for stage in stage_present.keys() {
+            *aggregate_stage_blocked_cycles
+                .entry(stage.clone())
+                .or_default() += 1;
+        }
+    }
+    assert!(
+        !aggregate_stage_blocked_cycles.is_empty(),
+        "data-wait run should emit aggregate resource-blocked stage cycles: {trace:?}"
+    );
     let wait_records = trace
         .iter()
         .filter(|record| record.get("stall_cause").and_then(Value::as_str) == Some("data_wait"))
@@ -109,6 +132,24 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
         stall_cycles,
         "monotonic",
     );
+    for (stage, blocked) in aggregate_stage_blocked {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.resource_blocked"),
+            "Count",
+            blocked,
+            "monotonic",
+        );
+    }
+    for (stage, cycles) in aggregate_stage_blocked_cycles {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.resource_blocked_cycles"),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
     for (stage, blocked) in stage_blocked {
         assert_stat(
             &stdout,
