@@ -313,10 +313,16 @@ impl O3RuntimeState {
         if let Some(sequence) = trace_sequence {
             self.mark_trace_data_access_outcome(sequence, response_tick, latency_ticks);
         }
-        if runtime_sequence.is_some() && o3_store_conditional_failed(execution) {
-            self.stats.record_store_conditional_failure();
-            if let Some(sequence) = trace_sequence {
-                self.mark_trace_store_conditional_failed(sequence);
+        if runtime_sequence.is_some() {
+            if let Some(access) = execution.execution().memory_access() {
+                self.stats
+                    .record_lsq_operation_latency(o3_lsq_operation(access), latency_ticks);
+            }
+            if o3_store_conditional_failed(execution) {
+                self.stats.record_store_conditional_failure();
+                if let Some(sequence) = trace_sequence {
+                    self.mark_trace_store_conditional_failed(sequence);
+                }
             }
         }
     }
@@ -778,6 +784,26 @@ impl O3RuntimeStats {
 
     fn record_store_conditional_failure(&mut self) {
         self.lsq_store_conditional_failures = self.lsq_store_conditional_failures.saturating_add(1);
+    }
+
+    fn record_lsq_operation_latency(
+        &mut self,
+        operation: O3RuntimeLsqOperation,
+        latency_ticks: u64,
+    ) {
+        if operation == O3RuntimeLsqOperation::None {
+            return;
+        }
+        let index = operation.index();
+        let samples = self.lsq_operation_latency_samples[index];
+        self.lsq_operation_latency_samples[index] = samples.saturating_add(1);
+        self.lsq_operation_latency_ticks[index] =
+            self.lsq_operation_latency_ticks[index].saturating_add(latency_ticks);
+        self.lsq_operation_latency_max_ticks[index] =
+            self.lsq_operation_latency_max_ticks[index].max(latency_ticks);
+        if samples == 0 || latency_ticks < self.lsq_operation_latency_min_ticks[index] {
+            self.lsq_operation_latency_min_ticks[index] = latency_ticks;
+        }
     }
 
     fn record_branch_repair(&mut self, event: O3RuntimeTraceRecord) {
@@ -1354,7 +1380,58 @@ mod tests {
             stats.lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
             1
         );
+        assert_eq!(
+            stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_min_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_max_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_avg_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
         assert_eq!(stats.lsq_store_conditional_failures(), 1);
+    }
+
+    #[test]
+    fn lsq_operation_latency_min_keeps_zero_tick_sample() {
+        let mut runtime = O3RuntimeState::default();
+        let first = store_conditional_event(0x8000, 10);
+        let second = store_conditional_event(0x8004, 11);
+
+        runtime.record_retired_instruction(&first);
+        runtime.record_retired_instruction(&second);
+        runtime.record_data_access_outcome(&first, 41, 0);
+        runtime.record_data_access_outcome(&second, 46, 5);
+
+        let stats = runtime.stats();
+
+        assert_eq!(
+            stats.lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
+            2
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
+            5
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_min_ticks(O3RuntimeLsqOperation::StoreConditional),
+            0
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_max_ticks(O3RuntimeLsqOperation::StoreConditional),
+            5
+        );
+        assert_eq!(
+            stats.lsq_operation_latency_avg_ticks(O3RuntimeLsqOperation::StoreConditional),
+            2
+        );
     }
 
     #[test]
@@ -1381,6 +1458,30 @@ mod tests {
                 .stats()
                 .lsq_operation_count(O3RuntimeLsqOperation::StoreConditional),
             1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .lsq_operation_latency_min_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .lsq_operation_latency_max_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .lsq_operation_latency_avg_ticks(O3RuntimeLsqOperation::StoreConditional),
+            7
         );
     }
 

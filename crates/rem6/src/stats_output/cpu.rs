@@ -978,6 +978,34 @@ fn emit_o3_runtime_stats(
             StatResetPolicy::Monotonic,
             o3.lsq_operation_count(operation),
         )?;
+        for (suffix, value) in [
+            ("latency_ticks", o3.lsq_operation_latency_ticks(operation)),
+            (
+                "latency_max_ticks",
+                o3.lsq_operation_latency_max_ticks(operation),
+            ),
+            (
+                "latency_min_ticks",
+                o3.lsq_operation_latency_min_ticks(operation),
+            ),
+            (
+                "latency_avg_ticks",
+                o3.lsq_operation_latency_avg_ticks(operation),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.lsq_operation.{}_{}",
+                    core.cpu,
+                    operation.as_str(),
+                    suffix
+                ),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for ordering in O3RuntimeLsqOrdering::TRACKED {
         increment_stat(

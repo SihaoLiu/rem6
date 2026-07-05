@@ -13,7 +13,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 5;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 6;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS: u8 = 5;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS: u8 = 4;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS: u8 = 3;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS: u8 = 2;
@@ -64,6 +65,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -114,16 +116,19 @@ impl O3RuntimeCheckpointPayload {
 
         let stats = match version {
             O3_RUNTIME_CHECKPOINT_VERSION => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, true)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, true)?
+            }
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS => {
+                read_o3_runtime_stats(payload, &mut offset, true, true, true, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, true, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, true, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, true, false, false)?
+                read_o3_runtime_stats(payload, &mut offset, true, false, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => {
-                read_o3_runtime_stats(payload, &mut offset, false, false, false)?
+                read_o3_runtime_stats(payload, &mut offset, false, false, false, false)?
             }
             O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
             _ => unreachable!("version was validated"),
@@ -282,6 +287,26 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     for operation in O3RuntimeLsqOperation::TRACKED {
         payload.extend_from_slice(&stats.lsq_operation_count(operation).to_le_bytes());
     }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(&stats.lsq_operation_latency_samples(operation).to_le_bytes());
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(&stats.lsq_operation_latency_ticks(operation).to_le_bytes());
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(
+            &stats
+                .lsq_operation_latency_max_ticks(operation)
+                .to_le_bytes(),
+        );
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(
+            &stats
+                .lsq_operation_latency_min_ticks(operation)
+                .to_le_bytes(),
+        );
+    }
     for ordering in O3RuntimeLsqOrdering::TRACKED {
         payload.extend_from_slice(&stats.lsq_ordering_count(ordering).to_le_bytes());
     }
@@ -371,10 +396,15 @@ fn read_o3_runtime_stats(
     has_class_stats: bool,
     has_lsq_matrix_stats: bool,
     has_branch_repair_stats: bool,
+    has_lsq_latency_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_latency_samples = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_latency_ticks = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_latency_max_ticks = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_latency_min_ticks = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_ordering_counts = [0; O3RuntimeLsqOrdering::COUNT];
     let mut branch_repair_targetless_mismatch_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_repair_wrong_target_kinds = [0; crate::BranchTargetKind::COUNT];
@@ -411,6 +441,20 @@ fn read_o3_runtime_stats(
     let lsq_store_conditional_failures = if has_lsq_matrix_stats {
         for operation in O3RuntimeLsqOperation::TRACKED {
             lsq_operation_counts[operation.index()] = read_u64(payload, offset)?;
+        }
+        if has_lsq_latency_stats {
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_latency_samples[operation.index()] = read_u64(payload, offset)?;
+            }
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_latency_ticks[operation.index()] = read_u64(payload, offset)?;
+            }
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_latency_max_ticks[operation.index()] = read_u64(payload, offset)?;
+            }
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_latency_min_ticks[operation.index()] = read_u64(payload, offset)?;
+            }
         }
         for ordering in O3RuntimeLsqOrdering::TRACKED {
             lsq_ordering_counts[ordering.index()] = read_u64(payload, offset)?;
@@ -452,6 +496,10 @@ fn read_o3_runtime_stats(
         lsq_store_to_load_forwarding_candidates,
         lsq_store_to_load_forwarding_matches,
         lsq_operation_counts,
+        lsq_operation_latency_samples,
+        lsq_operation_latency_ticks,
+        lsq_operation_latency_max_ticks,
+        lsq_operation_latency_min_ticks,
         lsq_ordering_counts,
         lsq_store_conditional_failures,
         branch_repair_targetless_mismatches,

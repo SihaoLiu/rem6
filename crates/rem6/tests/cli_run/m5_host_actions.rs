@@ -2556,6 +2556,92 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
             "stat registry should match structured runtime {field}"
         );
     }
+
+    for operation in [
+        "load",
+        "store",
+        "load_reserved",
+        "store_conditional",
+        "atomic",
+    ] {
+        let total_field = format!("lsq_operation_{operation}_latency_ticks");
+        let max_field = format!("lsq_operation_{operation}_latency_max_ticks");
+        let min_field = format!("lsq_operation_{operation}_latency_min_ticks");
+        let avg_field = format!("lsq_operation_{operation}_latency_avg_ticks");
+        let total = o3_runtime
+            .pointer(&format!("/{total_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {total_field}: {o3_runtime}")
+            });
+        let max = o3_runtime
+            .pointer(&format!("/{max_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {max_field}: {o3_runtime}")
+            });
+        let min = o3_runtime
+            .pointer(&format!("/{min_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {min_field}: {o3_runtime}")
+            });
+        let avg = o3_runtime
+            .pointer(&format!("/{avg_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {avg_field}: {o3_runtime}")
+            });
+        assert!(total > 0, "{total_field} should be positive: {o3_runtime}");
+        assert!(
+            max >= min && min > 0,
+            "invalid latency bounds for {operation}: {o3_runtime}"
+        );
+        assert!(
+            avg >= min && avg <= max,
+            "average latency should stay within bounds for {operation}: {o3_runtime}"
+        );
+        for (suffix, value) in [
+            ("latency_ticks", total),
+            ("latency_max_ticks", max),
+            ("latency_min_ticks", min),
+            ("latency_avg_ticks", avg),
+        ] {
+            assert_eq!(
+                json_stat_value(
+                    &json,
+                    &format!("sim.cpu0.o3.lsq_operation.{operation}_{suffix}")
+                ),
+                value,
+                "stat registry should match structured runtime {operation}_{suffix}"
+            );
+        }
+    }
+    for operation in ["float_load", "float_store", "vector_load", "vector_store"] {
+        for field in [
+            "latency_ticks",
+            "latency_max_ticks",
+            "latency_min_ticks",
+            "latency_avg_ticks",
+        ] {
+            let runtime_field = format!("lsq_operation_{operation}_{field}");
+            assert_eq!(
+                o3_runtime
+                    .pointer(&format!("/{runtime_field}"))
+                    .and_then(Value::as_u64),
+                Some(0),
+                "structured O3 runtime JSON should expose inactive {runtime_field}: {o3_runtime}"
+            );
+            assert_eq!(
+                json_stat_value(
+                    &json,
+                    &format!("sim.cpu0.o3.lsq_operation.{operation}_{field}")
+                ),
+                0,
+                "stat registry should expose inactive {operation}_{field}"
+            );
+        }
+    }
 }
 
 #[test]

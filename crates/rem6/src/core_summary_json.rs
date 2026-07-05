@@ -75,12 +75,36 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
 fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
     O3RuntimeLsqOperation::TRACKED
         .into_iter()
-        .map(|operation| {
-            format!(
-                "\"lsq_operation_{}\":{}",
-                operation.as_str(),
-                summary.o3_runtime.lsq_operation_count(operation)
-            )
+        .flat_map(|operation| {
+            let name = operation.as_str();
+            [
+                format!(
+                    "\"lsq_operation_{name}\":{}",
+                    summary.o3_runtime.lsq_operation_count(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_latency_ticks\":{}",
+                    summary.o3_runtime.lsq_operation_latency_ticks(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_latency_max_ticks\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_latency_max_ticks(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_latency_min_ticks\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_latency_min_ticks(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_latency_avg_ticks\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_latency_avg_ticks(operation)
+                ),
+            ]
         })
         .collect::<Vec<_>>()
         .join(",")
