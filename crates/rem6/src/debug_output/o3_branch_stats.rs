@@ -85,6 +85,27 @@ pub(super) fn o3_branch_predicted_not_taken_kind_stat_suffix(
     }
 }
 
+pub(super) fn o3_branch_predicted_target_kind_stat_suffix(kind: BranchTargetKind) -> &'static str {
+    match kind {
+        BranchTargetKind::NoBranch => "event.branch_predicted_target_kind.no_branch",
+        BranchTargetKind::Return => "event.branch_predicted_target_kind.return",
+        BranchTargetKind::CallDirect => "event.branch_predicted_target_kind.call_direct",
+        BranchTargetKind::CallIndirect => "event.branch_predicted_target_kind.call_indirect",
+        BranchTargetKind::DirectConditional => {
+            "event.branch_predicted_target_kind.direct_conditional"
+        }
+        BranchTargetKind::DirectUnconditional => {
+            "event.branch_predicted_target_kind.direct_unconditional"
+        }
+        BranchTargetKind::IndirectConditional => {
+            "event.branch_predicted_target_kind.indirect_conditional"
+        }
+        BranchTargetKind::IndirectUnconditional => {
+            "event.branch_predicted_target_kind.indirect_unconditional"
+        }
+    }
+}
+
 pub(super) fn o3_branch_predicted_target_match_kind_stat_suffix(
     kind: BranchTargetKind,
 ) -> &'static str {

@@ -9064,6 +9064,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
             branch_predicted_targets,
         ),
         (
+            "sim.debug.o3_trace.event.branch_predicted_target_kind.direct_conditional",
+            "Count",
+            branch_predicted_targets,
+        ),
+        (
             "sim.debug.o3_trace.event.branch_predicted_target_matches",
             "Count",
             1,
@@ -11696,6 +11701,11 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_targets",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.branch_predicted_target_kind.direct_conditional",
             "Count",
             0,
         ),
