@@ -966,6 +966,41 @@ fn emit_o3_runtime_stats(
             o3.fu_latency_class_instructions(class),
         )?;
     }
+    for (name, unit, value) in [
+        (
+            "lsq_data_latency_samples",
+            "Count",
+            o3.lsq_data_latency_samples(),
+        ),
+        (
+            "lsq_data_latency_ticks",
+            "Tick",
+            o3.lsq_data_latency_ticks(),
+        ),
+        (
+            "lsq_data_latency_max_ticks",
+            "Tick",
+            o3.lsq_data_latency_max_ticks(),
+        ),
+        (
+            "lsq_data_latency_min_ticks",
+            "Tick",
+            o3.lsq_data_latency_min_ticks(),
+        ),
+        (
+            "lsq_data_latency_avg_ticks",
+            "Tick",
+            o3.lsq_data_latency_avg_ticks(),
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     for operation in O3RuntimeLsqOperation::TRACKED {
         increment_stat(
             stats,

@@ -114,6 +114,17 @@ fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
         .join(",")
 }
 
+fn o3_runtime_lsq_data_latency_json(summary: &Rem6CoreSummary) -> String {
+    format!(
+        "\"lsq_data_latency_samples\":{},\"lsq_data_latency_ticks\":{},\"lsq_data_latency_max_ticks\":{},\"lsq_data_latency_min_ticks\":{},\"lsq_data_latency_avg_ticks\":{}",
+        summary.o3_runtime.lsq_data_latency_samples(),
+        summary.o3_runtime.lsq_data_latency_ticks(),
+        summary.o3_runtime.lsq_data_latency_max_ticks(),
+        summary.o3_runtime.lsq_data_latency_min_ticks(),
+        summary.o3_runtime.lsq_data_latency_avg_ticks()
+    )
+}
+
 fn o3_runtime_lsq_ordering_json(summary: &Rem6CoreSummary) -> String {
     O3RuntimeLsqOrdering::TRACKED
         .into_iter()
@@ -148,10 +159,11 @@ impl Rem6CoreSummary {
             .unwrap_or_default();
         let o3_runtime = if self.o3_runtime.has_activity() {
             let fu_latency_classes = o3_runtime_fu_latency_class_json(self);
+            let lsq_data_latency = o3_runtime_lsq_data_latency_json(self);
             let lsq_operations = o3_runtime_lsq_operation_json(self);
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -165,6 +177,7 @@ impl Rem6CoreSummary {
                 self.o3_runtime.fu_latency_instructions(),
                 self.o3_runtime.fu_latency_cycles(),
                 fu_latency_classes,
+                lsq_data_latency,
                 lsq_operations,
                 lsq_orderings,
                 self.o3_runtime.lsq_store_conditional_failures(),

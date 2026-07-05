@@ -33,11 +33,13 @@ const O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES: usize =
         + O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES: usize =
     O3RuntimeLsqOperation::TRACKED.len() * 4 * 8;
+const O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES: usize = 4 * 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES: usize =
     (3 + BranchTargetKind::COUNT * 3) * 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
     + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+    + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
@@ -223,6 +225,7 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
         &encoded[newer_stats_offset
             + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
             + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+            + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
             + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES..],
     ]
     .concat();
@@ -340,7 +343,9 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
     let lsq_latency_offset = stats_offset
         + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES;
-    let lsq_ordering_offset = lsq_latency_offset + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES;
+    let lsq_ordering_offset = lsq_latency_offset
+        + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES;
     let branch_repair_offset = lsq_ordering_offset + O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES;
     let mut encoded = [
         &encoded[..lsq_latency_offset],
@@ -432,7 +437,9 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     let lsq_latency_offset = stats_offset
         + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES;
-    let lsq_ordering_offset = lsq_latency_offset + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES;
+    let lsq_ordering_offset = lsq_latency_offset
+        + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES;
     let mut encoded = [
         &encoded[..lsq_latency_offset],
         &encoded[lsq_ordering_offset..],

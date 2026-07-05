@@ -794,6 +794,14 @@ impl O3RuntimeStats {
         if operation == O3RuntimeLsqOperation::None {
             return;
         }
+        let aggregate_samples = self.lsq_data_latency_samples;
+        self.lsq_data_latency_samples = aggregate_samples.saturating_add(1);
+        self.lsq_data_latency_ticks = self.lsq_data_latency_ticks.saturating_add(latency_ticks);
+        self.lsq_data_latency_max_ticks = self.lsq_data_latency_max_ticks.max(latency_ticks);
+        if aggregate_samples == 0 || latency_ticks < self.lsq_data_latency_min_ticks {
+            self.lsq_data_latency_min_ticks = latency_ticks;
+        }
+
         let index = operation.index();
         let samples = self.lsq_operation_latency_samples[index];
         self.lsq_operation_latency_samples[index] = samples.saturating_add(1);
@@ -1384,6 +1392,11 @@ mod tests {
             stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
             7
         );
+        assert_eq!(stats.lsq_data_latency_samples(), 1);
+        assert_eq!(stats.lsq_data_latency_ticks(), 7);
+        assert_eq!(stats.lsq_data_latency_min_ticks(), 7);
+        assert_eq!(stats.lsq_data_latency_max_ticks(), 7);
+        assert_eq!(stats.lsq_data_latency_avg_ticks(), 7);
         assert_eq!(
             stats.lsq_operation_latency_min_ticks(O3RuntimeLsqOperation::StoreConditional),
             7
@@ -1420,6 +1433,11 @@ mod tests {
             stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
             5
         );
+        assert_eq!(stats.lsq_data_latency_samples(), 2);
+        assert_eq!(stats.lsq_data_latency_ticks(), 5);
+        assert_eq!(stats.lsq_data_latency_min_ticks(), 0);
+        assert_eq!(stats.lsq_data_latency_max_ticks(), 5);
+        assert_eq!(stats.lsq_data_latency_avg_ticks(), 2);
         assert_eq!(
             stats.lsq_operation_latency_min_ticks(O3RuntimeLsqOperation::StoreConditional),
             0
@@ -1465,6 +1483,11 @@ mod tests {
                 .lsq_operation_latency_ticks(O3RuntimeLsqOperation::StoreConditional),
             7
         );
+        assert_eq!(decoded.stats().lsq_data_latency_samples(), 1);
+        assert_eq!(decoded.stats().lsq_data_latency_ticks(), 7);
+        assert_eq!(decoded.stats().lsq_data_latency_min_ticks(), 7);
+        assert_eq!(decoded.stats().lsq_data_latency_max_ticks(), 7);
+        assert_eq!(decoded.stats().lsq_data_latency_avg_ticks(), 7);
         assert_eq!(
             decoded
                 .stats()

@@ -2589,6 +2589,10 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
         );
     }
 
+    let mut aggregate_latency_samples = 0;
+    let mut aggregate_latency_ticks = 0;
+    let mut aggregate_latency_max_ticks = 0;
+    let mut aggregate_latency_min_ticks = u64::MAX;
     for operation in [
         "load",
         "store",
@@ -2649,6 +2653,10 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             total / samples,
             "average latency should use the structured sample count for {operation}: {o3_runtime}"
         );
+        aggregate_latency_samples += samples;
+        aggregate_latency_ticks += total;
+        aggregate_latency_max_ticks = aggregate_latency_max_ticks.max(max);
+        aggregate_latency_min_ticks = aggregate_latency_min_ticks.min(min);
         for (suffix, value) in [
             ("latency_samples", samples),
             ("latency_ticks", total),
@@ -2665,6 +2673,45 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
                 "stat registry should match structured runtime {operation}_{suffix}"
             );
         }
+    }
+    let aggregate_latency_avg_ticks = aggregate_latency_ticks / aggregate_latency_samples;
+    for (field, unit, value) in [
+        (
+            "lsq_data_latency_samples",
+            "Count",
+            aggregate_latency_samples,
+        ),
+        ("lsq_data_latency_ticks", "Tick", aggregate_latency_ticks),
+        (
+            "lsq_data_latency_max_ticks",
+            "Tick",
+            aggregate_latency_max_ticks,
+        ),
+        (
+            "lsq_data_latency_min_ticks",
+            "Tick",
+            aggregate_latency_min_ticks,
+        ),
+        (
+            "lsq_data_latency_avg_ticks",
+            "Tick",
+            aggregate_latency_avg_ticks,
+        ),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose aggregate {field}: {o3_runtime}"
+        );
+        assert_json_stat(
+            &json,
+            &format!("sim.cpu0.o3.{field}"),
+            unit,
+            value,
+            "monotonic",
+        );
     }
     for operation in ["float_load", "float_store", "vector_load", "vector_store"] {
         for field in [

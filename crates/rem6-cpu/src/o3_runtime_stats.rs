@@ -16,6 +16,10 @@ pub struct O3RuntimeStats {
     pub(crate) lsq_store_to_load_forwarding_candidates: u64,
     pub(crate) lsq_store_to_load_forwarding_matches: u64,
     pub(crate) lsq_operation_counts: [u64; O3RuntimeLsqOperation::COUNT],
+    pub(crate) lsq_data_latency_samples: u64,
+    pub(crate) lsq_data_latency_ticks: u64,
+    pub(crate) lsq_data_latency_max_ticks: u64,
+    pub(crate) lsq_data_latency_min_ticks: u64,
     pub(crate) lsq_operation_latency_samples: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_latency_ticks: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_latency_max_ticks: [u64; O3RuntimeLsqOperation::COUNT],
@@ -80,6 +84,34 @@ impl O3RuntimeStats {
 
     pub fn lsq_operation_count(self, operation: O3RuntimeLsqOperation) -> u64 {
         self.lsq_operation_counts[operation.index()]
+    }
+
+    pub const fn lsq_data_latency_samples(self) -> u64 {
+        self.lsq_data_latency_samples
+    }
+
+    pub const fn lsq_data_latency_ticks(self) -> u64 {
+        self.lsq_data_latency_ticks
+    }
+
+    pub const fn lsq_data_latency_max_ticks(self) -> u64 {
+        self.lsq_data_latency_max_ticks
+    }
+
+    pub const fn lsq_data_latency_min_ticks(self) -> u64 {
+        if self.lsq_data_latency_samples == 0 {
+            0
+        } else {
+            self.lsq_data_latency_min_ticks
+        }
+    }
+
+    pub const fn lsq_data_latency_avg_ticks(self) -> u64 {
+        if self.lsq_data_latency_samples == 0 {
+            0
+        } else {
+            self.lsq_data_latency_ticks / self.lsq_data_latency_samples
+        }
     }
 
     pub fn lsq_operation_latency_ticks(self, operation: O3RuntimeLsqOperation) -> u64 {
@@ -198,6 +230,10 @@ impl O3RuntimeStats {
             || self.lsq_store_bytes != 0
             || self.lsq_store_to_load_forwarding_candidates != 0
             || self.lsq_store_to_load_forwarding_matches != 0
+            || self.lsq_data_latency_samples != 0
+            || self.lsq_data_latency_ticks != 0
+            || self.lsq_data_latency_max_ticks != 0
+            || self.lsq_data_latency_min_ticks != 0
             || self.lsq_store_conditional_failures != 0
             || self.branch_repair_targetless_mismatches != 0
             || self.branch_repair_wrong_targets != 0
