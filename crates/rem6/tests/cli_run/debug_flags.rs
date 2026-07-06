@@ -7732,6 +7732,115 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
 }
 
 #[test]
+fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
+    let path = detailed_o3_indirect_call_wrong_target_debug_binary(
+        "stats-o3-indirect-call-wrong-target-runtime-matrix",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "280",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .expect("structured O3 runtime JSON");
+    let branch_repair = o3_runtime
+        .get("branch_repair")
+        .expect("structured O3 branch-repair runtime matrix");
+
+    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 0);
+    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 1);
+    assert_eq!(
+        json_record_u64(branch_repair, "direction_only_mismatches"),
+        1
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/wrong_target_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(1),
+        "call-indirect wrong-target runtime matrix should be structured: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/direction_only_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-unconditional direction-only runtime matrix should be structured: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/targetless_mismatch_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "targetless runtime matrix should include zero-valued branch kinds: {branch_repair}"
+    );
+    assert_eq!(
+        json_record_u64(o3_runtime, "iew_predicted_taken_incorrect"),
+        1
+    );
+    assert_eq!(
+        json_record_u64(o3_runtime, "iew_predicted_not_taken_incorrect"),
+        1
+    );
+
+    for (path, unit, value) in [
+        (
+            "sim.cpu0.o3.branch_repair_targetless_mismatches",
+            "Count",
+            0,
+        ),
+        ("sim.cpu0.o3.branch_repair_wrong_targets", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_repair_direction_only_mismatches",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_repair_wrong_target_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
+        ("sim.cpu0.o3.iew.predicted_taken_incorrect", "Count", 1),
+        ("sim.cpu0.o3.iew.predicted_not_taken_incorrect", "Count", 1),
+        ("system.cpu.iew.predictedTakenIncorrect", "Count", 1),
+        ("system.cpu.iew.predictedNotTakenIncorrect", "Count", 1),
+        ("system.cpu.iew.branchMispredicts", "Count", 2),
+        ("system.cpu.commit.branchMispredicts", "Count", 2),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
     let path = detailed_o3_indirect_call_wrong_target_debug_binary(
         "debug-flags-o3-indirect-call-wrong-target",
