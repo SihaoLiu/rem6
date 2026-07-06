@@ -939,7 +939,8 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
     for cpu in 0..core_count {
         let alias_prefix = gem5_cpu_alias_prefix(core_count, cpu);
         let pipeline_alias_prefix = format!("{alias_prefix}.pipeline.inOrder");
-        for (source_name, alias_name, unit) in [
+        #[rustfmt::skip]
+        const PIPELINE_ALIAS_STATS: [(&str, &str, &str); 23] = [
             ("advanced", "advanced", "Count"),
             ("flushed", "flushed", "Count"),
             ("flush_cycles", "flushCycles", "Cycle"),
@@ -949,50 +950,22 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
             ("fetch_wait_cycles", "fetchWaitCycles", "Cycle"),
             ("data_wait_cycles", "dataWaitCycles", "Cycle"),
             ("execute_wait_cycles", "executeWaitCycles", "Cycle"),
-            (
-                "branch_prediction_flushes",
-                "branchPredictionFlushes",
-                "Count",
-            ),
-            (
-                "branch_prediction_flush_cycles",
-                "branchPredictionFlushCycles",
-                "Cycle",
-            ),
+            ("branch_prediction_flushes", "branchPredictionFlushes", "Count"),
+            ("branch_prediction_flush_cycles", "branchPredictionFlushCycles", "Cycle"),
             ("redirects", "redirects", "Count"),
-            (
-                "branch_prediction_redirects",
-                "branchPredictionRedirects",
-                "Count",
-            ),
+            ("branch_prediction_redirects", "branchPredictionRedirects", "Count"),
+            ("interrupt_redirects", "interruptRedirects", "Count"),
+            ("interrupt_redirect_flushes", "interruptRedirectFlushes", "Count"),
+            ("interrupt_redirect_flush_cycles", "interruptRedirectFlushCycles", "Cycle"),
             ("trap_redirects", "trapRedirects", "Count"),
             ("trap_redirect_flushes", "trapRedirectFlushes", "Count"),
-            (
-                "trap_redirect_flush_cycles",
-                "trapRedirectFlushCycles",
-                "Cycle",
-            ),
-            (
-                "branch_speculation_predictions",
-                "branchSpeculationPredictions",
-                "Count",
-            ),
-            (
-                "branch_speculation_repairs",
-                "branchSpeculationRepairs",
-                "Count",
-            ),
-            (
-                "branch_speculation_removed_youngers",
-                "branchSpeculationRemovedYoungers",
-                "Count",
-            ),
-            (
-                "branch_speculation_max_pending",
-                "branchSpeculationMaxPending",
-                "Count",
-            ),
-        ] {
+            ("trap_redirect_flush_cycles", "trapRedirectFlushCycles", "Cycle"),
+            ("branch_speculation_predictions", "branchSpeculationPredictions", "Count"),
+            ("branch_speculation_repairs", "branchSpeculationRepairs", "Count"),
+            ("branch_speculation_removed_youngers", "branchSpeculationRemovedYoungers", "Count"),
+            ("branch_speculation_max_pending", "branchSpeculationMaxPending", "Count"),
+        ];
+        for (source_name, alias_name, unit) in PIPELINE_ALIAS_STATS {
             append_derived_stat_from_snapshot(
                 output,
                 snapshot,
@@ -1001,36 +974,28 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 unit,
             );
         }
+        #[rustfmt::skip]
+        const STAGE_ALIAS_STATS: [(&str, &str, &str); 17] = [
+            ("occupied_cycles", "occupiedCycles", "Cycle"),
+            ("advanced", "advanced", "Count"),
+            ("advanced_cycles", "advancedCycles", "Cycle"),
+            ("retired", "retired", "Count"),
+            ("retired_cycles", "retiredCycles", "Cycle"),
+            ("resource_blocked", "resourceBlocked", "Count"),
+            ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
+            ("ordering_blocked", "orderingBlocked", "Count"),
+            ("ordering_blocked_cycles", "orderingBlockedCycles", "Cycle"),
+            ("flushed", "flushed", "Count"),
+            ("flushed_cycles", "flushedCycles", "Cycle"),
+            ("branch_prediction_flushed", "branchPredictionFlushed", "Count"),
+            ("branch_prediction_flushed_cycles", "branchPredictionFlushedCycles", "Cycle"),
+            ("interrupt_redirect_flushed", "interruptRedirectFlushed", "Count"),
+            ("interrupt_redirect_flushed_cycles", "interruptRedirectFlushedCycles", "Cycle"),
+            ("trap_redirect_flushed", "trapRedirectFlushed", "Count"),
+            ("trap_redirect_flushed_cycles", "trapRedirectFlushedCycles", "Cycle"),
+        ];
         for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
-            for (source_name, alias_name, unit) in [
-                ("occupied_cycles", "occupiedCycles", "Cycle"),
-                ("advanced", "advanced", "Count"),
-                ("advanced_cycles", "advancedCycles", "Cycle"),
-                ("retired", "retired", "Count"),
-                ("retired_cycles", "retiredCycles", "Cycle"),
-                ("resource_blocked", "resourceBlocked", "Count"),
-                ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
-                ("ordering_blocked", "orderingBlocked", "Count"),
-                ("ordering_blocked_cycles", "orderingBlockedCycles", "Cycle"),
-                ("flushed", "flushed", "Count"),
-                ("flushed_cycles", "flushedCycles", "Cycle"),
-                (
-                    "branch_prediction_flushed",
-                    "branchPredictionFlushed",
-                    "Count",
-                ),
-                (
-                    "branch_prediction_flushed_cycles",
-                    "branchPredictionFlushedCycles",
-                    "Cycle",
-                ),
-                ("trap_redirect_flushed", "trapRedirectFlushed", "Count"),
-                (
-                    "trap_redirect_flushed_cycles",
-                    "trapRedirectFlushedCycles",
-                    "Cycle",
-                ),
-            ] {
+            for (source_name, alias_name, unit) in STAGE_ALIAS_STATS {
                 append_derived_stat_from_snapshot(
                     output,
                     snapshot,
@@ -1070,6 +1035,7 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
         ] {
             for (source_cause, alias_cause) in [
                 ("branch_prediction", "branchPrediction"),
+                ("interrupt_redirect", "interruptRedirect"),
                 ("trap_redirect", "trapRedirect"),
             ] {
                 for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
