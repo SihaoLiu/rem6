@@ -1220,6 +1220,14 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
             1,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_write",
+            1,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.iew.dispatched_insts",
             6,
         ),
@@ -1399,6 +1407,8 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "sim.host_actions.stats_dump.cpu0.o3.fu_float_misc_latency_cycles",
         "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_instructions",
         "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_latency_cycles",
+        "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
+        "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
     ] {
         assert_stats_dump_sample_absent(dump, path);
     }
@@ -1457,9 +1467,21 @@ fn rem6_run_m5_dump_stats_before_detailed_switch_keeps_later_o3_snapshot() {
         first_dump,
         "sim.host_actions.stats_dump.cpu0.o3.instructions",
     );
+    assert_stats_dump_sample_absent(
+        first_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+    );
     assert_stats_dump_sample(
         second_dump,
         "sim.host_actions.stats_dump.cpu0.o3.fu_integer_mul_instructions",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        second_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
         "counter",
         "Count",
         1,
@@ -1670,6 +1692,22 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_div",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.vector_float_misc",
             0,
         ),
         (

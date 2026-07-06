@@ -165,6 +165,9 @@ struct RiscvO3RuntimeCpuStats {
     iq_issued_inst_type_mem_read: StatId,
     iq_issued_inst_type_mem_write: StatId,
     iq_issued_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
+    commit_committed_inst_type_mem_read: StatId,
+    commit_committed_inst_type_mem_write: StatId,
+    commit_committed_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
     iew_dispatched_insts: StatId,
     iew_insts_to_commit: StatId,
     iew_writeback_count: StatId,
@@ -273,6 +276,21 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             iq_issued_inst_type_fu_classes: register_o3_iq_fu_latency_class_counters(
+                registry, &prefix,
+            )?,
+            commit_committed_inst_type_mem_read: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.committed_inst_type.mem_read",
+                "Count",
+            )?,
+            commit_committed_inst_type_mem_write: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.committed_inst_type.mem_write",
+                "Count",
+            )?,
+            commit_committed_inst_type_fu_classes: register_o3_commit_fu_latency_class_counters(
                 registry, &prefix,
             )?,
             iew_dispatched_insts: register_o3_counter(
@@ -443,6 +461,16 @@ impl RiscvO3RuntimeCpuStats {
                 current.lsq_stores(),
             ),
             (
+                self.commit_committed_inst_type_mem_read,
+                previous.lsq_loads(),
+                current.lsq_loads(),
+            ),
+            (
+                self.commit_committed_inst_type_mem_write,
+                previous.lsq_stores(),
+                current.lsq_stores(),
+            ),
+            (
                 self.iew_dispatched_insts,
                 previous.instructions(),
                 current.instructions(),
@@ -529,6 +557,12 @@ impl RiscvO3RuntimeCpuStats {
                 .saturating_sub(previous.fu_latency_class_instructions(class));
             if delta != 0 {
                 registry.increment(self.iq_issued_inst_type_fu_classes[class.index()], delta)?;
+            }
+            if delta != 0 {
+                registry.increment(
+                    self.commit_committed_inst_type_fu_classes[class.index()],
+                    delta,
+                )?;
             }
         }
         for operation in O3RuntimeLsqOperation::TRACKED {
@@ -625,6 +659,14 @@ impl RiscvO3RuntimeCpuStats {
             ),
             (self.iq_issued_inst_type_mem_read, snapshot.lsq_loads()),
             (self.iq_issued_inst_type_mem_write, snapshot.lsq_stores()),
+            (
+                self.commit_committed_inst_type_mem_read,
+                snapshot.lsq_loads(),
+            ),
+            (
+                self.commit_committed_inst_type_mem_write,
+                snapshot.lsq_stores(),
+            ),
             (self.iew_dispatched_insts, snapshot.instructions()),
             (self.iew_insts_to_commit, snapshot.rob_commits()),
             (self.iew_writeback_count, snapshot.instructions()),
@@ -694,6 +736,10 @@ impl RiscvO3RuntimeCpuStats {
         for class in O3RuntimeFuLatencyClass::ALL {
             registry.set_resettable_counter(
                 self.iq_issued_inst_type_fu_classes[class.index()],
+                snapshot.fu_latency_class_instructions(class),
+            )?;
+            registry.set_resettable_counter(
+                self.commit_committed_inst_type_fu_classes[class.index()],
                 snapshot.fu_latency_class_instructions(class),
             )?;
         }
@@ -906,7 +952,30 @@ fn register_o3_iq_fu_latency_class_counters(
     Ok(stats)
 }
 
+fn register_o3_commit_fu_latency_class_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
+    for class in O3RuntimeFuLatencyClass::ALL {
+        stats[class.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!(
+                "commit.committed_inst_type.{}",
+                o3_fu_latency_class_inst_type_stem(class)
+            ),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
 fn o3_iq_fu_latency_class_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+    o3_fu_latency_class_inst_type_stem(class)
+}
+
+fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
     match class {
         O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
         O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
