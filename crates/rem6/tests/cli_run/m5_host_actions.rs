@@ -4212,6 +4212,20 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.iew.branch_mispredicts",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.commit.branch_mispredicts",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iq.branch_insts_issued",
         "Count",
         3,

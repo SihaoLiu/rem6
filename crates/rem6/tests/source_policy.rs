@@ -609,6 +609,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.cpu0.o3.branch_repair_targetless_mismatches",
         "sim.cpu0.o3.branch_repair_direction_only_mismatches",
         "sim.cpu0.o3.branch_repair_wrong_targets",
+        "sim.cpu0.o3.iew.branch_mispredicts",
+        "sim.cpu0.o3.commit.branch_mispredicts",
         "sim.cpu0.o3.iq.branch_insts_issued",
         "system.cpu.iq.branchInstsIssued",
         "sim.cpu0.o3.commit.committed_inst_type.mem_read",

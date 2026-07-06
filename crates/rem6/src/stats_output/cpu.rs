@@ -1166,6 +1166,18 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
+    let iew_branch_mispredicts = o3
+        .iew_predicted_taken_incorrect()
+        .saturating_add(o3.iew_predicted_not_taken_incorrect());
+    for name in ["iew.branch_mispredicts", "commit.branch_mispredicts"] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            iew_branch_mispredicts,
+        )?;
+    }
     for (name, value) in [
         ("lsq_load_bytes", o3.lsq_load_bytes()),
         ("lsq_store_bytes", o3.lsq_store_bytes()),
