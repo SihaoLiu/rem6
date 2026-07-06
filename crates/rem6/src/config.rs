@@ -272,6 +272,8 @@ struct Rem6RunFileConfig {
     fabric_router_input_port: Option<u32>,
     fabric_router_output_port: Option<u32>,
     fabric_router_virtual_channel: Option<u16>,
+    fabric_request_router_virtual_channel: Option<u16>,
+    fabric_response_router_virtual_channel: Option<u16>,
     fabric_router_latency: Option<u64>,
     fabric_qos_queue_policy: Option<String>,
     debug_flags: Option<Vec<String>>,
@@ -742,6 +744,8 @@ impl Rem6RunConfig {
             file_config.fabric_router_input_port,
             file_config.fabric_router_output_port,
             file_config.fabric_router_virtual_channel,
+            file_config.fabric_request_router_virtual_channel,
+            file_config.fabric_response_router_virtual_channel,
             file_config.fabric_router_latency,
             file_config.fabric_qos_queue_policy.clone(),
         )?;
@@ -1132,6 +1136,14 @@ impl Rem6RunConfig {
                 "--fabric-router-virtual-channel" => {
                     fabric_parts
                         .set_router_virtual_channel(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-request-router-virtual-channel" => {
+                    fabric_parts
+                        .set_request_router_virtual_channel(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-response-router-virtual-channel" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_parts.set_response_router_virtual_channel(&value)?;
                 }
                 "--fabric-router-latency" => {
                     fabric_parts.set_router_latency(&required_value(&flag, args.next())?)?;

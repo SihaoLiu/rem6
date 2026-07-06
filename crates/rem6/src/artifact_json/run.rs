@@ -756,11 +756,13 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .router_stage()
         .map(|stage| {
             format!(
-                "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"latency_ticks\":{}}}",
+                "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"request_virtual_channel\":{},\"response_virtual_channel\":{},\"latency_ticks\":{}}}",
                 json_escape(stage.router()),
                 stage.input_port(),
                 stage.output_port(),
                 stage.virtual_channel(),
+                stage.request_virtual_channel(),
+                stage.response_virtual_channel(),
                 stage.latency(),
             )
         })

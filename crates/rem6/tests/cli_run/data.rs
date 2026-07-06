@@ -1490,6 +1490,10 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             "2",
             "--fabric-router-virtual-channel",
             "3",
+            "--fabric-request-router-virtual-channel",
+            "11",
+            "--fabric-response-router-virtual-channel",
+            "13",
             "--fabric-router-latency",
             "5",
             "--dump-memory",
@@ -1545,6 +1549,18 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     assert_eq!(
         router_stage.get("virtual_channel").and_then(Value::as_u64),
         Some(3)
+    );
+    assert_eq!(
+        router_stage
+            .get("request_virtual_channel")
+            .and_then(Value::as_u64),
+        Some(11)
+    );
+    assert_eq!(
+        router_stage
+            .get("response_virtual_channel")
+            .and_then(Value::as_u64),
+        Some(13)
     );
     assert_eq!(
         router_stage.get("latency_ticks").and_then(Value::as_u64),
@@ -1607,18 +1623,32 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         .and_then(Value::as_array)
         .expect("fabric hop activities")
         .iter()
-        .filter_map(|hop| hop.get("router"))
+        .filter(|hop| hop.get("router").is_some())
         .collect::<Vec<_>>();
     assert!(
         !router_hops.is_empty(),
         "missing fabric router hop activity"
     );
-    assert!(router_hops.iter().all(|router| {
+    assert!(router_hops.iter().all(|hop| {
+        let router = hop.get("router").expect("fabric router hop");
         router.get("router").and_then(Value::as_str) == Some("router0")
             && router.get("input_port").and_then(Value::as_u64) == Some(1)
             && router.get("output_port").and_then(Value::as_u64) == Some(2)
-            && router.get("virtual_channel").and_then(Value::as_u64) == Some(3)
             && router.get("latency_ticks").and_then(Value::as_u64) == Some(5)
+    }));
+    assert!(router_hops.iter().any(|hop| {
+        hop.get("virtual_network").and_then(Value::as_u64) == Some(3)
+            && hop
+                .pointer("/router/virtual_channel")
+                .and_then(Value::as_u64)
+                == Some(11)
+    }));
+    assert!(router_hops.iter().any(|hop| {
+        hop.get("virtual_network").and_then(Value::as_u64) == Some(4)
+            && hop
+                .pointer("/router/virtual_channel")
+                .and_then(Value::as_u64)
+                == Some(13)
     }));
     assert_run_fabric_router_activity_json(fabric);
     let fabric_bytes = fabric
@@ -2006,6 +2036,20 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     );
     assert_stat_greater_than(&stdout, "sim.memory.fabric.bytes", "Byte", 0, "monotonic");
     assert_stat_greater_than(&stdout, "sim.memory.fabric.flits", "Count", 0, "monotonic");
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc11.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc13.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
     assert_stat(
         &stdout,
         "sim.memory.fabric.credit_delay_ticks",
@@ -2116,6 +2160,20 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.resources.fabric.contended_lanes",
         "Count",
         fabric_contended_lanes,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.resources.fabric.router.router0.in1.out2.vc11.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.resources.fabric.router.router0.in1.out2.vc13.transfers",
+        "Count",
+        0,
         "monotonic",
     );
     assert_stat(
@@ -2922,7 +2980,7 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
     let config = temp_config(
         "toml-run-memory-system-preset",
         &format!(
-            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_router_latency = 5\nfabric_qos_queue_policy = \"lifo\"\nmemory_dumps = [\"0x80000048:8\"]\n",
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_request_router_virtual_channel = 21\nfabric_response_router_virtual_channel = 23\nfabric_router_latency = 5\nfabric_qos_queue_policy = \"lifo\"\nmemory_dumps = [\"0x80000048:8\"]\n",
             binary.display()
         ),
     );
@@ -2961,6 +3019,16 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
         Some("router0")
     );
     assert_eq!(
+        json.pointer("/fabric/router_stage/request_virtual_channel")
+            .and_then(Value::as_u64),
+        Some(21)
+    );
+    assert_eq!(
+        json.pointer("/fabric/router_stage/response_virtual_channel")
+            .and_then(Value::as_u64),
+        Some(23)
+    );
+    assert_eq!(
         json.pointer("/fabric/qos_queue_policy")
             .and_then(Value::as_str),
         Some("lifo")
@@ -2972,8 +3040,134 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
         0,
         "monotonic",
     );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc21.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc23.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
     assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
     assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
+}
+
+#[test]
+fn rem6_run_distinguishes_request_response_router_vcs_on_shared_virtual_network() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("run-fabric-shared-vn-router-vcs", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--memory-system",
+            "cache-fabric-dram",
+            "--fabric-request-virtual-network",
+            "9",
+            "--fabric-response-virtual-network",
+            "9",
+            "--fabric-router",
+            "router0",
+            "--fabric-router-input-port",
+            "1",
+            "--fabric-router-output-port",
+            "2",
+            "--fabric-router-virtual-channel",
+            "3",
+            "--fabric-request-router-virtual-channel",
+            "11",
+            "--fabric-response-router-virtual-channel",
+            "13",
+            "--fabric-router-latency",
+            "5",
+            "--dump-memory",
+            "0x80000048:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let router_hops = json
+        .pointer("/fabric/hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activities")
+        .iter()
+        .filter(|hop| hop.get("router").is_some())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("8977665544332211")
+    );
+    assert_eq!(json_u64(&json, "/fabric/active_virtual_networks"), 1);
+    assert!(router_hops.iter().any(|hop| {
+        hop.get("virtual_network").and_then(Value::as_u64) == Some(9)
+            && hop
+                .pointer("/router/virtual_channel")
+                .and_then(Value::as_u64)
+                == Some(11)
+    }));
+    assert!(router_hops.iter().any(|hop| {
+        hop.get("virtual_network").and_then(Value::as_u64) == Some(9)
+            && hop
+                .pointer("/router/virtual_channel")
+                .and_then(Value::as_u64)
+                == Some(13)
+    }));
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc11.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.router.router0.in1.out2.vc13.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
 }
 
 #[test]

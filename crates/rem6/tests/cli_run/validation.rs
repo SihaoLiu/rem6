@@ -1655,6 +1655,14 @@ fn rem6_run_config_scan_treats_fabric_router_flags_as_value_taking() {
             "invalid run fabric router virtual channel --config",
         ),
         (
+            "--fabric-request-router-virtual-channel",
+            "invalid run fabric router virtual channel --config",
+        ),
+        (
+            "--fabric-response-router-virtual-channel",
+            "invalid run fabric router virtual channel --config",
+        ),
+        (
             "--fabric-router-latency",
             "invalid run fabric router latency --config",
         ),

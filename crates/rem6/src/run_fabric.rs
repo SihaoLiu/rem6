@@ -289,6 +289,7 @@ pub(crate) fn run_fabric_path(
     fabric: &RunFabricConfig,
     latency: u64,
     virtual_network: u16,
+    router_virtual_channel: Option<u16>,
 ) -> Result<FabricPath, Rem6CliError> {
     let link = FabricLinkId::new(fabric.link()).map_err(execute_error)?;
     let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
@@ -305,7 +306,7 @@ pub(crate) fn run_fabric_path(
                 router,
                 router_stage.input_port(),
                 router_stage.output_port(),
-                router_stage.virtual_channel(),
+                router_virtual_channel.unwrap_or_else(|| router_stage.virtual_channel()),
                 router_stage.latency(),
             )
             .map_err(execute_error)?;

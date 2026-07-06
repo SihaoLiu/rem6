@@ -1143,11 +1143,17 @@ fn add_memory_route(
                     fabric,
                     route_delay,
                     fabric.request_virtual_network(),
+                    fabric
+                        .router_stage()
+                        .map(|stage| stage.request_virtual_channel()),
                 )?)
                 .with_response_fabric_path(run_fabric_path(
                     fabric,
                     route_delay,
                     fabric.response_virtual_network(),
+                    fabric
+                        .router_stage()
+                        .map(|stage| stage.response_virtual_channel()),
                 )?);
             MemoryRoute::new_path(source, cpu_partition, [hop])
                 .map_err(execute_error)?

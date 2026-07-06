@@ -14,6 +14,8 @@ pub(super) struct RunFabricConfigParts {
     router_input_port: Option<u32>,
     router_output_port: Option<u32>,
     router_virtual_channel: Option<u16>,
+    request_router_virtual_channel: Option<u16>,
+    response_router_virtual_channel: Option<u16>,
     router_latency: Option<u64>,
     qos_queue_policy: Option<RunFabricQosQueuePolicy>,
 }
@@ -30,6 +32,8 @@ impl RunFabricConfigParts {
         router_input_port: Option<u32>,
         router_output_port: Option<u32>,
         router_virtual_channel: Option<u16>,
+        request_router_virtual_channel: Option<u16>,
+        response_router_virtual_channel: Option<u16>,
         router_latency: Option<u64>,
         qos_queue_policy: Option<String>,
     ) -> Result<Self, Rem6CliError> {
@@ -63,6 +67,8 @@ impl RunFabricConfigParts {
             router_input_port,
             router_output_port,
             router_virtual_channel,
+            request_router_virtual_channel,
+            response_router_virtual_channel,
             router_latency,
             qos_queue_policy: qos_queue_policy
                 .as_deref()
@@ -81,6 +87,8 @@ impl RunFabricConfigParts {
             || self.router_input_port.is_some()
             || self.router_output_port.is_some()
             || self.router_virtual_channel.is_some()
+            || self.request_router_virtual_channel.is_some()
+            || self.response_router_virtual_channel.is_some()
             || self.router_latency.is_some()
             || self.qos_queue_policy.is_some()
     }
@@ -129,6 +137,23 @@ impl RunFabricConfigParts {
         Ok(())
     }
 
+    pub(super) fn set_request_router_virtual_channel(
+        &mut self,
+        value: &str,
+    ) -> Result<(), Rem6CliError> {
+        self.request_router_virtual_channel = Some(parse_run_fabric_router_virtual_channel(value)?);
+        Ok(())
+    }
+
+    pub(super) fn set_response_router_virtual_channel(
+        &mut self,
+        value: &str,
+    ) -> Result<(), Rem6CliError> {
+        self.response_router_virtual_channel =
+            Some(parse_run_fabric_router_virtual_channel(value)?);
+        Ok(())
+    }
+
     pub(super) fn set_router_latency(&mut self, value: &str) -> Result<(), Rem6CliError> {
         self.router_latency = Some(parse_run_fabric_router_latency(value)?);
         Ok(())
@@ -154,6 +179,8 @@ pub struct RunFabricRouterStageConfig {
     input_port: u32,
     output_port: u32,
     virtual_channel: u16,
+    request_virtual_channel: u16,
+    response_virtual_channel: u16,
     latency: u64,
 }
 
@@ -163,6 +190,8 @@ impl RunFabricRouterStageConfig {
         input_port: u32,
         output_port: u32,
         virtual_channel: u16,
+        request_virtual_channel: u16,
+        response_virtual_channel: u16,
         latency: u64,
     ) -> Self {
         Self {
@@ -170,6 +199,8 @@ impl RunFabricRouterStageConfig {
             input_port,
             output_port,
             virtual_channel,
+            request_virtual_channel,
+            response_virtual_channel,
             latency,
         }
     }
@@ -188,6 +219,14 @@ impl RunFabricRouterStageConfig {
 
     pub const fn virtual_channel(&self) -> u16 {
         self.virtual_channel
+    }
+
+    pub const fn request_virtual_channel(&self) -> u16 {
+        self.request_virtual_channel
+    }
+
+    pub const fn response_virtual_channel(&self) -> u16 {
+        self.response_virtual_channel
     }
 
     pub const fn latency(&self) -> u64 {
@@ -304,6 +343,8 @@ pub(super) fn run_fabric_config_from_parts(
         parts.router_input_port,
         parts.router_output_port,
         parts.router_virtual_channel,
+        parts.request_router_virtual_channel,
+        parts.response_router_virtual_channel,
         parts.router_latency,
     )?;
 
@@ -389,16 +430,23 @@ fn run_fabric_router_stage_config(
     input_port: Option<u32>,
     output_port: Option<u32>,
     virtual_channel: Option<u16>,
+    request_virtual_channel: Option<u16>,
+    response_virtual_channel: Option<u16>,
     latency: Option<u64>,
 ) -> Result<Option<RunFabricRouterStageConfig>, Rem6CliError> {
     let has_router_stage = router.is_some()
         || input_port.is_some()
         || output_port.is_some()
         || virtual_channel.is_some()
+        || request_virtual_channel.is_some()
+        || response_virtual_channel.is_some()
         || latency.is_some();
     if !has_router_stage {
         return Ok(None);
     }
+    let virtual_channel = virtual_channel.ok_or(Rem6CliError::MissingRequiredFlag {
+        flag: "--fabric-router-virtual-channel",
+    })?;
     Ok(Some(RunFabricRouterStageConfig::new(
         router.ok_or(Rem6CliError::MissingRequiredFlag {
             flag: "--fabric-router",
@@ -409,9 +457,9 @@ fn run_fabric_router_stage_config(
         output_port.ok_or(Rem6CliError::MissingRequiredFlag {
             flag: "--fabric-router-output-port",
         })?,
-        virtual_channel.ok_or(Rem6CliError::MissingRequiredFlag {
-            flag: "--fabric-router-virtual-channel",
-        })?,
+        virtual_channel,
+        request_virtual_channel.unwrap_or(virtual_channel),
+        response_virtual_channel.unwrap_or(virtual_channel),
         latency.ok_or(Rem6CliError::MissingRequiredFlag {
             flag: "--fabric-router-latency",
         })?,
@@ -435,6 +483,8 @@ mod tests {
                 Some(1),
                 Some(2),
                 Some(3),
+                Some(11),
+                Some(13),
                 Some(5),
                 Some("least-recently-granted".to_string()),
             )
@@ -453,6 +503,8 @@ mod tests {
         assert_eq!(router_stage.input_port(), 1);
         assert_eq!(router_stage.output_port(), 2);
         assert_eq!(router_stage.virtual_channel(), 3);
+        assert_eq!(router_stage.request_virtual_channel(), 11);
+        assert_eq!(router_stage.response_virtual_channel(), 13);
         assert_eq!(router_stage.latency(), 5);
         assert_eq!(
             config.qos_queue_policy(),
@@ -473,6 +525,8 @@ mod tests {
                 Some(1),
                 None,
                 Some(3),
+                None,
+                None,
                 Some(5),
                 None,
             )
@@ -493,6 +547,8 @@ mod tests {
         let error = RunFabricConfigParts::new(
             Some("cpu_mem".to_string()),
             Some(8),
+            None,
+            None,
             None,
             None,
             None,
