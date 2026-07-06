@@ -38,6 +38,7 @@ use dram::{
 };
 pub use dram::{CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming, CliDramTiming};
 pub use fabric::RunFabricConfig;
+pub(crate) use fabric::RunFabricRouterStageConfig;
 use fabric::{run_fabric_config_from_parts, RunFabricConfigParts};
 use file_scan::{
     gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,

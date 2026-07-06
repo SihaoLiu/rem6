@@ -133,7 +133,7 @@ use riscv_run_driver::{drive_cli_riscv_run, schedule_cli_riscv_host_checkpoint_e
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_sbi_console_input, read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
-use run_fabric::{run_fabric_path, run_memory_transport};
+use run_fabric::{run_fabric_path, run_memory_transport, RunFabricPathDirection};
 pub(crate) use run_fabric::{Rem6RunFabricRouterActivity, Rem6RunFabricSummary};
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
@@ -1143,17 +1143,13 @@ fn add_memory_route(
                     fabric,
                     route_delay,
                     fabric.request_virtual_network(),
-                    fabric
-                        .router_stage()
-                        .map(|stage| stage.request_virtual_channel()),
+                    RunFabricPathDirection::Request,
                 )?)
                 .with_response_fabric_path(run_fabric_path(
                     fabric,
                     route_delay,
                     fabric.response_virtual_network(),
-                    fabric
-                        .router_stage()
-                        .map(|stage| stage.response_virtual_channel()),
+                    RunFabricPathDirection::Response,
                 )?);
             MemoryRoute::new_path(source, cpu_partition, [hop])
                 .map_err(execute_error)?

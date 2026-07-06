@@ -7,7 +7,7 @@ use rem6_fabric::{
 };
 use rem6_transport::MemoryTransport;
 
-use crate::{execute_error, Rem6CliError, RunFabricConfig};
+use crate::{config::RunFabricRouterStageConfig, execute_error, Rem6CliError, RunFabricConfig};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6RunFabricSummary {
@@ -285,34 +285,57 @@ pub(crate) fn run_memory_transport(config: Option<&RunFabricConfig>) -> MemoryTr
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunFabricPathDirection {
+    Request,
+    Response,
+}
+
 pub(crate) fn run_fabric_path(
     fabric: &RunFabricConfig,
     latency: u64,
     virtual_network: u16,
-    router_virtual_channel: Option<u16>,
+    direction: RunFabricPathDirection,
 ) -> Result<FabricPath, Rem6CliError> {
-    let link = FabricLinkId::new(fabric.link()).map_err(execute_error)?;
-    let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
-        .map_err(execute_error)?
-        .with_virtual_network(VirtualNetworkId::new(virtual_network));
-    let hop = match fabric.credit_depth() {
-        Some(credit_depth) => hop.with_credit_depth(credit_depth).map_err(execute_error)?,
-        None => hop,
+    let hops = fabric
+        .hops()
+        .iter()
+        .map(|hop_config| {
+            let link = FabricLinkId::new(hop_config.link()).map_err(execute_error)?;
+            let hop = FabricPathHop::new(link, latency, hop_config.bandwidth_bytes_per_tick())
+                .map_err(execute_error)?
+                .with_virtual_network(VirtualNetworkId::new(virtual_network));
+            let hop = match fabric.credit_depth() {
+                Some(credit_depth) => hop.with_credit_depth(credit_depth).map_err(execute_error)?,
+                None => hop,
+            };
+            match hop_config.router_stage() {
+                Some(router_stage) => {
+                    let router_stage = run_fabric_router_stage(router_stage, direction)?;
+                    Ok(hop.with_router_stage(router_stage))
+                }
+                None => Ok(hop),
+            }
+        })
+        .collect::<Result<Vec<_>, Rem6CliError>>()?;
+    FabricPath::new(hops).map_err(execute_error)
+}
+
+fn run_fabric_router_stage(
+    router_stage: &RunFabricRouterStageConfig,
+    direction: RunFabricPathDirection,
+) -> Result<FabricRouterStage, Rem6CliError> {
+    let router = FabricRouterId::new(router_stage.router()).map_err(execute_error)?;
+    let virtual_channel = match direction {
+        RunFabricPathDirection::Request => router_stage.request_virtual_channel(),
+        RunFabricPathDirection::Response => router_stage.response_virtual_channel(),
     };
-    let hop = match fabric.router_stage() {
-        Some(router_stage) => {
-            let router = FabricRouterId::new(router_stage.router()).map_err(execute_error)?;
-            let router_stage = FabricRouterStage::new(
-                router,
-                router_stage.input_port(),
-                router_stage.output_port(),
-                router_virtual_channel.unwrap_or_else(|| router_stage.virtual_channel()),
-                router_stage.latency(),
-            )
-            .map_err(execute_error)?;
-            hop.with_router_stage(router_stage)
-        }
-        None => hop,
-    };
-    FabricPath::new([hop]).map_err(execute_error)
+    FabricRouterStage::new(
+        router,
+        router_stage.input_port(),
+        router_stage.output_port(),
+        virtual_channel,
+        router_stage.latency(),
+    )
+    .map_err(execute_error)
 }

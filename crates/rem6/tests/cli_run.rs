@@ -14,6 +14,8 @@ mod debug_flags;
 mod examples;
 #[path = "cli_run/execution.rs"]
 mod execution;
+#[path = "cli_run/fabric.rs"]
+mod fabric;
 #[path = "cli_run/gdb.rs"]
 mod gdb;
 #[path = "cli_run/gdb_cache.rs"]
