@@ -1607,9 +1607,17 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "system.cpu.iq.memInstsIssued",
         "system.cpu.iq.issuedInstType.MemRead",
         "system.cpu.iq.issuedInstType.MemWrite",
+        "system.cpu.iq.issuedInstType.IntMult",
+        "system.cpu.iq.issuedInstType.IntDiv",
+        "system.cpu.iq.issuedInstType.FloatMisc",
+        "system.cpu.iq.issuedInstType.SimdFloatMisc",
         "system.cpu.iq.branchInstsIssued",
         "system.cpu.commit.committedInstType.MemRead",
         "system.cpu.commit.committedInstType.MemWrite",
+        "system.cpu.commit.committedInstType.IntMult",
+        "system.cpu.commit.committedInstType.IntDiv",
+        "system.cpu.commit.committedInstType.FloatMisc",
+        "system.cpu.commit.committedInstType.SimdFloatMisc",
         "system.cpu.commit.branchMispredicts",
         "system.cpu.iew.branchRepair.targetlessMismatch",
         "system.cpu.iew.branchRepair.directionOnly",
@@ -1928,6 +1936,18 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
             5,
         ),
         ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 5),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
+    for (path, value) in [
+        ("system.cpu.iq.issuedInstType.IntMult", 1),
+        ("system.cpu.iq.issuedInstType.IntDiv", 1),
+        ("system.cpu.iq.issuedInstType.FloatMisc", 0),
+        ("system.cpu.iq.issuedInstType.SimdFloatMisc", 0),
+        ("system.cpu.commit.committedInstType.IntMult", 1),
+        ("system.cpu.commit.committedInstType.IntDiv", 1),
+        ("system.cpu.commit.committedInstType.FloatMisc", 0),
+        ("system.cpu.commit.committedInstType.SimdFloatMisc", 0),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
