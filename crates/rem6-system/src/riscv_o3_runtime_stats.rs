@@ -181,6 +181,7 @@ struct RiscvO3RuntimeLsqLatencyStats {
 struct RiscvO3RuntimeStructuralAliasStats {
     rob_writes: StatId,
     rob_reads: StatId,
+    rob_max_occupancy: StatId,
     rename_renamed_insts: StatId,
     rename_renamed_operands: StatId,
     iew_dispatched_insts: StatId,
@@ -194,6 +195,7 @@ struct RiscvO3RuntimeStructuralAliasStats {
     lsq_store_load_forwarding_candidates: StatId,
     lsq_store_load_forwarding_matches: StatId,
     lsq_forw_loads: StatId,
+    lsq_max_occupancy: StatId,
     iq_insts_issued: StatId,
     iq_mem_insts_issued: StatId,
     iq_issued_inst_type_mem_read: StatId,
@@ -343,6 +345,7 @@ impl RiscvO3RuntimeStructuralAliasStats {
         Ok(Self {
             rob_writes: register_o3_counter(registry, prefix, "rob.writes", "Count")?,
             rob_reads: register_o3_counter(registry, prefix, "rob.reads", "Count")?,
+            rob_max_occupancy: register_o3_counter(registry, prefix, "rob.maxOccupancy", "Count")?,
             rename_renamed_insts: register_o3_counter(
                 registry,
                 prefix,
@@ -416,6 +419,7 @@ impl RiscvO3RuntimeStructuralAliasStats {
                 "Count",
             )?,
             lsq_forw_loads: register_o3_counter(registry, prefix, "lsq0.forwLoads", "Count")?,
+            lsq_max_occupancy: register_o3_counter(registry, prefix, "lsq0.maxOccupancy", "Count")?,
             iq_insts_issued: register_o3_counter(registry, prefix, "iq.instsIssued", "Count")?,
             iq_mem_insts_issued: register_o3_counter(
                 registry,
@@ -495,10 +499,11 @@ impl RiscvO3RuntimeStructuralAliasStats {
         Ok(())
     }
 
-    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 21] {
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 23] {
         [
             (self.rob_writes, stats.rob_allocations()),
             (self.rob_reads, stats.rob_commits()),
+            (self.rob_max_occupancy, stats.max_rob_occupancy()),
             (self.rename_renamed_insts, stats.instructions()),
             (self.rename_renamed_operands, stats.rename_writes()),
             (self.iew_dispatched_insts, stats.instructions()),
@@ -524,6 +529,7 @@ impl RiscvO3RuntimeStructuralAliasStats {
                 self.lsq_forw_loads,
                 stats.lsq_store_to_load_forwarding_matches(),
             ),
+            (self.lsq_max_occupancy, stats.max_lsq_occupancy()),
             (self.iq_insts_issued, stats.instructions()),
             (
                 self.iq_mem_insts_issued,

@@ -1408,9 +1408,11 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
         .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
     for (path, unit, minimum) in [
         ("system.cpu1.rob.writes", "Count", 1),
+        ("system.cpu1.rob.maxOccupancy", "Count", 1),
         ("system.cpu1.rename.renamedOperands", "Count", 1),
         ("system.cpu1.iew.writebackCount.total", "Count", 1),
         ("system.cpu1.lsq0.loadBytes", "Byte", 4),
+        ("system.cpu1.lsq0.maxOccupancy", "Count", 1),
         ("system.cpu1.iq.issuedInstType.MemRead", "Count", 1),
         ("system.cpu1.commit.committedInstType.MemWrite", "Count", 1),
     ] {
@@ -1442,6 +1444,7 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
     );
     for path in [
         "system.cpu0.rob.writes",
+        "system.cpu0.rob.maxOccupancy",
         "system.cpu0.rename.renamedOperands",
         "system.cpu0.iew.writebackCount.total",
         "system.cpu0.iew.wbRate",
@@ -1449,6 +1452,7 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
         "system.cpu.iew.wbRate",
         "system.cpu.iew.wbFanout",
         "system.cpu0.lsq0.loadBytes",
+        "system.cpu0.lsq0.maxOccupancy",
         "system.cpu0.iq.issuedInstType.MemRead",
         "system.cpu0.commit.committedInstType.MemWrite",
     ] {
@@ -1571,6 +1575,22 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
     );
     assert_stats_dump_sample(
         dump,
+        "sim.host_actions.stats_dump.cpu0.o3.max_rob_occupancy",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.max_lsq_occupancy",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
         "sim.host_actions.stats_dump.cpu0.o3.rename_map_entries",
         "counter",
         "Count",
@@ -1629,6 +1649,8 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         ("system.cpu.iq.issuedInstType.MemWrite", 1),
         ("system.cpu.commit.committedInstType.MemRead", 1),
         ("system.cpu.commit.committedInstType.MemWrite", 1),
+        ("system.cpu.rob.maxOccupancy", 1),
+        ("system.cpu.lsq0.maxOccupancy", 1),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
