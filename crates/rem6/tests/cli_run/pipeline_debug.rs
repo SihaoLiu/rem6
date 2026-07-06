@@ -273,11 +273,21 @@ fn rem6_run_stats_emit_multicore_in_order_pipeline_aliases_after_existing_stage_
             cpu,
             &format!("system.cpu{cpu}.pipeline.inOrder"),
         );
+        assert_in_order_pipeline_stage_aliases_for_cpu(
+            &json,
+            cpu,
+            &format!("system.cpu{cpu}.pipeline.inOrder"),
+        );
     }
     assert_json_stat_id_after(
         &json,
         "system.cpu0.pipeline.inOrder.advanced",
         "system.cpu1.pipeline.inOrder.stallCause.executeWait.stage.commit.orderingBlockedCycles",
+    );
+    assert_json_stat_id_after(
+        &json,
+        "system.cpu0.pipeline.inOrder.stage.fetch1.occupiedCycles",
+        "system.cpu1.pipeline.inOrder.branchSpeculationMaxPending",
     );
 }
 
@@ -480,6 +490,7 @@ fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
     let stage_advanced_cycles = in_order_stage_metric_values(&json, "advanced_cycles");
     let stage_retired = in_order_stage_metric_values(&json, "retired");
     let stage_retired_cycles = in_order_stage_metric_values(&json, "retired_cycles");
+    assert_in_order_pipeline_stage_aliases(&json);
     assert_eq!(
         in_order_artifact_stage_metric_values(&json, "advanced"),
         stage_advanced
@@ -1764,6 +1775,51 @@ fn assert_in_order_pipeline_aliases_for_cpu(json: &Value, cpu: u64, alias_prefix
             &format!("sim.cpu{cpu}.pipeline.in_order.{source_name}"),
             &format!("{alias_prefix}.{alias_name}"),
         );
+    }
+}
+
+fn assert_in_order_pipeline_stage_aliases(json: &Value) {
+    assert_in_order_pipeline_stage_aliases_for_cpu(json, 0, "system.cpu.pipeline.inOrder");
+    assert_json_stat_id_after(
+        json,
+        "system.cpu.pipeline.inOrder.stage.fetch1.occupiedCycles",
+        "system.cpu.pipeline.inOrder.branchSpeculationMaxPending",
+    );
+}
+
+fn assert_in_order_pipeline_stage_aliases_for_cpu(json: &Value, cpu: u64, alias_prefix: &str) {
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        for (source_name, alias_name) in [
+            ("occupied_cycles", "occupiedCycles"),
+            ("advanced", "advanced"),
+            ("advanced_cycles", "advancedCycles"),
+            ("retired", "retired"),
+            ("retired_cycles", "retiredCycles"),
+            ("resource_blocked", "resourceBlocked"),
+            ("resource_blocked_cycles", "resourceBlockedCycles"),
+            ("ordering_blocked", "orderingBlocked"),
+            ("ordering_blocked_cycles", "orderingBlockedCycles"),
+            ("flushed", "flushed"),
+            ("flushed_cycles", "flushedCycles"),
+            ("branch_prediction_flushed", "branchPredictionFlushed"),
+            (
+                "branch_prediction_flushed_cycles",
+                "branchPredictionFlushedCycles",
+            ),
+            ("interrupt_redirect_flushed", "interruptRedirectFlushed"),
+            (
+                "interrupt_redirect_flushed_cycles",
+                "interruptRedirectFlushedCycles",
+            ),
+            ("trap_redirect_flushed", "trapRedirectFlushed"),
+            ("trap_redirect_flushed_cycles", "trapRedirectFlushedCycles"),
+        ] {
+            assert_json_stat_alias(
+                json,
+                &format!("sim.cpu{cpu}.pipeline.in_order.stage.{stage}.{source_name}"),
+                &format!("{alias_prefix}.stage.{stage}.{alias_name}"),
+            );
+        }
     }
 }
 

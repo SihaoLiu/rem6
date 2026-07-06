@@ -189,6 +189,47 @@ fn append_gem5_in_order_pipeline_json_alias_stats(
             );
         }
     }
+    for cpu in 0..core_count {
+        let pipeline_alias_prefix = format!(
+            "{}.pipeline.inOrder",
+            gem5_json_cpu_alias_prefix(core_count, cpu)
+        );
+        for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+            for (source_name, alias_name) in [
+                ("occupied_cycles", "occupiedCycles"),
+                ("advanced", "advanced"),
+                ("advanced_cycles", "advancedCycles"),
+                ("retired", "retired"),
+                ("retired_cycles", "retiredCycles"),
+                ("resource_blocked", "resourceBlocked"),
+                ("resource_blocked_cycles", "resourceBlockedCycles"),
+                ("ordering_blocked", "orderingBlocked"),
+                ("ordering_blocked_cycles", "orderingBlockedCycles"),
+                ("flushed", "flushed"),
+                ("flushed_cycles", "flushedCycles"),
+                ("branch_prediction_flushed", "branchPredictionFlushed"),
+                (
+                    "branch_prediction_flushed_cycles",
+                    "branchPredictionFlushedCycles",
+                ),
+                ("interrupt_redirect_flushed", "interruptRedirectFlushed"),
+                (
+                    "interrupt_redirect_flushed_cycles",
+                    "interruptRedirectFlushedCycles",
+                ),
+                ("trap_redirect_flushed", "trapRedirectFlushed"),
+                ("trap_redirect_flushed_cycles", "trapRedirectFlushedCycles"),
+            ] {
+                append_gem5_json_alias_from_paths(
+                    snapshot,
+                    records,
+                    next_id,
+                    &format!("sim.cpu{cpu}.pipeline.in_order.stage.{stage}.{source_name}"),
+                    &format!("{pipeline_alias_prefix}.stage.{stage}.{alias_name}"),
+                );
+            }
+        }
+    }
 }
 
 fn append_gem5_o3_op_class_json_alias_stats(
