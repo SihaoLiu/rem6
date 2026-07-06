@@ -15635,6 +15635,157 @@ fn rem6_run_text_stats_emit_in_order_stall_cause_stage_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_in_order_stage_movement_aliases() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
+        i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
+        i_type(3, 0, 0x0, 7, 0x13),  // addi x7, x0, 3
+        i_type(4, 0, 0x0, 28, 0x13), // addi x28, x0, 4
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-stage-movement-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text_stat_value(&stdout, "sim.cpu0.instructions.committed"),
+        5
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionRedirects"
+        ),
+        0
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushes"
+        ),
+        0
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushCycles"
+        ),
+        0
+    );
+
+    let mut stage_advanced = [0_u64; 5];
+    let mut stage_advanced_cycles = [0_u64; 5];
+    let mut stage_retired = [0_u64; 5];
+    let mut stage_retired_cycles = [0_u64; 5];
+    for (index, stage) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .enumerate()
+    {
+        for (source_name, alias_name, unit) in [
+            ("advanced", "advanced", "Count"),
+            ("advanced_cycles", "advancedCycles", "Cycle"),
+            ("retired", "retired", "Count"),
+            ("retired_cycles", "retiredCycles", "Cycle"),
+        ] {
+            let alias = format!("system.cpu.pipeline.inOrder.stage.{stage}.{alias_name}");
+            let source = format!("sim.cpu0.pipeline.in_order.stage.{stage}.{source_name}");
+            assert_eq!(
+                text_stat_value(&stdout, &alias),
+                text_stat_value(&stdout, &source)
+            );
+            let alias_line = text_stat_line(&stdout, &alias);
+            assert!(alias_line.contains(&format!("unit={unit}")), "{stdout}");
+            assert!(alias_line.contains("reset_policy=monotonic"), "{stdout}");
+        }
+        for branch_alias in [
+            format!("system.cpu.pipeline.inOrder.stage.{stage}.branchPredictionFlushed"),
+            format!("system.cpu.pipeline.inOrder.stage.{stage}.branchPredictionFlushedCycles"),
+            format!(
+                "system.cpu.pipeline.inOrder.flushCause.branchPrediction.stage.{stage}.flushed"
+            ),
+            format!(
+                "system.cpu.pipeline.inOrder.flushCause.branchPrediction.stage.{stage}.flushedCycles"
+            ),
+            format!(
+                "system.cpu.pipeline.inOrder.redirectCause.branchPrediction.stage.{stage}.flushed"
+            ),
+            format!(
+                "system.cpu.pipeline.inOrder.redirectCause.branchPrediction.stage.{stage}.flushedCycles"
+            ),
+        ] {
+            assert_eq!(
+                text_stat_value(&stdout, &branch_alias),
+                0,
+                "straight-line movement row should not emit branch-prediction alias {branch_alias}\n{stdout}"
+            );
+        }
+        stage_advanced[index] = text_stat_value(
+            &stdout,
+            &format!("system.cpu.pipeline.inOrder.stage.{stage}.advanced"),
+        );
+        stage_advanced_cycles[index] = text_stat_value(
+            &stdout,
+            &format!("system.cpu.pipeline.inOrder.stage.{stage}.advancedCycles"),
+        );
+        stage_retired[index] = text_stat_value(
+            &stdout,
+            &format!("system.cpu.pipeline.inOrder.stage.{stage}.retired"),
+        );
+        stage_retired_cycles[index] = text_stat_value(
+            &stdout,
+            &format!("system.cpu.pipeline.inOrder.stage.{stage}.retiredCycles"),
+        );
+    }
+
+    assert_eq!(
+        stage_advanced.iter().sum::<u64>(),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.advanced")
+    );
+    assert_eq!(
+        stage_retired.iter().sum::<u64>(),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.retired")
+    );
+    assert!(stage_advanced_cycles.iter().any(|cycles| *cycles > 0));
+    assert!(stage_retired_cycles.iter().any(|cycles| *cycles > 0));
+    assert!(
+        stage_advanced
+            .iter()
+            .zip(stage_advanced_cycles.iter())
+            .any(|(advanced, cycles)| advanced > cycles),
+        "widened pipeline should distinguish movement counts from cycle presence: advanced={stage_advanced:?} cycles={stage_advanced_cycles:?}"
+    );
+    assert!(
+        stage_retired[4] > 0,
+        "retirement movement should be attributed to commit stage: {stage_retired:?}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293,          // addi x5, x0, 7

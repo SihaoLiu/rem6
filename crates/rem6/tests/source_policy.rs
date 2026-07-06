@@ -582,6 +582,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.cpu0.pipeline.in_order.stall_cause.data_wait.stage.commit.resource_blocked",
         "sim.cpu0.pipeline.in_order.stall_cause.data_wait.stage.commit.resource_blocked_cycles",
         "sim.cpu0.pipeline.in_order.stall_cause.execute_wait.stage.execute.resource_blocked_cycles",
+        "system.cpu.pipeline.inOrder.stage.fetch1.advancedCycles",
+        "system.cpu.pipeline.inOrder.stage.commit.retiredCycles",
         "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlocked",
         "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlockedCycles",
         "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.execute.resourceBlockedCycles",

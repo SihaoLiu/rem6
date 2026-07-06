@@ -968,6 +968,10 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
         for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
             for (source_name, alias_name, unit) in [
                 ("occupied_cycles", "occupiedCycles", "Cycle"),
+                ("advanced", "advanced", "Count"),
+                ("advanced_cycles", "advancedCycles", "Cycle"),
+                ("retired", "retired", "Count"),
+                ("retired_cycles", "retiredCycles", "Cycle"),
                 ("resource_blocked", "resourceBlocked", "Count"),
                 ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
                 ("ordering_blocked", "orderingBlocked", "Count"),
