@@ -1607,8 +1607,17 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "system.cpu.iq.memInstsIssued",
         "system.cpu.iq.issuedInstType.MemRead",
         "system.cpu.iq.issuedInstType.MemWrite",
+        "system.cpu.iq.branchInstsIssued",
         "system.cpu.commit.committedInstType.MemRead",
         "system.cpu.commit.committedInstType.MemWrite",
+        "system.cpu.commit.branchMispredicts",
+        "system.cpu.iew.branchRepair.targetlessMismatch",
+        "system.cpu.iew.branchRepair.directionOnly",
+        "system.cpu.iew.branchRepair.wrongTarget",
+        "system.cpu.iew.branchRepair.total",
+        "system.cpu.iew.predictedTakenIncorrect",
+        "system.cpu.iew.predictedNotTakenIncorrect",
+        "system.cpu.iew.branchMispredicts",
         "system.cpu.lsq0.operation.load",
         "system.cpu.lsq0.operation.total",
         "system.cpu.lsq0.ordering.acquireRelease",
@@ -2270,6 +2279,26 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         3,
         "resettable",
     );
+    for (path, value) in [
+        ("system.cpu.iew.branchRepair.targetlessMismatch", 1),
+        ("system.cpu.iew.branchRepair.directionOnly", 2),
+        ("system.cpu.iew.branchRepair.wrongTarget", 0),
+        ("system.cpu.iew.branchRepair.total", 3),
+        ("system.cpu.iew.predictedTakenIncorrect", 1),
+        ("system.cpu.iew.predictedNotTakenIncorrect", 2),
+        ("system.cpu.iew.branchMispredicts", 3),
+        ("system.cpu.commit.branchMispredicts", 3),
+        ("system.cpu.iq.branchInstsIssued", 3),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
 
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
@@ -2305,6 +2334,15 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
+        "system.cpu.iew.branchRepair.targetlessMismatch",
+        "system.cpu.iew.branchRepair.directionOnly",
+        "system.cpu.iew.branchRepair.wrongTarget",
+        "system.cpu.iew.branchRepair.total",
+        "system.cpu.iew.predictedTakenIncorrect",
+        "system.cpu.iew.predictedNotTakenIncorrect",
+        "system.cpu.iew.branchMispredicts",
+        "system.cpu.commit.branchMispredicts",
+        "system.cpu.iq.branchInstsIssued",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }

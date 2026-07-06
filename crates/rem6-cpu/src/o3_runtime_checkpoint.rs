@@ -896,6 +896,9 @@ mod tests {
         let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
             super::super::default_o3_runtime_snapshot(),
             O3RuntimeStats {
+                branch_repair_targetless_mismatches: 2,
+                branch_repair_wrong_targets: 3,
+                branch_repair_direction_only_mismatches: 4,
                 iew_predicted_taken_incorrect: 3,
                 iew_predicted_not_taken_incorrect: 5,
                 ..O3RuntimeStats::default()
@@ -929,6 +932,10 @@ mod tests {
         let decoded = O3RuntimeCheckpointPayload::decode(&v7_encoded).unwrap();
         let stats = decoded.stats();
 
+        assert_eq!(stats.branch_repair_targetless_mismatches(), 2);
+        assert_eq!(stats.branch_repair_wrong_targets(), 3);
+        assert_eq!(stats.branch_repair_direction_only_mismatches(), 4);
+        assert_eq!(stats.branch_repair_mispredicts(), 9);
         assert_eq!(stats.iew_predicted_taken_incorrect(), 0);
         assert_eq!(stats.iew_predicted_not_taken_incorrect(), 0);
     }

@@ -179,6 +179,12 @@ impl O3RuntimeStats {
         self.branch_repair_direction_only_mismatches
     }
 
+    pub const fn branch_repair_mispredicts(self) -> u64 {
+        self.branch_repair_targetless_mismatches
+            .saturating_add(self.branch_repair_wrong_targets)
+            .saturating_add(self.branch_repair_direction_only_mismatches)
+    }
+
     pub fn branch_repair_targetless_mismatch_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_repair_targetless_mismatch_kinds[kind.index()]
     }

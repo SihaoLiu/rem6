@@ -166,6 +166,140 @@ struct RiscvO3RuntimeStructuralAliasStats {
     lsq_store_bytes: StatId,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeBranchAliasStats {
+    branch_repair_targetless_mismatch: StatId,
+    branch_repair_direction_only: StatId,
+    branch_repair_wrong_target: StatId,
+    branch_repair_total: StatId,
+    iew_predicted_taken_incorrect: StatId,
+    iew_predicted_not_taken_incorrect: StatId,
+    iew_branch_mispredicts: StatId,
+    commit_branch_mispredicts: StatId,
+    iq_branch_insts_issued: StatId,
+}
+
+impl RiscvO3RuntimeBranchAliasStats {
+    fn register(registry: &mut StatsRegistry, prefix: &str) -> Result<Self, StatsError> {
+        Ok(Self {
+            branch_repair_targetless_mismatch: register_o3_counter(
+                registry,
+                prefix,
+                "iew.branchRepair.targetlessMismatch",
+                "Count",
+            )?,
+            branch_repair_direction_only: register_o3_counter(
+                registry,
+                prefix,
+                "iew.branchRepair.directionOnly",
+                "Count",
+            )?,
+            branch_repair_wrong_target: register_o3_counter(
+                registry,
+                prefix,
+                "iew.branchRepair.wrongTarget",
+                "Count",
+            )?,
+            branch_repair_total: register_o3_counter(
+                registry,
+                prefix,
+                "iew.branchRepair.total",
+                "Count",
+            )?,
+            iew_predicted_taken_incorrect: register_o3_counter(
+                registry,
+                prefix,
+                "iew.predictedTakenIncorrect",
+                "Count",
+            )?,
+            iew_predicted_not_taken_incorrect: register_o3_counter(
+                registry,
+                prefix,
+                "iew.predictedNotTakenIncorrect",
+                "Count",
+            )?,
+            iew_branch_mispredicts: register_o3_counter(
+                registry,
+                prefix,
+                "iew.branchMispredicts",
+                "Count",
+            )?,
+            commit_branch_mispredicts: register_o3_counter(
+                registry,
+                prefix,
+                "commit.branchMispredicts",
+                "Count",
+            )?,
+            iq_branch_insts_issued: register_o3_counter(
+                registry,
+                prefix,
+                "iq.branchInstsIssued",
+                "Count",
+            )?,
+        })
+    }
+
+    fn increment_delta(
+        self,
+        registry: &mut StatsRegistry,
+        previous: O3RuntimeStats,
+        current: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for ((stat, previous), (_, current)) in self
+            .count_values(previous)
+            .into_iter()
+            .zip(self.count_values(current))
+        {
+            let delta = current.saturating_sub(previous);
+            if delta != 0 {
+                registry.increment(stat, delta)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for (stat, value) in self.count_values(snapshot) {
+            registry.set_resettable_counter(stat, value)?;
+        }
+        Ok(())
+    }
+
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 9] {
+        let branch_mispredicts = o3_branch_mispredicts(stats);
+        [
+            (
+                self.branch_repair_targetless_mismatch,
+                stats.branch_repair_targetless_mismatches(),
+            ),
+            (
+                self.branch_repair_direction_only,
+                stats.branch_repair_direction_only_mismatches(),
+            ),
+            (
+                self.branch_repair_wrong_target,
+                stats.branch_repair_wrong_targets(),
+            ),
+            (self.branch_repair_total, branch_mispredicts),
+            (
+                self.iew_predicted_taken_incorrect,
+                stats.iew_predicted_taken_incorrect(),
+            ),
+            (
+                self.iew_predicted_not_taken_incorrect,
+                stats.iew_predicted_not_taken_incorrect(),
+            ),
+            (self.iew_branch_mispredicts, branch_mispredicts),
+            (self.commit_branch_mispredicts, branch_mispredicts),
+            (self.iq_branch_insts_issued, stats.iq_branch_insts_issued()),
+        ]
+    }
+}
+
 impl RiscvO3RuntimeStructuralAliasStats {
     fn register(registry: &mut StatsRegistry, prefix: &str) -> Result<Self, StatsError> {
         Ok(Self {
@@ -401,6 +535,7 @@ struct RiscvO3RuntimeCpuStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    branch_aliases: RiscvO3RuntimeBranchAliasStats,
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
@@ -517,6 +652,10 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             branch_repair_kinds: register_o3_branch_repair_kind_counters(registry, &prefix)?,
+            branch_aliases: RiscvO3RuntimeBranchAliasStats::register(
+                registry,
+                &gem5_cpu_alias_prefix,
+            )?,
             fu_latency_instructions: register_o3_counter(
                 registry,
                 &prefix,
@@ -830,6 +969,8 @@ impl RiscvO3RuntimeCpuStats {
         }
         self.structural_aliases
             .increment_delta(registry, previous, current)?;
+        self.branch_aliases
+            .increment_delta(registry, previous, current)?;
         for kind in BranchTargetKind::ALL {
             let repair_stats = self.branch_repair_kinds[kind.index()];
             for (stat, previous, current) in [
@@ -1008,6 +1149,7 @@ impl RiscvO3RuntimeCpuStats {
             registry.set_resettable_counter(stat, value)?;
         }
         self.structural_aliases.set_snapshot(registry, snapshot)?;
+        self.branch_aliases.set_snapshot(registry, snapshot)?;
         let mut lsq_operation_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {
             let value = snapshot.lsq_operation_count(operation);
@@ -1115,9 +1257,7 @@ fn register_o3_counter(
 }
 
 fn o3_branch_mispredicts(stats: O3RuntimeStats) -> u64 {
-    stats
-        .iew_predicted_taken_incorrect()
-        .saturating_add(stats.iew_predicted_not_taken_incorrect())
+    stats.branch_repair_mispredicts()
 }
 
 fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
