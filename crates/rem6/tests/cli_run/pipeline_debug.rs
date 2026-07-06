@@ -546,6 +546,7 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
         in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "flushed");
     let flush_cause_branch_prediction_flushed_cycles =
         in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "flushed_cycles");
+    assert_in_order_cause_stage_alias_family(&json, "flush_cause", "flushCause");
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
             &json,
@@ -681,6 +682,7 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         in_order_stage_metric_values(&branch_json, "branch_prediction_flushed");
     let branch_stage_flushed_cycles =
         in_order_stage_metric_values(&branch_json, "branch_prediction_flushed_cycles");
+    assert_in_order_cause_stage_alias_family(&branch_json, "redirect_cause", "redirectCause");
     let branch_redirect_cause_flushed =
         in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "flushed");
     assert_eq!(
@@ -807,6 +809,7 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
     let trap_stage_flushed = in_order_stage_metric_values(&trap_json, "trap_redirect_flushed");
     let trap_stage_flushed_cycles =
         in_order_stage_metric_values(&trap_json, "trap_redirect_flushed_cycles");
+    assert_in_order_cause_stage_alias_family(&trap_json, "redirect_cause", "redirectCause");
     let trap_redirect_cause_flushed =
         in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed");
     assert_eq!(
@@ -1679,6 +1682,62 @@ fn assert_in_order_stall_cause_stage_aliases(
         );
         let source_path =
             format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}");
+        let alias = json_stat(json, &alias_path);
+        let source = json_stat(json, &source_path);
+        assert_eq!(
+            alias.get("value").and_then(Value::as_u64),
+            source.get("value").and_then(Value::as_u64),
+            "value mismatch for {alias_path}"
+        );
+        assert_eq!(
+            alias.get("unit").and_then(Value::as_str),
+            source.get("unit").and_then(Value::as_str),
+            "unit mismatch for {alias_path}"
+        );
+        assert_eq!(
+            alias.get("reset_policy").and_then(Value::as_str),
+            source.get("reset_policy").and_then(Value::as_str),
+            "reset policy mismatch for {alias_path}"
+        );
+    }
+}
+
+fn assert_in_order_cause_stage_alias_family(json: &Value, family: &str, alias_family: &str) {
+    for (cause, alias_cause) in [
+        ("branch_prediction", "branchPrediction"),
+        ("interrupt_redirect", "interruptRedirect"),
+        ("trap_redirect", "trapRedirect"),
+    ] {
+        for (metric, alias_metric) in [("flushed", "flushed"), ("flushed_cycles", "flushedCycles")]
+        {
+            assert_in_order_cause_stage_aliases(
+                json,
+                family,
+                alias_family,
+                cause,
+                alias_cause,
+                metric,
+                alias_metric,
+            );
+        }
+    }
+}
+
+fn assert_in_order_cause_stage_aliases(
+    json: &Value,
+    family: &str,
+    alias_family: &str,
+    cause: &str,
+    alias_cause: &str,
+    metric: &str,
+    alias_metric: &str,
+) {
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        let alias_path = format!(
+            "system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.stage.{stage}.{alias_metric}"
+        );
+        let source_path =
+            format!("sim.cpu0.pipeline.in_order.{family}.{cause}.stage.{stage}.{metric}");
         let alias = json_stat(json, &alias_path);
         let source = json_stat(json, &source_path);
         assert_eq!(
