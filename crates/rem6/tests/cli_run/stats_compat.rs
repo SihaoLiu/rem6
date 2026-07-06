@@ -18571,6 +18571,66 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    for (alias_name, source_name) in [
+        (
+            "branchSpeculationPredictions",
+            "branch_speculation_predictions",
+        ),
+        ("branchSpeculationRepairs", "branch_speculation_repairs"),
+        (
+            "branchSpeculationRemovedYoungers",
+            "branch_speculation_removed_youngers",
+        ),
+        (
+            "branchSpeculationMaxPending",
+            "branch_speculation_max_pending",
+        ),
+    ] {
+        let alias = format!("system.cpu.pipeline.inOrder.{alias_name}");
+        assert_eq!(
+            text_stat_value(&stdout, &alias),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.{source_name}")
+            )
+        );
+        assert!(
+            text_stat_line(&stdout, &alias).contains("unit=Count"),
+            "{stdout}"
+        );
+    }
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchSpeculationPredictions"
+        ),
+        2,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchSpeculationRepairs"
+        ),
+        1,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchSpeculationRemovedYoungers"
+        ),
+        1,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchSpeculationMaxPending"
+        ),
+        2,
+        "{stdout}"
+    );
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.squashes_0::total"),
         text_stat_value(&stdout, "sim.cpu0.branch_predictor.squashes.total")

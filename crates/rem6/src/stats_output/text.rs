@@ -956,6 +956,26 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 "trapRedirectFlushCycles",
                 "Cycle",
             ),
+            (
+                "branch_speculation_predictions",
+                "branchSpeculationPredictions",
+                "Count",
+            ),
+            (
+                "branch_speculation_repairs",
+                "branchSpeculationRepairs",
+                "Count",
+            ),
+            (
+                "branch_speculation_removed_youngers",
+                "branchSpeculationRemovedYoungers",
+                "Count",
+            ),
+            (
+                "branch_speculation_max_pending",
+                "branchSpeculationMaxPending",
+                "Count",
+            ),
         ] {
             append_derived_stat_from_snapshot(
                 output,
