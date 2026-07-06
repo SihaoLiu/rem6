@@ -3309,6 +3309,279 @@ fn rem6_run_accepts_jedec_dram_profile_presets() {
 }
 
 #[test]
+fn rem6_run_nvm_profile_records_dram_low_power_without_refresh() {
+    let program = riscv64_program(&[
+        b_type(0, 0, 0, 0x0), // beq x0, x0, self
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("nvm-low-power-no-refresh", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "300",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "nvm",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "8",
+            "--dram-low-power-self-refresh-entry-delay",
+            "24",
+            "--dram-low-power-exit-latency",
+            "5",
+            "--dram-low-power-self-refresh-exit-latency",
+            "11",
+            "--memory-route-delay",
+            "72",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
+    assert_eq!(
+        json.pointer("/dram/profile/technology")
+            .and_then(Value::as_str),
+        Some("nvm")
+    );
+    assert_eq!(
+        json.pointer("/dram/profile/timing/refresh_policy")
+            .and_then(Value::as_str),
+        None
+    );
+    assert_eq!(json_u64(&json, "/dram/refreshes"), 0);
+    assert_eq!(json_u64(&json, "/dram/refresh_ticks"), 0);
+    assert_eq!(json_u64(&json, "/memory_resources/dram/refreshes"), 0);
+    assert_eq!(json_u64(&json, "/memory_resources/dram/refresh_ticks"), 0);
+
+    let active_powerdown_entries = json_u64(&json, "/dram/low_power/active_powerdown/entries");
+    let active_powerdown_ticks = json_u64(&json, "/dram/low_power/active_powerdown/ticks");
+    let self_refresh_entries = json_u64(&json, "/dram/low_power/self_refresh/entries");
+    let self_refresh_ticks = json_u64(&json, "/dram/low_power/self_refresh/ticks");
+    assert!(active_powerdown_entries > 0);
+    assert!(active_powerdown_ticks > 0);
+    assert!(self_refresh_entries > 0);
+    assert!(self_refresh_ticks > 0);
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/low_power/active_powerdown/entries"
+        ),
+        active_powerdown_entries
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/low_power/active_powerdown/ticks"
+        ),
+        active_powerdown_ticks
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/low_power/self_refresh/entries"
+        ),
+        self_refresh_entries
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/low_power/self_refresh/ticks"),
+        self_refresh_ticks
+    );
+    let bank0_active_powerdown_entries = json_u64(
+        &json,
+        "/dram/targets/0/ports/0/banks/0/low_power/active_powerdown/entries",
+    );
+    let bank0_active_powerdown_ticks = json_u64(
+        &json,
+        "/dram/targets/0/ports/0/banks/0/low_power/active_powerdown/ticks",
+    );
+    assert!(bank0_active_powerdown_entries > 0);
+    assert!(bank0_active_powerdown_ticks > 0);
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/banks/0/low_power/active_powerdown/entries"
+        ),
+        bank0_active_powerdown_entries
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/banks/0/low_power/active_powerdown/ticks"
+        ),
+        bank0_active_powerdown_ticks
+    );
+    let bank0_self_refresh_entries = json_u64(
+        &json,
+        "/dram/targets/0/ports/0/banks/0/low_power/self_refresh/entries",
+    );
+    assert!(bank0_self_refresh_entries > 0);
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/banks/0/low_power/self_refresh/entries"
+        ),
+        bank0_self_refresh_entries
+    );
+    assert_eq!(json_u64(&json, "/dram/targets/0/refreshes"), 0);
+    assert_eq!(json_u64(&json, "/dram/targets/0/refresh_ticks"), 0);
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/targets/0/refreshes"),
+        0
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/targets/0/refresh_ticks"),
+        0
+    );
+    assert_eq!(json_u64(&json, "/dram/targets/0/ports/0/refreshes"), 0);
+    assert_eq!(json_u64(&json, "/dram/targets/0/ports/0/refresh_ticks"), 0);
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/targets/0/ports/0/refreshes"),
+        0
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/refresh_ticks"
+        ),
+        0
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/refreshes"),
+        0
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/refresh_ticks"),
+        0
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/banks/0/refreshes"
+        ),
+        0
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/dram/targets/0/ports/0/banks/0/refresh_ticks"
+        ),
+        0
+    );
+    assert_eq!(json_u64(&json, "/dram/nvm/persistent_writes"), 0);
+    assert!(json_u64(&json, "/dram/nvm/max_pending_reads") > 0);
+
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.technology.nvm",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.precharge_powerdown_entry_delay",
+        "Tick",
+        8,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_entry_delay",
+        "Tick",
+        24,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.active_powerdown.entries",
+        "Count",
+        active_powerdown_entries,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.active_powerdown.ticks",
+        "Tick",
+        active_powerdown_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.low_power.active_powerdown.ticks",
+        "Tick",
+        active_powerdown_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.self_refresh.entries",
+        "Count",
+        self_refresh_entries,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.low_power.self_refresh.ticks",
+        "Tick",
+        self_refresh_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.low_power.self_refresh.entries",
+        "Count",
+        bank0_self_refresh_entries,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.low_power.active_powerdown.ticks",
+        "Tick",
+        bank0_active_powerdown_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.refreshes",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.refresh_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_policy.per_bank",
+        "Count",
+        0,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_accepts_host_event_delay_runtime_option() {
     let program = riscv64_program(&[
         i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7
