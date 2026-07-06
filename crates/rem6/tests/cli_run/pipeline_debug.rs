@@ -326,6 +326,24 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
     let flush_cause_branch_prediction_flushed_cycles =
         in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "flushed_cycles");
     assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "branch_prediction",
+            "flushed"
+        ),
+        flush_cause_branch_prediction_flushed
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "branch_prediction",
+            "flushed_cycles"
+        ),
+        flush_cause_branch_prediction_flushed_cycles
+    );
+    assert_eq!(
         flush_cause_branch_prediction_flushed,
         stage_branch_prediction_flushed
     );
@@ -361,7 +379,25 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
         [0; 5]
     );
     assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "trap_redirect",
+            "flushed"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
         in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "flushed_cycles"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "trap_redirect",
+            "flushed_cycles"
+        ),
         [0; 5]
     );
 }
@@ -424,14 +460,31 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         in_order_stage_metric_values(&branch_json, "branch_prediction_flushed");
     let branch_stage_flushed_cycles =
         in_order_stage_metric_values(&branch_json, "branch_prediction_flushed_cycles");
+    let branch_redirect_cause_flushed =
+        in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "flushed");
     assert_eq!(
-        in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "flushed"),
-        branch_stage_flushed
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
+            "branch_prediction",
+            "flushed"
+        ),
+        branch_redirect_cause_flushed
     );
+    assert_eq!(branch_redirect_cause_flushed, branch_stage_flushed);
     let branch_redirect_cause_cycles = in_order_redirect_cause_stage_metric_values(
         &branch_json,
         "branch_prediction",
         "flushed_cycles",
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
+            "branch_prediction",
+            "flushed_cycles"
+        ),
+        branch_redirect_cause_cycles
     );
     assert_eq!(branch_redirect_cause_cycles, branch_stage_flushed_cycles);
     assert!(
@@ -445,8 +498,26 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         [0; 5]
     );
     assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
+            "trap_redirect",
+            "flushed"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
         in_order_redirect_cause_stage_metric_values(
             &branch_json,
+            "trap_redirect",
+            "flushed_cycles"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
             "trap_redirect",
             "flushed_cycles"
         ),
@@ -515,12 +586,29 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
     let trap_stage_flushed = in_order_stage_metric_values(&trap_json, "trap_redirect_flushed");
     let trap_stage_flushed_cycles =
         in_order_stage_metric_values(&trap_json, "trap_redirect_flushed_cycles");
+    let trap_redirect_cause_flushed =
+        in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed");
     assert_eq!(
-        in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed"),
-        trap_stage_flushed
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
+            "trap_redirect",
+            "flushed"
+        ),
+        trap_redirect_cause_flushed
     );
+    assert_eq!(trap_redirect_cause_flushed, trap_stage_flushed);
     let trap_redirect_cause_cycles =
         in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed_cycles");
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
+            "trap_redirect",
+            "flushed_cycles"
+        ),
+        trap_redirect_cause_cycles
+    );
     assert_eq!(trap_redirect_cause_cycles, trap_stage_flushed_cycles);
     assert!(
         trap_redirect_cause_cycles
@@ -533,8 +621,26 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         [0; 5]
     );
     assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
+            "branch_prediction",
+            "flushed"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
         in_order_redirect_cause_stage_metric_values(
             &trap_json,
+            "branch_prediction",
+            "flushed_cycles"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
             "branch_prediction",
             "flushed_cycles"
         ),
@@ -1300,6 +1406,24 @@ fn in_order_redirect_cause_stage_metric_values(
             json,
             &format!("sim.cpu0.pipeline.in_order.redirect_cause.{cause}.stage.{stage}.{metric}"),
         )
+    })
+}
+
+fn in_order_artifact_cause_stage_metric_values(
+    json: &Value,
+    family: &str,
+    cause: &str,
+    metric: &str,
+) -> [u64; 5] {
+    ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        let pointer = format!("/cores/0/in_order_pipeline/{family}/{cause}/stage_{metric}/{stage}");
+        json.pointer(&pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing artifact in-order {family} stage metric {metric} for {cause}/{stage} at {pointer}: {json}"
+                )
+            })
     })
 }
 
