@@ -1096,6 +1096,7 @@ fn emit_o3_runtime_stats(
             "mem_insts_issued",
             o3.lsq_loads().saturating_add(o3.lsq_stores()),
         ),
+        ("branch_insts_issued", o3.iq_branch_insts_issued()),
         ("issued_inst_type.mem_read", o3.lsq_loads()),
         ("issued_inst_type.mem_write", o3.lsq_stores()),
     ] {
@@ -1183,6 +1184,7 @@ fn emit_o3_runtime_stats(
             "lsq0.storeLoadForwardingMatches",
             o3.lsq_store_to_load_forwarding_matches(),
         ),
+        ("iq.branchInstsIssued", o3.iq_branch_insts_issued()),
     ] {
         increment_stat(
             stats,

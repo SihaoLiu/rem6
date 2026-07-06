@@ -15,7 +15,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 9;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 10;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS: u8 = 9;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS: u8 = 8;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS: u8 = 7;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS: u8 = 6;
@@ -88,6 +89,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -126,7 +128,9 @@ impl O3RuntimeCheckpointPayload {
             load_store_queue.push(read_lsq_entry(payload, &mut offset)?);
         }
 
-        let rename_entry_bytes = if version == O3_RUNTIME_CHECKPOINT_VERSION {
+        let has_dependency_producer_state =
+            version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS;
+        let rename_entry_bytes = if has_dependency_producer_state {
             O3_RUNTIME_RENAME_ENTRY_BYTES_WITH_DEPENDENCY
         } else {
             O3_RUNTIME_RENAME_ENTRY_BYTES
@@ -139,11 +143,8 @@ impl O3RuntimeCheckpointPayload {
         let mut rename_map = Vec::with_capacity(rename_count);
         let mut dependency_producers_with_consumers = BTreeSet::new();
         for _ in 0..rename_count {
-            let (entry, producer_has_consumers) = read_rename_entry(
-                payload,
-                &mut offset,
-                version == O3_RUNTIME_CHECKPOINT_VERSION,
-            )?;
+            let (entry, producer_has_consumers) =
+                read_rename_entry(payload, &mut offset, has_dependency_producer_state)?;
             if producer_has_consumers {
                 dependency_producers_with_consumers.insert(entry.physical());
             }
@@ -161,6 +162,19 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 true,
                 true,
+                true,
+            )?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS => read_o3_runtime_stats(
+                payload,
+                &mut offset,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS => {
                 read_o3_runtime_stats(
@@ -172,6 +186,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                 )?
             }
@@ -185,6 +200,7 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => {
                 read_o3_runtime_stats(
@@ -194,6 +210,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -209,12 +226,14 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
                 true,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -231,10 +250,12 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
+                false,
                 false,
                 false,
                 false,
@@ -476,6 +497,7 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     for value in [stats.iew_producer_insts(), stats.iew_consumer_insts()] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
+    payload.extend_from_slice(&stats.iq_branch_insts_issued().to_le_bytes());
     for value in [
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
@@ -550,6 +572,7 @@ fn read_o3_runtime_stats(
     has_lsq_data_latency_stats: bool,
     has_iew_branch_mispredict_split_stats: bool,
     has_iew_dependency_stats: bool,
+    has_iq_branch_issued_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
@@ -658,6 +681,11 @@ fn read_o3_runtime_stats(
     } else {
         (0, 0)
     };
+    let iq_branch_insts_issued = if has_iq_branch_issued_stats {
+        read_u64(payload, offset)?
+    } else {
+        0
+    };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -694,6 +722,7 @@ fn read_o3_runtime_stats(
         fu_latency_cycles,
         fu_latency_class_instructions,
         fu_latency_class_cycles,
+        iq_branch_insts_issued,
         max_rob_occupancy: read_u64(payload, offset)?,
         max_lsq_occupancy: read_u64(payload, offset)?,
         rename_map_entries: read_u64(payload, offset)?,
@@ -780,6 +809,7 @@ mod tests {
     const BRANCH_REPAIR_STATS_BYTES: usize = (3 + crate::BranchTargetKind::COUNT * 3) * U64_BYTES;
     const IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 * U64_BYTES;
     const IEW_DEPENDENCY_STATS_BYTES: usize = 2 * U64_BYTES;
+    const IQ_BRANCH_ISSUED_STATS_BYTES: usize = U64_BYTES;
     const MAX_OCCUPANCY_STATS_BYTES: usize = 3 * U64_BYTES;
     const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
         + LSQ_OPERATION_STATS_BYTES
@@ -788,7 +818,8 @@ mod tests {
         + LSQ_ORDERING_STATS_BYTES
         + BRANCH_REPAIR_STATS_BYTES
         + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
-        + IEW_DEPENDENCY_STATS_BYTES;
+        + IEW_DEPENDENCY_STATS_BYTES
+        + IQ_BRANCH_ISSUED_STATS_BYTES;
 
     #[test]
     fn checkpoint_v6_payloads_decode_without_aggregate_lsq_data_latency_stats() {
@@ -823,17 +854,23 @@ mod tests {
             + LSQ_OPERATION_STATS_BYTES
             + LSQ_OPERATION_LATENCY_STATS_BYTES;
         let split_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
             - IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let dependency_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
+        let iq_branch_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v6_encoded = [
             &encoded[..data_latency_offset],
             &encoded[data_latency_offset + LSQ_DATA_LATENCY_STATS_BYTES..split_offset],
             &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..dependency_offset],
-            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..],
+            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
+            &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
         ]
         .concat();
         v6_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
@@ -868,16 +905,22 @@ mod tests {
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
         let split_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
             - IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let dependency_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
+        let iq_branch_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v7_encoded = [
             &encoded[..split_offset],
             &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..dependency_offset],
-            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..],
+            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
+            &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
         ]
         .concat();
         v7_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
@@ -904,11 +947,16 @@ mod tests {
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
         let dependency_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
+        let iq_branch_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v8_encoded = [
             &encoded[..dependency_offset],
-            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..],
+            &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
+            &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
         ]
         .concat();
         v8_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
@@ -919,5 +967,34 @@ mod tests {
 
         assert_eq!(stats.iew_producer_insts(), 0);
         assert_eq!(stats.iew_consumer_insts(), 0);
+    }
+
+    #[test]
+    fn checkpoint_v9_payloads_decode_without_iq_branch_issued_stats() {
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            super::super::default_o3_runtime_snapshot(),
+            O3RuntimeStats {
+                iq_branch_insts_issued: 3,
+                ..O3RuntimeStats::default()
+            },
+        )
+        .unwrap();
+        let encoded = payload.encode();
+        let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let iq_branch_offset = stats_offset + CURRENT_STATS_BYTES
+            - IQ_BRANCH_ISSUED_STATS_BYTES
+            - MAX_OCCUPANCY_STATS_BYTES;
+        let mut v9_encoded = [
+            &encoded[..iq_branch_offset],
+            &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
+        ]
+        .concat();
+        v9_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS;
+
+        let decoded = O3RuntimeCheckpointPayload::decode(&v9_encoded).unwrap();
+        let stats = decoded.stats();
+
+        assert_eq!(stats.iq_branch_insts_issued(), 0);
     }
 }

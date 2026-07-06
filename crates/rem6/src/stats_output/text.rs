@@ -634,6 +634,13 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         append_derived_stat_from_snapshot(
             output,
             snapshot,
+            &format!("sim.cpu{cpu}.o3.iq.branch_insts_issued"),
+            &format!("{alias_prefix}.iq.branchInstsIssued"),
+            "Count",
+        );
+        append_derived_stat_from_snapshot(
+            output,
+            snapshot,
             &format!("sim.cpu{cpu}.o3.lsq_store_to_load_forwarding_matches"),
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",

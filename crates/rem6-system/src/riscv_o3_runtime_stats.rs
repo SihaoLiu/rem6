@@ -161,6 +161,7 @@ struct RiscvO3RuntimeCpuStats {
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     iq_insts_issued: StatId,
     iq_mem_insts_issued: StatId,
+    iq_branch_insts_issued: StatId,
     iq_issued_inst_type_mem_read: StatId,
     iq_issued_inst_type_mem_write: StatId,
     iq_issued_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
@@ -251,6 +252,12 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "iq.mem_insts_issued",
+                "Count",
+            )?,
+            iq_branch_insts_issued: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.branch_insts_issued",
                 "Count",
             )?,
             iq_issued_inst_type_mem_read: register_o3_counter(
@@ -419,6 +426,11 @@ impl RiscvO3RuntimeCpuStats {
                 self.iq_mem_insts_issued,
                 previous.lsq_loads().saturating_add(previous.lsq_stores()),
                 current.lsq_loads().saturating_add(current.lsq_stores()),
+            ),
+            (
+                self.iq_branch_insts_issued,
+                previous.iq_branch_insts_issued(),
+                current.iq_branch_insts_issued(),
             ),
             (
                 self.iq_issued_inst_type_mem_read,
@@ -606,6 +618,10 @@ impl RiscvO3RuntimeCpuStats {
             (
                 self.iq_mem_insts_issued,
                 snapshot.lsq_loads().saturating_add(snapshot.lsq_stores()),
+            ),
+            (
+                self.iq_branch_insts_issued,
+                snapshot.iq_branch_insts_issued(),
             ),
             (self.iq_issued_inst_type_mem_read, snapshot.lsq_loads()),
             (self.iq_issued_inst_type_mem_write, snapshot.lsq_stores()),

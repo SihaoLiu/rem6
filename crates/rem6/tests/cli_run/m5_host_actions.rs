@@ -1990,6 +1990,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         2,
         "resettable",
     );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
+        "counter",
+        "Count",
+        3,
+        "resettable",
+    );
 
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
@@ -2022,6 +2030,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_taken_incorrect",
         "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
@@ -2057,6 +2066,13 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
     assert_json_stat(
         &json,
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iq.branch_insts_issued",
         "Count",
         0,
         "monotonic",
@@ -3962,6 +3978,8 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         predicted_not_taken_incorrect,
     );
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.iq.branch_insts_issued", 3);
+    assert_text_count_stat(&stdout, "system.cpu.iq.branchInstsIssued", 3);
     assert_text_count_stat(
         &stdout,
         "system.cpu.iew.predictedTakenIncorrect",
@@ -4036,6 +4054,12 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         Some(predicted_not_taken_incorrect),
         "structured O3 runtime JSON should expose predicted-not-taken split: {json}"
     );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iq_branch_insts_issued")
+            .and_then(Value::as_u64),
+        Some(3),
+        "structured O3 runtime JSON should expose branch-issued count: {json}"
+    );
 
     assert_json_stat(
         &json,
@@ -4070,6 +4094,20 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "Count",
         predicted_not_taken_incorrect,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iq.branch_insts_issued",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iq.branchInstsIssued",
+        "Count",
+        3,
         "monotonic",
     );
     assert_json_stat(
@@ -4285,6 +4323,7 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.rename_map_entries");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.insts_issued");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.mem_insts_issued");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iq.branch_insts_issued");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.mem_read");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.mem_write");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_mul");
@@ -4359,6 +4398,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.rename_map_entries",
         "sim.cpu0.o3.iq.insts_issued",
         "sim.cpu0.o3.iq.mem_insts_issued",
+        "sim.cpu0.o3.iq.branch_insts_issued",
         "sim.cpu0.o3.iq.issued_inst_type.mem_read",
         "sim.cpu0.o3.iq.issued_inst_type.mem_write",
         "sim.cpu0.o3.iq.issued_inst_type.int_mul",
@@ -4391,6 +4431,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.lsq0.forwLoads",
         "system.cpu.iq.instsIssued",
         "system.cpu.iq.memInstsIssued",
+        "system.cpu.iq.branchInstsIssued",
         "system.cpu.iq.issuedInstType_0::MemRead",
         "system.cpu.iq.issuedInstType_0::MemWrite",
         "system.cpu.iq.issuedInstType_0::IntMult",

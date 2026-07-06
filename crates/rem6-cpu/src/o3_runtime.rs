@@ -1378,6 +1378,7 @@ mod tests {
             branch_repair_direction_only_kinds: direction_only_kinds,
             iew_predicted_taken_incorrect: 5,
             iew_predicted_not_taken_incorrect: 6,
+            iq_branch_insts_issued: 8,
             ..O3RuntimeStats::default()
         };
         let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
@@ -1412,6 +1413,7 @@ mod tests {
         );
         assert_eq!(decoded.stats().iew_predicted_taken_incorrect(), 5);
         assert_eq!(decoded.stats().iew_predicted_not_taken_incorrect(), 6);
+        assert_eq!(decoded.stats().iq_branch_insts_issued(), 8);
     }
 
     fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {

@@ -51,6 +51,7 @@ pub struct O3RuntimeStats {
     pub(crate) fu_latency_cycles: u64,
     pub(crate) fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) fu_latency_class_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
+    pub(crate) iq_branch_insts_issued: u64,
     pub(crate) max_rob_occupancy: u64,
     pub(crate) max_lsq_occupancy: u64,
     pub(crate) rename_map_entries: u64,
@@ -238,6 +239,10 @@ impl O3RuntimeStats {
         self.fu_latency_class_cycles(O3RuntimeFuLatencyClass::ScalarIntegerDiv)
     }
 
+    pub const fn iq_branch_insts_issued(self) -> u64 {
+        self.iq_branch_insts_issued
+    }
+
     pub const fn max_rob_occupancy(self) -> u64 {
         self.max_rob_occupancy
     }
@@ -275,6 +280,7 @@ impl O3RuntimeStats {
             || self.iew_consumer_insts != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
+            || self.iq_branch_insts_issued != 0
             || self.max_rob_occupancy != 0
             || self.max_lsq_occupancy != 0
             || self.rename_map_entries != 0
@@ -315,6 +321,9 @@ impl O3RuntimeStats {
         self.rob_allocations = self.rob_allocations.saturating_add(1);
         self.rob_commits = self.rob_commits.saturating_add(1);
         self.record_branch_repair(trace_record);
+        if trace_record.branch_event() {
+            self.iq_branch_insts_issued = self.iq_branch_insts_issued.saturating_add(1);
+        }
 
         let record = execution.execution();
         let fu_latency_cycles =
