@@ -1005,15 +1005,110 @@ fn rem6_run_gdb_listen_delegated_interrupt_csrs_vector_after_mret() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"trap\":\"environment_call\""));
-    assert!(stdout.contains("\"trap_pc\":\"0x1018\""));
+    assert!(
+        stdout.contains("\"status\":\"executed_until_trap\""),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"trap\":\"environment_call\""),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"trap_pc\":\"0x1018\""),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("\"x5\":\"0x2a\""), "stdout: {stdout}");
     assert!(stdout.contains("\"x6\":\"0x1004\""), "stdout: {stdout}");
     assert!(
         stdout.contains("\"x7\":\"0x8000000000000001\""),
         "stdout: {stdout}"
     );
+}
+
+#[test]
+fn rem6_run_gdb_listen_medeleg_illegal_instruction_vectors_to_supervisor_handler_after_mret() {
+    let program = riscv64_program(&[
+        0x3020_0073,                 // mret
+        csr_read(0x300, 0),          // csrr x0, mstatus; illegal from S-mode
+        i_type(42, 0, 0x0, 5, 0x13), // addi x5, x0, 42
+        csr_read(0x141, 6),          // csrr x6, sepc
+        csr_read(0x142, 7),          // csrr x7, scause
+        0x0000_0073,                 // ecall
+    ]);
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-medeleg-illegal-instruction", program, 100);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-64bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:3c0,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    for register in ["mstatus", "medeleg", "mepc", "stvec", "sepc", "scause"] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P4d=0008000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P4e=0400000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P53=0410000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P47=0810000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p4e"),
+        gdb_response(b"0400000000000000")
+    );
+
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"executed_until_trap\""),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"trap\":\"environment_call\""),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"trap_pc\":\"0x1014\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"x5\":\"0x2a\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x6\":\"0x1004\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x7\":\"0x2\""), "stdout: {stdout}");
 }
 
 #[test]

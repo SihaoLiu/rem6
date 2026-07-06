@@ -474,6 +474,12 @@ impl RiscvTrapEventPort {
             {
                 continue;
             }
+            if core
+                .complete_pending_supervisor_exception_delivery()
+                .is_some()
+            {
+                continue;
+            }
 
             let cpu = core.id();
             let event = event_for(cpu);
@@ -529,6 +535,12 @@ impl RiscvTrapEventPort {
             };
             if matches!(trap.kind(), RiscvTrapKind::Interrupt { .. })
                 && core.complete_pending_interrupt_delivery().is_some()
+            {
+                continue;
+            }
+            if core
+                .complete_pending_supervisor_exception_delivery()
+                .is_some()
             {
                 continue;
             }
@@ -863,6 +875,12 @@ impl RiscvTrapEventPort {
             };
             if matches!(trap.kind(), RiscvTrapKind::Interrupt { .. })
                 && core.complete_pending_interrupt_delivery().is_some()
+            {
+                continue;
+            }
+            if core
+                .complete_pending_supervisor_exception_delivery()
+                .is_some()
             {
                 continue;
             }
