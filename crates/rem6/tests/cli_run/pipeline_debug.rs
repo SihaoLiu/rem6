@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    process::Command,
+};
 
 use serde_json::Value;
 
@@ -45,6 +48,7 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_json_stat_ids_are_unique(&json);
     assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("8977665544332211")
@@ -58,6 +62,34 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked");
     let data_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked_cycles");
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "data_wait",
+        "dataWait",
+        "resource_blocked",
+        "resourceBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "data_wait",
+        "dataWait",
+        "resource_blocked_cycles",
+        "resourceBlockedCycles",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "data_wait",
+        "dataWait",
+        "ordering_blocked",
+        "orderingBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "data_wait",
+        "dataWait",
+        "ordering_blocked_cycles",
+        "orderingBlockedCycles",
+    );
     assert_eq!(
         in_order_artifact_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked"),
         data_wait_stage_blocked
@@ -89,6 +121,34 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked");
     let fetch_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked_cycles");
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "fetch_wait",
+        "fetchWait",
+        "resource_blocked",
+        "resourceBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "fetch_wait",
+        "fetchWait",
+        "resource_blocked_cycles",
+        "resourceBlockedCycles",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "fetch_wait",
+        "fetchWait",
+        "ordering_blocked",
+        "orderingBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "fetch_wait",
+        "fetchWait",
+        "ordering_blocked_cycles",
+        "orderingBlockedCycles",
+    );
     assert_eq!(
         in_order_artifact_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked"),
         fetch_wait_stage_blocked
@@ -121,6 +181,34 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
     assert_eq!(
         in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked"),
         [0; 5]
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "execute_wait",
+        "executeWait",
+        "resource_blocked",
+        "resourceBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "execute_wait",
+        "executeWait",
+        "resource_blocked_cycles",
+        "resourceBlockedCycles",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "execute_wait",
+        "executeWait",
+        "ordering_blocked",
+        "orderingBlocked",
+    );
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "execute_wait",
+        "executeWait",
+        "ordering_blocked_cycles",
+        "orderingBlockedCycles",
     );
     assert_eq!(
         in_order_artifact_stall_cause_stage_metric_values(
@@ -1534,16 +1622,39 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | opcode
 }
 
-fn json_stat_value(json: &Value, path: &str) -> u64 {
+fn json_stat<'a>(json: &'a Value, path: &str) -> &'a Value {
     json.pointer("/stats")
         .and_then(Value::as_array)
         .expect("stats array")
         .iter()
         .find(|stat| stat.get("path").and_then(Value::as_str) == Some(path))
         .unwrap_or_else(|| panic!("missing stat path {path}"))
+}
+
+fn json_stat_value(json: &Value, path: &str) -> u64 {
+    json_stat(json, path)
         .get("value")
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing numeric value for stat path {path}"))
+}
+
+fn assert_json_stat_ids_are_unique(json: &Value) {
+    let mut ids = BTreeSet::new();
+    for stat in json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("stats array")
+    {
+        let id = stat
+            .get("id")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing numeric stat id: {stat}"));
+        let path = stat
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing path>");
+        assert!(ids.insert(id), "duplicate stat id {id} for path {path}");
+    }
 }
 
 fn in_order_stall_cause_stage_metric_values(json: &Value, cause: &str, metric: &str) -> [u64; 5] {
@@ -1553,6 +1664,39 @@ fn in_order_stall_cause_stage_metric_values(json: &Value, cause: &str, metric: &
             &format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}"),
         )
     })
+}
+
+fn assert_in_order_stall_cause_stage_aliases(
+    json: &Value,
+    cause: &str,
+    alias_cause: &str,
+    metric: &str,
+    alias_metric: &str,
+) {
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        let alias_path = format!(
+            "system.cpu.pipeline.inOrder.stallCause.{alias_cause}.stage.{stage}.{alias_metric}"
+        );
+        let source_path =
+            format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}");
+        let alias = json_stat(json, &alias_path);
+        let source = json_stat(json, &source_path);
+        assert_eq!(
+            alias.get("value").and_then(Value::as_u64),
+            source.get("value").and_then(Value::as_u64),
+            "value mismatch for {alias_path}"
+        );
+        assert_eq!(
+            alias.get("unit").and_then(Value::as_str),
+            source.get("unit").and_then(Value::as_str),
+            "unit mismatch for {alias_path}"
+        );
+        assert_eq!(
+            alias.get("reset_policy").and_then(Value::as_str),
+            source.get("reset_policy").and_then(Value::as_str),
+            "reset policy mismatch for {alias_path}"
+        );
+    }
 }
 
 fn in_order_artifact_stall_cause_stage_metric_values(

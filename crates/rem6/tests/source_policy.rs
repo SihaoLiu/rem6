@@ -430,6 +430,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.pipeline.inOrder.stage.fetch1.resourceBlocked",
         "system.cpu.pipeline.inOrder.stage.fetch1.resourceBlockedCycles",
         "system.cpu.pipeline.inOrder.stage.decode.branchPredictionFlushed",
+        "system.cpu.pipeline.inOrder.stallCause.fetchWait.stage.fetch1.resourceBlocked",
         "system.cpu0.branchPred.condPredicted",
         "system.cpu0.branchPred.condPredictedTaken",
         "system.cpu0.branchPred.condIncorrect",

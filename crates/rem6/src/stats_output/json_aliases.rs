@@ -2,10 +2,7 @@ use rem6_stats::StatSnapshot;
 
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
 
-pub(super) fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
-    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
-        return;
-    };
+pub(super) fn append_gem5_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
     let mut next_id = snapshot
         .samples()
         .iter()
@@ -14,12 +11,25 @@ pub(super) fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: 
         .unwrap_or(0)
         .saturating_add(1);
 
+    append_gem5_o3_json_alias_stats(snapshot, records, &mut next_id);
+    append_gem5_in_order_pipeline_json_alias_stats(snapshot, records, &mut next_id);
+}
+
+fn append_gem5_o3_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+) {
+    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
+        return;
+    };
+
     for cpu in 0..core_count {
         let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
         append_gem5_o3_op_class_json_alias_stats(
             snapshot,
             records,
-            &mut next_id,
+            next_id,
             cpu,
             core_count,
             &alias_prefix,
@@ -33,7 +43,7 @@ pub(super) fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: 
             append_gem5_o3_json_alias_from_sample(
                 snapshot,
                 records,
-                &mut next_id,
+                next_id,
                 cpu,
                 source_suffix,
                 &alias_prefix,
@@ -47,12 +57,54 @@ pub(super) fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: 
             append_gem5_o3_json_alias_from_sample(
                 snapshot,
                 records,
-                &mut next_id,
+                next_id,
                 cpu,
                 source_suffix,
                 &alias_prefix,
                 alias_suffix,
             );
+        }
+    }
+}
+
+fn append_gem5_in_order_pipeline_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+) {
+    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
+        return;
+    };
+    for cpu in 0..core_count {
+        let pipeline_alias_prefix = format!(
+            "{}.pipeline.inOrder",
+            gem5_json_cpu_alias_prefix(core_count, cpu)
+        );
+        for (source_cause, alias_cause) in [
+            ("fetch_wait", "fetchWait"),
+            ("data_wait", "dataWait"),
+            ("execute_wait", "executeWait"),
+        ] {
+            for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+                for (source_name, alias_name) in [
+                    ("resource_blocked", "resourceBlocked"),
+                    ("resource_blocked_cycles", "resourceBlockedCycles"),
+                    ("ordering_blocked", "orderingBlocked"),
+                    ("ordering_blocked_cycles", "orderingBlockedCycles"),
+                ] {
+                    append_gem5_json_alias_from_paths(
+                        snapshot,
+                        records,
+                        next_id,
+                        &format!(
+                            "sim.cpu{cpu}.pipeline.in_order.stall_cause.{source_cause}.stage.{stage}.{source_name}"
+                        ),
+                        &format!(
+                            "{pipeline_alias_prefix}.stallCause.{alias_cause}.stage.{stage}.{alias_name}"
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -255,14 +307,24 @@ fn append_gem5_o3_json_alias_from_sample(
     alias_suffix: &str,
 ) {
     let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
-    let Some(source) = snapshot_sample(snapshot, &source_path) else {
+    let alias_path = format!("{alias_prefix}.{alias_suffix}");
+    append_gem5_json_alias_from_paths(snapshot, records, next_id, &source_path, &alias_path);
+}
+
+fn append_gem5_json_alias_from_paths(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    source_path: &str,
+    alias_path: &str,
+) {
+    let Some(source) = snapshot_sample(snapshot, source_path) else {
         return;
     };
-    let alias_path = format!("{alias_prefix}.{alias_suffix}");
-    if snapshot_sample(snapshot, &alias_path).is_none() {
+    if snapshot_sample(snapshot, alias_path).is_none() {
         records.push(json_record_for_derived_counter(
             *next_id,
-            &alias_path,
+            alias_path,
             source.unit(),
             source.value(),
             source.reset_policy(),

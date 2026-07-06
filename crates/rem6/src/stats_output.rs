@@ -44,7 +44,7 @@ use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
 use host_actions::emit_run_host_action_stats;
-use json_aliases::append_gem5_o3_json_alias_stats;
+use json_aliases::append_gem5_json_alias_stats;
 use memory_resources::emit_memory_resource_stats;
 pub(crate) use multi_run::multi_run_stats_output;
 pub(super) use resource_acquire::resource_acquire_stats_output;
@@ -731,7 +731,7 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .iter()
         .map(json_record_for_sample)
         .collect::<Vec<_>>();
-    append_gem5_o3_json_alias_stats(snapshot, &mut records);
+    append_gem5_json_alias_stats(snapshot, &mut records);
     let samples = records.join(",");
     format!("[{samples}]")
 }
