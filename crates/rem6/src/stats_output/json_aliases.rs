@@ -135,6 +135,60 @@ fn append_gem5_in_order_pipeline_json_alias_stats(
             }
         }
     }
+    for cpu in 0..core_count {
+        let pipeline_alias_prefix = format!(
+            "{}.pipeline.inOrder",
+            gem5_json_cpu_alias_prefix(core_count, cpu)
+        );
+        for (source_name, alias_name) in [
+            ("advanced", "advanced"),
+            ("flushed", "flushed"),
+            ("flush_cycles", "flushCycles"),
+            ("resource_blocked", "resourceBlocked"),
+            ("ordering_blocked", "orderingBlocked"),
+            ("stall_cycles", "stallCycles"),
+            ("fetch_wait_cycles", "fetchWaitCycles"),
+            ("data_wait_cycles", "dataWaitCycles"),
+            ("execute_wait_cycles", "executeWaitCycles"),
+            ("branch_prediction_flushes", "branchPredictionFlushes"),
+            (
+                "branch_prediction_flush_cycles",
+                "branchPredictionFlushCycles",
+            ),
+            ("redirects", "redirects"),
+            ("branch_prediction_redirects", "branchPredictionRedirects"),
+            ("interrupt_redirects", "interruptRedirects"),
+            ("interrupt_redirect_flushes", "interruptRedirectFlushes"),
+            (
+                "interrupt_redirect_flush_cycles",
+                "interruptRedirectFlushCycles",
+            ),
+            ("trap_redirects", "trapRedirects"),
+            ("trap_redirect_flushes", "trapRedirectFlushes"),
+            ("trap_redirect_flush_cycles", "trapRedirectFlushCycles"),
+            (
+                "branch_speculation_predictions",
+                "branchSpeculationPredictions",
+            ),
+            ("branch_speculation_repairs", "branchSpeculationRepairs"),
+            (
+                "branch_speculation_removed_youngers",
+                "branchSpeculationRemovedYoungers",
+            ),
+            (
+                "branch_speculation_max_pending",
+                "branchSpeculationMaxPending",
+            ),
+        ] {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!("sim.cpu{cpu}.pipeline.in_order.{source_name}"),
+                &format!("{pipeline_alias_prefix}.{alias_name}"),
+            );
+        }
+    }
 }
 
 fn append_gem5_o3_op_class_json_alias_stats(

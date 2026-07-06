@@ -49,6 +49,7 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_json_stat_ids_are_unique(&json);
+    assert_in_order_pipeline_aliases(&json);
     assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("8977665544332211")
@@ -229,6 +230,54 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
             "resource_blocked_cycles"
         ),
         [0; 5]
+    );
+}
+
+#[test]
+fn rem6_run_stats_emit_multicore_in_order_pipeline_aliases_after_existing_stage_aliases() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("multicore-pipeline-alias-id-order", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_json_stat_ids_are_unique(&json);
+    for cpu in [0, 1] {
+        assert_in_order_pipeline_aliases_for_cpu(
+            &json,
+            cpu,
+            &format!("system.cpu{cpu}.pipeline.inOrder"),
+        );
+    }
+    assert_json_stat_id_after(
+        &json,
+        "system.cpu0.pipeline.inOrder.advanced",
+        "system.cpu1.pipeline.inOrder.stallCause.executeWait.stage.commit.orderingBlockedCycles",
     );
 }
 
@@ -1660,6 +1709,100 @@ fn assert_json_stat_ids_are_unique(json: &Value) {
     }
 }
 
+fn assert_in_order_pipeline_aliases(json: &Value) {
+    assert_in_order_pipeline_aliases_for_cpu(json, 0, "system.cpu.pipeline.inOrder");
+    assert_json_stat_id_after(
+        json,
+        "system.cpu.pipeline.inOrder.advanced",
+        "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.commit.orderingBlockedCycles",
+    );
+}
+
+fn assert_in_order_pipeline_aliases_for_cpu(json: &Value, cpu: u64, alias_prefix: &str) {
+    for (source_name, alias_name) in [
+        ("advanced", "advanced"),
+        ("flushed", "flushed"),
+        ("flush_cycles", "flushCycles"),
+        ("resource_blocked", "resourceBlocked"),
+        ("ordering_blocked", "orderingBlocked"),
+        ("stall_cycles", "stallCycles"),
+        ("fetch_wait_cycles", "fetchWaitCycles"),
+        ("data_wait_cycles", "dataWaitCycles"),
+        ("execute_wait_cycles", "executeWaitCycles"),
+        ("branch_prediction_flushes", "branchPredictionFlushes"),
+        (
+            "branch_prediction_flush_cycles",
+            "branchPredictionFlushCycles",
+        ),
+        ("redirects", "redirects"),
+        ("branch_prediction_redirects", "branchPredictionRedirects"),
+        ("interrupt_redirects", "interruptRedirects"),
+        ("interrupt_redirect_flushes", "interruptRedirectFlushes"),
+        (
+            "interrupt_redirect_flush_cycles",
+            "interruptRedirectFlushCycles",
+        ),
+        ("trap_redirects", "trapRedirects"),
+        ("trap_redirect_flushes", "trapRedirectFlushes"),
+        ("trap_redirect_flush_cycles", "trapRedirectFlushCycles"),
+        (
+            "branch_speculation_predictions",
+            "branchSpeculationPredictions",
+        ),
+        ("branch_speculation_repairs", "branchSpeculationRepairs"),
+        (
+            "branch_speculation_removed_youngers",
+            "branchSpeculationRemovedYoungers",
+        ),
+        (
+            "branch_speculation_max_pending",
+            "branchSpeculationMaxPending",
+        ),
+    ] {
+        assert_json_stat_alias(
+            json,
+            &format!("sim.cpu{cpu}.pipeline.in_order.{source_name}"),
+            &format!("{alias_prefix}.{alias_name}"),
+        );
+    }
+}
+
+fn assert_json_stat_alias(json: &Value, source_path: &str, alias_path: &str) {
+    let alias = json_stat(json, alias_path);
+    let source = json_stat(json, source_path);
+    assert_eq!(
+        alias.get("value").and_then(Value::as_u64),
+        source.get("value").and_then(Value::as_u64),
+        "value mismatch for {alias_path}"
+    );
+    assert_eq!(
+        alias.get("unit").and_then(Value::as_str),
+        source.get("unit").and_then(Value::as_str),
+        "unit mismatch for {alias_path}"
+    );
+    assert_eq!(
+        alias.get("reset_policy").and_then(Value::as_str),
+        source.get("reset_policy").and_then(Value::as_str),
+        "reset policy mismatch for {alias_path}"
+    );
+}
+
+fn assert_json_stat_id_after(json: &Value, later_path: &str, earlier_path: &str) {
+    let later_id = json_stat_id(json, later_path);
+    let earlier_id = json_stat_id(json, earlier_path);
+    assert!(
+        later_id > earlier_id,
+        "{later_path} id {later_id} should be appended after {earlier_path} id {earlier_id}"
+    );
+}
+
+fn json_stat_id(json: &Value, path: &str) -> u64 {
+    json_stat(json, path)
+        .get("id")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing numeric id for stat path {path}"))
+}
+
 fn in_order_stall_cause_stage_metric_values(json: &Value, cause: &str, metric: &str) -> [u64; 5] {
     ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
         json_stat_value(
@@ -1682,23 +1825,7 @@ fn assert_in_order_stall_cause_stage_aliases(
         );
         let source_path =
             format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}");
-        let alias = json_stat(json, &alias_path);
-        let source = json_stat(json, &source_path);
-        assert_eq!(
-            alias.get("value").and_then(Value::as_u64),
-            source.get("value").and_then(Value::as_u64),
-            "value mismatch for {alias_path}"
-        );
-        assert_eq!(
-            alias.get("unit").and_then(Value::as_str),
-            source.get("unit").and_then(Value::as_str),
-            "unit mismatch for {alias_path}"
-        );
-        assert_eq!(
-            alias.get("reset_policy").and_then(Value::as_str),
-            source.get("reset_policy").and_then(Value::as_str),
-            "reset policy mismatch for {alias_path}"
-        );
+        assert_json_stat_alias(json, &source_path, &alias_path);
     }
 }
 
@@ -1738,23 +1865,7 @@ fn assert_in_order_cause_stage_aliases(
         );
         let source_path =
             format!("sim.cpu0.pipeline.in_order.{family}.{cause}.stage.{stage}.{metric}");
-        let alias = json_stat(json, &alias_path);
-        let source = json_stat(json, &source_path);
-        assert_eq!(
-            alias.get("value").and_then(Value::as_u64),
-            source.get("value").and_then(Value::as_u64),
-            "value mismatch for {alias_path}"
-        );
-        assert_eq!(
-            alias.get("unit").and_then(Value::as_str),
-            source.get("unit").and_then(Value::as_str),
-            "unit mismatch for {alias_path}"
-        );
-        assert_eq!(
-            alias.get("reset_policy").and_then(Value::as_str),
-            source.get("reset_policy").and_then(Value::as_str),
-            "reset policy mismatch for {alias_path}"
-        );
+        assert_json_stat_alias(json, &source_path, &alias_path);
     }
 }
 
