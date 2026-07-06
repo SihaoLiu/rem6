@@ -46,6 +46,16 @@ impl Rem6InOrderPipelineStageSummary {
         }
     }
 
+    fn saturating_mul(self, scalar: u64) -> Self {
+        Self {
+            fetch1: self.fetch1.saturating_mul(scalar),
+            fetch2: self.fetch2.saturating_mul(scalar),
+            decode: self.decode.saturating_mul(scalar),
+            execute: self.execute.saturating_mul(scalar),
+            commit: self.commit.saturating_mul(scalar),
+        }
+    }
+
     pub(crate) fn values(self) -> [u64; 5] {
         [
             self.fetch1,
@@ -124,6 +134,43 @@ pub(super) fn in_order_pipeline_stage_resource_blocked_cycles(
             summary.saturating_add(stage_presence_summary_from_instructions(
                 record.plan().resource_blocked(),
             ))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_resource_blocked_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            if record.stall_cause() == Some(cause) {
+                summary.saturating_add(stage_summary_from_instructions(
+                    record.plan().resource_blocked(),
+                ))
+            } else {
+                summary
+            }
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            if record.stall_cause() == Some(cause) {
+                summary.saturating_add(
+                    stage_presence_summary_from_instructions(record.plan().resource_blocked())
+                        .saturating_mul(record.stall_cycle_count()),
+                )
+            } else {
+                summary
+            }
         },
     )
 }

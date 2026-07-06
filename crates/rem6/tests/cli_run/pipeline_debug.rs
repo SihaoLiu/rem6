@@ -5,6 +5,106 @@ use serde_json::Value;
 use crate::support::*;
 
 #[test]
+fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    program.extend_from_slice(&[0; 16]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-stall-cause-stage-matrix-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dump-memory",
+            "0x80000020:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("8977665544332211")
+    );
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
+
+    let data_wait_cycles = json_stat_value(&json, "sim.cpu0.pipeline.in_order.data_wait_cycles");
+    assert!(data_wait_cycles > 0, "{stdout}");
+    let data_wait_stage_blocked =
+        in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked");
+    let data_wait_stage_cycles =
+        in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked_cycles");
+    assert_eq!(
+        data_wait_stage_cycles.iter().sum::<u64>(),
+        data_wait_cycles,
+        "data-wait stage-cycle matrix should account for all data wait cycles: {data_wait_stage_cycles:?}"
+    );
+    assert!(
+        data_wait_stage_blocked.iter().any(|blocked| *blocked > 0),
+        "data-wait run should attribute at least one blocked stage: {data_wait_stage_blocked:?}"
+    );
+    assert!(
+        data_wait_stage_cycles.iter().any(|cycles| *cycles > 0),
+        "data-wait run should attribute at least one blocked stage cycle: {data_wait_stage_cycles:?}"
+    );
+
+    let fetch_wait_cycles = json_stat_value(&json, "sim.cpu0.pipeline.in_order.fetch_wait_cycles");
+    let fetch_wait_stage_blocked =
+        in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked");
+    let fetch_wait_stage_cycles =
+        in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked_cycles");
+    if fetch_wait_cycles == 0 {
+        assert_eq!(fetch_wait_stage_blocked, [0; 5]);
+        assert_eq!(fetch_wait_stage_cycles, [0; 5]);
+    } else {
+        assert!(
+            fetch_wait_stage_blocked.iter().any(|blocked| *blocked > 0),
+            "fetch-wait run should attribute blocked stages when aggregate wait is nonzero: {fetch_wait_stage_blocked:?}"
+        );
+        assert!(
+            fetch_wait_stage_cycles.iter().any(|cycles| *cycles > 0),
+            "fetch-wait run should attribute stage cycles when aggregate wait is nonzero: {fetch_wait_stage_cycles:?}"
+        );
+    }
+
+    let execute_wait_cycles =
+        json_stat_value(&json, "sim.cpu0.pipeline.in_order.execute_wait_cycles");
+    assert_eq!(execute_wait_cycles, 0);
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked_cycles"),
+        [0; 5]
+    );
+}
+
+#[test]
 fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
@@ -702,6 +802,27 @@ fn json_record_bool(record: &Value, field: &str) -> bool {
         .get(field)
         .and_then(Value::as_bool)
         .unwrap_or_else(|| panic!("missing bool field {field} in record {record}"))
+}
+
+fn json_stat_value(json: &Value, path: &str) -> u64 {
+    json.pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("stats array")
+        .iter()
+        .find(|stat| stat.get("path").and_then(Value::as_str) == Some(path))
+        .unwrap_or_else(|| panic!("missing stat path {path}"))
+        .get("value")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing numeric value for stat path {path}"))
+}
+
+fn in_order_stall_cause_stage_metric_values(json: &Value, cause: &str, metric: &str) -> [u64; 5] {
+    ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        json_stat_value(
+            json,
+            &format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}"),
+        )
+    })
 }
 
 fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {

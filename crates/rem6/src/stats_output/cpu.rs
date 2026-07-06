@@ -261,6 +261,42 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_execute_wait_cycles,
         )?;
+        for (cause, resource_blocked, resource_blocked_cycles) in [
+            (
+                "fetch_wait",
+                core.in_order_pipeline_fetch_wait_stage_resource_blocked,
+                core.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
+            ),
+            (
+                "data_wait",
+                core.in_order_pipeline_data_wait_stage_resource_blocked,
+                core.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
+            ),
+            (
+                "execute_wait",
+                core.in_order_pipeline_execute_wait_stage_resource_blocked,
+                core.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
+            ),
+        ] {
+            emit_in_order_stall_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "resource_blocked",
+                "Count",
+                StatResetPolicy::Monotonic,
+                resource_blocked.values(),
+            )?;
+            emit_in_order_stall_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "resource_blocked_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                resource_blocked_cycles.values(),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.branch_predictions", core.cpu),
@@ -1332,6 +1368,33 @@ fn emit_in_order_stage_stats(
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stage.{stage}.{name}", core.cpu),
+            unit,
+            reset_policy,
+            value,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_in_order_stall_cause_stage_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+    cause: &str,
+    name: &str,
+    unit: &'static str,
+    reset_policy: StatResetPolicy,
+    values: [u64; 5],
+) -> Result<(), Rem6CliError> {
+    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(values)
+    {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{name}",
+                core.cpu
+            ),
             unit,
             reset_policy,
             value,

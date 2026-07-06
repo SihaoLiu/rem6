@@ -22,6 +22,16 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_stage_occupied_cycles: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_fetch_wait_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_fetch_wait_stage_resource_blocked_cycles:
+        Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_data_wait_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_data_wait_stage_resource_blocked_cycles:
+        Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_execute_wait_stage_resource_blocked:
+        Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_execute_wait_stage_resource_blocked_cycles:
+        Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_ordering_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_flushed: Rem6InOrderPipelineStageSummary,

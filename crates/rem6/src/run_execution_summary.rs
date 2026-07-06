@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    BranchTargetKind, CpuId, RiscvCluster, RiscvCoreDriveAction, TournamentPredictorSelection,
+    BranchTargetKind, CpuId, InOrderPipelineStallCause, RiscvCluster, RiscvCoreDriveAction,
+    TournamentPredictorSelection,
 };
 use rem6_isa_riscv::Register;
 use rem6_memory::CacheLineLayout;
@@ -23,6 +24,8 @@ use crate::pipeline_stats::{
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
     in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_ordering_blocked_cycles,
     in_order_pipeline_stage_resource_blocked, in_order_pipeline_stage_resource_blocked_cycles,
+    in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause,
+    in_order_pipeline_stage_resource_blocked_for_stall_cause,
     in_order_pipeline_stage_trap_redirect_flushed,
     in_order_pipeline_stage_trap_redirect_flushed_cycles, in_order_pipeline_stage_widths,
 };
@@ -160,6 +163,36 @@ pub(super) fn execution_summary(
         let pipeline_stage_resource_blocked = in_order_pipeline_stage_resource_blocked(&core);
         let pipeline_stage_resource_blocked_cycles =
             in_order_pipeline_stage_resource_blocked_cycles(&core);
+        let pipeline_fetch_wait_stage_resource_blocked =
+            in_order_pipeline_stage_resource_blocked_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::FetchWait,
+            );
+        let pipeline_fetch_wait_stage_resource_blocked_cycles =
+            in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::FetchWait,
+            );
+        let pipeline_data_wait_stage_resource_blocked =
+            in_order_pipeline_stage_resource_blocked_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::DataWait,
+            );
+        let pipeline_data_wait_stage_resource_blocked_cycles =
+            in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::DataWait,
+            );
+        let pipeline_execute_wait_stage_resource_blocked =
+            in_order_pipeline_stage_resource_blocked_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::ExecuteWait,
+            );
+        let pipeline_execute_wait_stage_resource_blocked_cycles =
+            in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause(
+                &core,
+                InOrderPipelineStallCause::ExecuteWait,
+            );
         let pipeline_stage_ordering_blocked = in_order_pipeline_stage_ordering_blocked(&core);
         let pipeline_stage_ordering_blocked_cycles =
             in_order_pipeline_stage_ordering_blocked_cycles(&core);
@@ -209,6 +242,18 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,
             in_order_pipeline_stage_resource_blocked: pipeline_stage_resource_blocked,
             in_order_pipeline_stage_resource_blocked_cycles: pipeline_stage_resource_blocked_cycles,
+            in_order_pipeline_fetch_wait_stage_resource_blocked:
+                pipeline_fetch_wait_stage_resource_blocked,
+            in_order_pipeline_fetch_wait_stage_resource_blocked_cycles:
+                pipeline_fetch_wait_stage_resource_blocked_cycles,
+            in_order_pipeline_data_wait_stage_resource_blocked:
+                pipeline_data_wait_stage_resource_blocked,
+            in_order_pipeline_data_wait_stage_resource_blocked_cycles:
+                pipeline_data_wait_stage_resource_blocked_cycles,
+            in_order_pipeline_execute_wait_stage_resource_blocked:
+                pipeline_execute_wait_stage_resource_blocked,
+            in_order_pipeline_execute_wait_stage_resource_blocked_cycles:
+                pipeline_execute_wait_stage_resource_blocked_cycles,
             in_order_pipeline_stage_ordering_blocked: pipeline_stage_ordering_blocked,
             in_order_pipeline_stage_ordering_blocked_cycles: pipeline_stage_ordering_blocked_cycles,
             in_order_pipeline_stage_flushed: pipeline_stage_flushed,
