@@ -894,7 +894,21 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iew.wbRate",
+        "Ppm",
+        ratio_ppm(writeback_count, cycles),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iew.producer_consumer_fanout_ppm",
+        "Ppm",
+        ratio_ppm(3, 4),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.wbFanout",
         "Ppm",
         ratio_ppm(3, 4),
         "monotonic",
@@ -1140,6 +1154,31 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         1,
         "monotonic",
     );
+    let writeback_rate_ppm = json_stat_u64(&json, "sim.cpu1.o3.iew.writeback_rate_ppm");
+    let producer_consumer_fanout_ppm =
+        json_stat_u64(&json, "sim.cpu1.o3.iew.producer_consumer_fanout_ppm");
+    assert_json_stat(
+        &json,
+        "system.cpu1.iew.wbRate",
+        "Ppm",
+        writeback_rate_ppm,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu1.iew.wbFanout",
+        "Ppm",
+        producer_consumer_fanout_ppm,
+        "monotonic",
+    );
+    for path in [
+        "system.cpu0.iew.wbRate",
+        "system.cpu0.iew.wbFanout",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
+    ] {
+        assert_json_stat_absent(&json, path);
+    }
     let core0 = json
         .pointer("/cores/0")
         .unwrap_or_else(|| panic!("missing core 0 summary: {json}"));

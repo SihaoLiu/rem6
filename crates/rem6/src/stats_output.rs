@@ -1,5 +1,5 @@
 use rem6_boot::{BootElfInterpreter, BootElfMetadata};
-use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
+use rem6_stats::{StatResetPolicy, StatSample, StatSnapshot, StatsRegistry};
 
 mod accelerator_run;
 mod cpu;
@@ -724,49 +724,140 @@ pub(super) fn trace_replay_stats_output(
 }
 
 fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
-    let samples = snapshot
+    let mut records = snapshot
         .samples()
         .iter()
-        .map(|sample| {
-            let scope = sample
-                .scope()
-                .iter()
-                .map(|segment| format!("\"{}\"", json_escape(segment)))
-                .collect::<Vec<_>>()
-                .join(",");
-            let description = sample
-                .description()
-                .map(|description| format!("\"{}\"", json_escape(description)))
-                .unwrap_or_else(|| "null".to_string());
-            let buckets = sample
-                .histogram_buckets()
-                .iter()
-                .map(|bucket| {
-                    format!(
-                        "{{\"bucket\":{},\"count\":{}}}",
-                        bucket.bucket(),
-                        bucket.count()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",");
+        .map(json_record_for_sample)
+        .collect::<Vec<_>>();
+    append_gem5_o3_iew_rate_json_alias_stats(snapshot, &mut records);
+    let samples = records.join(",");
+    format!("[{samples}]")
+}
+
+fn json_record_for_sample(sample: &StatSample) -> String {
+    let scope = sample
+        .scope()
+        .iter()
+        .map(|segment| format!("\"{}\"", json_escape(segment)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let description = sample
+        .description()
+        .map(|description| format!("\"{}\"", json_escape(description)))
+        .unwrap_or_else(|| "null".to_string());
+    let buckets = sample
+        .histogram_buckets()
+        .iter()
+        .map(|bucket| {
             format!(
-                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"kind\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":{},\"buckets\":[{}]}}",
-                sample.id().get(),
-                json_escape(sample.path()),
-                scope,
-                json_escape(sample.name()),
-                sample.kind(),
-                json_escape(sample.unit()),
-                sample.value(),
-                sample.reset_policy(),
-                description,
-                buckets
+                "{{\"bucket\":{},\"count\":{}}}",
+                bucket.bucket(),
+                bucket.count()
             )
         })
         .collect::<Vec<_>>()
         .join(",");
-    format!("[{samples}]")
+    format!(
+        "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"kind\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":{},\"buckets\":[{}]}}",
+        sample.id().get(),
+        json_escape(sample.path()),
+        scope,
+        json_escape(sample.name()),
+        sample.kind(),
+        json_escape(sample.unit()),
+        sample.value(),
+        sample.reset_policy(),
+        description,
+        buckets
+    )
+}
+
+fn append_gem5_o3_iew_rate_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
+    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
+        return;
+    };
+    let mut next_id = snapshot
+        .samples()
+        .iter()
+        .map(|sample| sample.id().get())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+
+    for cpu in 0..core_count {
+        let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
+        for (source_suffix, alias_suffix) in [
+            ("iew.writeback_rate_ppm", "iew.wbRate"),
+            ("iew.producer_consumer_fanout_ppm", "iew.wbFanout"),
+        ] {
+            let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
+            let Some(source) = snapshot_sample(snapshot, &source_path) else {
+                continue;
+            };
+            let alias_path = format!("{alias_prefix}.{alias_suffix}");
+            if snapshot_sample(snapshot, &alias_path).is_none() {
+                records.push(json_record_for_derived_counter(
+                    next_id,
+                    &alias_path,
+                    source.unit(),
+                    source.value(),
+                    source.reset_policy(),
+                ));
+                next_id = next_id.saturating_add(1);
+            }
+        }
+    }
+}
+
+fn json_record_for_derived_counter(
+    id: u64,
+    path: &str,
+    unit: &str,
+    value: u64,
+    reset_policy: StatResetPolicy,
+) -> String {
+    let (scope, name) = json_scope_and_name(path);
+    format!(
+        "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"kind\":\"counter\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":null,\"buckets\":[]}}",
+        id,
+        json_escape(path),
+        scope,
+        json_escape(name),
+        json_escape(unit),
+        value,
+        reset_policy
+    )
+}
+
+fn json_scope_and_name(path: &str) -> (String, &str) {
+    let Some((scope, name)) = path.rsplit_once('.') else {
+        return (String::new(), path);
+    };
+    let scope = scope
+        .split('.')
+        .map(|segment| format!("\"{}\"", json_escape(segment)))
+        .collect::<Vec<_>>()
+        .join(",");
+    (scope, name)
+}
+
+fn snapshot_sample<'a>(snapshot: &'a StatSnapshot, path: &str) -> Option<&'a StatSample> {
+    snapshot
+        .samples()
+        .iter()
+        .find(|sample| sample.path() == path)
+}
+
+fn snapshot_sample_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
+    snapshot_sample(snapshot, path).map(StatSample::value)
+}
+
+fn gem5_json_cpu_alias_prefix(core_count: u64, cpu: u64) -> String {
+    if core_count == 1 {
+        "system.cpu".to_string()
+    } else {
+        format!("system.cpu{cpu}")
+    }
 }
 
 pub(super) fn increment_stat(
