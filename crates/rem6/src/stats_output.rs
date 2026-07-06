@@ -791,6 +791,7 @@ fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<St
             records,
             &mut next_id,
             cpu,
+            core_count,
             &alias_prefix,
         );
         for (source_suffix, alias_suffix) in [
@@ -831,6 +832,7 @@ fn append_gem5_o3_op_class_json_alias_stats(
     records: &mut Vec<String>,
     next_id: &mut u64,
     cpu: u64,
+    core_count: u64,
     alias_prefix: &str,
 ) {
     for (source_suffix, alias_suffix) in [
@@ -839,6 +841,8 @@ fn append_gem5_o3_op_class_json_alias_stats(
             "iq.issued_inst_type.mem_write",
             "iq.issuedInstType.MemWrite",
         ),
+        ("iq.issued_inst_type.int_mul", "iq.issuedInstType.IntMult"),
+        ("iq.issued_inst_type.int_div", "iq.issuedInstType.IntDiv"),
         (
             "commit.committed_inst_type.mem_read",
             "commit.committedInstType.MemRead",
@@ -846,6 +850,45 @@ fn append_gem5_o3_op_class_json_alias_stats(
         (
             "commit.committed_inst_type.mem_write",
             "commit.committedInstType.MemWrite",
+        ),
+        (
+            "commit.committed_inst_type.int_mul",
+            "commit.committedInstType.IntMult",
+        ),
+        (
+            "commit.committed_inst_type.int_div",
+            "commit.committedInstType.IntDiv",
+        ),
+    ] {
+        append_gem5_o3_json_alias_from_sample(
+            snapshot,
+            records,
+            next_id,
+            cpu,
+            source_suffix,
+            alias_prefix,
+            alias_suffix,
+        );
+    }
+    if core_count != 1 {
+        return;
+    }
+    for (source_suffix, alias_suffix) in [
+        (
+            "iq.issued_inst_type.float_misc",
+            "iq.issuedInstType.FloatMisc",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_misc",
+            "iq.issuedInstType.SimdFloatMisc",
+        ),
+        (
+            "commit.committed_inst_type.float_misc",
+            "commit.committedInstType.FloatMisc",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_misc",
+            "commit.committedInstType.SimdFloatMisc",
         ),
     ] {
         append_gem5_o3_json_alias_from_sample(

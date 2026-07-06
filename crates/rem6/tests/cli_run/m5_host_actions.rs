@@ -1210,13 +1210,27 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         1,
         "monotonic",
     );
+    let iq_int_mul = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.int_mul");
+    let iq_int_div = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.int_div");
+    let commit_int_mul = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.int_mul");
+    let commit_int_div = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.int_div");
     let iq_mem_read = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.mem_read");
     let iq_mem_write = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.mem_write");
     let commit_mem_read = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.mem_read");
     let commit_mem_write = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.mem_write");
     for (path, value) in [
+        ("system.cpu1.iq.issuedInstType.IntMult", iq_int_mul),
+        ("system.cpu1.iq.issuedInstType.IntDiv", iq_int_div),
         ("system.cpu1.iq.issuedInstType.MemRead", iq_mem_read),
         ("system.cpu1.iq.issuedInstType.MemWrite", iq_mem_write),
+        (
+            "system.cpu1.commit.committedInstType.IntMult",
+            commit_int_mul,
+        ),
+        (
+            "system.cpu1.commit.committedInstType.IntDiv",
+            commit_int_div,
+        ),
         (
             "system.cpu1.commit.committedInstType.MemRead",
             commit_mem_read,
@@ -1272,12 +1286,24 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu.iew.wbFanout",
         "system.cpu0.iq.issuedInstType.MemRead",
         "system.cpu0.iq.issuedInstType.MemWrite",
+        "system.cpu0.iq.issuedInstType.IntMult",
+        "system.cpu0.iq.issuedInstType.IntDiv",
         "system.cpu0.commit.committedInstType.MemRead",
         "system.cpu0.commit.committedInstType.MemWrite",
+        "system.cpu0.commit.committedInstType.IntMult",
+        "system.cpu0.commit.committedInstType.IntDiv",
+        "system.cpu1.iq.issuedInstType.FloatMisc",
+        "system.cpu1.iq.issuedInstType.SimdFloatMisc",
+        "system.cpu1.commit.committedInstType.FloatMisc",
+        "system.cpu1.commit.committedInstType.SimdFloatMisc",
         "system.cpu.iq.issuedInstType.MemRead",
         "system.cpu.iq.issuedInstType.MemWrite",
+        "system.cpu.iq.issuedInstType.IntMult",
+        "system.cpu.iq.issuedInstType.IntDiv",
         "system.cpu.commit.committedInstType.MemRead",
         "system.cpu.commit.committedInstType.MemWrite",
+        "system.cpu.commit.committedInstType.IntMult",
+        "system.cpu.commit.committedInstType.IntDiv",
     ] {
         assert_json_stat_absent(&json, path);
     }
@@ -3144,7 +3170,21 @@ fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iq.issuedInstType.IntMult",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iq.issued_inst_type.int_div",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iq.issuedInstType.IntDiv",
         "Count",
         1,
         "monotonic",
@@ -3158,7 +3198,21 @@ fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.commit.committedInstType.IntMult",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.commit.committed_inst_type.int_div",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.commit.committedInstType.IntDiv",
         "Count",
         1,
         "monotonic",
@@ -3243,7 +3297,21 @@ fn rem6_run_records_o3_float_misc_fu_latency_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iq.issuedInstType.FloatMisc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iq.issuedInstType.SimdFloatMisc",
         "Count",
         2,
         "monotonic",
@@ -3257,7 +3325,21 @@ fn rem6_run_records_o3_float_misc_fu_latency_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.commit.committedInstType.FloatMisc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.commit.committedInstType.SimdFloatMisc",
         "Count",
         2,
         "monotonic",
@@ -5116,8 +5198,16 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.consumerInst.total");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemRead");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemWrite");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.IntMult");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.IntDiv");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatMisc");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemRead");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemWrite");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.IntMult");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.IntDiv");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatMisc");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.samples");
