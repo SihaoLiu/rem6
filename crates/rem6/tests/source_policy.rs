@@ -637,6 +637,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.rob.writes",
         "system.cpu.rename.renamedOperands",
         "system.cpu.iew.writebackCount.total",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
         "system.cpu.iq.issuedInstType.MemRead",
         "system.cpu.iq.issuedInstType.IntMult",
         "system.cpu.iq.issuedInstType.FloatMisc",

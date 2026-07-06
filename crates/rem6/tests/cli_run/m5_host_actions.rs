@@ -1221,10 +1221,38 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
     ] {
         assert_stats_dump_sample_at_least(dump, path, "counter", unit, minimum, "resettable");
     }
+    let writeback_rate_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu1.o3.iew.writeback_rate_ppm",
+    );
+    let producer_consumer_fanout_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu1.o3.iew.producer_consumer_fanout_ppm",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu1.iew.wbRate",
+        "counter",
+        "Ppm",
+        writeback_rate_ppm,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu1.iew.wbFanout",
+        "counter",
+        "Ppm",
+        producer_consumer_fanout_ppm,
+        "resettable",
+    );
     for path in [
         "system.cpu0.rob.writes",
         "system.cpu0.rename.renamedOperands",
         "system.cpu0.iew.writebackCount.total",
+        "system.cpu0.iew.wbRate",
+        "system.cpu0.iew.wbFanout",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
         "system.cpu0.lsq0.loadBytes",
         "system.cpu0.iq.issuedInstType.MemRead",
         "system.cpu0.commit.committedInstType.MemWrite",
@@ -1415,6 +1443,30 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Byte", value, "resettable");
     }
+    let writeback_rate_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+    );
+    let producer_consumer_fanout_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu.iew.wbRate",
+        "counter",
+        "Ppm",
+        writeback_rate_ppm,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu.iew.wbFanout",
+        "counter",
+        "Ppm",
+        producer_consumer_fanout_ppm,
+        "resettable",
+    );
     assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 8, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 5, "monotonic");
 }
@@ -1950,12 +2002,36 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
         1,
         "resettable",
     );
+    let writeback_rate_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+    );
     assert_stats_dump_sample(
         dump,
         "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
         "counter",
         "Ppm",
         ratio_ppm(2, 4),
+        "resettable",
+    );
+    let producer_consumer_fanout_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu.iew.wbRate",
+        "counter",
+        "Ppm",
+        writeback_rate_ppm,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu.iew.wbFanout",
+        "counter",
+        "Ppm",
+        producer_consumer_fanout_ppm,
         "resettable",
     );
     for (path, value) in [
@@ -4368,6 +4444,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
         &fixed_ratio_text(writeback_count, cycles),
         "(Count/Cycle)",
     );
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbRate");
     let producer_insts = text_stat_u64(&stdout, "system.cpu.iew.producerInst::total");
     let consumer_insts = text_stat_u64(&stdout, "system.cpu.iew.consumerInst::total");
     assert_text_ratio_stat(
@@ -4376,6 +4453,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
         &fixed_ratio_text(producer_insts, consumer_insts),
         "(Count/Count)",
     );
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbFanout");
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);

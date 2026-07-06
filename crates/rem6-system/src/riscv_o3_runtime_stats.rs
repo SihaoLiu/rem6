@@ -1308,13 +1308,13 @@ impl RiscvO3RuntimeCpuStats {
         snapshot: O3RuntimeStats,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
-        registry.set_resettable_counter(
-            self.iew_writeback_rate_ppm,
-            ratio_ppm(snapshot.instructions(), in_order_pipeline_cycles),
-        )?;
+        let writeback_rate = ratio_ppm(snapshot.instructions(), in_order_pipeline_cycles);
+        let producer_consumer_fanout =
+            ratio_ppm(snapshot.iew_producer_insts(), snapshot.iew_consumer_insts());
+        registry.set_resettable_counter(self.iew_writeback_rate_ppm, writeback_rate)?;
         registry.set_resettable_counter(
             self.iew_producer_consumer_fanout_ppm,
-            ratio_ppm(snapshot.iew_producer_insts(), snapshot.iew_consumer_insts()),
+            producer_consumer_fanout,
         )?;
         Ok(())
     }
