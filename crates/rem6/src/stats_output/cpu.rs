@@ -1392,6 +1392,29 @@ fn emit_o3_runtime_stats(
         .branch_repair_targetless_mismatches()
         .saturating_add(o3.branch_repair_wrong_targets())
         .saturating_add(o3.branch_repair_direction_only_mismatches());
+    for (name, value) in [
+        (
+            "iew.branchRepair.targetlessMismatch",
+            o3.branch_repair_targetless_mismatches(),
+        ),
+        (
+            "iew.branchRepair.wrongTarget",
+            o3.branch_repair_wrong_targets(),
+        ),
+        (
+            "iew.branchRepair.directionOnly",
+            o3.branch_repair_direction_only_mismatches(),
+        ),
+        ("iew.branchRepair.total", branch_mispredicts),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.{name}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     for name in ["iew.branchMispredicts", "commit.branchMispredicts"] {
         increment_stat(
             stats,

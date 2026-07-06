@@ -4161,6 +4161,15 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         2,
     );
     assert_text_count_stat(&stdout, "sim.cpu0.o3.branch_repair_wrong_targets", 0);
+    for (path, value) in [
+        ("system.cpu.iew.branchRepair_0::TargetlessMismatch", 1),
+        ("system.cpu.iew.branchRepair_0::DirectionOnly", 2),
+        ("system.cpu.iew.branchRepair_0::WrongTarget", 0),
+        ("system.cpu.iew.branchRepair_0::total", branch_mispredicts),
+    ] {
+        assert_text_count_stat(&stdout, path, value);
+        assert_text_stat_occurs_once(&stdout, path);
+    }
     assert_text_count_stat(
         &stdout,
         "sim.cpu0.o3.iew.predicted_taken_incorrect",
@@ -4275,6 +4284,14 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         0,
         "monotonic",
     );
+    for (path, value) in [
+        ("system.cpu.iew.branchRepair.targetlessMismatch", 1),
+        ("system.cpu.iew.branchRepair.directionOnly", 2),
+        ("system.cpu.iew.branchRepair.wrongTarget", 0),
+        ("system.cpu.iew.branchRepair.total", branch_mispredicts),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.iew.predicted_taken_incorrect",
@@ -4573,6 +4590,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.targetlessMismatch");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.directionOnly");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.wrongTarget");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.total");
     assert_json_stat_absent(&json, "system.cpu.iew.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
     assert!(
@@ -4660,6 +4681,14 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "system.cpu.iew.predictedTakenIncorrect",
         "system.cpu.iew.predictedNotTakenIncorrect",
+        "system.cpu.iew.branchRepair.targetlessMismatch",
+        "system.cpu.iew.branchRepair.directionOnly",
+        "system.cpu.iew.branchRepair.wrongTarget",
+        "system.cpu.iew.branchRepair.total",
+        "system.cpu.iew.branchRepair_0::TargetlessMismatch",
+        "system.cpu.iew.branchRepair_0::DirectionOnly",
+        "system.cpu.iew.branchRepair_0::WrongTarget",
+        "system.cpu.iew.branchRepair_0::total",
         "system.cpu.iew.branchMispredicts",
         "system.cpu.commit.branchMispredicts",
         "system.cpu.commit.committedInstType_0::MemRead",

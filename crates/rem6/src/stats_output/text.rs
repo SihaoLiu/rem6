@@ -647,25 +647,41 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",
         );
+        let targetless_mismatches = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),
+        );
+        let wrong_targets = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.o3.branch_repair_wrong_targets"),
+        );
+        let direction_only_mismatches = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.o3.branch_repair_direction_only_mismatches"),
+        );
         let branch_mispredict_stats = [
-            snapshot_value(
-                snapshot,
-                &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),
-            ),
-            snapshot_value(
-                snapshot,
-                &format!("sim.cpu{cpu}.o3.branch_repair_wrong_targets"),
-            ),
-            snapshot_value(
-                snapshot,
-                &format!("sim.cpu{cpu}.o3.branch_repair_direction_only_mismatches"),
-            ),
+            targetless_mismatches,
+            wrong_targets,
+            direction_only_mismatches,
         ];
         if branch_mispredict_stats.iter().any(Option::is_some) {
             let branch_mispredicts = branch_mispredict_stats
                 .into_iter()
                 .flatten()
                 .fold(0_u64, u64::saturating_add);
+            for (alias_name, value) in [
+                ("TargetlessMismatch", targetless_mismatches.unwrap_or(0)),
+                ("WrongTarget", wrong_targets.unwrap_or(0)),
+                ("DirectionOnly", direction_only_mismatches.unwrap_or(0)),
+                ("total", branch_mispredicts),
+            ] {
+                append_derived_count_stat_if_absent(
+                    output,
+                    snapshot,
+                    &format!("{alias_prefix}.iew.branchRepair_0::{alias_name}"),
+                    value,
+                );
+            }
             for alias_name in ["iew.branchMispredicts", "commit.branchMispredicts"] {
                 let alias_path = format!("{alias_prefix}.{alias_name}");
                 if snapshot_value(snapshot, &alias_path).is_none() {
@@ -1677,6 +1693,12 @@ mod tests {
 
     use super::stats_snapshot_text;
 
+    macro_rules! counter {
+        ($stats:expr, $path:expr, $unit:expr) => {
+            $stats.register_counter($path, $unit).unwrap()
+        };
+    }
+
     #[test]
     fn stats_output_renders_gem5_sim_seconds_without_float_rounding() {
         let mut stats = StatsRegistry::new();
@@ -1694,33 +1716,16 @@ mod tests {
     #[test]
     fn stats_output_renders_only_valid_gem5_cpu_ratio_prefixes() {
         let mut stats = StatsRegistry::new();
-        let cpu0_insts = stats
-            .register_counter("system.cpu0.numInsts", "Count")
-            .unwrap();
-        let cpu0_cycles = stats
-            .register_counter("system.cpu0.numCycles", "Cycle")
-            .unwrap();
-        let cpu0_commit_insts = stats
-            .register_counter("system.cpu0.commitStats0.numInsts", "Count")
-            .unwrap();
-        let cpu_named_insts = stats
-            .register_counter("system.cpu.main.numInsts", "Count")
-            .unwrap();
-        let cpu_named_cycles = stats
-            .register_counter("system.cpu.main.numCycles", "Cycle")
-            .unwrap();
-        let cpu_named_commit_insts = stats
-            .register_counter("system.cpu.main.commitStats0.numInsts", "Count")
-            .unwrap();
-        let cpu1_insts = stats
-            .register_counter("system.cpu1.numInsts", "Count")
-            .unwrap();
-        let cpu1_cycles = stats
-            .register_counter("system.cpu1.numCycles", "Cycle")
-            .unwrap();
-        let cpu1_commit_insts = stats
-            .register_counter("system.cpu1.commitStats0.numInsts", "Count")
-            .unwrap();
+        let cpu0_insts = counter!(&mut stats, "system.cpu0.numInsts", "Count");
+        let cpu0_cycles = counter!(&mut stats, "system.cpu0.numCycles", "Cycle");
+        let cpu0_commit_insts = counter!(&mut stats, "system.cpu0.commitStats0.numInsts", "Count");
+        let cpu_named_insts = counter!(&mut stats, "system.cpu.main.numInsts", "Count");
+        let cpu_named_cycles = counter!(&mut stats, "system.cpu.main.numCycles", "Cycle");
+        let cpu_named_commit_insts =
+            counter!(&mut stats, "system.cpu.main.commitStats0.numInsts", "Count");
+        let cpu1_insts = counter!(&mut stats, "system.cpu1.numInsts", "Count");
+        let cpu1_cycles = counter!(&mut stats, "system.cpu1.numCycles", "Cycle");
+        let cpu1_commit_insts = counter!(&mut stats, "system.cpu1.commitStats0.numInsts", "Count");
         stats.increment(cpu0_insts, 3).unwrap();
         stats.increment(cpu0_cycles, 12).unwrap();
         stats.increment(cpu0_commit_insts, 3).unwrap();
@@ -1748,13 +1753,9 @@ mod tests {
     #[test]
     fn stats_output_renders_zero_o3_wb_rate_when_writeback_stat_is_present() {
         let mut stats = StatsRegistry::new();
-        let cores = stats.register_counter("sim.cores", "Count").unwrap();
-        let cycles = stats
-            .register_counter("system.cpu.numCycles", "Cycle")
-            .unwrap();
-        stats
-            .register_counter("sim.cpu0.o3.iew.writeback_count", "Count")
-            .unwrap();
+        let cores = counter!(&mut stats, "sim.cores", "Count");
+        let cycles = counter!(&mut stats, "system.cpu.numCycles", "Cycle");
+        counter!(&mut stats, "sim.cpu0.o3.iew.writeback_count", "Count");
         stats.increment(cores, 1).unwrap();
         stats.increment(cycles, 12).unwrap();
 
@@ -1768,19 +1769,22 @@ mod tests {
     #[test]
     fn stats_output_saturates_o3_branch_mispredict_alias_total() {
         let mut stats = StatsRegistry::new();
-        let cores = stats.register_counter("sim.cores", "Count").unwrap();
-        let targetless = stats
-            .register_counter("sim.cpu0.o3.branch_repair_targetless_mismatches", "Count")
-            .unwrap();
-        let wrong_targets = stats
-            .register_counter("sim.cpu0.o3.branch_repair_wrong_targets", "Count")
-            .unwrap();
-        let direction_only = stats
-            .register_counter(
-                "sim.cpu0.o3.branch_repair_direction_only_mismatches",
-                "Count",
-            )
-            .unwrap();
+        let cores = counter!(&mut stats, "sim.cores", "Count");
+        let targetless = counter!(
+            &mut stats,
+            "sim.cpu0.o3.branch_repair_targetless_mismatches",
+            "Count"
+        );
+        let wrong_targets = counter!(
+            &mut stats,
+            "sim.cpu0.o3.branch_repair_wrong_targets",
+            "Count"
+        );
+        let direction_only = counter!(
+            &mut stats,
+            "sim.cpu0.o3.branch_repair_direction_only_mismatches",
+            "Count"
+        );
         stats.increment(cores, 1).unwrap();
         stats.increment(targetless, u64::MAX).unwrap();
         stats.increment(wrong_targets, 1).unwrap();
