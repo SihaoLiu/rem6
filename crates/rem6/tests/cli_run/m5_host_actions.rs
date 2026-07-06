@@ -3039,7 +3039,9 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             value,
             "stat registry should match structured runtime {field}"
         );
+        assert_o3_lsq_count_alias(json, field, value);
     }
+    assert_o3_lsq_count_alias_totals(json, 7, 3);
 
     let mut aggregate_latency_samples = 0;
     let mut aggregate_latency_ticks = 0;
@@ -3325,7 +3327,9 @@ fn rem6_run_o3_runtime_json_counts_store_conditional_failures() {
             value,
             "stat registry should match structured runtime {field}"
         );
+        assert_o3_lsq_count_alias(&json, field, value);
     }
+    assert_o3_lsq_count_alias_totals(&json, 2, 0);
 }
 
 #[test]
@@ -3460,7 +3464,9 @@ fn rem6_run_o3_runtime_json_exposes_float_vector_lsq_matrix() {
             value,
             "stat registry should match structured runtime {field}"
         );
+        assert_o3_lsq_count_alias(&json, field, value);
     }
+    assert_o3_lsq_count_alias_totals(&json, 4, 0);
 }
 
 #[test]
@@ -4647,6 +4653,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
         &json,
         "system.cpu.lsq0.dataResponse.storeConditional.totalLatency",
     );
+    assert_json_stat_absent(&json, "system.cpu.lsq0.operation.load");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.operation.total");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.ordering.acquire");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.ordering.total");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.targetlessMismatch");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.directionOnly");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.wrongTarget");
@@ -4746,6 +4756,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.lsq0.dataResponse.totalLatency",
         "system.cpu.lsq0.dataResponse.load.totalLatency",
         "system.cpu.lsq0.dataResponse.storeConditional.totalLatency",
+        "system.cpu.lsq0.operation.load",
+        "system.cpu.lsq0.operation.total",
+        "system.cpu.lsq0.ordering.acquire",
+        "system.cpu.lsq0.ordering.total",
         "system.cpu.iew.branchRepair.targetlessMismatch",
         "system.cpu.iew.branchRepair.directionOnly",
         "system.cpu.iew.branchRepair.wrongTarget",
@@ -6813,6 +6827,64 @@ fn assert_json_stat_absent(json: &Value, path: &str) {
             .all(|sample| sample.pointer("/path").and_then(Value::as_str) != Some(path)),
         "unexpected stat path {path} in {stats:?}"
     );
+}
+
+fn assert_o3_lsq_count_alias(json: &Value, field: &str, value: u64) {
+    let Some((family, alias)) = field
+        .strip_prefix("lsq_operation_")
+        .map(|operation| ("operation", o3_lsq_operation_count_alias(operation)))
+        .or_else(|| {
+            field
+                .strip_prefix("lsq_ordering_")
+                .map(|ordering| ("ordering", o3_lsq_ordering_count_alias(ordering)))
+        })
+    else {
+        return;
+    };
+
+    assert_json_stat(
+        json,
+        &format!("system.cpu.lsq0.{family}.{alias}"),
+        "Count",
+        value,
+        "monotonic",
+    );
+}
+
+fn assert_o3_lsq_count_alias_totals(json: &Value, operation_total: u64, ordering_total: u64) {
+    for (family, value) in [("operation", operation_total), ("ordering", ordering_total)] {
+        assert_json_stat(
+            json,
+            &format!("system.cpu.lsq0.{family}.total"),
+            "Count",
+            value,
+            "monotonic",
+        );
+    }
+}
+
+fn o3_lsq_operation_count_alias(operation: &str) -> &'static str {
+    match operation {
+        "load" => "load",
+        "store" => "store",
+        "load_reserved" => "loadReserved",
+        "store_conditional" => "storeConditional",
+        "atomic" => "atomic",
+        "float_load" => "floatLoad",
+        "float_store" => "floatStore",
+        "vector_load" => "vectorLoad",
+        "vector_store" => "vectorStore",
+        _ => panic!("unexpected O3 LSQ operation field {operation}"),
+    }
+}
+
+fn o3_lsq_ordering_count_alias(ordering: &str) -> &'static str {
+    match ordering {
+        "acquire" => "acquire",
+        "release" => "release",
+        "acquire_release" => "acquireRelease",
+        _ => panic!("unexpected O3 LSQ ordering field {ordering}"),
+    }
 }
 
 fn assert_stats_dump(

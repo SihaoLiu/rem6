@@ -1368,6 +1368,50 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
+    let mut lsq_operation_total = 0_u64;
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        let value = o3.lsq_operation_count(operation);
+        lsq_operation_total = lsq_operation_total.saturating_add(value);
+        increment_stat(
+            stats,
+            &format!(
+                "{gem5_cpu_alias_prefix}.lsq0.operation.{}",
+                o3_lsq_operation_alias(operation)
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    increment_stat(
+        stats,
+        &format!("{gem5_cpu_alias_prefix}.lsq0.operation.total"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        lsq_operation_total,
+    )?;
+    let mut lsq_ordering_total = 0_u64;
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        let value = o3.lsq_ordering_count(ordering);
+        lsq_ordering_total = lsq_ordering_total.saturating_add(value);
+        increment_stat(
+            stats,
+            &format!(
+                "{gem5_cpu_alias_prefix}.lsq0.ordering.{}",
+                o3_lsq_ordering_alias(ordering)
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    increment_stat(
+        stats,
+        &format!("{gem5_cpu_alias_prefix}.lsq0.ordering.total"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        lsq_ordering_total,
+    )?;
     for (name, unit, value) in [
         ("samples", "Count", o3.lsq_data_latency_samples()),
         ("totalLatency", "Tick", o3.lsq_data_latency_ticks()),
@@ -1492,6 +1536,15 @@ fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
         O3RuntimeLsqOperation::FloatStore => "floatStore",
         O3RuntimeLsqOperation::VectorLoad => "vectorLoad",
         O3RuntimeLsqOperation::VectorStore => "vectorStore",
+    }
+}
+
+fn o3_lsq_ordering_alias(ordering: O3RuntimeLsqOrdering) -> &'static str {
+    match ordering {
+        O3RuntimeLsqOrdering::None => "none",
+        O3RuntimeLsqOrdering::Acquire => "acquire",
+        O3RuntimeLsqOrdering::Release => "release",
+        O3RuntimeLsqOrdering::AcquireRelease => "acquireRelease",
     }
 }
 
