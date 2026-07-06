@@ -1000,6 +1000,30 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 );
             }
         }
+        for (source_cause, alias_cause) in [
+            ("fetch_wait", "fetchWait"),
+            ("data_wait", "dataWait"),
+            ("execute_wait", "executeWait"),
+        ] {
+            for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+                for (source_name, alias_name, unit) in [
+                    ("resource_blocked", "resourceBlocked", "Count"),
+                    ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
+                ] {
+                    append_derived_stat_from_snapshot(
+                        output,
+                        snapshot,
+                        &format!(
+                            "sim.cpu{cpu}.pipeline.in_order.stall_cause.{source_cause}.stage.{stage}.{source_name}"
+                        ),
+                        &format!(
+                            "{pipeline_alias_prefix}.stallCause.{alias_cause}.stage.{stage}.{alias_name}"
+                        ),
+                        unit,
+                    );
+                }
+            }
+        }
     }
 }
 

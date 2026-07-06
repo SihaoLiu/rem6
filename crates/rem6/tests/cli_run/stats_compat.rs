@@ -15528,6 +15528,113 @@ fn rem6_run_text_stats_emit_in_order_resource_stall_aliases_from_pending_paralle
 }
 
 #[test]
+fn rem6_run_text_stats_emit_in_order_stall_cause_stage_aliases() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    program.extend_from_slice(&[0; 16]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-stall-cause-stage-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for (cause, alias_cause) in [
+        ("fetch_wait", "fetchWait"),
+        ("data_wait", "dataWait"),
+        ("execute_wait", "executeWait"),
+    ] {
+        for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
+                    &format!(
+                        "system.cpu.pipeline.inOrder.stallCause.{alias_cause}.stage.{stage}.resourceBlocked"
+                    )
+                ),
+                text_stat_value(
+                    &stdout,
+                    &format!(
+                        "sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.resource_blocked"
+                    )
+                )
+            );
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
+                    &format!(
+                        "system.cpu.pipeline.inOrder.stallCause.{alias_cause}.stage.{stage}.resourceBlockedCycles"
+                    )
+                ),
+                text_stat_value(
+                    &stdout,
+                    &format!(
+                        "sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.resource_blocked_cycles"
+                    )
+                )
+            );
+        }
+    }
+    assert!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlockedCycles"
+        ) > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.execute.resourceBlockedCycles"
+        ),
+        0
+    );
+    assert!(
+        text_stat_line(
+            &stdout,
+            "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlocked"
+        )
+        .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(
+            &stdout,
+            "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlockedCycles"
+        )
+        .contains("unit=Cycle"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293,          // addi x5, x0, 7
