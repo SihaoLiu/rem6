@@ -1123,6 +1123,7 @@ fn emit_o3_runtime_stats(
     for (name, value) in [
         ("dispatched_insts", o3.instructions()),
         ("insts_to_commit", o3.rob_commits()),
+        ("writeback_count", o3.instructions()),
         (
             "predicted_taken_incorrect",
             o3.iew_predicted_taken_incorrect(),

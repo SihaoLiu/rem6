@@ -712,6 +712,15 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 insts_to_commit,
             );
         }
+        if let Some(writeback_count) =
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.writeback_count"))
+        {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.writebackCount::total"),
+                writeback_count,
+            );
+        }
     }
 }
 

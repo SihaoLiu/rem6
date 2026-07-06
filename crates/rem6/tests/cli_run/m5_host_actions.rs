@@ -850,6 +850,13 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.iew.writeback_count",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "system.cpu.iew.dispatchedInsts",
         "Count",
         6,
@@ -1177,6 +1184,7 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
             6,
         ),
         ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 6),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.writeback_count", 6),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
@@ -3825,6 +3833,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit::total", 6);
+    assert_text_count_stat(&stdout, "system.cpu.iew.writebackCount::total", 6);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
@@ -4222,6 +4231,7 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_div");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_count");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_taken_incorrect");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_not_taken_incorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
@@ -4297,6 +4307,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.iew.instsToCommit::total",
+        "sim.cpu0.o3.iew.writeback_count",
+        "system.cpu.iew.writebackCount::total",
         "sim.cpu0.o3.iew.predicted_taken_incorrect",
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "system.cpu.iew.predictedTakenIncorrect",
