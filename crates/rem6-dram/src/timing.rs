@@ -34,9 +34,35 @@ impl DramRefreshPolicy {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DramRefreshGranularity {
+    OneX,
+    TwoX,
+    FourX,
+}
+
+impl DramRefreshGranularity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OneX => "1x",
+            Self::TwoX => "2x",
+            Self::FourX => "4x",
+        }
+    }
+
+    const fn divisor(self) -> u64 {
+        match self {
+            Self::OneX => 1,
+            Self::TwoX => 2,
+            Self::FourX => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramRefreshTiming {
     interval: u64,
     recovery: u64,
+    granularity: DramRefreshGranularity,
 }
 
 impl DramRefreshTiming {
@@ -51,7 +77,19 @@ impl DramRefreshTiming {
                 field: DramRefreshTimingField::Recovery,
             });
         }
-        Ok(Self { interval, recovery })
+        Ok(Self {
+            interval,
+            recovery,
+            granularity: DramRefreshGranularity::OneX,
+        })
+    }
+
+    pub const fn with_granularity(mut self, granularity: DramRefreshGranularity) -> Self {
+        let divisor = granularity.divisor();
+        self.interval = divide_refresh_cycles(self.interval, divisor);
+        self.recovery = divide_refresh_cycles(self.recovery, divisor);
+        self.granularity = granularity;
+        self
     }
 
     pub const fn interval(self) -> u64 {
@@ -68,6 +106,19 @@ impl DramRefreshTiming {
 
     pub const fn t_rfc_cycles(self) -> u64 {
         self.recovery
+    }
+
+    pub const fn granularity(self) -> DramRefreshGranularity {
+        self.granularity
+    }
+}
+
+const fn divide_refresh_cycles(value: u64, divisor: u64) -> u64 {
+    let quotient = value / divisor;
+    if value % divisor == 0 {
+        quotient
+    } else {
+        quotient.saturating_add(1)
     }
 }
 

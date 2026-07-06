@@ -235,6 +235,15 @@ pub(super) fn emit_dram_stats(
             u64::from(summary.profile_timing_refresh_policy == Some(policy)),
         )?;
     }
+    for (granularity, stat) in [("1x", "one_x"), ("2x", "two_x"), ("4x", "four_x")] {
+        emit_dram_constant(
+            stats,
+            prefix,
+            &format!("profile.timing.refresh_granularity.{stat}"),
+            "Count",
+            u64::from(summary.profile_timing_refresh_granularity == Some(granularity)),
+        )?;
+    }
     emit_dram_constant(
         stats,
         prefix,

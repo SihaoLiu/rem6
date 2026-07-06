@@ -1920,24 +1920,24 @@ fn rem6_run_rejects_incomplete_dram_command_window_timing() {
 fn rem6_run_config_scan_treats_dram_refresh_timing_as_value_taking() {
     let bogus_config = temp_output("dram-refresh-prescan-bogus-config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--dram-refresh-interval",
-            "--config",
-            bogus_config.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    for flag in ["--dram-refresh-interval", "--dram-refresh-granularity"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args(["run", flag, "--config", bogus_config.to_str().unwrap()])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("invalid DRAM refresh timing --config"),
-        "stderr: {stderr}"
-    );
-    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+        assert!(!output.status.success(), "flag: {flag}");
+        assert!(output.stdout.is_empty(), "flag: {flag}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("invalid DRAM refresh timing --config"),
+            "flag: {flag} stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains(&format!("failed to read config {}", bogus_config.display())),
+            "flag: {flag} stderr: {stderr}"
+        );
+    }
 }
 
 #[test]

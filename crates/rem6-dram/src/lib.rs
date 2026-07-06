@@ -41,8 +41,8 @@ use refresh::{
     record_due_refresh_events, DramRefreshWindow,
 };
 pub use timing::{
-    DramCommandWindow, DramGeometry, DramRefreshPolicy, DramRefreshTiming, DramRefreshTimingField,
-    DramTiming, DramTimingField,
+    DramCommandWindow, DramGeometry, DramRefreshGranularity, DramRefreshPolicy, DramRefreshTiming,
+    DramRefreshTimingField, DramTiming, DramTimingField,
 };
 pub use wait_for::DramWaitForMarker;
 use wait_for::{merge_wait_for_graph, record_dram_wait_interval, DramWaitRecord};

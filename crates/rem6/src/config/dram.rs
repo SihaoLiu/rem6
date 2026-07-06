@@ -1,4 +1,4 @@
-use rem6_dram::DramRefreshPolicy;
+use rem6_dram::{DramRefreshGranularity, DramRefreshPolicy};
 
 use super::parse::required_value;
 use crate::Rem6CliError;
@@ -388,21 +388,42 @@ fn validate_positive_dram_timing_value(value: u64) -> Result<u64, Rem6CliError> 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CliDramRefreshTiming {
-    interval: u64,
-    recovery: u64,
+    interval: Option<u64>,
+    recovery: Option<u64>,
+    granularity: DramRefreshGranularity,
 }
 
 impl CliDramRefreshTiming {
     pub(crate) const fn new(interval: u64, recovery: u64) -> Self {
-        Self { interval, recovery }
+        Self {
+            interval: Some(interval),
+            recovery: Some(recovery),
+            granularity: DramRefreshGranularity::OneX,
+        }
     }
 
-    pub const fn interval(self) -> u64 {
+    const fn from_options(
+        interval: Option<u64>,
+        recovery: Option<u64>,
+        granularity: DramRefreshGranularity,
+    ) -> Self {
+        Self {
+            interval,
+            recovery,
+            granularity,
+        }
+    }
+
+    pub const fn interval(self) -> Option<u64> {
         self.interval
     }
 
-    pub const fn recovery(self) -> u64 {
+    pub const fn recovery(self) -> Option<u64> {
         self.recovery
+    }
+
+    pub const fn granularity(self) -> DramRefreshGranularity {
+        self.granularity
     }
 }
 
@@ -571,15 +592,20 @@ fn parse_low_power_timing_value(value: &str) -> Result<u64, Rem6CliError> {
 pub(super) struct CliDramRefreshTimingOptions {
     interval: Option<u64>,
     recovery: Option<u64>,
+    granularity: Option<DramRefreshGranularity>,
 }
 
 impl CliDramRefreshTimingOptions {
     pub(super) const fn new(interval: Option<u64>, recovery: Option<u64>) -> Self {
-        Self { interval, recovery }
+        Self {
+            interval,
+            recovery,
+            granularity: None,
+        }
     }
 
     pub(super) const fn was_set(self) -> bool {
-        self.interval.is_some() || self.recovery.is_some()
+        self.interval.is_some() || self.recovery.is_some() || self.granularity.is_some()
     }
 
     pub(super) fn set_interval(&mut self, value: &str) -> Result<(), Rem6CliError> {
@@ -592,15 +618,41 @@ impl CliDramRefreshTimingOptions {
         Ok(())
     }
 
+    pub(super) fn set_granularity(&mut self, value: &str) -> Result<(), Rem6CliError> {
+        self.granularity = Some(parse_refresh_granularity(value).ok_or_else(|| {
+            Rem6CliError::InvalidDramRefreshTiming {
+                value: value.to_string(),
+            }
+        })?);
+        Ok(())
+    }
+
     pub(super) fn timing(self) -> Result<Option<CliDramRefreshTiming>, Rem6CliError> {
+        let granularity = self.granularity.unwrap_or(DramRefreshGranularity::OneX);
         match (self.interval, self.recovery) {
             (None, None) => Ok(None),
-            (Some(interval), Some(recovery)) => Ok(Some(CliDramRefreshTiming::new(
-                validate_refresh_timing_value(interval)?,
-                validate_refresh_timing_value(recovery)?,
+            (Some(interval), Some(recovery)) => Ok(Some(CliDramRefreshTiming::from_options(
+                Some(validate_refresh_timing_value(interval)?),
+                Some(validate_refresh_timing_value(recovery)?),
+                granularity,
             ))),
             _ => Err(Rem6CliError::IncompleteDramRefreshTiming),
         }
+        .map(|timing| {
+            timing.or_else(|| {
+                self.granularity
+                    .map(|_| CliDramRefreshTiming::from_options(None, None, granularity))
+            })
+        })
+    }
+}
+
+fn parse_refresh_granularity(value: &str) -> Option<DramRefreshGranularity> {
+    match value {
+        "1x" => Some(DramRefreshGranularity::OneX),
+        "2x" => Some(DramRefreshGranularity::TwoX),
+        "4x" => Some(DramRefreshGranularity::FourX),
+        _ => None,
     }
 }
 
@@ -688,6 +740,10 @@ pub(super) fn apply_dram_option_flag(
         "--dram-refresh-recovery" => {
             let value = required_value(flag, args.next())?;
             refresh.set_recovery(&value)?;
+        }
+        "--dram-refresh-granularity" => {
+            let value = required_value(flag, args.next())?;
+            refresh.set_granularity(&value)?;
         }
         "--dram-refresh-policy" => {
             let value = required_value(flag, args.next())?;

@@ -43,6 +43,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--dram-command-window-cycles",
             "--dram-command-window-max-commands",
             "--dram-refresh-policy",
+            "--dram-refresh-granularity",
             "--dram-low-power-precharge-powerdown-entry-delay",
             "--dram-low-power-self-refresh-entry-delay",
             "--dram-low-power-exit-latency",

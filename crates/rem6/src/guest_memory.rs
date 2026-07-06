@@ -1,7 +1,7 @@
 use rem6_boot::BootImage;
 use rem6_dram::{
-    DramGeometry, DramLowPowerTiming, DramMemoryController, DramRefreshPolicy, DramRefreshTiming,
-    DramTiming, ExternalMemoryProfile, NvmMediaTiming,
+    DramGeometry, DramJedecRefreshPreset, DramLowPowerTiming, DramMemoryController,
+    DramRefreshPolicy, DramRefreshTiming, DramTiming, ExternalMemoryProfile, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryTargetId,
@@ -201,12 +201,14 @@ pub(super) fn build_cli_dram_profile(
 ) -> Result<ExternalMemoryProfile, Rem6CliError> {
     let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
     let timing = cli_dram_timing(dram_timing)?;
-    let volatile_timing = timing_with_refresh(
+    let volatile_timing = timing_with_cli_refresh(
         timing,
         refresh_timing.unwrap_or(CliDramRefreshTiming::new(
             CLI_VOLATILE_REFRESH_INTERVAL,
             CLI_VOLATILE_REFRESH_RECOVERY,
         )),
+        DramRefreshTiming::new(CLI_VOLATILE_REFRESH_INTERVAL, CLI_VOLATILE_REFRESH_RECOVERY)
+            .map_err(execute_error)?,
     )?;
     let profile = match profile {
         CliDramMemoryProfile::Ddr => ExternalMemoryProfile::ddr(
@@ -217,42 +219,30 @@ pub(super) fn build_cli_dram_profile(
             geometry,
             volatile_timing,
         ),
-        CliDramMemoryProfile::Ddr4_2400_8Gb => match refresh_timing {
-            Some(refresh_timing) => ExternalMemoryProfile::ddr(
-                CLI_MEMORY_TARGET,
-                line_layout,
-                1,
-                1,
-                geometry,
-                timing_with_refresh(timing, refresh_timing)?,
-            ),
-            None => ExternalMemoryProfile::ddr4_2400_8gb(
-                CLI_MEMORY_TARGET,
-                line_layout,
-                1,
-                1,
-                geometry,
+        CliDramMemoryProfile::Ddr4_2400_8Gb => ExternalMemoryProfile::ddr(
+            CLI_MEMORY_TARGET,
+            line_layout,
+            1,
+            1,
+            geometry,
+            timing_with_jedec_refresh(
                 timing,
-            ),
-        },
-        CliDramMemoryProfile::Ddr5_4800_16Gb => match refresh_timing {
-            Some(refresh_timing) => ExternalMemoryProfile::ddr(
-                CLI_MEMORY_TARGET,
-                line_layout,
-                1,
-                1,
-                geometry,
-                timing_with_refresh(timing, refresh_timing)?,
-            ),
-            None => ExternalMemoryProfile::ddr5_4800_16gb(
-                CLI_MEMORY_TARGET,
-                line_layout,
-                1,
-                1,
-                geometry,
+                refresh_timing,
+                DramJedecRefreshPreset::Ddr4_2400_8Gb,
+            )?,
+        ),
+        CliDramMemoryProfile::Ddr5_4800_16Gb => ExternalMemoryProfile::ddr(
+            CLI_MEMORY_TARGET,
+            line_layout,
+            1,
+            1,
+            geometry,
+            timing_with_jedec_refresh(
                 timing,
-            ),
-        },
+                refresh_timing,
+                DramJedecRefreshPreset::Ddr5_4800_16Gb,
+            )?,
+        ),
         CliDramMemoryProfile::Hbm => {
             let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
             let timing = hbm_cli_dram_timing(volatile_timing, dram_timing)?;
@@ -261,24 +251,18 @@ pub(super) fn build_cli_dram_profile(
         CliDramMemoryProfile::Hbm2_2000_2Gb => {
             let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
             let timing = hbm_cli_dram_timing(timing, dram_timing)?;
-            match refresh_timing {
-                Some(refresh_timing) => ExternalMemoryProfile::hbm(
-                    CLI_MEMORY_TARGET,
-                    line_layout,
-                    2,
-                    2,
-                    geometry,
-                    timing_with_refresh(timing, refresh_timing)?,
-                ),
-                None => ExternalMemoryProfile::hbm2_2000_2gb(
-                    CLI_MEMORY_TARGET,
-                    line_layout,
-                    2,
-                    2,
-                    geometry,
+            ExternalMemoryProfile::hbm(
+                CLI_MEMORY_TARGET,
+                line_layout,
+                2,
+                2,
+                geometry,
+                timing_with_jedec_refresh(
                     timing,
-                ),
-            }
+                    refresh_timing,
+                    DramJedecRefreshPreset::Hbm2_2000_2Gb,
+                )?,
+            )
         }
         CliDramMemoryProfile::Lpddr => {
             let timing =
@@ -287,24 +271,18 @@ pub(super) fn build_cli_dram_profile(
         }
         CliDramMemoryProfile::Lpddr4_3200_16Gb => {
             let timing = timing.with_low_power_timing(cli_dram_low_power_timing(low_power_timing)?);
-            match refresh_timing {
-                Some(refresh_timing) => ExternalMemoryProfile::lpddr(
-                    CLI_MEMORY_TARGET,
-                    line_layout,
-                    2,
-                    2,
-                    geometry,
-                    timing_with_refresh(timing, refresh_timing)?,
-                ),
-                None => ExternalMemoryProfile::lpddr4_3200_16gb(
-                    CLI_MEMORY_TARGET,
-                    line_layout,
-                    2,
-                    2,
-                    geometry,
+            ExternalMemoryProfile::lpddr(
+                CLI_MEMORY_TARGET,
+                line_layout,
+                2,
+                2,
+                geometry,
+                timing_with_jedec_refresh(
                     timing,
-                ),
-            }
+                    refresh_timing,
+                    DramJedecRefreshPreset::Lpddr4_3200_16Gb,
+                )?,
+            )
         }
         CliDramMemoryProfile::Nvm => {
             let timing = nvm_cli_dram_timing(timing, dram_timing)?;
@@ -392,16 +370,42 @@ fn cli_dram_low_power_timing(
     .map_err(execute_error)
 }
 
-fn timing_with_refresh(
+fn timing_with_jedec_refresh(
+    timing: DramTiming,
+    refresh: Option<CliDramRefreshTiming>,
+    preset: DramJedecRefreshPreset,
+) -> Result<DramTiming, Rem6CliError> {
+    let preset_timing = preset.refresh_timing().map_err(execute_error)?;
+    let refresh_timing = match refresh {
+        Some(refresh) => cli_refresh_timing(refresh, preset_timing)?,
+        None => preset_timing,
+    };
+    timing
+        .with_refresh_timing(refresh_timing)
+        .map_err(execute_error)
+}
+
+fn timing_with_cli_refresh(
     timing: DramTiming,
     refresh: CliDramRefreshTiming,
+    default: DramRefreshTiming,
 ) -> Result<DramTiming, Rem6CliError> {
+    let refresh_timing = cli_refresh_timing(refresh, default)?;
     timing
-        .with_refresh_timing(
-            DramRefreshTiming::new(refresh.interval(), refresh.recovery())
-                .map_err(execute_error)?,
-        )
+        .with_refresh_timing(refresh_timing)
         .map_err(execute_error)
+}
+
+fn cli_refresh_timing(
+    refresh: CliDramRefreshTiming,
+    default: DramRefreshTiming,
+) -> Result<DramRefreshTiming, Rem6CliError> {
+    let interval = refresh.interval().unwrap_or(default.interval());
+    let recovery = refresh.recovery().unwrap_or(default.recovery());
+    let refresh_timing = DramRefreshTiming::new(interval, recovery)
+        .map_err(execute_error)?
+        .with_granularity(refresh.granularity());
+    Ok(refresh_timing)
 }
 
 fn cli_memory_regions(
