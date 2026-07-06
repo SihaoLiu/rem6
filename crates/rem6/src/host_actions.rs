@@ -412,6 +412,9 @@ impl Rem6HostStatsDumpSummary {
 
 fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {
     let path = sample.path().to_string();
+    if path.starts_with("system.cpu.lsq0.") {
+        return !active_o3_cpus.is_empty();
+    }
     let Some(cpu) = o3_stats_dump_sample_cpu(&path) else {
         return true;
     };
@@ -419,8 +422,15 @@ fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> b
 }
 
 fn o3_stats_dump_sample_cpu(path: &str) -> Option<u32> {
-    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
-    let (cpu, _suffix) = rest.split_once(".o3.")?;
+    if let Some(rest) = path.strip_prefix("sim.host_actions.stats_dump.cpu") {
+        return parse_o3_stats_dump_cpu(rest, ".o3.");
+    }
+    path.strip_prefix("system.cpu")
+        .and_then(|rest| parse_o3_stats_dump_cpu(rest, ".lsq0."))
+}
+
+fn parse_o3_stats_dump_cpu(rest: &str, separator: &str) -> Option<u32> {
+    let (cpu, _suffix) = rest.split_once(separator)?;
     if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }

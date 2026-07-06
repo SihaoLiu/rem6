@@ -21,9 +21,13 @@ impl RiscvO3RuntimeStats {
         I: IntoIterator<Item = CpuId>,
     {
         let cpus = cpus.into_iter().collect::<BTreeSet<_>>();
+        let single_cpu_run = cpus.len() == 1;
         let stats = cpus
             .iter()
-            .map(|cpu| RiscvO3RuntimeCpuStats::register(registry, *cpu).map(|stats| (*cpu, stats)))
+            .map(|cpu| {
+                RiscvO3RuntimeCpuStats::register(registry, *cpu, single_cpu_run)
+                    .map(|stats| (*cpu, stats))
+            })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         Ok(Self {
             cpus,
@@ -148,9 +152,13 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_alias_total: StatId,
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
+    lsq_ordering_alias_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
+    lsq_ordering_alias_total: StatId,
     lsq_store_conditional_failures: StatId,
     branch_repair_targetless_mismatches: StatId,
     branch_repair_wrong_targets: StatId,
@@ -183,8 +191,17 @@ struct RiscvO3RuntimeCpuStats {
 }
 
 impl RiscvO3RuntimeCpuStats {
-    fn register(registry: &mut StatsRegistry, cpu: CpuId) -> Result<Self, StatsError> {
+    fn register(
+        registry: &mut StatsRegistry,
+        cpu: CpuId,
+        single_cpu_run: bool,
+    ) -> Result<Self, StatsError> {
         let prefix = format!("sim.host_actions.stats_dump.cpu{}.o3", cpu.get());
+        let gem5_cpu_alias_prefix = if single_cpu_run {
+            "system.cpu".to_string()
+        } else {
+            format!("system.cpu{}", cpu.get())
+        };
         Ok(Self {
             instructions: register_o3_counter(registry, &prefix, "instructions", "Count")?,
             rob_allocations: register_o3_counter(registry, &prefix, "rob_allocations", "Count")?,
@@ -207,6 +224,16 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             lsq_operation_counts: register_o3_lsq_operation_counters(registry, &prefix)?,
+            lsq_operation_alias_counts: register_o3_lsq_operation_alias_counters(
+                registry,
+                &gem5_cpu_alias_prefix,
+            )?,
+            lsq_operation_alias_total: register_o3_counter(
+                registry,
+                &gem5_cpu_alias_prefix,
+                "lsq0.operation.total",
+                "Count",
+            )?,
             lsq_data_latency: register_o3_lsq_latency_counters(
                 registry,
                 &prefix,
@@ -214,6 +241,16 @@ impl RiscvO3RuntimeCpuStats {
             )?,
             lsq_operation_latency: register_o3_lsq_operation_latency_counters(registry, &prefix)?,
             lsq_ordering_counts: register_o3_lsq_ordering_counters(registry, &prefix)?,
+            lsq_ordering_alias_counts: register_o3_lsq_ordering_alias_counters(
+                registry,
+                &gem5_cpu_alias_prefix,
+            )?,
+            lsq_ordering_alias_total: register_o3_counter(
+                registry,
+                &gem5_cpu_alias_prefix,
+                "lsq0.ordering.total",
+                "Count",
+            )?,
             lsq_store_conditional_failures: register_o3_counter(
                 registry,
                 &prefix,
@@ -589,22 +626,34 @@ impl RiscvO3RuntimeCpuStats {
                 )?;
             }
         }
+        let mut lsq_operation_delta_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {
             let delta = current
                 .lsq_operation_count(operation)
                 .saturating_sub(previous.lsq_operation_count(operation));
+            lsq_operation_delta_total = lsq_operation_delta_total.saturating_add(delta);
             if delta != 0 {
                 registry.increment(self.lsq_operation_counts[operation.index()], delta)?;
+                registry.increment(self.lsq_operation_alias_counts[operation.index()], delta)?;
             }
         }
+        if lsq_operation_delta_total != 0 {
+            registry.increment(self.lsq_operation_alias_total, lsq_operation_delta_total)?;
+        }
         self.set_lsq_latency_snapshot(registry, current)?;
+        let mut lsq_ordering_delta_total = 0_u64;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
             let delta = current
                 .lsq_ordering_count(ordering)
                 .saturating_sub(previous.lsq_ordering_count(ordering));
+            lsq_ordering_delta_total = lsq_ordering_delta_total.saturating_add(delta);
             if delta != 0 {
                 registry.increment(self.lsq_ordering_counts[ordering.index()], delta)?;
+                registry.increment(self.lsq_ordering_alias_counts[ordering.index()], delta)?;
             }
+        }
+        if lsq_ordering_delta_total != 0 {
+            registry.increment(self.lsq_ordering_alias_total, lsq_ordering_delta_total)?;
         }
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
@@ -715,19 +764,27 @@ impl RiscvO3RuntimeCpuStats {
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        let mut lsq_operation_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {
+            let value = snapshot.lsq_operation_count(operation);
+            lsq_operation_total = lsq_operation_total.saturating_add(value);
+            registry.set_resettable_counter(self.lsq_operation_counts[operation.index()], value)?;
             registry.set_resettable_counter(
-                self.lsq_operation_counts[operation.index()],
-                snapshot.lsq_operation_count(operation),
+                self.lsq_operation_alias_counts[operation.index()],
+                value,
             )?;
         }
+        registry.set_resettable_counter(self.lsq_operation_alias_total, lsq_operation_total)?;
         self.set_lsq_latency_snapshot(registry, snapshot)?;
+        let mut lsq_ordering_total = 0_u64;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
-            registry.set_resettable_counter(
-                self.lsq_ordering_counts[ordering.index()],
-                snapshot.lsq_ordering_count(ordering),
-            )?;
+            let value = snapshot.lsq_ordering_count(ordering);
+            lsq_ordering_total = lsq_ordering_total.saturating_add(value);
+            registry.set_resettable_counter(self.lsq_ordering_counts[ordering.index()], value)?;
+            registry
+                .set_resettable_counter(self.lsq_ordering_alias_counts[ordering.index()], value)?;
         }
+        registry.set_resettable_counter(self.lsq_ordering_alias_total, lsq_ordering_total)?;
         for kind in BranchTargetKind::ALL {
             let repair_stats = self.branch_repair_kinds[kind.index()];
             for (stat, value) in [
@@ -819,6 +876,30 @@ fn o3_branch_mispredicts(stats: O3RuntimeStats) -> u64 {
         .saturating_add(stats.iew_predicted_not_taken_incorrect())
 }
 
+fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
+    match operation {
+        O3RuntimeLsqOperation::None => "none",
+        O3RuntimeLsqOperation::Load => "load",
+        O3RuntimeLsqOperation::Store => "store",
+        O3RuntimeLsqOperation::LoadReserved => "loadReserved",
+        O3RuntimeLsqOperation::StoreConditional => "storeConditional",
+        O3RuntimeLsqOperation::Atomic => "atomic",
+        O3RuntimeLsqOperation::FloatLoad => "floatLoad",
+        O3RuntimeLsqOperation::FloatStore => "floatStore",
+        O3RuntimeLsqOperation::VectorLoad => "vectorLoad",
+        O3RuntimeLsqOperation::VectorStore => "vectorStore",
+    }
+}
+
+fn o3_lsq_ordering_alias(ordering: O3RuntimeLsqOrdering) -> &'static str {
+    match ordering {
+        O3RuntimeLsqOrdering::None => "none",
+        O3RuntimeLsqOrdering::Acquire => "acquire",
+        O3RuntimeLsqOrdering::Release => "release",
+        O3RuntimeLsqOrdering::AcquireRelease => "acquireRelease",
+    }
+}
+
 fn register_o3_lsq_operation_counters(
     registry: &mut StatsRegistry,
     prefix: &str,
@@ -829,6 +910,22 @@ fn register_o3_lsq_operation_counters(
             registry,
             prefix,
             &format!("lsq_operation.{}", operation.as_str()),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn register_o3_lsq_operation_alias_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq0.operation.{}", o3_lsq_operation_alias(operation)),
             "Count",
         )?;
     }
@@ -902,6 +999,22 @@ fn register_o3_lsq_ordering_counters(
             registry,
             prefix,
             &format!("lsq_ordering.{}", ordering.as_str()),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn register_o3_lsq_ordering_alias_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[StatId; O3RuntimeLsqOrdering::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOrdering::COUNT];
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        stats[ordering.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq0.ordering.{}", o3_lsq_ordering_alias(ordering)),
             "Count",
         )?;
     }

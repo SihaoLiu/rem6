@@ -1481,6 +1481,10 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_latency_cycles",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+        "system.cpu.lsq0.operation.load",
+        "system.cpu.lsq0.operation.total",
+        "system.cpu.lsq0.ordering.acquireRelease",
+        "system.cpu.lsq0.ordering.total",
     ] {
         assert_stats_dump_sample_absent(dump, path);
     }
@@ -2339,6 +2343,27 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
             "resettable",
         );
     }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load", 1),
+        ("system.cpu.lsq0.operation.store", 3),
+        ("system.cpu.lsq0.operation.loadReserved", 1),
+        ("system.cpu.lsq0.operation.storeConditional", 1),
+        ("system.cpu.lsq0.operation.atomic", 1),
+        ("system.cpu.lsq0.operation.total", 7),
+        ("system.cpu.lsq0.ordering.acquire", 1),
+        ("system.cpu.lsq0.ordering.release", 1),
+        ("system.cpu.lsq0.ordering.acquireRelease", 1),
+        ("system.cpu.lsq0.ordering.total", 3),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
     for (path, unit, value) in [
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_samples",
@@ -2465,6 +2490,23 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
             "sim.host_actions.stats_dump.cpu0.o3.lsq_store_conditional_failures",
             1,
         ),
+    ] {
+        assert_stats_dump_sample(
+            post_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load", 0),
+        ("system.cpu.lsq0.operation.store", 1),
+        ("system.cpu.lsq0.operation.storeConditional", 1),
+        ("system.cpu.lsq0.operation.total", 2),
+        ("system.cpu.lsq0.ordering.acquireRelease", 0),
+        ("system.cpu.lsq0.ordering.total", 0),
     ] {
         assert_stats_dump_sample(
             post_reset_dump,
