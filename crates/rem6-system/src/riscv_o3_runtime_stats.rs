@@ -140,6 +140,242 @@ struct RiscvO3RuntimeLsqLatencyStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeStructuralAliasStats {
+    rob_writes: StatId,
+    rob_reads: StatId,
+    rename_renamed_insts: StatId,
+    rename_renamed_operands: StatId,
+    iew_dispatched_insts: StatId,
+    iew_disp_load_insts: StatId,
+    iew_disp_store_insts: StatId,
+    iew_insts_to_commit_total: StatId,
+    iew_writeback_count_total: StatId,
+    iew_producer_inst_total: StatId,
+    iew_consumer_inst_total: StatId,
+    lsq_added_loads_and_stores: StatId,
+    lsq_store_load_forwarding_candidates: StatId,
+    lsq_store_load_forwarding_matches: StatId,
+    lsq_forw_loads: StatId,
+    iq_insts_issued: StatId,
+    iq_mem_insts_issued: StatId,
+    iq_issued_inst_type_mem_read: StatId,
+    iq_issued_inst_type_mem_write: StatId,
+    commit_committed_inst_type_mem_read: StatId,
+    commit_committed_inst_type_mem_write: StatId,
+    lsq_load_bytes: StatId,
+    lsq_store_bytes: StatId,
+}
+
+impl RiscvO3RuntimeStructuralAliasStats {
+    fn register(registry: &mut StatsRegistry, prefix: &str) -> Result<Self, StatsError> {
+        Ok(Self {
+            rob_writes: register_o3_counter(registry, prefix, "rob.writes", "Count")?,
+            rob_reads: register_o3_counter(registry, prefix, "rob.reads", "Count")?,
+            rename_renamed_insts: register_o3_counter(
+                registry,
+                prefix,
+                "rename.renamedInsts",
+                "Count",
+            )?,
+            rename_renamed_operands: register_o3_counter(
+                registry,
+                prefix,
+                "rename.renamedOperands",
+                "Count",
+            )?,
+            iew_dispatched_insts: register_o3_counter(
+                registry,
+                prefix,
+                "iew.dispatchedInsts",
+                "Count",
+            )?,
+            iew_disp_load_insts: register_o3_counter(
+                registry,
+                prefix,
+                "iew.dispLoadInsts",
+                "Count",
+            )?,
+            iew_disp_store_insts: register_o3_counter(
+                registry,
+                prefix,
+                "iew.dispStoreInsts",
+                "Count",
+            )?,
+            iew_insts_to_commit_total: register_o3_counter(
+                registry,
+                prefix,
+                "iew.instsToCommit.total",
+                "Count",
+            )?,
+            iew_writeback_count_total: register_o3_counter(
+                registry,
+                prefix,
+                "iew.writebackCount.total",
+                "Count",
+            )?,
+            iew_producer_inst_total: register_o3_counter(
+                registry,
+                prefix,
+                "iew.producerInst.total",
+                "Count",
+            )?,
+            iew_consumer_inst_total: register_o3_counter(
+                registry,
+                prefix,
+                "iew.consumerInst.total",
+                "Count",
+            )?,
+            lsq_added_loads_and_stores: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.addedLoadsAndStores",
+                "Count",
+            )?,
+            lsq_store_load_forwarding_candidates: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.storeLoadForwardingCandidates",
+                "Count",
+            )?,
+            lsq_store_load_forwarding_matches: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.storeLoadForwardingMatches",
+                "Count",
+            )?,
+            lsq_forw_loads: register_o3_counter(registry, prefix, "lsq0.forwLoads", "Count")?,
+            iq_insts_issued: register_o3_counter(registry, prefix, "iq.instsIssued", "Count")?,
+            iq_mem_insts_issued: register_o3_counter(
+                registry,
+                prefix,
+                "iq.memInstsIssued",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_read: register_o3_counter(
+                registry,
+                prefix,
+                "iq.issuedInstType.MemRead",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_write: register_o3_counter(
+                registry,
+                prefix,
+                "iq.issuedInstType.MemWrite",
+                "Count",
+            )?,
+            commit_committed_inst_type_mem_read: register_o3_counter(
+                registry,
+                prefix,
+                "commit.committedInstType.MemRead",
+                "Count",
+            )?,
+            commit_committed_inst_type_mem_write: register_o3_counter(
+                registry,
+                prefix,
+                "commit.committedInstType.MemWrite",
+                "Count",
+            )?,
+            lsq_load_bytes: register_o3_counter(registry, prefix, "lsq0.loadBytes", "Byte")?,
+            lsq_store_bytes: register_o3_counter(registry, prefix, "lsq0.storeBytes", "Byte")?,
+        })
+    }
+
+    fn increment_delta(
+        self,
+        registry: &mut StatsRegistry,
+        previous: O3RuntimeStats,
+        current: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for ((stat, previous), (_, current)) in self
+            .count_values(previous)
+            .into_iter()
+            .zip(self.count_values(current))
+        {
+            let delta = current.saturating_sub(previous);
+            if delta != 0 {
+                registry.increment(stat, delta)?;
+            }
+        }
+        for ((stat, previous), (_, current)) in self
+            .byte_values(previous)
+            .into_iter()
+            .zip(self.byte_values(current))
+        {
+            let delta = current.saturating_sub(previous);
+            if delta != 0 {
+                registry.increment(stat, delta)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for (stat, value) in self.count_values(snapshot) {
+            registry.set_resettable_counter(stat, value)?;
+        }
+        for (stat, value) in self.byte_values(snapshot) {
+            registry.set_resettable_counter(stat, value)?;
+        }
+        Ok(())
+    }
+
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 21] {
+        [
+            (self.rob_writes, stats.rob_allocations()),
+            (self.rob_reads, stats.rob_commits()),
+            (self.rename_renamed_insts, stats.instructions()),
+            (self.rename_renamed_operands, stats.rename_writes()),
+            (self.iew_dispatched_insts, stats.instructions()),
+            (self.iew_disp_load_insts, stats.lsq_loads()),
+            (self.iew_disp_store_insts, stats.lsq_stores()),
+            (self.iew_insts_to_commit_total, stats.rob_commits()),
+            (self.iew_writeback_count_total, stats.instructions()),
+            (self.iew_producer_inst_total, stats.iew_producer_insts()),
+            (self.iew_consumer_inst_total, stats.iew_consumer_insts()),
+            (
+                self.lsq_added_loads_and_stores,
+                stats.lsq_loads().saturating_add(stats.lsq_stores()),
+            ),
+            (
+                self.lsq_store_load_forwarding_candidates,
+                stats.lsq_store_to_load_forwarding_candidates(),
+            ),
+            (
+                self.lsq_store_load_forwarding_matches,
+                stats.lsq_store_to_load_forwarding_matches(),
+            ),
+            (
+                self.lsq_forw_loads,
+                stats.lsq_store_to_load_forwarding_matches(),
+            ),
+            (self.iq_insts_issued, stats.instructions()),
+            (
+                self.iq_mem_insts_issued,
+                stats.lsq_loads().saturating_add(stats.lsq_stores()),
+            ),
+            (self.iq_issued_inst_type_mem_read, stats.lsq_loads()),
+            (self.iq_issued_inst_type_mem_write, stats.lsq_stores()),
+            (self.commit_committed_inst_type_mem_read, stats.lsq_loads()),
+            (
+                self.commit_committed_inst_type_mem_write,
+                stats.lsq_stores(),
+            ),
+        ]
+    }
+
+    fn byte_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 2] {
+        [
+            (self.lsq_load_bytes, stats.lsq_load_bytes()),
+            (self.lsq_store_bytes, stats.lsq_store_bytes()),
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvO3RuntimeCpuStats {
     instructions: StatId,
     rob_allocations: StatId,
@@ -151,6 +387,7 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_bytes: StatId,
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
+    structural_aliases: RiscvO3RuntimeStructuralAliasStats,
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_total: StatId,
@@ -222,6 +459,10 @@ impl RiscvO3RuntimeCpuStats {
                 &prefix,
                 "lsq_store_to_load_forwarding_matches",
                 "Count",
+            )?,
+            structural_aliases: RiscvO3RuntimeStructuralAliasStats::register(
+                registry,
+                &gem5_cpu_alias_prefix,
             )?,
             lsq_operation_counts: register_o3_lsq_operation_counters(registry, &prefix)?,
             lsq_operation_alias_counts: register_o3_lsq_operation_alias_counters(
@@ -587,6 +828,8 @@ impl RiscvO3RuntimeCpuStats {
                 registry.increment(stat, delta)?;
             }
         }
+        self.structural_aliases
+            .increment_delta(registry, previous, current)?;
         for kind in BranchTargetKind::ALL {
             let repair_stats = self.branch_repair_kinds[kind.index()];
             for (stat, previous, current) in [
@@ -764,6 +1007,7 @@ impl RiscvO3RuntimeCpuStats {
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        self.structural_aliases.set_snapshot(registry, snapshot)?;
         let mut lsq_operation_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {
             let value = snapshot.lsq_operation_count(operation);

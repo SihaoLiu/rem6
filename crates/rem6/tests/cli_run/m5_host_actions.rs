@@ -1160,6 +1160,80 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
 }
 
 #[test]
+fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_dump_stats_binary(
+        "m5-switch-cpu-hart1-detailed-o3-dump-structural-aliases",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    for (path, unit, minimum) in [
+        ("system.cpu1.rob.writes", "Count", 1),
+        ("system.cpu1.rename.renamedOperands", "Count", 1),
+        ("system.cpu1.iew.writebackCount.total", "Count", 1),
+        ("system.cpu1.lsq0.loadBytes", "Byte", 4),
+        ("system.cpu1.iq.issuedInstType.MemRead", "Count", 1),
+        ("system.cpu1.commit.committedInstType.MemWrite", "Count", 1),
+    ] {
+        assert_stats_dump_sample_at_least(dump, path, "counter", unit, minimum, "resettable");
+    }
+    for path in [
+        "system.cpu0.rob.writes",
+        "system.cpu0.rename.renamedOperands",
+        "system.cpu0.iew.writebackCount.total",
+        "system.cpu0.lsq0.loadBytes",
+        "system.cpu0.iq.issuedInstType.MemRead",
+        "system.cpu0.commit.committedInstType.MemWrite",
+    ] {
+        assert_stats_dump_sample_absent(dump, path);
+    }
+}
+
+#[test]
 fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
     let path = detailed_o3_dump_stats_binary("m5-switch-cpu-detailed-o3-dump-runtime-stats");
 
@@ -1309,6 +1383,37 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         ("sim.host_actions.stats_dump.cpu0.o3.iew.consumer_inst", 4),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
+    for (path, value) in [
+        ("system.cpu.rob.writes", 6),
+        ("system.cpu.rob.reads", 6),
+        ("system.cpu.rename.renamedInsts", 6),
+        ("system.cpu.rename.renamedOperands", 4),
+        ("system.cpu.iew.dispatchedInsts", 6),
+        ("system.cpu.iew.dispLoadInsts", 1),
+        ("system.cpu.iew.dispStoreInsts", 1),
+        ("system.cpu.iew.instsToCommit.total", 6),
+        ("system.cpu.iew.writebackCount.total", 6),
+        ("system.cpu.iew.producerInst.total", 3),
+        ("system.cpu.iew.consumerInst.total", 4),
+        ("system.cpu.lsq0.addedLoadsAndStores", 2),
+        ("system.cpu.lsq0.storeLoadForwardingCandidates", 0),
+        ("system.cpu.lsq0.storeLoadForwardingMatches", 0),
+        ("system.cpu.lsq0.forwLoads", 0),
+        ("system.cpu.iq.instsIssued", 6),
+        ("system.cpu.iq.memInstsIssued", 2),
+        ("system.cpu.iq.issuedInstType.MemRead", 1),
+        ("system.cpu.iq.issuedInstType.MemWrite", 1),
+        ("system.cpu.commit.committedInstType.MemRead", 1),
+        ("system.cpu.commit.committedInstType.MemWrite", 1),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.loadBytes", 4),
+        ("system.cpu.lsq0.storeBytes", 4),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Byte", value, "resettable");
     }
     assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 8, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.rename_writes", "Count", 5, "monotonic");
@@ -1481,6 +1586,29 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_latency_cycles",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+        "system.cpu.rob.writes",
+        "system.cpu.rob.reads",
+        "system.cpu.rename.renamedInsts",
+        "system.cpu.rename.renamedOperands",
+        "system.cpu.iew.dispatchedInsts",
+        "system.cpu.iew.dispLoadInsts",
+        "system.cpu.iew.dispStoreInsts",
+        "system.cpu.iew.instsToCommit.total",
+        "system.cpu.iew.writebackCount.total",
+        "system.cpu.iew.producerInst.total",
+        "system.cpu.iew.consumerInst.total",
+        "system.cpu.lsq0.addedLoadsAndStores",
+        "system.cpu.lsq0.loadBytes",
+        "system.cpu.lsq0.storeBytes",
+        "system.cpu.lsq0.storeLoadForwardingCandidates",
+        "system.cpu.lsq0.storeLoadForwardingMatches",
+        "system.cpu.lsq0.forwLoads",
+        "system.cpu.iq.instsIssued",
+        "system.cpu.iq.memInstsIssued",
+        "system.cpu.iq.issuedInstType.MemRead",
+        "system.cpu.iq.issuedInstType.MemWrite",
+        "system.cpu.commit.committedInstType.MemRead",
+        "system.cpu.commit.committedInstType.MemWrite",
         "system.cpu.lsq0.operation.load",
         "system.cpu.lsq0.operation.total",
         "system.cpu.lsq0.ordering.acquireRelease",
@@ -5658,6 +5786,37 @@ fn multicore_hart1_detailed_o3_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 6, 0x17),                             // auipc x6, 0
+        i_type(data_start - auipc_pc, 6, 0x0, 6, 0x13), // addi x6, x6, data
+        i_type(42, 0, 0x0, 1, 0x13),                    // addi x1, x0, 42
+        i_type(7, 0, 0x0, 2, 0x13),                     // addi x2, x0, 7
+        0x0220_81b3,                                    // mul x3, x1, x2
+        0x0220_c1b3,                                    // div x3, x1, x2
+        i_type(0, 6, 0b010, 12, 0x03),                  // lw x12, 0(x6)
+        s_type(4, 12, 6, 0b010),                        // sw x12, 4(x6)
+        m5op(M5_DUMP_STATS),                            // dump cpu1 O3 runtime aliases
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
@@ -6988,6 +7147,47 @@ fn assert_stats_dump_sample(
         sample.pointer("/value").and_then(Value::as_u64),
         Some(value),
         "stats dump sample {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/reset_policy").and_then(Value::as_str),
+        Some(reset_policy),
+        "stats dump sample {path}: {sample}"
+    );
+}
+
+fn assert_stats_dump_sample_at_least(
+    dump: &Value,
+    path: &str,
+    kind: &str,
+    unit: &str,
+    minimum: u64,
+    reset_policy: &str,
+) {
+    let sample = dump
+        .pointer("/samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| {
+            samples
+                .iter()
+                .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        })
+        .unwrap_or_else(|| panic!("missing stats dump sample {path}: {dump}"));
+    assert_eq!(
+        sample.pointer("/kind").and_then(Value::as_str),
+        Some(kind),
+        "stats dump sample {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/unit").and_then(Value::as_str),
+        Some(unit),
+        "stats dump sample {path}: {sample}"
+    );
+    assert!(
+        sample
+            .pointer("/value")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value >= minimum),
+        "stats dump sample {path} should be at least {minimum}: {sample}"
     );
     assert_eq!(
         sample.pointer("/reset_policy").and_then(Value::as_str),

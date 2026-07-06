@@ -412,7 +412,7 @@ impl Rem6HostStatsDumpSummary {
 
 fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {
     let path = sample.path().to_string();
-    if path.starts_with("system.cpu.lsq0.") {
+    if is_single_cpu_o3_alias_path(&path) {
         return !active_o3_cpus.is_empty();
     }
     let Some(cpu) = o3_stats_dump_sample_cpu(&path) else {
@@ -421,12 +421,27 @@ fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> b
     active_o3_cpus.contains(&cpu)
 }
 
+fn is_single_cpu_o3_alias_path(path: &str) -> bool {
+    [
+        "system.cpu.rob.",
+        "system.cpu.rename.",
+        "system.cpu.iew.",
+        "system.cpu.lsq0.",
+        "system.cpu.iq.",
+        "system.cpu.commit.",
+    ]
+    .into_iter()
+    .any(|prefix| path.starts_with(prefix))
+}
+
 fn o3_stats_dump_sample_cpu(path: &str) -> Option<u32> {
     if let Some(rest) = path.strip_prefix("sim.host_actions.stats_dump.cpu") {
         return parse_o3_stats_dump_cpu(rest, ".o3.");
     }
-    path.strip_prefix("system.cpu")
-        .and_then(|rest| parse_o3_stats_dump_cpu(rest, ".lsq0."))
+    let rest = path.strip_prefix("system.cpu")?;
+    [".rob.", ".rename.", ".iew.", ".lsq0.", ".iq.", ".commit."]
+        .into_iter()
+        .find_map(|separator| parse_o3_stats_dump_cpu(rest, separator))
 }
 
 fn parse_o3_stats_dump_cpu(rest: &str, separator: &str) -> Option<u32> {
