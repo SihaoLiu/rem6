@@ -583,6 +583,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlocked",
         "system.cpu.pipeline.inOrder.stallCause.dataWait.stage.commit.resourceBlockedCycles",
         "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.execute.resourceBlockedCycles",
+        "system.cpu.pipeline.inOrder.flushCause.branchPrediction.stage.fetch1.flushedCycles",
+        "system.cpu.pipeline.inOrder.redirectCause.trapRedirect.stage.commit.flushedCycles",
         "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
         "sim.debug.pipeline_trace.cpu.cpu0.records",

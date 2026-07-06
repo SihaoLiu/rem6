@@ -15984,6 +15984,184 @@ fn rem6_run_text_stats_emit_in_order_branch_flush_aliases_from_redirect() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_in_order_flush_redirect_cause_stage_aliases() {
+    let branch_program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        b_type(8, 5, 5, 0x0),       // beq x5, x5, target
+        i_type(9, 0, 0x0, 6, 0x13), // addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // target: addi x7, x0, 7
+        0x0000_0073,                // ecall
+    ]);
+    let branch_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &branch_program);
+    let branch_path = temp_binary("in-order-branch-cause-stage-text-aliases", &branch_elf);
+
+    let branch_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            branch_path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        branch_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&branch_output.stderr)
+    );
+    let branch_stdout = String::from_utf8(branch_output.stdout).unwrap();
+    assert!(
+        text_stat_value(
+            &branch_stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionRedirects"
+        ) > 0,
+        "{branch_stdout}"
+    );
+    let (branch_flushed, branch_flushed_cycles) = assert_in_order_cause_stage_aliases(
+        &branch_stdout,
+        "flush_cause",
+        "flushCause",
+        "branch_prediction",
+        "branchPrediction",
+    );
+    assert!(
+        branch_flushed.iter().any(|flushed| *flushed > 0),
+        "branch run should expose nonzero branch-prediction flush-cause aliases: {branch_flushed:?}"
+    );
+    assert!(
+        branch_flushed_cycles.iter().any(|cycles| *cycles > 0),
+        "branch run should expose nonzero branch-prediction flush-cause alias cycles: {branch_flushed_cycles:?}"
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &branch_stdout,
+            "redirect_cause",
+            "redirectCause",
+            "branch_prediction",
+            "branchPrediction",
+        ),
+        (branch_flushed, branch_flushed_cycles)
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &branch_stdout,
+            "flush_cause",
+            "flushCause",
+            "trap_redirect",
+            "trapRedirect",
+        ),
+        ([0; 5], [0; 5])
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &branch_stdout,
+            "redirect_cause",
+            "redirectCause",
+            "trap_redirect",
+            "trapRedirect",
+        ),
+        ([0; 5], [0; 5])
+    );
+
+    let trap_program = riscv64_program(&[
+        0x0000_0073,                // ecall redirects to the trap vector
+        i_type(9, 0, 0x0, 6, 0x13), // wrong-path addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // trap-vector target after default mtvec
+    ]);
+    let trap_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &trap_program);
+    let trap_path = temp_binary("in-order-trap-cause-stage-text-aliases", &trap_elf);
+
+    let trap_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            trap_path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        trap_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&trap_output.stderr)
+    );
+    let trap_stdout = String::from_utf8(trap_output.stdout).unwrap();
+    assert_eq!(
+        text_stat_value(&trap_stdout, "system.cpu.pipeline.inOrder.trapRedirects"),
+        1
+    );
+    let (trap_flushed, trap_flushed_cycles) = assert_in_order_cause_stage_aliases(
+        &trap_stdout,
+        "flush_cause",
+        "flushCause",
+        "trap_redirect",
+        "trapRedirect",
+    );
+    assert!(
+        trap_flushed.iter().any(|flushed| *flushed > 0),
+        "trap run should expose nonzero trap-redirect flush-cause aliases: {trap_flushed:?}"
+    );
+    assert!(
+        trap_flushed_cycles.iter().any(|cycles| *cycles > 0),
+        "trap run should expose nonzero trap-redirect flush-cause alias cycles: {trap_flushed_cycles:?}"
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &trap_stdout,
+            "redirect_cause",
+            "redirectCause",
+            "trap_redirect",
+            "trapRedirect",
+        ),
+        (trap_flushed, trap_flushed_cycles)
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &trap_stdout,
+            "flush_cause",
+            "flushCause",
+            "branch_prediction",
+            "branchPrediction",
+        ),
+        ([0; 5], [0; 5])
+    );
+    assert_eq!(
+        assert_in_order_cause_stage_aliases(
+            &trap_stdout,
+            "redirect_cause",
+            "redirectCause",
+            "branch_prediction",
+            "branchPrediction",
+        ),
+        ([0; 5], [0; 5])
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_trap_redirect_flushes_from_execution() {
     let program = riscv64_program(&[
         0x0000_0073,                // ecall redirects to the trap vector
@@ -18954,6 +19132,55 @@ fn json_core_register<'a>(artifact: &'a Value, cpu: i32, register: &str) -> Opti
     artifact
         .pointer(&format!("/cores/{cpu}/registers/{register}"))
         .and_then(Value::as_str)
+}
+
+fn assert_in_order_cause_stage_aliases(
+    stdout: &str,
+    source_family: &str,
+    alias_family: &str,
+    source_cause: &str,
+    alias_cause: &str,
+) -> ([u64; 5], [u64; 5]) {
+    let flushed_values = ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        let flushed_alias = format!(
+            "system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.stage.{stage}.flushed"
+        );
+        let flushed_cycles_alias = format!(
+            "system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.stage.{stage}.flushedCycles"
+        );
+        let flushed_source = format!(
+            "sim.cpu0.pipeline.in_order.{source_family}.{source_cause}.stage.{stage}.flushed"
+        );
+        let flushed_cycles_source = format!(
+            "sim.cpu0.pipeline.in_order.{source_family}.{source_cause}.stage.{stage}.flushed_cycles"
+        );
+        assert_eq!(
+            text_stat_value(stdout, &flushed_alias),
+            text_stat_value(stdout, &flushed_source)
+        );
+        assert_eq!(
+            text_stat_value(stdout, &flushed_cycles_alias),
+            text_stat_value(stdout, &flushed_cycles_source)
+        );
+        assert!(
+            text_stat_line(stdout, &flushed_alias).contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(stdout, &flushed_cycles_alias).contains("unit=Cycle"),
+            "{stdout}"
+        );
+        text_stat_value(stdout, &flushed_alias)
+    });
+    let flushed_cycle_values = ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        text_stat_value(
+            stdout,
+            &format!(
+                "system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.stage.{stage}.flushedCycles"
+            ),
+        )
+    });
+    (flushed_values, flushed_cycle_values)
 }
 
 fn text_stat_decimal(stdout: &str, path: &str) -> String {
