@@ -1299,6 +1299,8 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu1.iq.issuedInstType.FloatMultAcc",
         "system.cpu1.iq.issuedInstType.FloatDiv",
         "system.cpu1.iq.issuedInstType.FloatSqrt",
+        "system.cpu1.iq.issuedInstType.SimdMult",
+        "system.cpu1.iq.issuedInstType.SimdDiv",
         "system.cpu1.iq.issuedInstType.SimdFloatAdd",
         "system.cpu1.iq.issuedInstType.SimdFloatCmp",
         "system.cpu1.iq.issuedInstType.SimdFloatMisc",
@@ -1313,6 +1315,8 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu1.commit.committedInstType.FloatMultAcc",
         "system.cpu1.commit.committedInstType.FloatDiv",
         "system.cpu1.commit.committedInstType.FloatSqrt",
+        "system.cpu1.commit.committedInstType.SimdMult",
+        "system.cpu1.commit.committedInstType.SimdDiv",
         "system.cpu1.commit.committedInstType.SimdFloatAdd",
         "system.cpu1.commit.committedInstType.SimdFloatCmp",
         "system.cpu1.commit.committedInstType.SimdFloatMisc",
@@ -3552,6 +3556,129 @@ fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_vector_integer_fu_latency_classes() {
+    let path = detailed_o3_vector_integer_fu_latency_binary(
+        "m5-switch-cpu-detailed-o3-vector-integer-runtime-json",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert_eq!(
+        o3_runtime
+            .pointer("/fu_latency_instructions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    for class in ["vector_integer_mul", "vector_integer_div"] {
+        let instruction_path = format!("/fu_{class}_instructions");
+        let latency_path = format!("/fu_{class}_latency_cycles");
+        let stat_instruction_path = format!("sim.cpu0.o3.fu_{class}_instructions");
+        let stat_latency_path = format!("sim.cpu0.o3.fu_{class}_latency_cycles");
+        let runtime_instructions = o3_runtime
+            .pointer(&instruction_path)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {instruction_path}: {o3_runtime}")
+            });
+        let runtime_latency_cycles = o3_runtime
+            .pointer(&latency_path)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {latency_path}: {o3_runtime}")
+            });
+        assert_eq!(
+            runtime_instructions, 1,
+            "structured O3 runtime JSON should count {instruction_path}: {o3_runtime}"
+        );
+        assert!(
+            runtime_latency_cycles > 0,
+            "structured O3 runtime JSON should count positive {latency_path}: {o3_runtime}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &stat_instruction_path),
+            runtime_instructions,
+            "stat registry should match structured runtime {instruction_path}"
+        );
+        assert_eq!(
+            json_stat_value(&json, &stat_latency_path),
+            runtime_latency_cycles,
+            "stat registry should match structured runtime {latency_path}"
+        );
+    }
+
+    for (source_class, alias_class) in [
+        ("vector_integer_mul", "SimdMult"),
+        ("vector_integer_div", "SimdDiv"),
+    ] {
+        let expected_instructions = json_stat_value(
+            &json,
+            &format!("sim.cpu0.o3.fu_{source_class}_instructions"),
+        );
+        let value = json_stat_u64(
+            &json,
+            &format!("sim.cpu0.o3.iq.issued_inst_type.{source_class}"),
+        );
+        assert_eq!(
+            value, expected_instructions,
+            "IQ issued op-class count should match FU class runtime count for {source_class}"
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.iq.issuedInstType.{alias_class}"),
+            "Count",
+            value,
+            "monotonic",
+        );
+        let value = json_stat_u64(
+            &json,
+            &format!("sim.cpu0.o3.commit.committed_inst_type.{source_class}"),
+        );
+        assert_eq!(
+            value, expected_instructions,
+            "commit op-class count should match FU class runtime count for {source_class}"
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.commit.committedInstType.{alias_class}"),
+            "Count",
+            value,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
     let path = detailed_o3_ordered_atomic_lsq_binary(
         "m5-switch-cpu-detailed-o3-ordered-atomic-lsq-runtime-json",
@@ -5254,6 +5381,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_latency_cycles");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_vector_integer_mul_instructions");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_vector_integer_mul_latency_cycles");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_vector_integer_div_instructions");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_vector_integer_div_latency_cycles");
     assert_json_stat_absent(&json, "sim.cpu0.o3.max_rob_occupancy");
     assert_json_stat_absent(&json, "sim.cpu0.o3.max_lsq_occupancy");
     assert_json_stat_absent(&json, "sim.cpu0.o3.rename_map_entries");
@@ -5264,10 +5395,20 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.mem_write");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_mul");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_div");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.vector_integer_mul");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.vector_integer_div");
     assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.mem_read");
     assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.mem_write");
     assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.int_mul");
     assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.int_div");
+    assert_json_stat_absent(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.vector_integer_mul",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.vector_integer_div",
+    );
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_count");
@@ -5291,6 +5432,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatMultAcc");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatDiv");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatSqrt");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdMult");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdDiv");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatAdd");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatCmp");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatMisc");
@@ -5309,6 +5452,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatMultAcc");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatDiv");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatSqrt");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdMult");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdDiv");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatAdd");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatCmp");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatMisc");
@@ -6707,6 +6852,20 @@ fn detailed_o3_float_extended_fu_latency_binary(name: &str) -> std::path::PathBu
         vector_arith_type(0b000000, 0b001, 2, 1, 3), // vfadd.vv v3, v2, v1
         vector_arith_type(0b101100, 0b001, 2, 1, 4), // vfmacc.vv v4, v2, v1
         vector_arith_type(0b010011, 0b001, 1, 0, 5), // vfsqrt.v v5, v1
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_vector_integer_fu_latency_binary(name: &str) -> std::path::PathBuf {
+    let program = riscv64_program(&[
+        i_type(2, 0, 0x0, 10, 0x13),                 // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                   // e32, m1, vl=2
+        m5op(M5_SWITCH_CPU),                         // switch cpu0 to detailed
+        vector_arith_type(0b100101, 0b010, 2, 1, 3), // vmul.vv v3, v2, v1
+        vector_arith_type(0b100000, 0b010, 2, 1, 4), // vdivu.vv v4, v2, v1
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);

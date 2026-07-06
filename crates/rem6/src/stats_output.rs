@@ -11,6 +11,7 @@ mod fabric;
 mod gpu_run;
 mod gups;
 mod host_actions;
+mod json_aliases;
 mod memory_resources;
 mod multi_run;
 mod resource_acquire;
@@ -43,6 +44,7 @@ use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
 use host_actions::emit_run_host_action_stats;
+use json_aliases::append_gem5_o3_json_alias_stats;
 use memory_resources::emit_memory_resource_stats;
 pub(crate) use multi_run::multi_run_stats_output;
 pub(super) use resource_acquire::resource_acquire_stats_output;
@@ -772,259 +774,6 @@ fn json_record_for_sample(sample: &StatSample) -> String {
     )
 }
 
-fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
-    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
-        return;
-    };
-    let mut next_id = snapshot
-        .samples()
-        .iter()
-        .map(|sample| sample.id().get())
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-
-    for cpu in 0..core_count {
-        let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
-        append_gem5_o3_op_class_json_alias_stats(
-            snapshot,
-            records,
-            &mut next_id,
-            cpu,
-            core_count,
-            &alias_prefix,
-        );
-        for (source_suffix, alias_suffix) in [
-            ("iew.insts_to_commit", "iew.instsToCommit.total"),
-            ("iew.writeback_count", "iew.writebackCount.total"),
-            ("iew.producer_inst", "iew.producerInst.total"),
-            ("iew.consumer_inst", "iew.consumerInst.total"),
-        ] {
-            append_gem5_o3_json_alias_from_sample(
-                snapshot,
-                records,
-                &mut next_id,
-                cpu,
-                source_suffix,
-                &alias_prefix,
-                alias_suffix,
-            );
-        }
-        for (source_suffix, alias_suffix) in [
-            ("iew.writeback_rate_ppm", "iew.wbRate"),
-            ("iew.producer_consumer_fanout_ppm", "iew.wbFanout"),
-        ] {
-            append_gem5_o3_json_alias_from_sample(
-                snapshot,
-                records,
-                &mut next_id,
-                cpu,
-                source_suffix,
-                &alias_prefix,
-                alias_suffix,
-            );
-        }
-    }
-}
-
-fn append_gem5_o3_op_class_json_alias_stats(
-    snapshot: &StatSnapshot,
-    records: &mut Vec<String>,
-    next_id: &mut u64,
-    cpu: u64,
-    core_count: u64,
-    alias_prefix: &str,
-) {
-    for (source_suffix, alias_suffix) in [
-        ("iq.issued_inst_type.mem_read", "iq.issuedInstType.MemRead"),
-        (
-            "iq.issued_inst_type.mem_write",
-            "iq.issuedInstType.MemWrite",
-        ),
-        ("iq.issued_inst_type.int_mul", "iq.issuedInstType.IntMult"),
-        ("iq.issued_inst_type.int_div", "iq.issuedInstType.IntDiv"),
-        (
-            "commit.committed_inst_type.mem_read",
-            "commit.committedInstType.MemRead",
-        ),
-        (
-            "commit.committed_inst_type.mem_write",
-            "commit.committedInstType.MemWrite",
-        ),
-        (
-            "commit.committed_inst_type.int_mul",
-            "commit.committedInstType.IntMult",
-        ),
-        (
-            "commit.committed_inst_type.int_div",
-            "commit.committedInstType.IntDiv",
-        ),
-    ] {
-        append_gem5_o3_json_alias_from_sample(
-            snapshot,
-            records,
-            next_id,
-            cpu,
-            source_suffix,
-            alias_prefix,
-            alias_suffix,
-        );
-    }
-    if core_count != 1 {
-        return;
-    }
-    for (source_suffix, alias_suffix) in [
-        (
-            "iq.issued_inst_type.float_add",
-            "iq.issuedInstType.FloatAdd",
-        ),
-        (
-            "iq.issued_inst_type.float_compare",
-            "iq.issuedInstType.FloatCmp",
-        ),
-        (
-            "iq.issued_inst_type.float_misc",
-            "iq.issuedInstType.FloatMisc",
-        ),
-        (
-            "iq.issued_inst_type.float_mul",
-            "iq.issuedInstType.FloatMult",
-        ),
-        (
-            "iq.issued_inst_type.float_fma",
-            "iq.issuedInstType.FloatMultAcc",
-        ),
-        (
-            "iq.issued_inst_type.float_div",
-            "iq.issuedInstType.FloatDiv",
-        ),
-        (
-            "iq.issued_inst_type.float_sqrt",
-            "iq.issuedInstType.FloatSqrt",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_add",
-            "iq.issuedInstType.SimdFloatAdd",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_compare",
-            "iq.issuedInstType.SimdFloatCmp",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_misc",
-            "iq.issuedInstType.SimdFloatMisc",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_mul",
-            "iq.issuedInstType.SimdFloatMult",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_fma",
-            "iq.issuedInstType.SimdFloatMultAcc",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_div",
-            "iq.issuedInstType.SimdFloatDiv",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_sqrt",
-            "iq.issuedInstType.SimdFloatSqrt",
-        ),
-        (
-            "commit.committed_inst_type.float_add",
-            "commit.committedInstType.FloatAdd",
-        ),
-        (
-            "commit.committed_inst_type.float_compare",
-            "commit.committedInstType.FloatCmp",
-        ),
-        (
-            "commit.committed_inst_type.float_misc",
-            "commit.committedInstType.FloatMisc",
-        ),
-        (
-            "commit.committed_inst_type.float_mul",
-            "commit.committedInstType.FloatMult",
-        ),
-        (
-            "commit.committed_inst_type.float_fma",
-            "commit.committedInstType.FloatMultAcc",
-        ),
-        (
-            "commit.committed_inst_type.float_div",
-            "commit.committedInstType.FloatDiv",
-        ),
-        (
-            "commit.committed_inst_type.float_sqrt",
-            "commit.committedInstType.FloatSqrt",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_add",
-            "commit.committedInstType.SimdFloatAdd",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_compare",
-            "commit.committedInstType.SimdFloatCmp",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_misc",
-            "commit.committedInstType.SimdFloatMisc",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_mul",
-            "commit.committedInstType.SimdFloatMult",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_fma",
-            "commit.committedInstType.SimdFloatMultAcc",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_div",
-            "commit.committedInstType.SimdFloatDiv",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_sqrt",
-            "commit.committedInstType.SimdFloatSqrt",
-        ),
-    ] {
-        append_gem5_o3_json_alias_from_sample(
-            snapshot,
-            records,
-            next_id,
-            cpu,
-            source_suffix,
-            alias_prefix,
-            alias_suffix,
-        );
-    }
-}
-
-fn append_gem5_o3_json_alias_from_sample(
-    snapshot: &StatSnapshot,
-    records: &mut Vec<String>,
-    next_id: &mut u64,
-    cpu: u64,
-    source_suffix: &str,
-    alias_prefix: &str,
-    alias_suffix: &str,
-) {
-    let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
-    let Some(source) = snapshot_sample(snapshot, &source_path) else {
-        return;
-    };
-    let alias_path = format!("{alias_prefix}.{alias_suffix}");
-    if snapshot_sample(snapshot, &alias_path).is_none() {
-        records.push(json_record_for_derived_counter(
-            *next_id,
-            &alias_path,
-            source.unit(),
-            source.value(),
-            source.reset_policy(),
-        ));
-        *next_id = next_id.saturating_add(1);
-    }
-}
-
 fn json_record_for_derived_counter(
     id: u64,
     path: &str,
@@ -1066,14 +815,6 @@ fn snapshot_sample<'a>(snapshot: &'a StatSnapshot, path: &str) -> Option<&'a Sta
 
 fn snapshot_sample_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
     snapshot_sample(snapshot, path).map(StatSample::value)
-}
-
-fn gem5_json_cpu_alias_prefix(core_count: u64, cpu: u64) -> String {
-    if core_count == 1 {
-        "system.cpu".to_string()
-    } else {
-        format!("system.cpu{cpu}")
-    }
 }
 
 pub(super) fn increment_stat(
