@@ -864,7 +864,21 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iew.instsToCommit.total",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iew.writeback_count",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.writebackCount.total",
         "Count",
         6,
         "monotonic",
@@ -878,7 +892,21 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iew.producerInst.total",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iew.consumer_inst",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.consumerInst.total",
         "Count",
         4,
         "monotonic",
@@ -1154,6 +1182,18 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         1,
         "monotonic",
     );
+    let insts_to_commit = json_stat_u64(&json, "sim.cpu1.o3.iew.insts_to_commit");
+    let writeback_count = json_stat_u64(&json, "sim.cpu1.o3.iew.writeback_count");
+    let producer_inst = json_stat_u64(&json, "sim.cpu1.o3.iew.producer_inst");
+    let consumer_inst = json_stat_u64(&json, "sim.cpu1.o3.iew.consumer_inst");
+    for (path, value) in [
+        ("system.cpu1.iew.instsToCommit.total", insts_to_commit),
+        ("system.cpu1.iew.writebackCount.total", writeback_count),
+        ("system.cpu1.iew.producerInst.total", producer_inst),
+        ("system.cpu1.iew.consumerInst.total", consumer_inst),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
     let writeback_rate_ppm = json_stat_u64(&json, "sim.cpu1.o3.iew.writeback_rate_ppm");
     let producer_consumer_fanout_ppm =
         json_stat_u64(&json, "sim.cpu1.o3.iew.producer_consumer_fanout_ppm");
@@ -1172,8 +1212,16 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "monotonic",
     );
     for path in [
+        "system.cpu0.iew.instsToCommit.total",
+        "system.cpu0.iew.writebackCount.total",
+        "system.cpu0.iew.producerInst.total",
+        "system.cpu0.iew.consumerInst.total",
         "system.cpu0.iew.wbRate",
         "system.cpu0.iew.wbFanout",
+        "system.cpu.iew.instsToCommit.total",
+        "system.cpu.iew.writebackCount.total",
+        "system.cpu.iew.producerInst.total",
+        "system.cpu.iew.consumerInst.total",
         "system.cpu.iew.wbRate",
         "system.cpu.iew.wbFanout",
     ] {
@@ -5008,6 +5056,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_taken_incorrect");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_not_taken_incorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
+    assert_json_stat_absent(&json, "system.cpu.iew.instsToCommit.total");
+    assert_json_stat_absent(&json, "system.cpu.iew.writebackCount.total");
+    assert_json_stat_absent(&json, "system.cpu.iew.producerInst.total");
+    assert_json_stat_absent(&json, "system.cpu.iew.consumerInst.total");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.samples");

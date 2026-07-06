@@ -729,7 +729,7 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .iter()
         .map(json_record_for_sample)
         .collect::<Vec<_>>();
-    append_gem5_o3_iew_rate_json_alias_stats(snapshot, &mut records);
+    append_gem5_o3_iew_json_alias_stats(snapshot, &mut records);
     let samples = records.join(",");
     format!("[{samples}]")
 }
@@ -772,7 +772,7 @@ fn json_record_for_sample(sample: &StatSample) -> String {
     )
 }
 
-fn append_gem5_o3_iew_rate_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
+fn append_gem5_o3_iew_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
     let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
         return;
     };
@@ -787,25 +787,61 @@ fn append_gem5_o3_iew_rate_json_alias_stats(snapshot: &StatSnapshot, records: &m
     for cpu in 0..core_count {
         let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
         for (source_suffix, alias_suffix) in [
+            ("iew.insts_to_commit", "iew.instsToCommit.total"),
+            ("iew.writeback_count", "iew.writebackCount.total"),
+            ("iew.producer_inst", "iew.producerInst.total"),
+            ("iew.consumer_inst", "iew.consumerInst.total"),
+        ] {
+            append_gem5_o3_iew_json_alias_from_sample(
+                snapshot,
+                records,
+                &mut next_id,
+                cpu,
+                source_suffix,
+                &alias_prefix,
+                alias_suffix,
+            );
+        }
+        for (source_suffix, alias_suffix) in [
             ("iew.writeback_rate_ppm", "iew.wbRate"),
             ("iew.producer_consumer_fanout_ppm", "iew.wbFanout"),
         ] {
-            let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
-            let Some(source) = snapshot_sample(snapshot, &source_path) else {
-                continue;
-            };
-            let alias_path = format!("{alias_prefix}.{alias_suffix}");
-            if snapshot_sample(snapshot, &alias_path).is_none() {
-                records.push(json_record_for_derived_counter(
-                    next_id,
-                    &alias_path,
-                    source.unit(),
-                    source.value(),
-                    source.reset_policy(),
-                ));
-                next_id = next_id.saturating_add(1);
-            }
+            append_gem5_o3_iew_json_alias_from_sample(
+                snapshot,
+                records,
+                &mut next_id,
+                cpu,
+                source_suffix,
+                &alias_prefix,
+                alias_suffix,
+            );
         }
+    }
+}
+
+fn append_gem5_o3_iew_json_alias_from_sample(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    source_suffix: &str,
+    alias_prefix: &str,
+    alias_suffix: &str,
+) {
+    let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
+    let Some(source) = snapshot_sample(snapshot, &source_path) else {
+        return;
+    };
+    let alias_path = format!("{alias_prefix}.{alias_suffix}");
+    if snapshot_sample(snapshot, &alias_path).is_none() {
+        records.push(json_record_for_derived_counter(
+            *next_id,
+            &alias_path,
+            source.unit(),
+            source.value(),
+            source.reset_policy(),
+        ));
+        *next_id = next_id.saturating_add(1);
     }
 }
 
