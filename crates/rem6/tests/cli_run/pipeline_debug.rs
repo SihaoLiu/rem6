@@ -59,6 +59,18 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
     let data_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked_cycles");
     assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked"),
+        data_wait_stage_blocked
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "data_wait",
+            "resource_blocked_cycles"
+        ),
+        data_wait_stage_cycles
+    );
+    assert_eq!(
         data_wait_stage_cycles.iter().sum::<u64>(),
         data_wait_cycles,
         "data-wait stage-cycle matrix should account for all data wait cycles: {data_wait_stage_cycles:?}"
@@ -77,6 +89,18 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked");
     let fetch_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked_cycles");
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked"),
+        fetch_wait_stage_blocked
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "fetch_wait",
+            "resource_blocked_cycles"
+        ),
+        fetch_wait_stage_cycles
+    );
     if fetch_wait_cycles == 0 {
         assert_eq!(fetch_wait_stage_blocked, [0; 5]);
         assert_eq!(fetch_wait_stage_cycles, [0; 5]);
@@ -99,7 +123,23 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         [0; 5]
     );
     assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "resource_blocked"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
         in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked_cycles"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "resource_blocked_cycles"
+        ),
         [0; 5]
     );
 }
@@ -1220,6 +1260,24 @@ fn in_order_stall_cause_stage_metric_values(json: &Value, cause: &str, metric: &
             json,
             &format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{metric}"),
         )
+    })
+}
+
+fn in_order_artifact_stall_cause_stage_metric_values(
+    json: &Value,
+    cause: &str,
+    metric: &str,
+) -> [u64; 5] {
+    ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        let pointer =
+            format!("/cores/0/in_order_pipeline/stall_cause/{cause}/stage_{metric}/{stage}");
+        json.pointer(&pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing artifact in-order stall-cause stage metric {metric} for {cause}/{stage} at {pointer}: {json}"
+                )
+            })
     })
 }
 
