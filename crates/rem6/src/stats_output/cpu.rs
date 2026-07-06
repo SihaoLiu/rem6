@@ -1418,6 +1418,7 @@ fn emit_o3_runtime_stats(
     for (name, value) in [
         ("rob.writes", o3.rob_allocations()),
         ("rob.reads", o3.rob_commits()),
+        ("rob.maxOccupancy", o3.max_rob_occupancy()),
         ("rename.renamedInsts", o3.instructions()),
         ("rename.renamedOperands", o3.rename_writes()),
         ("iew.dispatchedInsts", o3.instructions()),
@@ -1444,6 +1445,7 @@ fn emit_o3_runtime_stats(
             o3.lsq_store_to_load_forwarding_matches(),
         ),
         ("lsq0.forwLoads", o3.lsq_store_to_load_forwarding_matches()),
+        ("lsq0.maxOccupancy", o3.max_lsq_occupancy()),
         ("iq.instsIssued", o3.instructions()),
         (
             "iq.memInstsIssued",

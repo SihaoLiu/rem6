@@ -1011,6 +1011,13 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         2,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "system.cpu.lsq0.maxOccupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
     assert_json_stat(&json, "system.cpu.lsq0.loadBytes", "Byte", 4, "monotonic");
     assert_json_stat(&json, "system.cpu.lsq0.storeBytes", "Byte", 4, "monotonic");
     let forwarding_matches =
@@ -1032,6 +1039,13 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(&json, "system.cpu.rob.writes", "Count", 6, "monotonic");
     assert_json_stat(&json, "system.cpu.rob.reads", "Count", 6, "monotonic");
+    assert_json_stat(
+        &json,
+        "system.cpu.rob.maxOccupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
     let o3_runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
@@ -1196,6 +1210,30 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
     assert_json_stat_at_least(&json, "sim.cpu1.o3.instructions", "Count", 8, "monotonic");
     assert_json_stat_at_least(&json, "sim.cpu1.o3.lsq_load_bytes", "Byte", 4, "monotonic");
     assert_json_stat_at_least(&json, "sim.cpu1.o3.lsq_store_bytes", "Byte", 4, "monotonic");
+    let rob_max_occupancy = json_stat_u64(&json, "sim.cpu1.o3.max_rob_occupancy");
+    let lsq_max_occupancy = json_stat_u64(&json, "sim.cpu1.o3.max_lsq_occupancy");
+    assert!(
+        rob_max_occupancy >= 1,
+        "hart 1 should record nonzero ROB occupancy: {json}"
+    );
+    assert!(
+        lsq_max_occupancy >= 1,
+        "hart 1 should record nonzero LSQ occupancy: {json}"
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu1.rob.maxOccupancy",
+        "Count",
+        rob_max_occupancy,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu1.lsq0.maxOccupancy",
+        "Count",
+        lsq_max_occupancy,
+        "monotonic",
+    );
     assert_json_stat_at_least(
         &json,
         "sim.cpu1.o3.fu_integer_mul_instructions",
@@ -1284,6 +1322,10 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu.iew.consumerInst.total",
         "system.cpu.iew.wbRate",
         "system.cpu.iew.wbFanout",
+        "system.cpu0.rob.maxOccupancy",
+        "system.cpu0.lsq0.maxOccupancy",
+        "system.cpu.rob.maxOccupancy",
+        "system.cpu.lsq0.maxOccupancy",
         "system.cpu0.iq.issuedInstType.MemRead",
         "system.cpu0.iq.issuedInstType.MemWrite",
         "system.cpu0.iq.issuedInstType.IntMult",
@@ -5105,6 +5147,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     );
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbFanout");
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.maxOccupancy", 1);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
     let forwarding_matches =
@@ -5136,6 +5179,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     );
     assert_text_count_stat(&stdout, "system.cpu.rob.writes", 6);
     assert_text_count_stat(&stdout, "system.cpu.rob.reads", 6);
+    assert_text_count_stat(&stdout, "system.cpu.rob.maxOccupancy", 1);
 }
 
 #[test]
@@ -5739,6 +5783,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.total");
     assert_json_stat_absent(&json, "system.cpu.iew.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
+    assert_json_stat_absent(&json, "system.cpu.rob.maxOccupancy");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.maxOccupancy");
     assert!(
         json.pointer("/cores/0/o3_runtime").is_none(),
         "timing-mode run should not emit inactive O3 runtime state: {json}"
@@ -5856,6 +5902,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.lsq0.storeLoadForwardingCandidates",
         "system.cpu.lsq0.storeLoadForwardingMatches",
         "system.cpu.lsq0.forwLoads",
+        "system.cpu.lsq0.maxOccupancy",
         "system.cpu.iq.instsIssued",
         "system.cpu.iq.memInstsIssued",
         "system.cpu.iq.branchInstsIssued",
@@ -5865,6 +5912,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iq.issuedInstType_0::IntDiv",
         "system.cpu.rob.writes",
         "system.cpu.rob.reads",
+        "system.cpu.rob.maxOccupancy",
     ] {
         assert_text_stat_absent(&stdout, path);
     }
