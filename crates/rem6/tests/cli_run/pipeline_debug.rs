@@ -211,6 +211,182 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
 }
 
 #[test]
+fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag() {
+    let branch_program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        b_type(8, 5, 5, 0x0),       // beq x5, x5, target
+        i_type(9, 0, 0x0, 6, 0x13), // addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // target: addi x7, x0, 7
+        0x0000_0073,                // ecall
+    ]);
+    let branch_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &branch_program);
+    let branch_path = temp_binary(
+        "pipeline-redirect-cause-branch-stage-matrix-stats",
+        &branch_elf,
+    );
+
+    let branch_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            branch_path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        branch_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&branch_output.stderr)
+    );
+    let branch_stdout = String::from_utf8(branch_output.stdout).unwrap();
+    let branch_json: Value = serde_json::from_str(&branch_stdout).unwrap();
+    assert!(branch_stdout.contains("\"x5\":\"0x1\""));
+    assert!(branch_stdout.contains("\"x7\":\"0x7\""));
+    assert!(
+        !branch_stdout.contains("\"x6\":\"0x9\""),
+        "wrong-path instruction must be squashed: {branch_stdout}"
+    );
+    let branch_redirects = json_stat_value(
+        &branch_json,
+        "sim.cpu0.pipeline.in_order.branch_prediction_redirects",
+    );
+    assert!(branch_redirects > 0, "{branch_stdout}");
+
+    let branch_stage_flushed =
+        in_order_stage_metric_values(&branch_json, "branch_prediction_flushed");
+    let branch_stage_flushed_cycles =
+        in_order_stage_metric_values(&branch_json, "branch_prediction_flushed_cycles");
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "flushed"),
+        branch_stage_flushed
+    );
+    let branch_redirect_cause_cycles = in_order_redirect_cause_stage_metric_values(
+        &branch_json,
+        "branch_prediction",
+        "flushed_cycles",
+    );
+    assert_eq!(branch_redirect_cause_cycles, branch_stage_flushed_cycles);
+    assert!(
+        branch_redirect_cause_cycles
+            .iter()
+            .any(|cycles| *cycles > 0),
+        "branch run should attribute redirect-cause flushed cycles by stage: {branch_redirect_cause_cycles:?}"
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&branch_json, "trap_redirect", "flushed"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(
+            &branch_json,
+            "trap_redirect",
+            "flushed_cycles"
+        ),
+        [0; 5]
+    );
+
+    let trap_program = riscv64_program(&[
+        0x0000_0073,                // ecall redirects to the trap vector
+        i_type(9, 0, 0x0, 6, 0x13), // wrong-path addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // trap-vector target after default mtvec
+    ]);
+    let trap_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &trap_program);
+    let trap_path = temp_binary("pipeline-redirect-cause-trap-stage-matrix-stats", &trap_elf);
+
+    let trap_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            trap_path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        trap_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&trap_output.stderr)
+    );
+    let trap_stdout = String::from_utf8(trap_output.stdout).unwrap();
+    let trap_json: Value = serde_json::from_str(&trap_stdout).unwrap();
+    assert_eq!(
+        trap_json
+            .pointer("/simulation/status")
+            .and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert!(
+        !trap_stdout.contains("\"x6\":\"0x9\""),
+        "wrong-path instruction must be squashed: {trap_stdout}"
+    );
+    assert_eq!(
+        json_stat_value(
+            &trap_json,
+            "sim.cpu0.pipeline.in_order.branch_prediction_redirects"
+        ),
+        0
+    );
+    assert_eq!(
+        json_stat_value(&trap_json, "sim.cpu0.pipeline.in_order.trap_redirects"),
+        1
+    );
+
+    let trap_stage_flushed = in_order_stage_metric_values(&trap_json, "trap_redirect_flushed");
+    let trap_stage_flushed_cycles =
+        in_order_stage_metric_values(&trap_json, "trap_redirect_flushed_cycles");
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed"),
+        trap_stage_flushed
+    );
+    let trap_redirect_cause_cycles =
+        in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed_cycles");
+    assert_eq!(trap_redirect_cause_cycles, trap_stage_flushed_cycles);
+    assert!(
+        trap_redirect_cause_cycles
+            .iter()
+            .any(|cycles| *cycles > 0),
+        "trap run should attribute redirect-cause flushed cycles by stage: {trap_redirect_cause_cycles:?}"
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&trap_json, "branch_prediction", "flushed"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(
+            &trap_json,
+            "branch_prediction",
+            "flushed_cycles"
+        ),
+        [0; 5]
+    );
+}
+
+#[test]
 fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
@@ -936,6 +1112,19 @@ fn in_order_flush_cause_stage_metric_values(json: &Value, cause: &str, metric: &
         json_stat_value(
             json,
             &format!("sim.cpu0.pipeline.in_order.flush_cause.{cause}.stage.{stage}.{metric}"),
+        )
+    })
+}
+
+fn in_order_redirect_cause_stage_metric_values(
+    json: &Value,
+    cause: &str,
+    metric: &str,
+) -> [u64; 5] {
+    ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        json_stat_value(
+            json,
+            &format!("sim.cpu0.pipeline.in_order.redirect_cause.{cause}.stage.{stage}.{metric}"),
         )
     })
 }

@@ -245,18 +245,40 @@ pub(super) fn emit_cpu_run_stats(
                 core.in_order_pipeline_stage_trap_redirect_flushed_cycles,
             ),
         ] {
-            emit_in_order_flush_cause_stage_stats(
+            emit_in_order_cause_stage_stats(
                 stats,
                 core,
+                "flush_cause",
                 cause,
                 "flushed",
                 "Count",
                 StatResetPolicy::Monotonic,
                 flushed.values(),
             )?;
-            emit_in_order_flush_cause_stage_stats(
+            emit_in_order_cause_stage_stats(
                 stats,
                 core,
+                "flush_cause",
+                cause,
+                "flushed_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                flushed_cycles.values(),
+            )?;
+            emit_in_order_cause_stage_stats(
+                stats,
+                core,
+                "redirect_cause",
+                cause,
+                "flushed",
+                "Count",
+                StatResetPolicy::Monotonic,
+                flushed.values(),
+            )?;
+            emit_in_order_cause_stage_stats(
+                stats,
+                core,
+                "redirect_cause",
                 cause,
                 "flushed_cycles",
                 "Cycle",
@@ -1434,9 +1456,10 @@ fn emit_in_order_stall_cause_stage_stats(
     Ok(())
 }
 
-fn emit_in_order_flush_cause_stage_stats(
+fn emit_in_order_cause_stage_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
+    family: &str,
     cause: &str,
     name: &str,
     unit: &'static str,
@@ -1450,8 +1473,8 @@ fn emit_in_order_flush_cause_stage_stats(
         increment_stat(
             stats,
             &format!(
-                "sim.cpu{}.pipeline.in_order.flush_cause.{cause}.stage.{stage}.{name}",
-                core.cpu
+                "sim.cpu{}.pipeline.in_order.{family}.{cause}.stage.{stage}.{name}",
+                core.cpu,
             ),
             unit,
             reset_policy,
