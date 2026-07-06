@@ -1292,10 +1292,34 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu0.commit.committedInstType.MemWrite",
         "system.cpu0.commit.committedInstType.IntMult",
         "system.cpu0.commit.committedInstType.IntDiv",
+        "system.cpu1.iq.issuedInstType.FloatAdd",
+        "system.cpu1.iq.issuedInstType.FloatCmp",
         "system.cpu1.iq.issuedInstType.FloatMisc",
+        "system.cpu1.iq.issuedInstType.FloatMult",
+        "system.cpu1.iq.issuedInstType.FloatMultAcc",
+        "system.cpu1.iq.issuedInstType.FloatDiv",
+        "system.cpu1.iq.issuedInstType.FloatSqrt",
+        "system.cpu1.iq.issuedInstType.SimdFloatAdd",
+        "system.cpu1.iq.issuedInstType.SimdFloatCmp",
         "system.cpu1.iq.issuedInstType.SimdFloatMisc",
+        "system.cpu1.iq.issuedInstType.SimdFloatMult",
+        "system.cpu1.iq.issuedInstType.SimdFloatMultAcc",
+        "system.cpu1.iq.issuedInstType.SimdFloatDiv",
+        "system.cpu1.iq.issuedInstType.SimdFloatSqrt",
+        "system.cpu1.commit.committedInstType.FloatAdd",
+        "system.cpu1.commit.committedInstType.FloatCmp",
         "system.cpu1.commit.committedInstType.FloatMisc",
+        "system.cpu1.commit.committedInstType.FloatMult",
+        "system.cpu1.commit.committedInstType.FloatMultAcc",
+        "system.cpu1.commit.committedInstType.FloatDiv",
+        "system.cpu1.commit.committedInstType.FloatSqrt",
+        "system.cpu1.commit.committedInstType.SimdFloatAdd",
+        "system.cpu1.commit.committedInstType.SimdFloatCmp",
         "system.cpu1.commit.committedInstType.SimdFloatMisc",
+        "system.cpu1.commit.committedInstType.SimdFloatMult",
+        "system.cpu1.commit.committedInstType.SimdFloatMultAcc",
+        "system.cpu1.commit.committedInstType.SimdFloatDiv",
+        "system.cpu1.commit.committedInstType.SimdFloatSqrt",
         "system.cpu.iq.issuedInstType.MemRead",
         "system.cpu.iq.issuedInstType.MemWrite",
         "system.cpu.iq.issuedInstType.IntMult",
@@ -3434,6 +3458,37 @@ fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
             "stat registry should match structured runtime {latency_path}"
         );
     }
+    for (source_class, alias_class) in [
+        ("float_add", "FloatAdd"),
+        ("float_fma", "FloatMultAcc"),
+        ("float_sqrt", "FloatSqrt"),
+        ("vector_float_add", "SimdFloatAdd"),
+        ("vector_float_fma", "SimdFloatMultAcc"),
+        ("vector_float_sqrt", "SimdFloatSqrt"),
+    ] {
+        let value = json_stat_u64(
+            &json,
+            &format!("sim.cpu0.o3.iq.issued_inst_type.{source_class}"),
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.iq.issuedInstType.{alias_class}"),
+            "Count",
+            value,
+            "monotonic",
+        );
+        let value = json_stat_u64(
+            &json,
+            &format!("sim.cpu0.o3.commit.committed_inst_type.{source_class}"),
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.commit.committedInstType.{alias_class}"),
+            "Count",
+            value,
+            "monotonic",
+        );
+    }
     for class in [
         "float_mul",
         "float_div",
@@ -3463,6 +3518,35 @@ fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
             json_stat_value(&json, &format!("sim.cpu0.o3.fu_{class}_latency_cycles")),
             0,
             "stat registry should expose inactive {latency_path}"
+        );
+    }
+    for (source_class, alias_class) in [
+        ("float_compare", "FloatCmp"),
+        ("float_mul", "FloatMult"),
+        ("float_div", "FloatDiv"),
+        ("vector_float_compare", "SimdFloatCmp"),
+        ("vector_float_mul", "SimdFloatMult"),
+        ("vector_float_div", "SimdFloatDiv"),
+    ] {
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.iq.issuedInstType.{alias_class}"),
+            "Count",
+            json_stat_u64(
+                &json,
+                &format!("sim.cpu0.o3.iq.issued_inst_type.{source_class}"),
+            ),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.commit.committedInstType.{alias_class}"),
+            "Count",
+            json_stat_u64(
+                &json,
+                &format!("sim.cpu0.o3.commit.committed_inst_type.{source_class}"),
+            ),
+            "monotonic",
         );
     }
 }
@@ -5200,14 +5284,41 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemWrite");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.IntMult");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.IntDiv");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatAdd");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatCmp");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatMult");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatMultAcc");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatDiv");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.FloatSqrt");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatAdd");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatCmp");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatMult");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatMultAcc");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatDiv");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.SimdFloatSqrt");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemRead");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemWrite");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.IntMult");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.IntDiv");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatAdd");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatCmp");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatMult");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatMultAcc");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatDiv");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.FloatSqrt");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatAdd");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatCmp");
     assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatMisc");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatMult");
+    assert_json_stat_absent(
+        &json,
+        "system.cpu.commit.committedInstType.SimdFloatMultAcc",
+    );
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatDiv");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.SimdFloatSqrt");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.samples");

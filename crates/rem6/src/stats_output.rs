@@ -875,20 +875,116 @@ fn append_gem5_o3_op_class_json_alias_stats(
     }
     for (source_suffix, alias_suffix) in [
         (
+            "iq.issued_inst_type.float_add",
+            "iq.issuedInstType.FloatAdd",
+        ),
+        (
+            "iq.issued_inst_type.float_compare",
+            "iq.issuedInstType.FloatCmp",
+        ),
+        (
             "iq.issued_inst_type.float_misc",
             "iq.issuedInstType.FloatMisc",
+        ),
+        (
+            "iq.issued_inst_type.float_mul",
+            "iq.issuedInstType.FloatMult",
+        ),
+        (
+            "iq.issued_inst_type.float_fma",
+            "iq.issuedInstType.FloatMultAcc",
+        ),
+        (
+            "iq.issued_inst_type.float_div",
+            "iq.issuedInstType.FloatDiv",
+        ),
+        (
+            "iq.issued_inst_type.float_sqrt",
+            "iq.issuedInstType.FloatSqrt",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_add",
+            "iq.issuedInstType.SimdFloatAdd",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_compare",
+            "iq.issuedInstType.SimdFloatCmp",
         ),
         (
             "iq.issued_inst_type.vector_float_misc",
             "iq.issuedInstType.SimdFloatMisc",
         ),
         (
+            "iq.issued_inst_type.vector_float_mul",
+            "iq.issuedInstType.SimdFloatMult",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_fma",
+            "iq.issuedInstType.SimdFloatMultAcc",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_div",
+            "iq.issuedInstType.SimdFloatDiv",
+        ),
+        (
+            "iq.issued_inst_type.vector_float_sqrt",
+            "iq.issuedInstType.SimdFloatSqrt",
+        ),
+        (
+            "commit.committed_inst_type.float_add",
+            "commit.committedInstType.FloatAdd",
+        ),
+        (
+            "commit.committed_inst_type.float_compare",
+            "commit.committedInstType.FloatCmp",
+        ),
+        (
             "commit.committed_inst_type.float_misc",
             "commit.committedInstType.FloatMisc",
         ),
         (
+            "commit.committed_inst_type.float_mul",
+            "commit.committedInstType.FloatMult",
+        ),
+        (
+            "commit.committed_inst_type.float_fma",
+            "commit.committedInstType.FloatMultAcc",
+        ),
+        (
+            "commit.committed_inst_type.float_div",
+            "commit.committedInstType.FloatDiv",
+        ),
+        (
+            "commit.committed_inst_type.float_sqrt",
+            "commit.committedInstType.FloatSqrt",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_add",
+            "commit.committedInstType.SimdFloatAdd",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_compare",
+            "commit.committedInstType.SimdFloatCmp",
+        ),
+        (
             "commit.committed_inst_type.vector_float_misc",
             "commit.committedInstType.SimdFloatMisc",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_mul",
+            "commit.committedInstType.SimdFloatMult",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_fma",
+            "commit.committedInstType.SimdFloatMultAcc",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_div",
+            "commit.committedInstType.SimdFloatDiv",
+        ),
+        (
+            "commit.committed_inst_type.vector_float_sqrt",
+            "commit.committedInstType.SimdFloatSqrt",
         ),
     ] {
         append_gem5_o3_json_alias_from_sample(
