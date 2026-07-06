@@ -245,6 +245,55 @@ fn rem6_run_json_stats_omit_text_only_gem5_cpu_rate_aliases() {
 }
 
 #[test]
+fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_covered() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gem5-multicore-branch-pred-json-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--memory-route-delay",
+            "1",
+            "--riscv-branch-lookahead",
+            "2",
+            "--riscv-branch-predictor",
+            "basic",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert!(stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups") > 0);
+    assert!(stat_value(&stdout, "sim.cpu1.branch_predictor.btb.lookups") > 0);
+    assert_json_stat_absent(&json, "system.cpu.branchPred.condPredicted");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredicted");
+    assert_json_stat_absent(&json, "system.cpu1.branchPred.condPredicted");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBLookups");
+    assert_json_stat_absent(&json, "system.cpu1.branchPred.BTBLookups");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.lookups::total");
+    assert_json_stat_absent(&json, "system.cpu1.branchPred.btb.lookups::total");
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguous_cpu_path() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -15818,6 +15867,7 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     let branch_predictions = json_u64_field(&stdout, "\"branch_predictions\":");
     let branch_mispredictions = json_u64_field(&stdout, "\"branch_mispredictions\":");
     let conditional_branch_predictions =
@@ -16001,12 +16051,25 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     }
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(!stdout.contains("\"x6\":\"0x1\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredicted\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condIncorrect\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredicted\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condIncorrect\""));
+    for (source, alias) in [
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
+            "system.cpu.branchPred.condPredicted",
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken",
+            "system.cpu.branchPred.condPredictedTaken",
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
+            "system.cpu.branchPred.condIncorrect",
+        ),
+    ] {
+        assert_json_stat_alias(&json, source, alias);
+    }
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredicted");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredictedTaken");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.condIncorrect");
 }
 
 #[test]
@@ -16620,6 +16683,7 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     let path = temp_binary("in-order-conditional-branch-predicted-taken", &elf);
 
     let stdout = selected_branch_predictor_stdout(&path, "basic");
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     let conditional_branch_predictions =
         json_u64_field(&stdout, "\"conditional_branch_predictions\":");
     let conditional_branch_predicted_taken =
@@ -16914,41 +16978,116 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     assert!(conditional_branch_predictions > 0, "{stdout}");
     assert!(conditional_branch_predicted_taken > 0, "{stdout}");
     assert!(conditional_branch_predicted_taken <= conditional_branch_predictions);
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBLookups\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.lookups::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBHits\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.misses::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBUpdates\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.updates::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.evictions\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBHitRatio\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBMispredicted\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.mispredict::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.predTakenBTBMiss\""));
-    assert!(
-        !stdout.contains("\"path\":\"system.cpu.branchPred.mispredictDueToBTBMiss_0::DirectCond\"")
+    for (source, alias) in [
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
+            "system.cpu.branchPred.condPredicted",
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken",
+            "system.cpu.branchPred.condPredictedTaken",
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
+            "system.cpu.branchPred.condIncorrect",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.lookups",
+            "system.cpu.branchPred.BTBLookups",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.lookups",
+            "system.cpu.branchPred.btb.lookups::total",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.hits",
+            "system.cpu.branchPred.BTBHits",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.misses",
+            "system.cpu.branchPred.btb.misses::total",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.updates",
+            "system.cpu.branchPred.BTBUpdates",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.updates",
+            "system.cpu.branchPred.btb.updates::total",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.evictions",
+            "system.cpu.branchPred.btb.evictions",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.mispredictions",
+            "system.cpu.branchPred.BTBMispredicted",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.mispredictions",
+            "system.cpu.branchPred.btb.mispredict::total",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.predicted_taken_misses",
+            "system.cpu.branchPred.predTakenBTBMiss",
+        ),
+        (
+            "sim.cpu0.branch_predictor.btb.mispredict_due_to_btb_miss.total",
+            "system.cpu.branchPred.mispredictDueToBTBMiss_0::total",
+        ),
+    ] {
+        assert_json_stat_alias(&json, source, alias);
+    }
+    for (source_kind, alias_kind) in [
+        ("no_branch", "NoBranch"),
+        ("return", "Return"),
+        ("call_direct", "CallDirect"),
+        ("call_indirect", "CallIndirect"),
+        ("direct_conditional", "DirectCond"),
+        ("direct_unconditional", "DirectUncond"),
+        ("indirect_conditional", "IndirectCond"),
+        ("indirect_unconditional", "IndirectUncond"),
+    ] {
+        for (source_family, alias_family) in [
+            ("lookups", "lookups"),
+            ("misses", "misses"),
+            ("updates", "updates"),
+        ] {
+            assert_json_stat_alias(
+                &json,
+                &format!("sim.cpu0.branch_predictor.btb.{source_family}.{source_kind}"),
+                &format!("system.cpu.branchPred.btb.{alias_family}::{alias_kind}"),
+            );
+        }
+        assert_json_stat_alias(
+            &json,
+            &format!("sim.cpu0.branch_predictor.btb.mispredict_due_to_btb_miss.{source_kind}"),
+            &format!("system.cpu.branchPred.mispredictDueToBTBMiss_0::{alias_kind}"),
+        );
+    }
+    assert_json_stat_absent(&json, "system.cpu.branchPred.BTBHitRatio");
+    assert_json_stat_absent(
+        &json,
+        "system.cpu.branchPred.mispredictDueToPredictor_0::DirectCond",
     );
-    assert!(!stdout
-        .contains("\"path\":\"system.cpu.branchPred.mispredictDueToPredictor_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.committed_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.mispredicted_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.corrected_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.lookups_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.targetWrong_0::DirectCond\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.targetProvider_0::BTB\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBLookups\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.lookups::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHits\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.misses::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBUpdates\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.updates::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.evictions\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHitRatio\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBMispredicted\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.mispredict::total\""));
-    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.predTakenBTBMiss\""));
+    assert_json_stat_absent(&json, "system.cpu.branchPred.committed_0::DirectCond");
+    assert_json_stat_absent(&json, "system.cpu.branchPred.mispredicted_0::DirectCond");
+    assert_json_stat_absent(&json, "system.cpu.branchPred.corrected_0::DirectCond");
+    assert_json_stat_absent(&json, "system.cpu.branchPred.lookups_0::DirectCond");
+    assert_json_stat_absent(&json, "system.cpu.branchPred.targetWrong_0::DirectCond");
+    assert_json_stat_absent(&json, "system.cpu.branchPred.targetProvider_0::BTB");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredictedTaken");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBLookups");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.lookups::total");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBHits");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.misses::total");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBUpdates");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.updates::total");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.evictions");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBHitRatio");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBMispredicted");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.mispredict::total");
+    assert_json_stat_absent(&json, "system.cpu0.branchPred.predTakenBTBMiss");
 }
 
 #[test]
@@ -19634,6 +19773,38 @@ fn json_stat_values_with_prefix(
             )
         })
         .collect()
+}
+
+fn json_stat_record<'a>(json: &'a Value, path: &str) -> Option<&'a Value> {
+    json.as_array()
+        .or_else(|| json.pointer("/stats").and_then(Value::as_array))
+        .and_then(|stats| {
+            stats
+                .iter()
+                .find(|sample| sample.get("path").and_then(Value::as_str) == Some(path))
+        })
+}
+
+fn assert_json_stat_alias(json: &Value, source_path: &str, alias_path: &str) {
+    let source = json_stat_record(json, source_path)
+        .unwrap_or_else(|| panic!("missing JSON source stat {source_path}"));
+    let alias = json_stat_record(json, alias_path)
+        .unwrap_or_else(|| panic!("missing JSON alias stat {alias_path}"));
+
+    assert_eq!(alias.get("value"), source.get("value"), "{alias_path}");
+    assert_eq!(alias.get("unit"), source.get("unit"), "{alias_path}");
+    assert_eq!(
+        alias.get("reset_policy"),
+        source.get("reset_policy"),
+        "{alias_path}"
+    );
+}
+
+fn assert_json_stat_absent(json: &Value, path: &str) {
+    assert!(
+        json_stat_record(json, path).is_none(),
+        "unexpected JSON stat {path}"
+    );
 }
 
 fn path_has_numeric_suffix(path: &str, prefix: &str) -> bool {

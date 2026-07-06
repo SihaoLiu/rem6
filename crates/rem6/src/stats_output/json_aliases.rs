@@ -1,3 +1,4 @@
+use rem6_cpu::BranchTargetKind;
 use rem6_stats::StatSnapshot;
 
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
@@ -13,6 +14,109 @@ pub(super) fn append_gem5_json_alias_stats(snapshot: &StatSnapshot, records: &mu
 
     append_gem5_o3_json_alias_stats(snapshot, records, &mut next_id);
     append_gem5_in_order_pipeline_json_alias_stats(snapshot, records, &mut next_id);
+    append_gem5_branch_predictor_json_alias_stats(snapshot, records, &mut next_id);
+}
+
+fn append_gem5_branch_predictor_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+) {
+    let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
+        return;
+    };
+    if core_count != 1 {
+        return;
+    }
+
+    for cpu in 0..core_count {
+        let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
+        for (source_path, alias_path) in [
+            (
+                format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predictions"),
+                format!("{alias_prefix}.branchPred.condPredicted"),
+            ),
+            (
+                format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predicted_taken"),
+                format!("{alias_prefix}.branchPred.condPredictedTaken"),
+            ),
+            (
+                format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_mispredictions"),
+                format!("{alias_prefix}.branchPred.condIncorrect"),
+            ),
+        ] {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &source_path,
+                &alias_path,
+            );
+        }
+
+        for (source_suffix, alias_suffix) in [
+            ("lookups", "BTBLookups"),
+            ("lookups", "btb.lookups::total"),
+            ("hits", "BTBHits"),
+            ("misses", "btb.misses::total"),
+            ("updates", "BTBUpdates"),
+            ("updates", "btb.updates::total"),
+            ("evictions", "btb.evictions"),
+            ("mispredictions", "BTBMispredicted"),
+            ("mispredictions", "btb.mispredict::total"),
+            ("predicted_taken_misses", "predTakenBTBMiss"),
+        ] {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!("sim.cpu{cpu}.branch_predictor.btb.{source_suffix}"),
+                &format!("{alias_prefix}.branchPred.{alias_suffix}"),
+            );
+        }
+
+        for kind in BranchTargetKind::ALL {
+            for (source_family, alias_family) in [
+                ("lookups", "lookups"),
+                ("misses", "misses"),
+                ("updates", "updates"),
+            ] {
+                append_gem5_json_alias_from_paths(
+                    snapshot,
+                    records,
+                    next_id,
+                    &format!(
+                        "sim.cpu{cpu}.branch_predictor.btb.{source_family}.{}",
+                        kind.canonical_stat_name()
+                    ),
+                    &format!(
+                        "{alias_prefix}.branchPred.btb.{alias_family}::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                );
+            }
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.btb.mispredict_due_to_btb_miss.{}",
+                    kind.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::{}",
+                    kind.gem5_branch_type_name()
+                ),
+            );
+        }
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.mispredict_due_to_btb_miss.total"),
+            &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::total"),
+        );
+    }
 }
 
 fn append_gem5_o3_json_alias_stats(
