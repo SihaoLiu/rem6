@@ -284,6 +284,26 @@ fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_cove
 
     assert!(stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups") > 0);
     assert!(stat_value(&stdout, "sim.cpu1.branch_predictor.btb.lookups") > 0);
+    for cpu in [0, 1] {
+        assert!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.total")
+            ) > 0
+        );
+        assert!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.committed.total")
+            ) > 0
+        );
+        assert!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.total")
+            ) > 0
+        );
+    }
     assert_json_stat_absent(&json, "system.cpu.branchPred.condPredicted");
     assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredicted");
     assert_json_stat_absent(&json, "system.cpu1.branchPred.condPredicted");
@@ -291,6 +311,37 @@ fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_cove
     assert_json_stat_absent(&json, "system.cpu1.branchPred.BTBLookups");
     assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.lookups::total");
     assert_json_stat_absent(&json, "system.cpu1.branchPred.btb.lookups::total");
+    for prefix in ["system.cpu", "system.cpu0", "system.cpu1"] {
+        assert_json_stat_absent(&json, &format!("{prefix}.branchPred.indirectMispredicted"));
+        for family in [
+            "lookups_0",
+            "committed_0",
+            "mispredicted_0",
+            "corrected_0",
+            "targetWrong_0",
+            "mispredictDueToPredictor_0",
+        ] {
+            for kind in [
+                "NoBranch",
+                "Return",
+                "CallDirect",
+                "CallIndirect",
+                "DirectCond",
+                "DirectUncond",
+                "IndirectCond",
+                "IndirectUncond",
+                "total",
+            ] {
+                assert_json_stat_absent(&json, &format!("{prefix}.branchPred.{family}::{kind}"));
+            }
+        }
+        for provider in ["NoTarget", "BTB", "RAS", "Indirect", "total"] {
+            assert_json_stat_absent(
+                &json,
+                &format!("{prefix}.branchPred.targetProvider_0::{provider}"),
+            );
+        }
+    }
 }
 
 #[test]
@@ -17065,17 +17116,68 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
             &format!("system.cpu.branchPred.mispredictDueToBTBMiss_0::{alias_kind}"),
         );
     }
-    assert_json_stat_absent(&json, "system.cpu.branchPred.BTBHitRatio");
-    assert_json_stat_absent(
+    assert_json_stat_alias(
         &json,
-        "system.cpu.branchPred.mispredictDueToPredictor_0::DirectCond",
+        "sim.cpu0.branch_predictor.indirect_mispredicted",
+        "system.cpu.branchPred.indirectMispredicted",
     );
-    assert_json_stat_absent(&json, "system.cpu.branchPred.committed_0::DirectCond");
-    assert_json_stat_absent(&json, "system.cpu.branchPred.mispredicted_0::DirectCond");
-    assert_json_stat_absent(&json, "system.cpu.branchPred.corrected_0::DirectCond");
-    assert_json_stat_absent(&json, "system.cpu.branchPred.lookups_0::DirectCond");
-    assert_json_stat_absent(&json, "system.cpu.branchPred.targetWrong_0::DirectCond");
-    assert_json_stat_absent(&json, "system.cpu.branchPred.targetProvider_0::BTB");
+    for (source_kind, alias_kind) in [
+        ("no_branch", "NoBranch"),
+        ("return", "Return"),
+        ("call_direct", "CallDirect"),
+        ("call_indirect", "CallIndirect"),
+        ("direct_conditional", "DirectCond"),
+        ("direct_unconditional", "DirectUncond"),
+        ("indirect_conditional", "IndirectCond"),
+        ("indirect_unconditional", "IndirectUncond"),
+    ] {
+        for (source_family, alias_family) in [
+            ("lookups", "lookups_0"),
+            ("committed", "committed_0"),
+            ("mispredicted", "mispredicted_0"),
+            ("corrected", "corrected_0"),
+            ("target_wrong", "targetWrong_0"),
+            ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+        ] {
+            assert_json_stat_alias(
+                &json,
+                &format!("sim.cpu0.branch_predictor.{source_family}.{source_kind}"),
+                &format!("system.cpu.branchPred.{alias_family}::{alias_kind}"),
+            );
+        }
+    }
+    for (source_family, alias_family) in [
+        ("lookups", "lookups_0"),
+        ("committed", "committed_0"),
+        ("mispredicted", "mispredicted_0"),
+        ("corrected", "corrected_0"),
+        ("target_wrong", "targetWrong_0"),
+        ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+    ] {
+        assert_json_stat_alias(
+            &json,
+            &format!("sim.cpu0.branch_predictor.{source_family}.total"),
+            &format!("system.cpu.branchPred.{alias_family}::total"),
+        );
+    }
+    for (source_provider, alias_provider) in [
+        ("no_target", "NoTarget"),
+        ("btb", "BTB"),
+        ("ras", "RAS"),
+        ("indirect", "Indirect"),
+    ] {
+        assert_json_stat_alias(
+            &json,
+            &format!("sim.cpu0.branch_predictor.target_provider.{source_provider}"),
+            &format!("system.cpu.branchPred.targetProvider_0::{alias_provider}"),
+        );
+    }
+    assert_json_stat_alias(
+        &json,
+        "sim.cpu0.branch_predictor.target_provider.total",
+        "system.cpu.branchPred.targetProvider_0::total",
+    );
+    assert_json_stat_absent(&json, "system.cpu.branchPred.BTBHitRatio");
     assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredictedTaken");
     assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBLookups");
     assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.lookups::total");

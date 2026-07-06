@@ -1,4 +1,4 @@
-use rem6_cpu::BranchTargetKind;
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::StatSnapshot;
 
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
@@ -115,6 +115,76 @@ fn append_gem5_branch_predictor_json_alias_stats(
             next_id,
             &format!("sim.cpu{cpu}.branch_predictor.btb.mispredict_due_to_btb_miss.total"),
             &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::total"),
+        );
+
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
+            &format!("{alias_prefix}.branchPred.indirectMispredicted"),
+        );
+        for kind in BranchTargetKind::ALL {
+            for (source_family, alias_family) in [
+                ("lookups", "lookups_0"),
+                ("committed", "committed_0"),
+                ("mispredicted", "mispredicted_0"),
+                ("corrected", "corrected_0"),
+                ("target_wrong", "targetWrong_0"),
+                ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+            ] {
+                append_gem5_json_alias_from_paths(
+                    snapshot,
+                    records,
+                    next_id,
+                    &format!(
+                        "sim.cpu{cpu}.branch_predictor.{source_family}.{}",
+                        kind.canonical_stat_name()
+                    ),
+                    &format!(
+                        "{alias_prefix}.branchPred.{alias_family}::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                );
+            }
+        }
+        for (source_family, alias_family) in [
+            ("lookups", "lookups_0"),
+            ("committed", "committed_0"),
+            ("mispredicted", "mispredicted_0"),
+            ("corrected", "corrected_0"),
+            ("target_wrong", "targetWrong_0"),
+            ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+        ] {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!("sim.cpu{cpu}.branch_predictor.{source_family}.total"),
+                &format!("{alias_prefix}.branchPred.{alias_family}::total"),
+            );
+        }
+        for provider in BranchTargetProvider::ALL {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.target_provider.{}",
+                    provider.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.branchPred.targetProvider_0::{}",
+                    provider.gem5_target_provider_name()
+                ),
+            );
+        }
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!("sim.cpu{cpu}.branch_predictor.target_provider.total"),
+            &format!("{alias_prefix}.branchPred.targetProvider_0::total"),
         );
     }
 }
