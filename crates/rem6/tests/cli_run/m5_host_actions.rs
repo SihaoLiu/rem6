@@ -836,6 +836,20 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.commit.committed_inst_type.mem_read",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.mem_write",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iew.dispatched_insts",
         "Count",
         6,
@@ -2545,6 +2559,20 @@ fn rem6_run_records_o3_fu_latency_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.commit.committed_inst_type.int_mul",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.int_div",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.fu_integer_div_latency_cycles",
         "Cycle",
         19,
@@ -2624,6 +2652,20 @@ fn rem6_run_records_o3_float_misc_fu_latency_stats_after_detailed_switch() {
     assert_json_stat(
         &json,
         "sim.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.float_misc",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
         "Count",
         2,
         "monotonic",
@@ -3917,6 +3959,22 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iq.memInstsIssued", 2);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::MemRead", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::MemWrite", 1);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.commit.committed_inst_type.mem_read",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.commit.committed_inst_type.mem_write",
+        1,
+    );
+    assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType_0::MemRead", 1);
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.commit.committedInstType_0::MemWrite",
+        1,
+    );
     assert_text_count_stat(&stdout, "system.cpu.rob.writes", 6);
     assert_text_count_stat(&stdout, "system.cpu.rob.reads", 6);
 }
@@ -4223,6 +4281,10 @@ fn rem6_run_text_stats_alias_o3_fu_latency_after_detailed_switch() {
     assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_integer_div_latency_cycles", 19);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntMult", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntDiv", 1);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.commit.committed_inst_type.int_mul", 1);
+    assert_text_count_stat(&stdout, "sim.cpu0.o3.commit.committed_inst_type.int_div", 1);
+    assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType_0::IntMult", 1);
+    assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType_0::IntDiv", 1);
 }
 
 #[test]
@@ -4273,6 +4335,26 @@ fn rem6_run_text_stats_alias_o3_float_misc_fu_latency_after_detailed_switch() {
     );
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::FloatMisc", 2);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::SimdFloatMisc", 2);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.commit.committed_inst_type.float_misc",
+        2,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
+        2,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.commit.committedInstType_0::FloatMisc",
+        2,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.commit.committedInstType_0::SimdFloatMisc",
+        2,
+    );
 }
 
 #[test]
@@ -4328,6 +4410,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.mem_write");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_mul");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iq.issued_inst_type.int_div");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.mem_read");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.mem_write");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.int_mul");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.commit.committed_inst_type.int_div");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_count");
@@ -4403,6 +4489,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iq.issued_inst_type.mem_write",
         "sim.cpu0.o3.iq.issued_inst_type.int_mul",
         "sim.cpu0.o3.iq.issued_inst_type.int_div",
+        "sim.cpu0.o3.commit.committed_inst_type.mem_read",
+        "sim.cpu0.o3.commit.committed_inst_type.mem_write",
+        "sim.cpu0.o3.commit.committed_inst_type.int_mul",
+        "sim.cpu0.o3.commit.committed_inst_type.int_div",
         "system.cpu.rename.renamedInsts",
         "system.cpu.rename.renamedOperands",
         "system.cpu.iew.dispatchedInsts",
@@ -4423,6 +4513,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.predictedNotTakenIncorrect",
         "system.cpu.iew.branchMispredicts",
         "system.cpu.commit.branchMispredicts",
+        "system.cpu.commit.committedInstType_0::MemRead",
+        "system.cpu.commit.committedInstType_0::MemWrite",
+        "system.cpu.commit.committedInstType_0::IntMult",
+        "system.cpu.commit.committedInstType_0::IntDiv",
         "system.cpu.lsq0.addedLoadsAndStores",
         "system.cpu.lsq0.loadBytes",
         "system.cpu.lsq0.storeBytes",

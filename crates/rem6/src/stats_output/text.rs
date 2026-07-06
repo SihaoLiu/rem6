@@ -710,6 +710,36 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 );
             }
         }
+        for (op_class, source_name) in [
+            ("MemRead", "mem_read"),
+            ("MemWrite", "mem_write"),
+            ("IntMult", "int_mul"),
+            ("IntDiv", "int_div"),
+            ("FloatAdd", "float_add"),
+            ("FloatCmp", "float_compare"),
+            ("FloatMisc", "float_misc"),
+            ("FloatMult", "float_mul"),
+            ("FloatMultAcc", "float_fma"),
+            ("FloatDiv", "float_div"),
+            ("FloatSqrt", "float_sqrt"),
+            ("SimdMult", "vector_integer_mul"),
+            ("SimdDiv", "vector_integer_div"),
+            ("SimdFloatAdd", "vector_float_add"),
+            ("SimdFloatCmp", "vector_float_compare"),
+            ("SimdFloatMisc", "vector_float_misc"),
+            ("SimdFloatMult", "vector_float_mul"),
+            ("SimdFloatMultAcc", "vector_float_fma"),
+            ("SimdFloatDiv", "vector_float_div"),
+            ("SimdFloatSqrt", "vector_float_sqrt"),
+        ] {
+            append_derived_stat_from_snapshot(
+                output,
+                snapshot,
+                &format!("sim.cpu{cpu}.o3.commit.committed_inst_type.{source_name}"),
+                &format!("{alias_prefix}.commit.committedInstType_0::{op_class}"),
+                "Count",
+            );
+        }
         if let Some(insts_to_commit) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.insts_to_commit"))
         {

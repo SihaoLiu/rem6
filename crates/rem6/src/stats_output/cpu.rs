@@ -1114,7 +1114,29 @@ fn emit_o3_runtime_stats(
             &format!(
                 "sim.cpu{}.o3.iq.issued_inst_type.{}",
                 core.cpu,
-                o3_iq_fu_latency_class_stem(class)
+                o3_fu_latency_class_inst_type_stem(class)
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            o3.fu_latency_class_instructions(class),
+        )?;
+    }
+    for (name, value) in [("mem_read", o3.lsq_loads()), ("mem_write", o3.lsq_stores())] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.commit.committed_inst_type.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.commit.committed_inst_type.{}",
+                core.cpu,
+                o3_fu_latency_class_inst_type_stem(class)
             ),
             "Count",
             StatResetPolicy::Monotonic,
@@ -1222,7 +1244,7 @@ fn emit_o3_runtime_stats(
     Ok(())
 }
 
-fn o3_iq_fu_latency_class_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
     match class {
         O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
         O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
