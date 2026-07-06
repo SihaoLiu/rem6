@@ -645,6 +645,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatch_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_matches",
         "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",

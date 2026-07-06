@@ -563,6 +563,10 @@ struct RiscvO3RuntimeCpuStats {
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_total: StatId,
+    lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_candidate_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_match_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
@@ -652,6 +656,28 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq0.operation.total",
                 "Count",
             )?,
+            lsq_operation_forwarding_candidates: register_o3_lsq_operation_forwarding_counters(
+                registry,
+                &prefix,
+                "forwarding_candidates",
+            )?,
+            lsq_operation_forwarding_matches: register_o3_lsq_operation_forwarding_counters(
+                registry,
+                &prefix,
+                "forwarding_matches",
+            )?,
+            lsq_operation_forwarding_candidate_aliases:
+                register_o3_lsq_operation_forwarding_alias_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeLoadForwardingCandidates",
+                )?,
+            lsq_operation_forwarding_match_aliases:
+                register_o3_lsq_operation_forwarding_alias_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeLoadForwardingMatches",
+                )?,
             lsq_data_latency: register_o3_lsq_latency_counters(
                 registry,
                 &prefix,
@@ -1098,6 +1124,34 @@ impl RiscvO3RuntimeCpuStats {
         if lsq_operation_delta_total != 0 {
             registry.increment(self.lsq_operation_alias_total, lsq_operation_delta_total)?;
         }
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            let candidate_delta = current
+                .lsq_operation_forwarding_candidates(operation)
+                .saturating_sub(previous.lsq_operation_forwarding_candidates(operation));
+            if candidate_delta != 0 {
+                registry.increment(
+                    self.lsq_operation_forwarding_candidates[operation.index()],
+                    candidate_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_forwarding_candidate_aliases[operation.index()],
+                    candidate_delta,
+                )?;
+            }
+            let match_delta = current
+                .lsq_operation_forwarding_matches(operation)
+                .saturating_sub(previous.lsq_operation_forwarding_matches(operation));
+            if match_delta != 0 {
+                registry.increment(
+                    self.lsq_operation_forwarding_matches[operation.index()],
+                    match_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_forwarding_match_aliases[operation.index()],
+                    match_delta,
+                )?;
+            }
+        }
         self.set_lsq_latency_snapshot(registry, current)?;
         let mut lsq_ordering_delta_total = 0_u64;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
@@ -1237,6 +1291,24 @@ impl RiscvO3RuntimeCpuStats {
             )?;
         }
         registry.set_resettable_counter(self.lsq_operation_alias_total, lsq_operation_total)?;
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_candidates[operation.index()],
+                snapshot.lsq_operation_forwarding_candidates(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_matches[operation.index()],
+                snapshot.lsq_operation_forwarding_matches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_candidate_aliases[operation.index()],
+                snapshot.lsq_operation_forwarding_candidates(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_match_aliases[operation.index()],
+                snapshot.lsq_operation_forwarding_matches(operation),
+            )?;
+        }
         self.set_lsq_latency_snapshot(registry, snapshot)?;
         let mut lsq_ordering_total = 0_u64;
         for ordering in O3RuntimeLsqOrdering::TRACKED {
@@ -1419,6 +1491,44 @@ fn register_o3_lsq_operation_alias_counters(
             registry,
             prefix,
             &format!("lsq0.operation.{}", o3_lsq_operation_alias(operation)),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn register_o3_lsq_operation_forwarding_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    suffix: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq_operation.{}_{}", operation.as_str(), suffix),
+            "Count",
+        )?;
+    }
+    Ok(stats)
+}
+
+fn register_o3_lsq_operation_forwarding_alias_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    suffix: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!(
+                "lsq0.operation.{}.{}",
+                o3_lsq_operation_alias(operation),
+                suffix
+            ),
             "Count",
         )?;
     }

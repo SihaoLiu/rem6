@@ -3070,6 +3070,141 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
 }
 
 #[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
+    let path = detailed_o3_lsq_forwarding_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-lsq-forwarding-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a00000033000000")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        pre_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0)
+    );
+    for (path, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_matches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_matches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_candidates",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_matches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
+            1,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
+            1,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingCandidates",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingMatches",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        post_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1)
+    );
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_matches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+}
+
+#[test]
 fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
     let path =
         detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-detailed-o3-lsq-store-load-match");
@@ -6700,6 +6835,33 @@ fn detailed_o3_lsq_matrix_dump_reset_stats_binary(name: &str) -> std::path::Path
         words.push(0);
     }
     words.extend([9, 0, 0, 0, 0, 0, 0, 0, 0x5566_7788, 0x1122_3344, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+        b_type(24, 11, 12, 0x1),                        // bne x12, x11, fail
+        m5op(M5_DUMP_RESET_STATS),
+        i_type(0x33, 0, 0x0, 13, 0x13), // addi x13, x0, 0x33
+        s_type(4, 13, 5, 0b010),        // sw x13, 4(x5)
+        m5op(M5_DUMP_STATS),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
