@@ -25,9 +25,6 @@ fn append_gem5_branch_predictor_json_alias_stats(
     let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
         return;
     };
-    if core_count != 1 {
-        return;
-    }
 
     for cpu in 0..core_count {
         let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);

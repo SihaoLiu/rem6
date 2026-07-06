@@ -245,7 +245,7 @@ fn rem6_run_json_stats_omit_text_only_gem5_cpu_rate_aliases() {
 }
 
 #[test]
-fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_covered() {
+fn rem6_run_json_stats_emit_gem5_multicore_branch_prediction_aliases_without_ambiguous_cpu_path() {
     let program = selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("gem5-multicore-branch-pred-json-aliases", &elf);
@@ -304,16 +304,181 @@ fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_cove
             ) > 0
         );
     }
-    assert_json_stat_absent(&json, "system.cpu.branchPred.condPredicted");
-    assert_json_stat_absent(&json, "system.cpu0.branchPred.condPredicted");
-    assert_json_stat_absent(&json, "system.cpu1.branchPred.condPredicted");
-    assert_json_stat_absent(&json, "system.cpu0.branchPred.BTBLookups");
-    assert_json_stat_absent(&json, "system.cpu1.branchPred.BTBLookups");
-    assert_json_stat_absent(&json, "system.cpu0.branchPred.btb.lookups::total");
-    assert_json_stat_absent(&json, "system.cpu1.branchPred.btb.lookups::total");
-    for prefix in ["system.cpu", "system.cpu0", "system.cpu1"] {
-        assert_json_stat_absent(&json, &format!("{prefix}.branchPred.indirectMispredicted"));
-        for family in [
+
+    assert_gem5_branch_predictor_json_aliases_absent(&json, "system.cpu");
+    for cpu in [0, 1] {
+        assert_gem5_branch_predictor_json_aliases(
+            &json,
+            &format!("sim.cpu{cpu}"),
+            &format!("system.cpu{cpu}"),
+        );
+    }
+}
+
+fn assert_gem5_branch_predictor_json_aliases(
+    json: &Value,
+    source_prefix: &str,
+    alias_prefix: &str,
+) {
+    for (source_suffix, alias_suffix) in [
+        (
+            "pipeline.in_order.conditional_branch_predictions",
+            "branchPred.condPredicted",
+        ),
+        (
+            "pipeline.in_order.conditional_branch_predicted_taken",
+            "branchPred.condPredictedTaken",
+        ),
+        (
+            "pipeline.in_order.conditional_branch_mispredictions",
+            "branchPred.condIncorrect",
+        ),
+        ("branch_predictor.btb.lookups", "branchPred.BTBLookups"),
+        (
+            "branch_predictor.btb.lookups",
+            "branchPred.btb.lookups::total",
+        ),
+        ("branch_predictor.btb.hits", "branchPred.BTBHits"),
+        (
+            "branch_predictor.btb.misses",
+            "branchPred.btb.misses::total",
+        ),
+        ("branch_predictor.btb.updates", "branchPred.BTBUpdates"),
+        (
+            "branch_predictor.btb.updates",
+            "branchPred.btb.updates::total",
+        ),
+        ("branch_predictor.btb.evictions", "branchPred.btb.evictions"),
+        (
+            "branch_predictor.btb.mispredictions",
+            "branchPred.BTBMispredicted",
+        ),
+        (
+            "branch_predictor.btb.mispredictions",
+            "branchPred.btb.mispredict::total",
+        ),
+        (
+            "branch_predictor.btb.predicted_taken_misses",
+            "branchPred.predTakenBTBMiss",
+        ),
+        (
+            "branch_predictor.btb.mispredict_due_to_btb_miss.total",
+            "branchPred.mispredictDueToBTBMiss_0::total",
+        ),
+        (
+            "branch_predictor.indirect_mispredicted",
+            "branchPred.indirectMispredicted",
+        ),
+    ] {
+        assert_json_stat_alias(
+            json,
+            &format!("{source_prefix}.{source_suffix}"),
+            &format!("{alias_prefix}.{alias_suffix}"),
+        );
+    }
+
+    for (source_kind, alias_kind) in BRANCH_TARGET_KIND_JSON_ALIASES {
+        for (source_family, alias_family) in [
+            ("lookups", "lookups"),
+            ("misses", "misses"),
+            ("updates", "updates"),
+        ] {
+            assert_json_stat_alias(
+                json,
+                &format!("{source_prefix}.branch_predictor.btb.{source_family}.{source_kind}"),
+                &format!("{alias_prefix}.branchPred.btb.{alias_family}::{alias_kind}"),
+            );
+        }
+        assert_json_stat_alias(
+            json,
+            &format!(
+                "{source_prefix}.branch_predictor.btb.mispredict_due_to_btb_miss.{source_kind}"
+            ),
+            &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::{alias_kind}"),
+        );
+
+        for (source_family, alias_family) in [
+            ("lookups", "lookups_0"),
+            ("committed", "committed_0"),
+            ("mispredicted", "mispredicted_0"),
+            ("corrected", "corrected_0"),
+            ("target_wrong", "targetWrong_0"),
+            ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+        ] {
+            assert_json_stat_alias(
+                json,
+                &format!("{source_prefix}.branch_predictor.{source_family}.{source_kind}"),
+                &format!("{alias_prefix}.branchPred.{alias_family}::{alias_kind}"),
+            );
+        }
+    }
+
+    for (source_family, alias_family) in [
+        ("lookups", "lookups_0"),
+        ("committed", "committed_0"),
+        ("mispredicted", "mispredicted_0"),
+        ("corrected", "corrected_0"),
+        ("target_wrong", "targetWrong_0"),
+        ("mispredict_due_to_predictor", "mispredictDueToPredictor_0"),
+    ] {
+        assert_json_stat_alias(
+            json,
+            &format!("{source_prefix}.branch_predictor.{source_family}.total"),
+            &format!("{alias_prefix}.branchPred.{alias_family}::total"),
+        );
+    }
+
+    for (source_provider, alias_provider) in BRANCH_TARGET_PROVIDER_JSON_ALIASES {
+        assert_json_stat_alias(
+            json,
+            &format!("{source_prefix}.branch_predictor.target_provider.{source_provider}"),
+            &format!("{alias_prefix}.branchPred.targetProvider_0::{alias_provider}"),
+        );
+    }
+    assert_json_stat_alias(
+        json,
+        &format!("{source_prefix}.branch_predictor.target_provider.total"),
+        &format!("{alias_prefix}.branchPred.targetProvider_0::total"),
+    );
+
+    assert_json_stat_absent(json, &format!("{alias_prefix}.branchPred.BTBHitRatio"));
+}
+
+fn assert_gem5_branch_predictor_json_aliases_absent(json: &Value, alias_prefix: &str) {
+    for alias_suffix in [
+        "branchPred.condPredicted",
+        "branchPred.condPredictedTaken",
+        "branchPred.condIncorrect",
+        "branchPred.BTBLookups",
+        "branchPred.btb.lookups::total",
+        "branchPred.BTBHits",
+        "branchPred.btb.misses::total",
+        "branchPred.BTBUpdates",
+        "branchPred.btb.updates::total",
+        "branchPred.btb.evictions",
+        "branchPred.BTBHitRatio",
+        "branchPred.BTBMispredicted",
+        "branchPred.btb.mispredict::total",
+        "branchPred.predTakenBTBMiss",
+        "branchPred.mispredictDueToBTBMiss_0::total",
+        "branchPred.indirectMispredicted",
+    ] {
+        assert_json_stat_absent(json, &format!("{alias_prefix}.{alias_suffix}"));
+    }
+
+    for (_, alias_kind) in BRANCH_TARGET_KIND_JSON_ALIASES {
+        for alias_family in ["lookups", "misses", "updates"] {
+            assert_json_stat_absent(
+                json,
+                &format!("{alias_prefix}.branchPred.btb.{alias_family}::{alias_kind}"),
+            );
+        }
+        assert_json_stat_absent(
+            json,
+            &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::{alias_kind}"),
+        );
+
+        for alias_family in [
             "lookups_0",
             "committed_0",
             "mispredicted_0",
@@ -321,28 +486,56 @@ fn rem6_run_json_stats_keep_branch_pred_aliases_single_core_until_multicore_cove
             "targetWrong_0",
             "mispredictDueToPredictor_0",
         ] {
-            for kind in [
-                "NoBranch",
-                "Return",
-                "CallDirect",
-                "CallIndirect",
-                "DirectCond",
-                "DirectUncond",
-                "IndirectCond",
-                "IndirectUncond",
-                "total",
-            ] {
-                assert_json_stat_absent(&json, &format!("{prefix}.branchPred.{family}::{kind}"));
-            }
-        }
-        for provider in ["NoTarget", "BTB", "RAS", "Indirect", "total"] {
             assert_json_stat_absent(
-                &json,
-                &format!("{prefix}.branchPred.targetProvider_0::{provider}"),
+                json,
+                &format!("{alias_prefix}.branchPred.{alias_family}::{alias_kind}"),
             );
         }
     }
+
+    for alias_family in [
+        "lookups_0",
+        "committed_0",
+        "mispredicted_0",
+        "corrected_0",
+        "targetWrong_0",
+        "mispredictDueToPredictor_0",
+    ] {
+        assert_json_stat_absent(
+            json,
+            &format!("{alias_prefix}.branchPred.{alias_family}::total"),
+        );
+    }
+
+    for (_, alias_provider) in BRANCH_TARGET_PROVIDER_JSON_ALIASES {
+        assert_json_stat_absent(
+            json,
+            &format!("{alias_prefix}.branchPred.targetProvider_0::{alias_provider}"),
+        );
+    }
+    assert_json_stat_absent(
+        json,
+        &format!("{alias_prefix}.branchPred.targetProvider_0::total"),
+    );
 }
+
+const BRANCH_TARGET_KIND_JSON_ALIASES: &[(&str, &str)] = &[
+    ("no_branch", "NoBranch"),
+    ("return", "Return"),
+    ("call_direct", "CallDirect"),
+    ("call_indirect", "CallIndirect"),
+    ("direct_conditional", "DirectCond"),
+    ("direct_unconditional", "DirectUncond"),
+    ("indirect_conditional", "IndirectCond"),
+    ("indirect_unconditional", "IndirectUncond"),
+];
+
+const BRANCH_TARGET_PROVIDER_JSON_ALIASES: &[(&str, &str)] = &[
+    ("no_target", "NoTarget"),
+    ("btb", "BTB"),
+    ("ras", "RAS"),
+    ("indirect", "Indirect"),
+];
 
 #[test]
 fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguous_cpu_path() {
