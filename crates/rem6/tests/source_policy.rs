@@ -628,6 +628,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
         "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.float_misc",

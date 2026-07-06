@@ -1936,9 +1936,28 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
             5,
         ),
         ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 5),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.writeback_count", 5),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.producer_inst", 2),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.consumer_inst", 4),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
+    assert_stats_dump_sample_at_least(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+        "counter",
+        "Ppm",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
+        "counter",
+        "Ppm",
+        ratio_ppm(2, 4),
+        "resettable",
+    );
     for (path, value) in [
         ("system.cpu.iq.issuedInstType.IntMult", 1),
         ("system.cpu.iq.issuedInstType.IntDiv", 1),

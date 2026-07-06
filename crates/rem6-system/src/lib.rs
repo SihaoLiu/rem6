@@ -386,7 +386,17 @@ impl RiscvSystemRunDriver {
             instruction_stats.reset_retired_instruction_probes();
         }
         if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
-            o3_runtime_stats.reset_snapshots();
+            let cycle_baselines = cluster
+                .core_ids()
+                .into_iter()
+                .map(|cpu| {
+                    cluster
+                        .core(cpu)
+                        .map(|core| (cpu, core.in_order_pipeline_snapshot().cycle()))
+                        .map_err(SystemError::RiscvCluster)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            o3_runtime_stats.reset_snapshots(cycle_baselines);
         }
         for cpu in cluster.core_ids() {
             cluster
@@ -772,12 +782,16 @@ impl RiscvSystemRunDriver {
             let controller = self.trap_port.controller();
             let mut controller = controller.lock().expect("system host controller lock");
             for cpu in updated_cpus {
-                let snapshot = cluster
-                    .core(cpu)
-                    .map_err(SystemError::RiscvCluster)?
-                    .o3_runtime_stats();
+                let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+                let snapshot = core.o3_runtime_stats();
+                let in_order_pipeline_cycles = core.in_order_pipeline_snapshot().cycle();
                 o3_runtime_stats
-                    .record_cpu_snapshot(controller.executor_mut().stats_mut(), cpu, snapshot)
+                    .record_cpu_snapshot(
+                        controller.executor_mut().stats_mut(),
+                        cpu,
+                        snapshot,
+                        in_order_pipeline_cycles,
+                    )
                     .map_err(SystemError::Stats)?;
             }
         }
