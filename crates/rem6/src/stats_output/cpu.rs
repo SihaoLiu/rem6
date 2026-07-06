@@ -1368,6 +1368,59 @@ fn emit_o3_runtime_stats(
             value,
         )?;
     }
+    for (name, unit, value) in [
+        ("samples", "Count", o3.lsq_data_latency_samples()),
+        ("totalLatency", "Tick", o3.lsq_data_latency_ticks()),
+        ("maxLatency", "Tick", o3.lsq_data_latency_max_ticks()),
+        ("minLatency", "Tick", o3.lsq_data_latency_min_ticks()),
+        ("avgLatency", "Tick", o3.lsq_data_latency_avg_ticks()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.lsq0.dataResponse.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        let operation_alias = o3_lsq_operation_alias(operation);
+        for (name, unit, value) in [
+            (
+                "samples",
+                "Count",
+                o3.lsq_operation_latency_samples(operation),
+            ),
+            (
+                "totalLatency",
+                "Tick",
+                o3.lsq_operation_latency_ticks(operation),
+            ),
+            (
+                "maxLatency",
+                "Tick",
+                o3.lsq_operation_latency_max_ticks(operation),
+            ),
+            (
+                "minLatency",
+                "Tick",
+                o3.lsq_operation_latency_min_ticks(operation),
+            ),
+            (
+                "avgLatency",
+                "Tick",
+                o3.lsq_operation_latency_avg_ticks(operation),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{gem5_cpu_alias_prefix}.lsq0.dataResponse.{operation_alias}.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     for (name, numerator, denominator) in [
         (
             "iew.writeback_rate_ppm",
@@ -1425,6 +1478,21 @@ fn emit_o3_runtime_stats(
         )?;
     }
     Ok(())
+}
+
+fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
+    match operation {
+        O3RuntimeLsqOperation::None => "none",
+        O3RuntimeLsqOperation::Load => "load",
+        O3RuntimeLsqOperation::Store => "store",
+        O3RuntimeLsqOperation::LoadReserved => "loadReserved",
+        O3RuntimeLsqOperation::StoreConditional => "storeConditional",
+        O3RuntimeLsqOperation::Atomic => "atomic",
+        O3RuntimeLsqOperation::FloatLoad => "floatLoad",
+        O3RuntimeLsqOperation::FloatStore => "floatStore",
+        O3RuntimeLsqOperation::VectorLoad => "vectorLoad",
+        O3RuntimeLsqOperation::VectorStore => "vectorStore",
+    }
 }
 
 fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {

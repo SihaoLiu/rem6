@@ -3045,12 +3045,12 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
     let mut aggregate_latency_ticks = 0;
     let mut aggregate_latency_max_ticks = 0;
     let mut aggregate_latency_min_ticks = u64::MAX;
-    for operation in [
-        "load",
-        "store",
-        "load_reserved",
-        "store_conditional",
-        "atomic",
+    for (operation, alias_operation) in [
+        ("load", "load"),
+        ("store", "store"),
+        ("load_reserved", "loadReserved"),
+        ("store_conditional", "storeConditional"),
+        ("atomic", "atomic"),
     ] {
         let samples_field = format!("lsq_operation_{operation}_latency_samples");
         let total_field = format!("lsq_operation_{operation}_latency_ticks");
@@ -3125,27 +3125,51 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
                 "stat registry should match structured runtime {operation}_{suffix}"
             );
         }
+        for (suffix, unit, value) in [
+            ("samples", "Count", samples),
+            ("totalLatency", "Tick", total),
+            ("maxLatency", "Tick", max),
+            ("minLatency", "Tick", min),
+            ("avgLatency", "Tick", avg),
+        ] {
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.dataResponse.{alias_operation}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
     }
     let aggregate_latency_avg_ticks = aggregate_latency_ticks / aggregate_latency_samples;
-    for (field, unit, value) in [
+    for (field, alias, unit, value) in [
         (
             "lsq_data_latency_samples",
+            "samples",
             "Count",
             aggregate_latency_samples,
         ),
-        ("lsq_data_latency_ticks", "Tick", aggregate_latency_ticks),
+        (
+            "lsq_data_latency_ticks",
+            "totalLatency",
+            "Tick",
+            aggregate_latency_ticks,
+        ),
         (
             "lsq_data_latency_max_ticks",
+            "maxLatency",
             "Tick",
             aggregate_latency_max_ticks,
         ),
         (
             "lsq_data_latency_min_ticks",
+            "minLatency",
             "Tick",
             aggregate_latency_min_ticks,
         ),
         (
             "lsq_data_latency_avg_ticks",
+            "avgLatency",
             "Tick",
             aggregate_latency_avg_ticks,
         ),
@@ -3164,14 +3188,26 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             value,
             "monotonic",
         );
+        assert_json_stat(
+            json,
+            &format!("system.cpu.lsq0.dataResponse.{alias}"),
+            unit,
+            value,
+            "monotonic",
+        );
     }
-    for operation in ["float_load", "float_store", "vector_load", "vector_store"] {
-        for field in [
-            "latency_samples",
-            "latency_ticks",
-            "latency_max_ticks",
-            "latency_min_ticks",
-            "latency_avg_ticks",
+    for (operation, alias_operation) in [
+        ("float_load", "floatLoad"),
+        ("float_store", "floatStore"),
+        ("vector_load", "vectorLoad"),
+        ("vector_store", "vectorStore"),
+    ] {
+        for (field, alias, unit) in [
+            ("latency_samples", "samples", "Count"),
+            ("latency_ticks", "totalLatency", "Tick"),
+            ("latency_max_ticks", "maxLatency", "Tick"),
+            ("latency_min_ticks", "minLatency", "Tick"),
+            ("latency_avg_ticks", "avgLatency", "Tick"),
         ] {
             let runtime_field = format!("lsq_operation_{operation}_{field}");
             assert_eq!(
@@ -3188,6 +3224,13 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
                 ),
                 0,
                 "stat registry should expose inactive {operation}_{field}"
+            );
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.dataResponse.{alias_operation}.{alias}"),
+                unit,
+                0,
+                "monotonic",
             );
         }
     }
@@ -4562,6 +4605,13 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_bytes");
     assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates");
     assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_store_to_load_forwarding_matches");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_data_latency_samples");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_data_latency_ticks");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.lsq_operation.load_latency_ticks");
+    assert_json_stat_absent(
+        &json,
+        "sim.cpu0.o3.lsq_operation.store_conditional_latency_ticks",
+    );
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_instructions");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_mul_latency_cycles");
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_integer_div_instructions");
@@ -4590,6 +4640,13 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.samples");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.totalLatency");
+    assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.load.totalLatency");
+    assert_json_stat_absent(
+        &json,
+        "system.cpu.lsq0.dataResponse.storeConditional.totalLatency",
+    );
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.targetlessMismatch");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.directionOnly");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.wrongTarget");
@@ -4643,6 +4700,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.lsq_store_bytes",
         "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
         "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        "sim.cpu0.o3.lsq_data_latency_samples",
+        "sim.cpu0.o3.lsq_data_latency_ticks",
+        "sim.cpu0.o3.lsq_operation.load_latency_ticks",
+        "sim.cpu0.o3.lsq_operation.store_conditional_latency_ticks",
         "sim.cpu0.o3.fu_latency_instructions",
         "sim.cpu0.o3.fu_latency_cycles",
         "sim.cpu0.o3.fu_integer_mul_instructions",
@@ -4681,6 +4742,10 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "system.cpu.iew.predictedTakenIncorrect",
         "system.cpu.iew.predictedNotTakenIncorrect",
+        "system.cpu.lsq0.dataResponse.samples",
+        "system.cpu.lsq0.dataResponse.totalLatency",
+        "system.cpu.lsq0.dataResponse.load.totalLatency",
+        "system.cpu.lsq0.dataResponse.storeConditional.totalLatency",
         "system.cpu.iew.branchRepair.targetlessMismatch",
         "system.cpu.iew.branchRepair.directionOnly",
         "system.cpu.iew.branchRepair.wrongTarget",
