@@ -307,27 +307,62 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
 pub(super) fn in_order_pipeline_stage_trap_redirect_flushed(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
-    core.in_order_pipeline_cycle_records().into_iter().fold(
-        Rem6InOrderPipelineStageSummary::default(),
-        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
-            Some(InOrderPipelineRedirectCause::Trap) => {
-                summary.saturating_add(stage_summary_from_instructions(record.plan().flushed()))
-            }
-            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => summary,
-        },
-    )
+    in_order_pipeline_stage_flushed_for_redirect_cause(core, InOrderPipelineRedirectCause::Trap)
 }
 
 pub(super) fn in_order_pipeline_stage_trap_redirect_flushed_cycles(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::Trap,
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_flushed_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::Interrupt,
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::Interrupt,
+    )
+}
+
+fn in_order_pipeline_stage_flushed_for_redirect_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineRedirectCause,
+) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),
         |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
-            Some(InOrderPipelineRedirectCause::Trap) => summary.saturating_add(
+            Some(record_cause) if record_cause == cause => {
+                summary.saturating_add(stage_summary_from_instructions(record.plan().flushed()))
+            }
+            Some(_) | None => summary,
+        },
+    )
+}
+
+fn in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineRedirectCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
+            Some(record_cause) if record_cause == cause => summary.saturating_add(
                 stage_presence_summary_from_instructions(record.plan().flushed()),
             ),
-            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => summary,
+            Some(_) | None => summary,
         },
     )
 }

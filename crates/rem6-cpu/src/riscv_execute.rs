@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use rem6_isa_riscv::{
-    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorMemoryInstruction,
+    RiscvInstruction, RiscvTrapKind, RiscvVectorFloatInstruction, RiscvVectorMemoryInstruction,
     RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
 };
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
@@ -235,12 +235,20 @@ impl RiscvCore {
             retired_branch.fetch_prediction(),
             direct_jump_fetch_ahead_target,
         );
-        let pipeline_redirect = execution.trap().is_some().then(|| {
-            InOrderBranchRedirect::trap(
-                fetch.request_id().sequence(),
-                InOrderPipelineStage::Commit,
-                next_pc.get(),
-            )
+        let pipeline_redirect = execution.trap().map(|trap| {
+            let sequence = fetch.request_id().sequence();
+            match trap.kind() {
+                RiscvTrapKind::Interrupt { .. } => InOrderBranchRedirect::interrupt(
+                    sequence,
+                    InOrderPipelineStage::Commit,
+                    next_pc.get(),
+                ),
+                _ => InOrderBranchRedirect::trap(
+                    sequence,
+                    InOrderPipelineStage::Commit,
+                    next_pc.get(),
+                ),
+            }
         });
         let execute_wait_cycles = in_order_execute_wait_cycles(instruction);
         let pipeline_cycle = if execution.memory_access().is_none() {

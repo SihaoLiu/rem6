@@ -351,8 +351,18 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_trap_redirect_flushed,
             self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
         );
+        let stage_interrupt_redirect_flushed = in_order_pipeline_stage_summary_json(
+            self.in_order_pipeline_stage_interrupt_redirect_flushed,
+        );
+        let stage_interrupt_redirect_flushed_cycles = in_order_pipeline_stage_summary_json(
+            self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
+        );
+        let cause_interrupt_redirect = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_stage_interrupt_redirect_flushed,
+            self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
+        );
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_advanced\":{},\"stage_advanced_cycles\":{},\"stage_retired\":{},\"stage_retired_cycles\":{},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked_cycles\":{},\"stall_cause\":{{\"fetch_wait\":{},\"data_wait\":{},\"execute_wait\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked_cycles\":{},\"stage_flushed\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_flushed_cycles\":{},\"stage_branch_prediction_flushed\":{},\"stage_branch_prediction_flushed_cycles\":{},\"stage_trap_redirect_flushed\":{},\"stage_trap_redirect_flushed_cycles\":{},\"flush_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{}}},\"redirect_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"flush_cycles\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"execute_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"branch_prediction_flush_cycles\":{},\"redirects\":{},\"branch_prediction_redirects\":{},\"trap_redirects\":{},\"trap_redirect_flushes\":{},\"trap_redirect_flush_cycles\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"squashes\":{},\"target_provider\":{},\"indirect_hits\":{},\"indirect_mispredicted\":{},\"ras\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{}{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_advanced\":{},\"stage_advanced_cycles\":{},\"stage_retired\":{},\"stage_retired_cycles\":{},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked_cycles\":{},\"stall_cause\":{{\"fetch_wait\":{},\"data_wait\":{},\"execute_wait\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked_cycles\":{},\"stage_flushed\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_flushed_cycles\":{},\"stage_branch_prediction_flushed\":{},\"stage_branch_prediction_flushed_cycles\":{},\"stage_trap_redirect_flushed\":{},\"stage_trap_redirect_flushed_cycles\":{},\"stage_interrupt_redirect_flushed\":{},\"stage_interrupt_redirect_flushed_cycles\":{},\"flush_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{},\"interrupt_redirect\":{}}},\"redirect_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{},\"interrupt_redirect\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"flush_cycles\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"execute_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"branch_prediction_flush_cycles\":{},\"redirects\":{},\"branch_prediction_redirects\":{},\"interrupt_redirects\":{},\"interrupt_redirect_flushes\":{},\"interrupt_redirect_flush_cycles\":{},\"trap_redirects\":{},\"trap_redirect_flushes\":{},\"trap_redirect_flush_cycles\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"squashes\":{},\"target_provider\":{},\"indirect_hits\":{},\"indirect_mispredicted\":{},\"ras\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{}{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
@@ -407,10 +417,14 @@ impl Rem6CoreSummary {
             stage_branch_prediction_flushed_cycles,
             stage_trap_redirect_flushed,
             stage_trap_redirect_flushed_cycles,
+            stage_interrupt_redirect_flushed,
+            stage_interrupt_redirect_flushed_cycles,
             &cause_branch_prediction,
             &cause_trap_redirect,
+            &cause_interrupt_redirect,
             &cause_branch_prediction,
             &cause_trap_redirect,
+            &cause_interrupt_redirect,
             self.in_order_pipeline_retired,
             self.in_order_pipeline_advanced,
             self.in_order_pipeline_flushed,
@@ -430,6 +444,9 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_branch_prediction_flush_cycles,
             self.in_order_pipeline_redirects,
             self.in_order_pipeline_branch_prediction_redirects,
+            self.in_order_pipeline_interrupt_redirects,
+            self.in_order_pipeline_interrupt_redirect_flushes,
+            self.in_order_pipeline_interrupt_redirect_flush_cycles,
             self.in_order_pipeline_trap_redirects,
             self.in_order_pipeline_trap_redirect_flushes,
             self.in_order_pipeline_trap_redirect_flush_cycles,

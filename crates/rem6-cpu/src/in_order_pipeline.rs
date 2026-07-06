@@ -155,6 +155,7 @@ impl InOrderPipelineStallCause {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InOrderPipelineRedirectCause {
     BranchPrediction,
+    Interrupt,
     Trap,
 }
 
@@ -162,6 +163,7 @@ impl InOrderPipelineRedirectCause {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BranchPrediction => "branch_prediction",
+            Self::Interrupt => "interrupt_redirect",
             Self::Trap => "trap_redirect",
         }
     }
@@ -195,6 +197,19 @@ impl InOrderBranchRedirect {
             resolved_stage,
             target_pc,
             InOrderPipelineRedirectCause::Trap,
+        )
+    }
+
+    pub const fn interrupt(
+        sequence: u64,
+        resolved_stage: InOrderPipelineStage,
+        target_pc: u64,
+    ) -> Self {
+        Self::with_cause(
+            sequence,
+            resolved_stage,
+            target_pc,
+            InOrderPipelineRedirectCause::Interrupt,
         )
     }
 
@@ -672,6 +687,9 @@ pub struct InOrderPipelineCycleSummary {
     conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
     branch_prediction_redirect_count: usize,
+    interrupt_redirect_count: usize,
+    interrupt_redirect_flushed_count: usize,
+    interrupt_redirect_flush_cycle_count: usize,
     trap_redirect_count: usize,
     trap_redirect_flushed_count: usize,
     trap_redirect_flush_cycle_count: usize,
@@ -701,6 +719,9 @@ pub struct InOrderPipelineRunSummary {
     branch_prediction_flush_cycle_count: usize,
     redirect_count: usize,
     branch_prediction_redirect_count: usize,
+    interrupt_redirect_count: usize,
+    interrupt_redirect_flushed_count: usize,
+    interrupt_redirect_flush_cycle_count: usize,
     trap_redirect_count: usize,
     trap_redirect_flushed_count: usize,
     trap_redirect_flush_cycle_count: usize,
@@ -729,6 +750,9 @@ impl InOrderPipelineRunSummary {
         branch_prediction_flush_cycle_count: 0,
         redirect_count: 0,
         branch_prediction_redirect_count: 0,
+        interrupt_redirect_count: 0,
+        interrupt_redirect_flushed_count: 0,
+        interrupt_redirect_flush_cycle_count: 0,
         trap_redirect_count: 0,
         trap_redirect_flushed_count: 0,
         trap_redirect_flush_cycle_count: 0,
@@ -786,6 +810,10 @@ impl InOrderPipelineRunSummary {
                 summary.redirect_count += 1;
             }
             summary.branch_prediction_redirect_count += cycle.branch_prediction_redirect_count();
+            summary.interrupt_redirect_count += cycle.interrupt_redirect_count();
+            summary.interrupt_redirect_flushed_count += cycle.interrupt_redirect_flushed_count();
+            summary.interrupt_redirect_flush_cycle_count +=
+                cycle.interrupt_redirect_flush_cycle_count();
             summary.trap_redirect_count += cycle.trap_redirect_count();
             summary.trap_redirect_flushed_count += cycle.trap_redirect_flushed_count();
             summary.trap_redirect_flush_cycle_count += cycle.trap_redirect_flush_cycle_count();
@@ -829,6 +857,12 @@ impl InOrderPipelineRunSummary {
             redirect_count: self.redirect_count + other.redirect_count,
             branch_prediction_redirect_count: self.branch_prediction_redirect_count
                 + other.branch_prediction_redirect_count,
+            interrupt_redirect_count: self.interrupt_redirect_count
+                + other.interrupt_redirect_count,
+            interrupt_redirect_flushed_count: self.interrupt_redirect_flushed_count
+                + other.interrupt_redirect_flushed_count,
+            interrupt_redirect_flush_cycle_count: self.interrupt_redirect_flush_cycle_count
+                + other.interrupt_redirect_flush_cycle_count,
             trap_redirect_count: self.trap_redirect_count + other.trap_redirect_count,
             trap_redirect_flushed_count: self.trap_redirect_flushed_count
                 + other.trap_redirect_flushed_count,
@@ -921,6 +955,18 @@ impl InOrderPipelineRunSummary {
 
     pub const fn branch_prediction_redirect_count(self) -> usize {
         self.branch_prediction_redirect_count
+    }
+
+    pub const fn interrupt_redirect_count(self) -> usize {
+        self.interrupt_redirect_count
+    }
+
+    pub const fn interrupt_redirect_flushed_count(self) -> usize {
+        self.interrupt_redirect_flushed_count
+    }
+
+    pub const fn interrupt_redirect_flush_cycle_count(self) -> usize {
+        self.interrupt_redirect_flush_cycle_count
     }
 
     pub const fn trap_redirect_count(self) -> usize {
@@ -1087,6 +1133,18 @@ impl InOrderPipelineCycleSummary {
         self.branch_prediction_redirect_count
     }
 
+    pub const fn interrupt_redirect_count(self) -> usize {
+        self.interrupt_redirect_count
+    }
+
+    pub const fn interrupt_redirect_flushed_count(self) -> usize {
+        self.interrupt_redirect_flushed_count
+    }
+
+    pub const fn interrupt_redirect_flush_cycle_count(self) -> usize {
+        self.interrupt_redirect_flush_cycle_count
+    }
+
     pub const fn trap_redirect_count(self) -> usize {
         self.trap_redirect_count
     }
@@ -1177,11 +1235,26 @@ impl InOrderPipelineCycleRecord {
         let redirect_cause = self.plan.redirect().map(|redirect| redirect.cause());
         let branch_prediction_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::BranchPrediction));
+        let interrupt_redirect_count =
+            usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Interrupt));
+        let interrupt_redirect_flushed_count = match redirect_cause {
+            Some(InOrderPipelineRedirectCause::Interrupt) => self.plan.flushed().len(),
+            Some(
+                InOrderPipelineRedirectCause::BranchPrediction | InOrderPipelineRedirectCause::Trap,
+            )
+            | None => 0,
+        };
+        let interrupt_redirect_flush_cycle_count =
+            usize::from(interrupt_redirect_flushed_count > 0);
         let trap_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Trap));
         let trap_redirect_flushed_count = match redirect_cause {
             Some(InOrderPipelineRedirectCause::Trap) => self.plan.flushed().len(),
-            Some(InOrderPipelineRedirectCause::BranchPrediction) | None => 0,
+            Some(
+                InOrderPipelineRedirectCause::BranchPrediction
+                | InOrderPipelineRedirectCause::Interrupt,
+            )
+            | None => 0,
         };
         let trap_redirect_flush_cycle_count = usize::from(trap_redirect_flushed_count > 0);
 
@@ -1201,6 +1274,9 @@ impl InOrderPipelineCycleRecord {
             conditional_branch_misprediction_count,
             branch_prediction_flushed_count,
             branch_prediction_redirect_count,
+            interrupt_redirect_count,
+            interrupt_redirect_flushed_count,
+            interrupt_redirect_flush_cycle_count,
             trap_redirect_count,
             trap_redirect_flushed_count,
             trap_redirect_flush_cycle_count,

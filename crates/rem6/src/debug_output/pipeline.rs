@@ -56,6 +56,8 @@ pub(super) fn pipeline_trace_records(
                     let branch_prediction_flushed =
                         summary.branch_prediction_flushed_count() as u64;
                     let trap_redirect_flushed = summary.trap_redirect_flushed_count() as u64;
+                    let interrupt_redirect_flushed =
+                        summary.interrupt_redirect_flushed_count() as u64;
                     let branch_predictions = summary.branch_prediction_count() as u64;
                     let redirect_cause = cycle.plan().redirect().map(|redirect| redirect.cause());
                     Rem6PipelineTraceRecord {
@@ -66,6 +68,7 @@ pub(super) fn pipeline_trace_records(
                         flush_cause: pipeline_flush_cause(
                             branch_prediction_flushed,
                             trap_redirect_flushed,
+                            interrupt_redirect_flushed,
                         ),
                         redirect_cause: pipeline_redirect_cause(redirect_cause),
                         state_changed: summary.state_changed(),
@@ -151,10 +154,16 @@ impl Rem6PipelineTraceRecord {
 const fn pipeline_flush_cause(
     branch_prediction_flushed: u64,
     trap_redirect_flushed: u64,
+    interrupt_redirect_flushed: u64,
 ) -> Option<&'static str> {
-    match (branch_prediction_flushed, trap_redirect_flushed) {
-        (0, 0) => None,
-        (0, _) => Some("trap_redirect"),
+    match (
+        branch_prediction_flushed,
+        trap_redirect_flushed,
+        interrupt_redirect_flushed,
+    ) {
+        (0, 0, 0) => None,
+        (0, 0, _) => Some("interrupt_redirect"),
+        (0, _, _) => Some("trap_redirect"),
         _ => Some("branch_prediction"),
     }
 }

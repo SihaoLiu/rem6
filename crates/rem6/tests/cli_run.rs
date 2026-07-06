@@ -42,6 +42,8 @@ mod multi_run;
 mod pc_count_probes;
 #[path = "cli_run/pipeline_debug.rs"]
 mod pipeline_debug;
+#[path = "cli_run/pipeline_interrupt.rs"]
+mod pipeline_interrupt;
 #[path = "cli_run/power_import.rs"]
 mod power_import;
 #[path = "cli_run/readfile_resource.rs"]

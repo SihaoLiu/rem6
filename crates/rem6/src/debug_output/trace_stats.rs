@@ -111,6 +111,8 @@ struct PipelineStageTraceStatSummary {
     branch_prediction_flushed_cycles: u64,
     trap_redirect_flushed: u64,
     trap_redirect_flushed_cycles: u64,
+    interrupt_redirect_flushed: u64,
+    interrupt_redirect_flushed_cycles: u64,
     resource_blocked: u64,
     resource_blocked_cycles: u64,
 }
@@ -449,6 +451,13 @@ impl PipelineStageTraceStatSummary {
             .saturating_add(flushed_cycles);
     }
 
+    fn add_interrupt_redirect_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.interrupt_redirect_flushed = self.interrupt_redirect_flushed.saturating_add(flushed);
+        self.interrupt_redirect_flushed_cycles = self
+            .interrupt_redirect_flushed_cycles
+            .saturating_add(flushed_cycles);
+    }
+
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
         for (suffix, unit, value) in [
             ("before_in_flight", "Count", self.before_in_flight),
@@ -484,6 +493,16 @@ impl PipelineStageTraceStatSummary {
                 "trap_redirect_flushed_cycles",
                 "Cycle",
                 self.trap_redirect_flushed_cycles,
+            ),
+            (
+                "interrupt_redirect_flushed",
+                "Count",
+                self.interrupt_redirect_flushed,
+            ),
+            (
+                "interrupt_redirect_flushed_cycles",
+                "Cycle",
+                self.interrupt_redirect_flushed_cycles,
             ),
             ("resource_blocked", "Count", self.resource_blocked),
             (
@@ -751,6 +770,14 @@ pub(super) fn pipeline_trace_stats(
                         .entry(stage.clone())
                         .or_default()
                         .add_trap_redirect_flushed(*flushed, 1);
+                }
+            }
+            Some("interrupt_redirect") => {
+                for (stage, flushed) in &stage_flushed {
+                    stages
+                        .entry(stage.clone())
+                        .or_default()
+                        .add_interrupt_redirect_flushed(*flushed, 1);
                 }
             }
             Some(_) | None => {}

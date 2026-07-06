@@ -265,6 +265,24 @@ pub(super) fn emit_cpu_run_stats(
             core.in_order_pipeline_stage_trap_redirect_flushed_cycles
                 .values(),
         )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "interrupt_redirect_flushed",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_interrupt_redirect_flushed
+                .values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "interrupt_redirect_flushed_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles
+                .values(),
+        )?;
         for (cause, flushed, flushed_cycles) in [
             (
                 "branch_prediction",
@@ -275,6 +293,11 @@ pub(super) fn emit_cpu_run_stats(
                 "trap_redirect",
                 core.in_order_pipeline_stage_trap_redirect_flushed,
                 core.in_order_pipeline_stage_trap_redirect_flushed_cycles,
+            ),
+            (
+                "interrupt_redirect",
+                core.in_order_pipeline_stage_interrupt_redirect_flushed,
+                core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
             ),
         ] {
             emit_in_order_cause_stage_stats(
@@ -472,6 +495,33 @@ pub(super) fn emit_cpu_run_stats(
             "Count",
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_trap_redirects,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.pipeline.in_order.interrupt_redirects", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_interrupt_redirects,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.interrupt_redirect_flushes",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_interrupt_redirect_flushes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.interrupt_redirect_flush_cycles",
+                core.cpu
+            ),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_interrupt_redirect_flush_cycles,
         )?;
         increment_stat(
             stats,
