@@ -15,7 +15,8 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 10;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = 11;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS: u8 = 9;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS: u8 = 8;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS: u8 = 7;
@@ -90,6 +91,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -163,6 +165,20 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 true,
                 true,
+                true,
+            )?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS => read_o3_runtime_stats(
+                payload,
+                &mut offset,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS => read_o3_runtime_stats(
                 payload,
@@ -175,6 +191,7 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 true,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS => {
                 read_o3_runtime_stats(
@@ -186,6 +203,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                 )?
@@ -201,6 +219,7 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => {
                 read_o3_runtime_stats(
@@ -210,6 +229,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -227,12 +247,14 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
                 true,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -251,10 +273,12 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
+                false,
                 false,
                 false,
                 false,
@@ -437,6 +461,20 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         payload.extend_from_slice(&stats.lsq_operation_count(operation).to_le_bytes());
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(
+            &stats
+                .lsq_operation_forwarding_candidates(operation)
+                .to_le_bytes(),
+        );
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(
+            &stats
+                .lsq_operation_forwarding_matches(operation)
+                .to_le_bytes(),
+        );
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
         payload.extend_from_slice(&stats.lsq_operation_latency_samples(operation).to_le_bytes());
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
@@ -573,10 +611,13 @@ fn read_o3_runtime_stats(
     has_iew_branch_mispredict_split_stats: bool,
     has_iew_dependency_stats: bool,
     has_iq_branch_issued_stats: bool,
+    has_lsq_forwarding_matrix_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_forwarding_candidates = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_forwarding_matches = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_data_latency_samples = 0;
     let mut lsq_data_latency_ticks = 0;
     let mut lsq_data_latency_max_ticks = 0;
@@ -621,6 +662,14 @@ fn read_o3_runtime_stats(
     let lsq_store_conditional_failures = if has_lsq_matrix_stats {
         for operation in O3RuntimeLsqOperation::TRACKED {
             lsq_operation_counts[operation.index()] = read_u64(payload, offset)?;
+        }
+        if has_lsq_forwarding_matrix_stats {
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_forwarding_candidates[operation.index()] = read_u64(payload, offset)?;
+            }
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_forwarding_matches[operation.index()] = read_u64(payload, offset)?;
+            }
         }
         if has_lsq_latency_stats {
             for operation in O3RuntimeLsqOperation::TRACKED {
@@ -698,6 +747,8 @@ fn read_o3_runtime_stats(
         lsq_store_to_load_forwarding_candidates,
         lsq_store_to_load_forwarding_matches,
         lsq_operation_counts,
+        lsq_operation_forwarding_candidates,
+        lsq_operation_forwarding_matches,
         lsq_data_latency_samples,
         lsq_data_latency_ticks,
         lsq_data_latency_max_ticks,
@@ -802,6 +853,8 @@ mod tests {
 
     const BASE_AND_FU_STATS_BYTES: usize = (12 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES;
     const LSQ_OPERATION_STATS_BYTES: usize = O3RuntimeLsqOperation::TRACKED.len() * U64_BYTES;
+    const LSQ_OPERATION_FORWARDING_STATS_BYTES: usize =
+        O3RuntimeLsqOperation::TRACKED.len() * 2 * U64_BYTES;
     const LSQ_OPERATION_LATENCY_STATS_BYTES: usize =
         O3RuntimeLsqOperation::TRACKED.len() * 4 * U64_BYTES;
     const LSQ_DATA_LATENCY_STATS_BYTES: usize = 4 * U64_BYTES;
@@ -813,6 +866,7 @@ mod tests {
     const MAX_OCCUPANCY_STATS_BYTES: usize = 3 * U64_BYTES;
     const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
         + LSQ_OPERATION_STATS_BYTES
+        + LSQ_OPERATION_FORWARDING_STATS_BYTES
         + LSQ_OPERATION_LATENCY_STATS_BYTES
         + LSQ_DATA_LATENCY_STATS_BYTES
         + LSQ_ORDERING_STATS_BYTES
@@ -849,9 +903,11 @@ mod tests {
         .unwrap();
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let forwarding_offset = stats_offset + BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
         let data_latency_offset = stats_offset
             + BASE_AND_FU_STATS_BYTES
             + LSQ_OPERATION_STATS_BYTES
+            + LSQ_OPERATION_FORWARDING_STATS_BYTES
             + LSQ_OPERATION_LATENCY_STATS_BYTES;
         let split_offset = stats_offset + CURRENT_STATS_BYTES
             - IQ_BRANCH_ISSUED_STATS_BYTES
@@ -866,7 +922,8 @@ mod tests {
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v6_encoded = [
-            &encoded[..data_latency_offset],
+            &encoded[..forwarding_offset],
+            &encoded[forwarding_offset + LSQ_OPERATION_FORWARDING_STATS_BYTES..data_latency_offset],
             &encoded[data_latency_offset + LSQ_DATA_LATENCY_STATS_BYTES..split_offset],
             &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..dependency_offset],
             &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
@@ -907,6 +964,7 @@ mod tests {
         .unwrap();
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let forwarding_offset = stats_offset + BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
         let split_offset = stats_offset + CURRENT_STATS_BYTES
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
@@ -920,7 +978,8 @@ mod tests {
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v7_encoded = [
-            &encoded[..split_offset],
+            &encoded[..forwarding_offset],
+            &encoded[forwarding_offset + LSQ_OPERATION_FORWARDING_STATS_BYTES..split_offset],
             &encoded[split_offset + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..dependency_offset],
             &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
             &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
@@ -953,6 +1012,7 @@ mod tests {
         .unwrap();
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let forwarding_offset = stats_offset + BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
         let dependency_offset = stats_offset + CURRENT_STATS_BYTES
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - IEW_DEPENDENCY_STATS_BYTES
@@ -961,7 +1021,8 @@ mod tests {
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v8_encoded = [
-            &encoded[..dependency_offset],
+            &encoded[..forwarding_offset],
+            &encoded[forwarding_offset + LSQ_OPERATION_FORWARDING_STATS_BYTES..dependency_offset],
             &encoded[dependency_offset + IEW_DEPENDENCY_STATS_BYTES..iq_branch_offset],
             &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
         ]
@@ -988,11 +1049,13 @@ mod tests {
         .unwrap();
         let encoded = payload.encode();
         let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let forwarding_offset = stats_offset + BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
         let iq_branch_offset = stats_offset + CURRENT_STATS_BYTES
             - IQ_BRANCH_ISSUED_STATS_BYTES
             - MAX_OCCUPANCY_STATS_BYTES;
         let mut v9_encoded = [
-            &encoded[..iq_branch_offset],
+            &encoded[..forwarding_offset],
+            &encoded[forwarding_offset + LSQ_OPERATION_FORWARDING_STATS_BYTES..iq_branch_offset],
             &encoded[iq_branch_offset + IQ_BRANCH_ISSUED_STATS_BYTES..],
         ]
         .concat();
@@ -1003,5 +1066,49 @@ mod tests {
         let stats = decoded.stats();
 
         assert_eq!(stats.iq_branch_insts_issued(), 0);
+    }
+
+    #[test]
+    fn checkpoint_v10_payloads_decode_without_lsq_operation_forwarding_stats() {
+        let operation = O3RuntimeLsqOperation::Load;
+        let mut operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+        let mut operation_forwarding_candidates = [0; O3RuntimeLsqOperation::COUNT];
+        let mut operation_forwarding_matches = [0; O3RuntimeLsqOperation::COUNT];
+        operation_counts[operation.index()] = 2;
+        operation_forwarding_candidates[operation.index()] = 1;
+        operation_forwarding_matches[operation.index()] = 1;
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            super::super::default_o3_runtime_snapshot(),
+            O3RuntimeStats {
+                lsq_store_to_load_forwarding_candidates: 1,
+                lsq_store_to_load_forwarding_matches: 1,
+                lsq_operation_counts: operation_counts,
+                lsq_operation_forwarding_candidates: operation_forwarding_candidates,
+                lsq_operation_forwarding_matches: operation_forwarding_matches,
+                iq_branch_insts_issued: 3,
+                ..O3RuntimeStats::default()
+            },
+        )
+        .unwrap();
+        let encoded = payload.encode();
+        let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let forwarding_offset = stats_offset + BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
+        let mut v10_encoded = [
+            &encoded[..forwarding_offset],
+            &encoded[forwarding_offset + LSQ_OPERATION_FORWARDING_STATS_BYTES..],
+        ]
+        .concat();
+        v10_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS;
+
+        let decoded = O3RuntimeCheckpointPayload::decode(&v10_encoded).unwrap();
+        let stats = decoded.stats();
+
+        assert_eq!(stats.lsq_operation_count(operation), 2);
+        assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
+        assert_eq!(stats.iq_branch_insts_issued(), 3);
+        assert_eq!(stats.lsq_operation_forwarding_candidates(operation), 0);
+        assert_eq!(stats.lsq_operation_forwarding_matches(operation), 0);
     }
 }

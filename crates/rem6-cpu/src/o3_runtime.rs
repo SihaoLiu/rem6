@@ -621,7 +621,8 @@ impl O3RuntimeState {
         if o3_load_data_value(data, pending.bytes)
             .is_some_and(|value| o3_low_bytes_equal(value, pending.value, pending.bytes))
         {
-            self.stats.record_store_to_load_forwarding_match();
+            self.stats
+                .record_store_to_load_forwarding_match(pending.operation);
             self.mark_trace_store_forwarding_match(pending.trace_sequence);
         }
     }
@@ -746,6 +747,7 @@ struct O3PendingLoadForwardingMatch {
     address: Address,
     bytes: u32,
     value: u64,
+    operation: O3RuntimeLsqOperation,
     trace_sequence: Option<u64>,
 }
 

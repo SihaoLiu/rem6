@@ -3119,6 +3119,57 @@ fn rem6_run_records_o3_lsq_store_load_matches_after_detailed_switch() {
         1,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.lsq_operation.load_forwarding_matches",
+        "Count",
+        1,
+        "monotonic",
+    );
+    for path in [
+        "sim.cpu0.o3.lsq_operation.store_forwarding_candidates",
+        "sim.cpu0.o3.lsq_operation.store_forwarding_matches",
+        "sim.cpu0.o3.lsq_operation.store_conditional_forwarding_candidates",
+        "sim.cpu0.o3.lsq_operation.store_conditional_forwarding_matches",
+        "sim.cpu0.o3.lsq_operation.atomic_forwarding_candidates",
+        "sim.cpu0.o3.lsq_operation.atomic_forwarding_matches",
+    ] {
+        assert_json_stat(&json, path, "Count", 0, "monotonic");
+    }
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_operation_load_forwarding_candidates")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_operation_load_forwarding_matches")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_operation_store_forwarding_candidates")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_operation_store_forwarding_matches")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
 }
 
 #[test]
@@ -5216,6 +5267,46 @@ fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingCandidates", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingMatches", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.forwLoads", 1);
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_operation.load_forwarding_matches",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_operation.store_forwarding_candidates",
+        0,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.lsq_operation.store_forwarding_matches",
+        0,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.lsq0.operation.store.storeLoadForwardingCandidates",
+        0,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.lsq0.operation.store.storeLoadForwardingMatches",
+        0,
+    );
 }
 
 #[test]

@@ -1214,6 +1214,29 @@ fn emit_o3_runtime_stats(
             StatResetPolicy::Monotonic,
             o3.lsq_operation_count(operation),
         )?;
+        for (suffix, value) in [
+            (
+                "forwarding_candidates",
+                o3.lsq_operation_forwarding_candidates(operation),
+            ),
+            (
+                "forwarding_matches",
+                o3.lsq_operation_forwarding_matches(operation),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.lsq_operation.{}_{}",
+                    core.cpu,
+                    operation.as_str(),
+                    suffix
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
         for (suffix, unit, value) in [
             (
                 "latency_samples",
@@ -1462,6 +1485,25 @@ fn emit_o3_runtime_stats(
             StatResetPolicy::Monotonic,
             value,
         )?;
+        let operation_alias = o3_lsq_operation_alias(operation);
+        for (name, value) in [
+            (
+                "storeLoadForwardingCandidates",
+                o3.lsq_operation_forwarding_candidates(operation),
+            ),
+            (
+                "storeLoadForwardingMatches",
+                o3.lsq_operation_forwarding_matches(operation),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{gem5_cpu_alias_prefix}.lsq0.operation.{operation_alias}.{name}"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     increment_stat(
         stats,

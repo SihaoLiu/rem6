@@ -109,6 +109,18 @@ fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
                     summary.o3_runtime.lsq_operation_count(operation)
                 ),
                 format!(
+                    "\"lsq_operation_{name}_forwarding_candidates\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_forwarding_candidates(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_forwarding_matches\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_forwarding_matches(operation)
+                ),
+                format!(
                     "\"lsq_operation_{name}_latency_ticks\":{}",
                     summary.o3_runtime.lsq_operation_latency_ticks(operation)
                 ),
