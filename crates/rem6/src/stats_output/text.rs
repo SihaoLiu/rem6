@@ -720,6 +720,14 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 &format!("{alias_prefix}.iew.writebackCount::total"),
                 writeback_count,
             );
+            if let Some(cycles) = snapshot_value(snapshot, &format!("{alias_prefix}.numCycles")) {
+                append_derived_count_per_cycle_stat(
+                    output,
+                    &format!("{alias_prefix}.iew.wbRate"),
+                    writeback_count,
+                    cycles,
+                );
+            }
         }
     }
 }
@@ -1224,6 +1232,16 @@ fn append_derived_ratio_stat(output: &mut String, path: &str, numerator: u64, de
     ));
 }
 
+fn append_derived_count_per_cycle_stat(output: &mut String, path: &str, count: u64, cycles: u64) {
+    if cycles == 0 {
+        return;
+    }
+    output.push_str(&format!(
+        "{path:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
+        format_fixed_ratio(count, cycles)
+    ));
+}
+
 fn append_gem5_mem_ctrl_bandwidth_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
     let (Some(final_tick), Some(sim_freq)) = (
         snapshot_value(snapshot, "finalTick"),
@@ -1542,6 +1560,26 @@ mod tests {
         assert!(!text.contains("system.cpu.main.commitStats0.ipc"));
         assert!(!text.contains("system.cpu1.ipc"));
         assert!(!text.contains("system.cpu1.commitStats0.ipc"));
+    }
+
+    #[test]
+    fn stats_output_renders_zero_o3_wb_rate_when_writeback_stat_is_present() {
+        let mut stats = StatsRegistry::new();
+        let cores = stats.register_counter("sim.cores", "Count").unwrap();
+        let cycles = stats
+            .register_counter("system.cpu.numCycles", "Cycle")
+            .unwrap();
+        stats
+            .register_counter("sim.cpu0.o3.iew.writeback_count", "Count")
+            .unwrap();
+        stats.increment(cores, 1).unwrap();
+        stats.increment(cycles, 12).unwrap();
+
+        let text = stats_snapshot_text(&stats.snapshot(0));
+
+        assert!(text.contains("system.cpu.iew.writebackCount::total"));
+        assert!(text.contains("system.cpu.iew.wbRate"));
+        assert!(text.contains("0.000000 # kind=derived unit=(Count/Cycle)"));
     }
 
     #[test]

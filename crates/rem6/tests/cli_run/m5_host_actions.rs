@@ -3834,6 +3834,14 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit::total", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.writebackCount::total", 6);
+    let writeback_count = text_stat_u64(&stdout, "system.cpu.iew.writebackCount::total");
+    let cycles = text_stat_u64(&stdout, "system.cpu.numCycles");
+    assert_text_ratio_stat(
+        &stdout,
+        "system.cpu.iew.wbRate",
+        &fixed_ratio_text(writeback_count, cycles),
+        "(Count/Cycle)",
+    );
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
@@ -4309,6 +4317,7 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.instsToCommit::total",
         "sim.cpu0.o3.iew.writeback_count",
         "system.cpu.iew.writebackCount::total",
+        "system.cpu.iew.wbRate",
         "sim.cpu0.o3.iew.predicted_taken_incorrect",
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "system.cpu.iew.predictedTakenIncorrect",
@@ -5832,6 +5841,28 @@ fn assert_text_cycle_stat(stdout: &str, path: &str, value: u64) {
     );
 }
 
+fn assert_text_ratio_stat(stdout: &str, path: &str, value: &str, unit: &str) {
+    let line = text_stat_line(stdout, path);
+    let actual = line.split_whitespace().nth(1);
+    assert_eq!(
+        actual,
+        Some(value),
+        "unexpected text stat value for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("kind=derived"),
+        "missing derived kind for {path} in line: {line}"
+    );
+    assert!(
+        line.contains(&format!("unit={unit}")),
+        "missing {unit} unit for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("reset_policy=monotonic"),
+        "missing monotonic reset policy for {path} in line: {line}"
+    );
+}
+
 fn assert_text_histogram_sample(stdout: &str, path: &str, unit: &str, value: u64) -> u64 {
     let line = text_stat_line(stdout, path);
     let actual = line
@@ -5882,6 +5913,19 @@ fn text_stat_line<'a>(stdout: &'a str, path: &str) -> &'a str {
         .lines()
         .find(|line| line.split_whitespace().next() == Some(path))
         .unwrap_or_else(|| panic!("missing text stat {path} in stdout:\n{stdout}"))
+}
+
+fn text_stat_u64(stdout: &str, path: &str) -> u64 {
+    text_stat_line(stdout, path)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("text stat {path} should have an integer value"))
+}
+
+fn fixed_ratio_text(numerator: u64, denominator: u64) -> String {
+    assert_ne!(denominator, 0, "ratio denominator must be nonzero");
+    format!("{:.6}", numerator as f64 / denominator as f64)
 }
 
 fn assert_text_stat_absent(stdout: &str, path: &str) {
