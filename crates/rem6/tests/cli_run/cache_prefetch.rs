@@ -993,6 +993,139 @@ fn rem6_run_instruction_cache_prefetcher_translates_page_crossing_next_line() {
     );
 }
 
+#[test]
+fn rem6_run_instruction_cache_prefetcher_routes_translated_prefetch_through_non_msi_l2_l3() {
+    let mut program = riscv64_program(&[
+        0x0000_0073, // ecall
+    ]);
+    program.resize(64, 0);
+    let elf = riscv64_elf(0x8000_0ff0, 0x8000_0ff0, &program);
+    let path = temp_binary(
+        "instruction-cache-prefetch-non-msi-hierarchy-translation",
+        &elf,
+    );
+
+    for protocol in ["mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "140",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--instruction-cache-protocol",
+                protocol,
+                "--instruction-cache-l2-protocol",
+                protocol,
+                "--instruction-cache-l3-protocol",
+                protocol,
+                "--instruction-cache-prefetcher",
+                "tagged-next-line",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "protocol {protocol} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout).unwrap();
+
+        assert_eq!(
+            json.pointer("/simulation/status").and_then(Value::as_str),
+            Some("executed_until_trap"),
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("\"committed_instructions\":1"),
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_eq!(
+            json_u64(
+                &json,
+                "/memory_resources/cache/instruction/l1/prefetch_translation_queue_translated"
+            ),
+            1,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_eq!(
+            json_u64(
+                &json,
+                "/memory_resources/cache/instruction/l1/prefetch_translation_queue_dropped"
+            ),
+            0,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_eq!(
+            json_u64(
+                &json,
+                "/memory_resources/cache/instruction/l1/prefetch_fills"
+            ),
+            1,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_eq!(
+            json_u64(
+                &json,
+                "/memory_resources/cache/instruction/l2/prefetch_fills"
+            ),
+            1,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_eq!(
+            json_u64(
+                &json,
+                "/memory_resources/cache/instruction/l3/prefetch_fills"
+            ),
+            1,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert!(
+            json_u64(&json, "/memory_resources/cache/instruction/l2/activity") >= 2,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert!(
+            json_u64(&json, "/memory_resources/cache/instruction/l3/activity") >= 2,
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert_stat(
+            &stdout,
+            "sim.instruction_cache.l2.prefetch.fills",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            "sim.instruction_cache.l3.prefetch.fills",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.resources.cache.instruction.l2.prefetch.fills",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.resources.cache.instruction.l3.prefetch.fills",
+            "Count",
+            1,
+            "monotonic",
+        );
+    }
+}
+
 fn json_u64(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
