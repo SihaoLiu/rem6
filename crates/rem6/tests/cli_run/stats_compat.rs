@@ -16030,6 +16030,24 @@ fn rem6_run_stats_emit_in_order_trap_redirect_flushes_from_execution() {
         json_stage_summary(&stdout, "\"stage_trap_redirect_flushed\":{");
     let stage_trap_redirect_flushed_cycles =
         json_stage_summary(&stdout, "\"stage_trap_redirect_flushed_cycles\":{");
+    let flush_cause_trap_redirect_flushed = ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .map(|stage| {
+            stat_value(
+                &stdout,
+                &format!(
+                    "sim.cpu0.pipeline.in_order.flush_cause.trap_redirect.stage.{stage}.flushed"
+                ),
+            )
+        });
+    let flush_cause_trap_redirect_flushed_cycles =
+        ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+            stat_value(
+                &stdout,
+                &format!(
+                "sim.cpu0.pipeline.in_order.flush_cause.trap_redirect.stage.{stage}.flushed_cycles"
+            ),
+            )
+        });
 
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
@@ -16097,6 +16115,20 @@ fn rem6_run_stats_emit_in_order_trap_redirect_flushes_from_execution() {
     assert_eq!(
         stage_trap_redirect_flushed_cycles.iter().sum::<u64>(),
         trap_redirect_flush_cycles
+    );
+    assert_eq!(
+        flush_cause_trap_redirect_flushed,
+        stage_trap_redirect_flushed
+    );
+    assert_eq!(
+        flush_cause_trap_redirect_flushed_cycles,
+        stage_trap_redirect_flushed_cycles
+    );
+    assert!(
+        flush_cause_trap_redirect_flushed_cycles
+            .iter()
+            .any(|value| *value > 0),
+        "{stdout}"
     );
     for (index, stage) in ["fetch1", "fetch2", "decode", "execute", "commit"]
         .iter()

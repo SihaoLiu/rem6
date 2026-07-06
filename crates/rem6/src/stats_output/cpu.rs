@@ -233,6 +233,37 @@ pub(super) fn emit_cpu_run_stats(
             core.in_order_pipeline_stage_trap_redirect_flushed_cycles
                 .values(),
         )?;
+        for (cause, flushed, flushed_cycles) in [
+            (
+                "branch_prediction",
+                core.in_order_pipeline_stage_branch_prediction_flushed,
+                core.in_order_pipeline_stage_branch_prediction_flushed_cycles,
+            ),
+            (
+                "trap_redirect",
+                core.in_order_pipeline_stage_trap_redirect_flushed,
+                core.in_order_pipeline_stage_trap_redirect_flushed_cycles,
+            ),
+        ] {
+            emit_in_order_flush_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "flushed",
+                "Count",
+                StatResetPolicy::Monotonic,
+                flushed.values(),
+            )?;
+            emit_in_order_flush_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "flushed_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                flushed_cycles.values(),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
@@ -1393,6 +1424,33 @@ fn emit_in_order_stall_cause_stage_stats(
             stats,
             &format!(
                 "sim.cpu{}.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{name}",
+                core.cpu
+            ),
+            unit,
+            reset_policy,
+            value,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_in_order_flush_cause_stage_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+    cause: &str,
+    name: &str,
+    unit: &'static str,
+    reset_policy: StatResetPolicy,
+    values: [u64; 5],
+) -> Result<(), Rem6CliError> {
+    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(values)
+    {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.flush_cause.{cause}.stage.{stage}.{name}",
                 core.cpu
             ),
             unit,
