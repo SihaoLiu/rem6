@@ -729,7 +729,7 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .iter()
         .map(json_record_for_sample)
         .collect::<Vec<_>>();
-    append_gem5_o3_iew_json_alias_stats(snapshot, &mut records);
+    append_gem5_o3_json_alias_stats(snapshot, &mut records);
     let samples = records.join(",");
     format!("[{samples}]")
 }
@@ -772,7 +772,7 @@ fn json_record_for_sample(sample: &StatSample) -> String {
     )
 }
 
-fn append_gem5_o3_iew_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
+fn append_gem5_o3_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
     let Some(core_count) = snapshot_sample_value(snapshot, "sim.cores") else {
         return;
     };
@@ -786,13 +786,20 @@ fn append_gem5_o3_iew_json_alias_stats(snapshot: &StatSnapshot, records: &mut Ve
 
     for cpu in 0..core_count {
         let alias_prefix = gem5_json_cpu_alias_prefix(core_count, cpu);
+        append_gem5_o3_op_class_json_alias_stats(
+            snapshot,
+            records,
+            &mut next_id,
+            cpu,
+            &alias_prefix,
+        );
         for (source_suffix, alias_suffix) in [
             ("iew.insts_to_commit", "iew.instsToCommit.total"),
             ("iew.writeback_count", "iew.writebackCount.total"),
             ("iew.producer_inst", "iew.producerInst.total"),
             ("iew.consumer_inst", "iew.consumerInst.total"),
         ] {
-            append_gem5_o3_iew_json_alias_from_sample(
+            append_gem5_o3_json_alias_from_sample(
                 snapshot,
                 records,
                 &mut next_id,
@@ -806,7 +813,7 @@ fn append_gem5_o3_iew_json_alias_stats(snapshot: &StatSnapshot, records: &mut Ve
             ("iew.writeback_rate_ppm", "iew.wbRate"),
             ("iew.producer_consumer_fanout_ppm", "iew.wbFanout"),
         ] {
-            append_gem5_o3_iew_json_alias_from_sample(
+            append_gem5_o3_json_alias_from_sample(
                 snapshot,
                 records,
                 &mut next_id,
@@ -819,7 +826,41 @@ fn append_gem5_o3_iew_json_alias_stats(snapshot: &StatSnapshot, records: &mut Ve
     }
 }
 
-fn append_gem5_o3_iew_json_alias_from_sample(
+fn append_gem5_o3_op_class_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for (source_suffix, alias_suffix) in [
+        ("iq.issued_inst_type.mem_read", "iq.issuedInstType.MemRead"),
+        (
+            "iq.issued_inst_type.mem_write",
+            "iq.issuedInstType.MemWrite",
+        ),
+        (
+            "commit.committed_inst_type.mem_read",
+            "commit.committedInstType.MemRead",
+        ),
+        (
+            "commit.committed_inst_type.mem_write",
+            "commit.committedInstType.MemWrite",
+        ),
+    ] {
+        append_gem5_o3_json_alias_from_sample(
+            snapshot,
+            records,
+            next_id,
+            cpu,
+            source_suffix,
+            alias_prefix,
+            alias_suffix,
+        );
+    }
+}
+
+fn append_gem5_o3_json_alias_from_sample(
     snapshot: &StatSnapshot,
     records: &mut Vec<String>,
     next_id: &mut u64,

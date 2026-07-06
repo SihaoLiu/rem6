@@ -829,7 +829,21 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.iq.issuedInstType.MemRead",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.iq.issued_inst_type.mem_write",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iq.issuedInstType.MemWrite",
         "Count",
         1,
         "monotonic",
@@ -843,7 +857,21 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "system.cpu.commit.committedInstType.MemRead",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.cpu0.o3.commit.committed_inst_type.mem_write",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.commit.committedInstType.MemWrite",
         "Count",
         1,
         "monotonic",
@@ -1182,6 +1210,24 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         1,
         "monotonic",
     );
+    let iq_mem_read = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.mem_read");
+    let iq_mem_write = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.mem_write");
+    let commit_mem_read = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.mem_read");
+    let commit_mem_write = json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.mem_write");
+    for (path, value) in [
+        ("system.cpu1.iq.issuedInstType.MemRead", iq_mem_read),
+        ("system.cpu1.iq.issuedInstType.MemWrite", iq_mem_write),
+        (
+            "system.cpu1.commit.committedInstType.MemRead",
+            commit_mem_read,
+        ),
+        (
+            "system.cpu1.commit.committedInstType.MemWrite",
+            commit_mem_write,
+        ),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
     let insts_to_commit = json_stat_u64(&json, "sim.cpu1.o3.iew.insts_to_commit");
     let writeback_count = json_stat_u64(&json, "sim.cpu1.o3.iew.writeback_count");
     let producer_inst = json_stat_u64(&json, "sim.cpu1.o3.iew.producer_inst");
@@ -1224,6 +1270,14 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         "system.cpu.iew.consumerInst.total",
         "system.cpu.iew.wbRate",
         "system.cpu.iew.wbFanout",
+        "system.cpu0.iq.issuedInstType.MemRead",
+        "system.cpu0.iq.issuedInstType.MemWrite",
+        "system.cpu0.commit.committedInstType.MemRead",
+        "system.cpu0.commit.committedInstType.MemWrite",
+        "system.cpu.iq.issuedInstType.MemRead",
+        "system.cpu.iq.issuedInstType.MemWrite",
+        "system.cpu.commit.committedInstType.MemRead",
+        "system.cpu.commit.committedInstType.MemWrite",
     ] {
         assert_json_stat_absent(&json, path);
     }
@@ -5060,6 +5114,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.writebackCount.total");
     assert_json_stat_absent(&json, "system.cpu.iew.producerInst.total");
     assert_json_stat_absent(&json, "system.cpu.iew.consumerInst.total");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemRead");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemWrite");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemRead");
+    assert_json_stat_absent(&json, "system.cpu.commit.committedInstType.MemWrite");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_json_stat_absent(&json, "system.cpu.lsq0.dataResponse.samples");
