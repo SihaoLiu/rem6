@@ -883,6 +883,22 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         4,
         "monotonic",
     );
+    let writeback_count = json_stat_u64(&json, "sim.cpu0.o3.iew.writeback_count");
+    let cycles = json_stat_u64(&json, "system.cpu.numCycles");
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.writeback_rate_ppm",
+        "Ppm",
+        ratio_ppm(writeback_count, cycles),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.producer_consumer_fanout_ppm",
+        "Ppm",
+        ratio_ppm(3, 4),
+        "monotonic",
+    );
     assert_json_stat(
         &json,
         "system.cpu.iew.dispatchedInsts",
@@ -890,6 +906,62 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         6,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "system.cpu.rename.renamedInsts",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.rename.renamedOperands",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.dispLoadInsts",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.dispStoreInsts",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.lsq0.addedLoadsAndStores",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(&json, "system.cpu.lsq0.loadBytes", "Byte", 4, "monotonic");
+    assert_json_stat(&json, "system.cpu.lsq0.storeBytes", "Byte", 4, "monotonic");
+    let forwarding_matches =
+        json_stat_u64(&json, "sim.cpu0.o3.lsq_store_to_load_forwarding_matches");
+    assert_json_stat(
+        &json,
+        "system.cpu.lsq0.forwLoads",
+        "Count",
+        forwarding_matches,
+        "monotonic",
+    );
+    assert_json_stat(&json, "system.cpu.iq.instsIssued", "Count", 6, "monotonic");
+    assert_json_stat(
+        &json,
+        "system.cpu.iq.memInstsIssued",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(&json, "system.cpu.rob.writes", "Count", 6, "monotonic");
+    assert_json_stat(&json, "system.cpu.rob.reads", "Count", 6, "monotonic");
     let o3_runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
@@ -4011,8 +4083,15 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
+    let forwarding_matches =
+        text_stat_u64(&stdout, "sim.cpu0.o3.lsq_store_to_load_forwarding_matches");
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.forwLoads", forwarding_matches);
     assert_text_count_stat(&stdout, "system.cpu.iq.instsIssued", 6);
     assert_text_count_stat(&stdout, "system.cpu.iq.memInstsIssued", 2);
+    assert_text_stat_occurs_once(&stdout, "system.cpu.lsq0.forwLoads");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iq.instsIssued");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iq.memInstsIssued");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.iq.branchInstsIssued");
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::MemRead", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::MemWrite", 1);
     assert_text_count_stat(
@@ -6539,6 +6618,27 @@ fn parse_hex_u64(value: &str) -> u64 {
         .unwrap_or_else(|| panic!("checksum should use 0x prefix: {value}"));
     u64::from_str_radix(digits, 16)
         .unwrap_or_else(|error| panic!("invalid checksum {value}: {error}"))
+}
+
+fn json_stat_u64(json: &Value, path: &str) -> u64 {
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    stats
+        .iter()
+        .find(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        .and_then(|sample| sample.pointer("/value"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing u64 stat path {path} in {stats:?}"))
+}
+
+fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
+    ppm.min(u128::from(u64::MAX)) as u64
 }
 
 fn assert_json_stat(json: &Value, path: &str, unit: &str, value: u64, reset_policy: &str) {

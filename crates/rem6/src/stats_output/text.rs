@@ -615,8 +615,9 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         if let Some(instructions) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.instructions"))
         {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iq.instsIssued"),
                 instructions,
             );
@@ -625,20 +626,21 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.lsq_loads")),
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.lsq_stores")),
         ) {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iq.memInstsIssued"),
                 loads.saturating_add(stores),
             );
         }
-        append_derived_stat_from_snapshot(
+        append_derived_stat_from_snapshot_if_absent(
             output,
             snapshot,
             &format!("sim.cpu{cpu}.o3.iq.branch_insts_issued"),
             &format!("{alias_prefix}.iq.branchInstsIssued"),
             "Count",
         );
-        append_derived_stat_from_snapshot(
+        append_derived_stat_from_snapshot_if_absent(
             output,
             snapshot,
             &format!("sim.cpu{cpu}.o3.lsq_store_to_load_forwarding_matches"),
@@ -674,8 +676,9 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         for (op_class, source_name) in [("MemRead", "lsq_loads"), ("MemWrite", "lsq_stores")] {
             let source_path = format!("sim.cpu{cpu}.o3.{source_name}");
             if let Some(value) = snapshot_value(snapshot, &source_path) {
-                append_derived_count_stat(
+                append_derived_count_stat_if_absent(
                     output,
+                    snapshot,
                     &format!("{alias_prefix}.iq.issuedInstType_0::{op_class}"),
                     value,
                 );
@@ -703,8 +706,9 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         ] {
             let source_path = format!("sim.cpu{cpu}.o3.fu_{}_instructions", class.stat_stem());
             if let Some(value) = snapshot_value(snapshot, &source_path) {
-                append_derived_count_stat(
+                append_derived_count_stat_if_absent(
                     output,
+                    snapshot,
                     &format!("{alias_prefix}.iq.issuedInstType_0::{op_class}"),
                     value,
                 );
@@ -732,7 +736,7 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             ("SimdFloatDiv", "vector_float_div"),
             ("SimdFloatSqrt", "vector_float_sqrt"),
         ] {
-            append_derived_stat_from_snapshot(
+            append_derived_stat_from_snapshot_if_absent(
                 output,
                 snapshot,
                 &format!("sim.cpu{cpu}.o3.commit.committed_inst_type.{source_name}"),
@@ -743,8 +747,9 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         if let Some(insts_to_commit) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.insts_to_commit"))
         {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iew.instsToCommit::total"),
                 insts_to_commit,
             );
@@ -752,8 +757,9 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         if let Some(writeback_count) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.writeback_count"))
         {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iew.writebackCount::total"),
                 writeback_count,
             );
@@ -769,15 +775,17 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
         let producer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.producer_inst"));
         let consumer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.consumer_inst"));
         if let Some(producer_inst) = producer_inst {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iew.producerInst::total"),
                 producer_inst,
             );
         }
         if let Some(consumer_inst) = consumer_inst {
-            append_derived_count_stat(
+            append_derived_count_stat_if_absent(
                 output,
+                snapshot,
                 &format!("{alias_prefix}.iew.consumerInst::total"),
                 consumer_inst,
             );
@@ -1259,6 +1267,17 @@ fn append_derived_count_stat(output: &mut String, path: &str, value: u64) {
     append_derived_unit_stat(output, path, value, "Count");
 }
 
+fn append_derived_count_stat_if_absent(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    path: &str,
+    value: u64,
+) {
+    if snapshot_value(snapshot, path).is_none() {
+        append_derived_count_stat(output, path, value);
+    }
+}
+
 fn append_derived_cycle_stat(output: &mut String, path: &str, value: u64) {
     append_derived_unit_stat(output, path, value, "Cycle");
 }
@@ -1283,6 +1302,18 @@ fn append_derived_stat_from_snapshot(
         "Count" => append_derived_count_stat(output, alias_path, value),
         "Cycle" => append_derived_cycle_stat(output, alias_path, value),
         _ => append_derived_unit_stat(output, alias_path, value, unit),
+    }
+}
+
+fn append_derived_stat_from_snapshot_if_absent(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    source_path: &str,
+    alias_path: &str,
+    unit: &str,
+) {
+    if snapshot_value(snapshot, alias_path).is_none() {
+        append_derived_stat_from_snapshot(output, snapshot, source_path, alias_path, unit);
     }
 }
 

@@ -1143,10 +1143,11 @@ fn emit_o3_runtime_stats(
             o3.fu_latency_class_instructions(class),
         )?;
     }
+    let writeback_count = o3.instructions();
     for (name, value) in [
         ("dispatched_insts", o3.instructions()),
         ("insts_to_commit", o3.rob_commits()),
-        ("writeback_count", o3.instructions()),
+        ("writeback_count", writeback_count),
         ("producer_inst", o3.iew_producer_insts()),
         ("consumer_inst", o3.iew_consumer_insts()),
         (
@@ -1218,6 +1219,12 @@ fn emit_o3_runtime_stats(
             "lsq0.storeLoadForwardingMatches",
             o3.lsq_store_to_load_forwarding_matches(),
         ),
+        ("lsq0.forwLoads", o3.lsq_store_to_load_forwarding_matches()),
+        ("iq.instsIssued", o3.instructions()),
+        (
+            "iq.memInstsIssued",
+            o3.lsq_loads().saturating_add(o3.lsq_stores()),
+        ),
         ("iq.branchInstsIssued", o3.iq_branch_insts_issued()),
     ] {
         increment_stat(
@@ -1238,6 +1245,26 @@ fn emit_o3_runtime_stats(
             "Byte",
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+    for (name, numerator, denominator) in [
+        (
+            "iew.writeback_rate_ppm",
+            writeback_count,
+            core.in_order_pipeline_cycles,
+        ),
+        (
+            "iew.producer_consumer_fanout_ppm",
+            o3.iew_producer_insts(),
+            o3.iew_consumer_insts(),
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.{name}", core.cpu),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            ratio_ppm(numerator, denominator),
         )?;
     }
     let branch_mispredicts = o3
@@ -1262,6 +1289,14 @@ fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'stati
         O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
         _ => class.stat_stem(),
     }
+}
+
+fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
+    ppm.min(u128::from(u64::MAX)) as u64
 }
 
 fn emit_branch_predictor_counter_stats<const N: usize>(
