@@ -145,6 +145,139 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
 }
 
 #[test]
+fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug_flag() {
+    let program = riscv64_program(&[
+        i_type(97, 0, 0x0, 11, 0x13),        // addi x11, x0, 97
+        i_type(3, 0, 0x0, 12, 0x13),         // addi x12, x0, 3
+        r_type(0x01, 12, 11, 0x4, 10, 0x33), // div x10, x11, x12
+        i_type(1, 0, 0x0, 8, 0x13),          // addi x8, x0, 1
+        i_type(2, 0, 0x0, 9, 0x13),          // addi x9, x0, 2
+        0x0000_0073,                         // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-execute-wait-ordering-stage-matrix-stats", &elf);
+
+    let json_stdout = run_execute_wait_ordering_program(&path, "json");
+    let json: Value = serde_json::from_str(&json_stdout).unwrap();
+    assert!(
+        json.pointer("/debug/pipeline_trace").is_none(),
+        "normal stats evidence should not require Pipeline debug trace: {json_stdout}"
+    );
+    assert!(json_stdout.contains("\"x10\":\"0x20\""));
+    assert!(json_stdout.contains("\"x8\":\"0x1\""));
+    assert!(json_stdout.contains("\"x9\":\"0x2\""));
+    assert_eq!(
+        json_stat_value(
+            &json,
+            "sim.cpu0.pipeline.in_order.branch_prediction_redirects"
+        ),
+        0
+    );
+
+    let execute_wait_cycles =
+        json_stat_value(&json, "sim.cpu0.pipeline.in_order.execute_wait_cycles");
+    assert!(execute_wait_cycles > 0, "{json_stdout}");
+    let execute_wait_resource =
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked");
+    let execute_wait_resource_cycles =
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "resource_blocked_cycles");
+    let execute_wait_ordering =
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "ordering_blocked");
+    let execute_wait_ordering_cycles =
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "ordering_blocked_cycles");
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "resource_blocked"
+        ),
+        execute_wait_resource
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "resource_blocked_cycles"
+        ),
+        execute_wait_resource_cycles
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "ordering_blocked"
+        ),
+        execute_wait_ordering
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(
+            &json,
+            "execute_wait",
+            "ordering_blocked_cycles"
+        ),
+        execute_wait_ordering_cycles
+    );
+    assert!(
+        execute_wait_resource_cycles.iter().any(|cycles| *cycles > 0),
+        "execute-wait run should attribute resource-blocked stage cycles: {execute_wait_resource_cycles:?}"
+    );
+    assert!(
+        execute_wait_ordering.iter().any(|blocked| *blocked > 0),
+        "execute-wait run should attribute younger ordering-blocked instructions: {execute_wait_ordering:?}"
+    );
+    assert!(
+        execute_wait_ordering_cycles.iter().any(|cycles| *cycles > 0),
+        "execute-wait run should attribute younger ordering-blocked stage cycles: {execute_wait_ordering_cycles:?}"
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "data_wait", "ordering_blocked"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "data_wait", "ordering_blocked_cycles"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "ordering_blocked"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "ordering_blocked_cycles"),
+        [0; 5]
+    );
+
+    let text_stdout = run_execute_wait_ordering_program(&path, "text");
+    for (stage, ordering_blocked) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(execute_wait_ordering)
+    {
+        assert_eq!(
+            text_stat_value(
+                &text_stdout,
+                &format!(
+                    "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.{stage}.orderingBlocked"
+                ),
+            ),
+            ordering_blocked
+        );
+    }
+    for (stage, ordering_blocked_cycles) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(execute_wait_ordering_cycles)
+    {
+        assert_eq!(
+            text_stat_value(
+                &text_stdout,
+                &format!(
+                    "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.{stage}.orderingBlockedCycles"
+                ),
+            ),
+            ordering_blocked_cycles
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
@@ -1346,6 +1479,59 @@ fn json_record_bool(record: &Value, field: &str) -> bool {
         .get(field)
         .and_then(Value::as_bool)
         .unwrap_or_else(|| panic!("missing bool field {field} in record {record}"))
+}
+
+fn text_stat_value(stdout: &str, path: &str) -> u64 {
+    stdout
+        .lines()
+        .find_map(|line| {
+            let mut columns = line.split_whitespace();
+            let sample_path = columns.next()?;
+            if sample_path == path {
+                columns.next()?.parse().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("missing text stat {path}: {stdout}"))
+}
+
+fn run_execute_wait_ordering_program(path: &std::path::Path, stats_format: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            stats_format,
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
 }
 
 fn json_stat_value(json: &Value, path: &str) -> u64 {

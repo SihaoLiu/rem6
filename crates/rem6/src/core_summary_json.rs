@@ -54,11 +54,15 @@ fn in_order_pipeline_stage_summary_json(summary: Rem6InOrderPipelineStageSummary
 fn in_order_pipeline_stall_cause_stage_summary_json(
     resource_blocked: Rem6InOrderPipelineStageSummary,
     resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
+    ordering_blocked: Rem6InOrderPipelineStageSummary,
+    ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
     format!(
-        "{{\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{}}}",
+        "{{\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{},\"stage_ordering_blocked_cycles\":{}}}",
         in_order_pipeline_stage_summary_json(resource_blocked),
-        in_order_pipeline_stage_summary_json(resource_blocked_cycles)
+        in_order_pipeline_stage_summary_json(resource_blocked_cycles),
+        in_order_pipeline_stage_summary_json(ordering_blocked),
+        in_order_pipeline_stage_summary_json(ordering_blocked_cycles)
     )
 }
 
@@ -317,14 +321,20 @@ impl Rem6CoreSummary {
         let stall_cause_fetch_wait = in_order_pipeline_stall_cause_stage_summary_json(
             self.in_order_pipeline_fetch_wait_stage_resource_blocked,
             self.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
+            self.in_order_pipeline_fetch_wait_stage_ordering_blocked,
+            self.in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_data_wait = in_order_pipeline_stall_cause_stage_summary_json(
             self.in_order_pipeline_data_wait_stage_resource_blocked,
             self.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
+            self.in_order_pipeline_data_wait_stage_ordering_blocked,
+            self.in_order_pipeline_data_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_execute_wait = in_order_pipeline_stall_cause_stage_summary_json(
             self.in_order_pipeline_execute_wait_stage_resource_blocked,
             self.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
+            self.in_order_pipeline_execute_wait_stage_ordering_blocked,
+            self.in_order_pipeline_execute_wait_stage_ordering_blocked_cycles,
         );
         let stage_ordering_blocked_cycles = in_order_pipeline_stage_summary_json(
             self.in_order_pipeline_stage_ordering_blocked_cycles,

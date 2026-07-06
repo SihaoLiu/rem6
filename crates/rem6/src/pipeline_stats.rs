@@ -249,6 +249,43 @@ pub(super) fn in_order_pipeline_stage_ordering_blocked_cycles(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_ordering_blocked_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            if record.stall_cause() == Some(cause) {
+                summary.saturating_add(stage_summary_from_instructions(
+                    record.plan().ordering_blocked(),
+                ))
+            } else {
+                summary
+            }
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_ordering_blocked_cycles_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            if record.stall_cause() == Some(cause) {
+                summary.saturating_add(
+                    stage_presence_summary_from_instructions(record.plan().ordering_blocked())
+                        .saturating_mul(record.stall_cycle_count()),
+                )
+            } else {
+                summary
+            }
+        },
+    )
+}
+
 pub(super) fn in_order_pipeline_stage_flushed(core: &RiscvCore) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),

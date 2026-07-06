@@ -465,8 +465,8 @@ fn in_order_pipeline_resource_stall_cycle_preserves_in_flight_work() {
     let summary = record.summary();
     assert_eq!(summary.advanced_count(), 0);
     assert_eq!(summary.retired_count(), 0);
-    assert_eq!(summary.resource_blocked_count(), 2);
-    assert_eq!(summary.ordering_blocked_count(), 0);
+    assert_eq!(summary.resource_blocked_count(), 1);
+    assert_eq!(summary.ordering_blocked_count(), 1);
     assert!(!summary.state_changed());
 }
 

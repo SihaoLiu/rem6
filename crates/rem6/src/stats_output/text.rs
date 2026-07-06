@@ -1014,6 +1014,8 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 for (source_name, alias_name, unit) in [
                     ("resource_blocked", "resourceBlocked", "Count"),
                     ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
+                    ("ordering_blocked", "orderingBlocked", "Count"),
+                    ("ordering_blocked_cycles", "orderingBlockedCycles", "Cycle"),
                 ] {
                     append_derived_stat_from_snapshot(
                         output,

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     branch::Rem6BranchTraceRecord, pipeline::Rem6PipelineTraceRecord, Rem6DataTraceRecord,
@@ -115,12 +115,16 @@ struct PipelineStageTraceStatSummary {
     interrupt_redirect_flushed_cycles: u64,
     resource_blocked: u64,
     resource_blocked_cycles: u64,
+    ordering_blocked: u64,
+    ordering_blocked_cycles: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PipelineStageResourceTraceStatSummary {
     resource_blocked: u64,
     resource_blocked_cycles: u64,
+    ordering_blocked: u64,
+    ordering_blocked_cycles: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -432,6 +436,13 @@ impl PipelineStageTraceStatSummary {
             .saturating_add(resource_blocked_cycles);
     }
 
+    fn add_ordering_blocked(&mut self, ordering_blocked: u64, ordering_blocked_cycles: u64) {
+        self.ordering_blocked = self.ordering_blocked.saturating_add(ordering_blocked);
+        self.ordering_blocked_cycles = self
+            .ordering_blocked_cycles
+            .saturating_add(ordering_blocked_cycles);
+    }
+
     fn add_flushed(&mut self, flushed: u64, flushed_cycles: u64) {
         self.flushed = self.flushed.saturating_add(flushed);
         self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
@@ -510,6 +521,12 @@ impl PipelineStageTraceStatSummary {
                 "Cycle",
                 self.resource_blocked_cycles,
             ),
+            ("ordering_blocked", "Count", self.ordering_blocked),
+            (
+                "ordering_blocked_cycles",
+                "Cycle",
+                self.ordering_blocked_cycles,
+            ),
         ] {
             stats.push(Rem6PipelineTraceStat {
                 path: format!("{prefix}.{suffix}"),
@@ -521,11 +538,21 @@ impl PipelineStageTraceStatSummary {
 }
 
 impl PipelineStageResourceTraceStatSummary {
-    fn add_record(&mut self, resource_blocked: u64, resource_blocked_cycles: u64) {
+    fn add_record(
+        &mut self,
+        resource_blocked: u64,
+        resource_blocked_cycles: u64,
+        ordering_blocked: u64,
+        ordering_blocked_cycles: u64,
+    ) {
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
         self.resource_blocked_cycles = self
             .resource_blocked_cycles
             .saturating_add(resource_blocked_cycles);
+        self.ordering_blocked = self.ordering_blocked.saturating_add(ordering_blocked);
+        self.ordering_blocked_cycles = self
+            .ordering_blocked_cycles
+            .saturating_add(ordering_blocked_cycles);
     }
 
     fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
@@ -535,6 +562,12 @@ impl PipelineStageResourceTraceStatSummary {
                 "resource_blocked_cycles",
                 "Cycle",
                 self.resource_blocked_cycles,
+            ),
+            ("ordering_blocked", "Count", self.ordering_blocked),
+            (
+                "ordering_blocked_cycles",
+                "Cycle",
+                self.ordering_blocked_cycles,
             ),
         ] {
             stats.push(Rem6PipelineTraceStat {
@@ -743,6 +776,18 @@ pub(super) fn pipeline_trace_stats(
                 .or_default()
                 .add_resource_blocked(*resource_blocked, 1);
         }
+        let mut stage_ordering_blocked = BTreeMap::<String, u64>::new();
+        for instruction in &record.ordering_blocked {
+            *stage_ordering_blocked
+                .entry(stat_path_segment(instruction.stage()))
+                .or_default() += 1;
+        }
+        for (stage, ordering_blocked) in &stage_ordering_blocked {
+            stages
+                .entry(stage.clone())
+                .or_default()
+                .add_ordering_blocked(*ordering_blocked, 1);
+        }
         let mut stage_flushed = BTreeMap::<String, u64>::new();
         for instruction in &record.flushed {
             *stage_flushed
@@ -784,11 +829,29 @@ pub(super) fn pipeline_trace_stats(
         }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
-            for (stage, resource_blocked) in stage_resource_blocked {
+            let stall_stages = stage_resource_blocked
+                .keys()
+                .chain(stage_ordering_blocked.keys())
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            for stage in stall_stages {
                 stall_cause_stages
-                    .entry((cause, stage))
+                    .entry((cause, stage.clone()))
                     .or_default()
-                    .add_record(resource_blocked, record.stall_cycles);
+                    .add_record(
+                        stage_resource_blocked
+                            .get(&stage)
+                            .copied()
+                            .unwrap_or_default(),
+                        u64::from(stage_resource_blocked.contains_key(&stage))
+                            .saturating_mul(record.stall_cycles),
+                        stage_ordering_blocked
+                            .get(&stage)
+                            .copied()
+                            .unwrap_or_default(),
+                        u64::from(stage_ordering_blocked.contains_key(&stage))
+                            .saturating_mul(record.stall_cycles),
+                    );
             }
         }
         if let Some(cause) = record.flush_cause {

@@ -452,10 +452,16 @@ impl InOrderPipelinePlan {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
+        let mut instructions = canonical_in_flight(instructions)?;
+        let ordering_blocked = if instructions.is_empty() {
+            Vec::new()
+        } else {
+            instructions.split_off(1)
+        };
         Ok(Self {
             advanced: Vec::new(),
-            resource_blocked: canonical_in_flight(instructions)?,
-            ordering_blocked: Vec::new(),
+            resource_blocked: instructions,
+            ordering_blocked,
             flushed: Vec::new(),
             redirect: None,
         })

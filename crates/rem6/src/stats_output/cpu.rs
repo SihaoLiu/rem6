@@ -369,21 +369,33 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_execute_wait_cycles,
         )?;
-        for (cause, resource_blocked, resource_blocked_cycles) in [
+        for (
+            cause,
+            resource_blocked,
+            resource_blocked_cycles,
+            ordering_blocked,
+            ordering_blocked_cycles,
+        ) in [
             (
                 "fetch_wait",
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked,
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
+                core.in_order_pipeline_fetch_wait_stage_ordering_blocked,
+                core.in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles,
             ),
             (
                 "data_wait",
                 core.in_order_pipeline_data_wait_stage_resource_blocked,
                 core.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
+                core.in_order_pipeline_data_wait_stage_ordering_blocked,
+                core.in_order_pipeline_data_wait_stage_ordering_blocked_cycles,
             ),
             (
                 "execute_wait",
                 core.in_order_pipeline_execute_wait_stage_resource_blocked,
                 core.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
+                core.in_order_pipeline_execute_wait_stage_ordering_blocked,
+                core.in_order_pipeline_execute_wait_stage_ordering_blocked_cycles,
             ),
         ] {
             emit_in_order_stall_cause_stage_stats(
@@ -403,6 +415,24 @@ pub(super) fn emit_cpu_run_stats(
                 "Cycle",
                 StatResetPolicy::Monotonic,
                 resource_blocked_cycles.values(),
+            )?;
+            emit_in_order_stall_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "ordering_blocked",
+                "Count",
+                StatResetPolicy::Monotonic,
+                ordering_blocked.values(),
+            )?;
+            emit_in_order_stall_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "ordering_blocked_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                ordering_blocked_cycles.values(),
             )?;
         }
         increment_stat(
