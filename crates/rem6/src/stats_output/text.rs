@@ -729,6 +729,30 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
                 );
             }
         }
+        let producer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.producer_inst"));
+        let consumer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.consumer_inst"));
+        if let Some(producer_inst) = producer_inst {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.producerInst::total"),
+                producer_inst,
+            );
+        }
+        if let Some(consumer_inst) = consumer_inst {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.consumerInst::total"),
+                consumer_inst,
+            );
+        }
+        if let (Some(producer_inst), Some(consumer_inst)) = (producer_inst, consumer_inst) {
+            append_derived_count_per_count_stat(
+                output,
+                &format!("{alias_prefix}.iew.wbFanout"),
+                producer_inst,
+                consumer_inst,
+            );
+        }
     }
 }
 
@@ -1239,6 +1263,21 @@ fn append_derived_count_per_cycle_stat(output: &mut String, path: &str, count: u
     output.push_str(&format!(
         "{path:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
         format_fixed_ratio(count, cycles)
+    ));
+}
+
+fn append_derived_count_per_count_stat(
+    output: &mut String,
+    path: &str,
+    numerator: u64,
+    denominator: u64,
+) {
+    if denominator == 0 {
+        return;
+    }
+    output.push_str(&format!(
+        "{path:<64} {:>20} # kind=derived unit=(Count/Count) reset_policy=monotonic\n",
+        format_fixed_ratio(numerator, denominator)
     ));
 }
 

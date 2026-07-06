@@ -1,6 +1,17 @@
+use rem6_isa_riscv::{MemoryAccessKind, RegisterWrite};
+use rem6_memory::MemoryRequestId;
+
 use crate::branch_predictor::BranchTargetKind;
+use crate::o3_fu_latency::o3_fu_latency_class;
 use crate::o3_runtime_trace::{
-    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+};
+use crate::riscv_execution_event::RiscvCpuExecutionEvent;
+
+use super::{
+    o3_load_forwarding_access, o3_load_register_value, o3_low_bytes_equal, o3_lsq_access_bytes,
+    o3_lsq_access_counts, o3_lsq_operation, o3_lsq_ordering, o3_rename_write_count,
+    O3PendingLoadForwardingMatch, O3StoreForwardingEntry, O3StoreForwardingObservation,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -34,6 +45,8 @@ pub struct O3RuntimeStats {
     pub(crate) branch_repair_direction_only_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) iew_predicted_taken_incorrect: u64,
     pub(crate) iew_predicted_not_taken_incorrect: u64,
+    pub(crate) iew_producer_insts: u64,
+    pub(crate) iew_consumer_insts: u64,
     pub(crate) fu_latency_instructions: u64,
     pub(crate) fu_latency_cycles: u64,
     pub(crate) fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
@@ -185,6 +198,14 @@ impl O3RuntimeStats {
         self.iew_predicted_not_taken_incorrect
     }
 
+    pub const fn iew_producer_insts(self) -> u64 {
+        self.iew_producer_insts
+    }
+
+    pub const fn iew_consumer_insts(self) -> u64 {
+        self.iew_consumer_insts
+    }
+
     pub const fn fu_latency_instructions(self) -> u64 {
         self.fu_latency_instructions
     }
@@ -250,10 +271,222 @@ impl O3RuntimeStats {
             || self.branch_repair_direction_only_mismatches != 0
             || self.iew_predicted_taken_incorrect != 0
             || self.iew_predicted_not_taken_incorrect != 0
+            || self.iew_producer_insts != 0
+            || self.iew_consumer_insts != 0
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.max_rob_occupancy != 0
             || self.max_lsq_occupancy != 0
             || self.rename_map_entries != 0
+    }
+}
+
+impl O3RuntimeStats {
+    pub(super) fn observe_rob_occupancy(&mut self, occupancy: usize) {
+        self.max_rob_occupancy = self
+            .max_rob_occupancy
+            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
+    }
+
+    pub(super) fn observe_lsq_occupancy(&mut self, occupancy: usize) {
+        self.max_lsq_occupancy = self
+            .max_lsq_occupancy
+            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
+    }
+
+    pub(super) fn set_rename_map_entries(&mut self, entries: usize) {
+        self.rename_map_entries = u64::try_from(entries).unwrap_or(u64::MAX);
+    }
+
+    pub(super) fn record_iew_dependency_producer(&mut self) {
+        self.iew_producer_insts = self.iew_producer_insts.saturating_add(1);
+    }
+
+    pub(super) fn record_iew_dependency_consumer(&mut self) {
+        self.iew_consumer_insts = self.iew_consumer_insts.saturating_add(1);
+    }
+
+    pub(super) fn record_retired_instruction(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        trace_record: O3RuntimeTraceRecord,
+    ) {
+        self.instructions = self.instructions.saturating_add(1);
+        self.rob_allocations = self.rob_allocations.saturating_add(1);
+        self.rob_commits = self.rob_commits.saturating_add(1);
+        self.record_branch_repair(trace_record);
+
+        let record = execution.execution();
+        let fu_latency_cycles =
+            crate::riscv_execute::in_order_execute_wait_cycles(record.instruction());
+        if fu_latency_cycles > 0 {
+            self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
+            self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);
+            if let Some(class) = o3_fu_latency_class(record.instruction()) {
+                let index = class.index();
+                self.fu_latency_class_instructions[index] =
+                    self.fu_latency_class_instructions[index].saturating_add(1);
+                self.fu_latency_class_cycles[index] =
+                    self.fu_latency_class_cycles[index].saturating_add(fu_latency_cycles);
+            }
+        }
+
+        self.rename_writes = self
+            .rename_writes
+            .saturating_add(o3_rename_write_count(record));
+
+        if let Some(access) = record.memory_access() {
+            let (loads, stores) = o3_lsq_access_counts(access);
+            self.lsq_loads = self.lsq_loads.saturating_add(loads);
+            self.lsq_stores = self.lsq_stores.saturating_add(stores);
+            let (load_bytes, store_bytes) = o3_lsq_access_bytes(access);
+            self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(load_bytes);
+            self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(store_bytes);
+
+            let operation = o3_lsq_operation(access);
+            let operation_index = operation.index();
+            self.lsq_operation_counts[operation_index] =
+                self.lsq_operation_counts[operation_index].saturating_add(1);
+
+            let ordering = o3_lsq_ordering(access);
+            if ordering != O3RuntimeLsqOrdering::None {
+                let ordering_index = ordering.index();
+                self.lsq_ordering_counts[ordering_index] =
+                    self.lsq_ordering_counts[ordering_index].saturating_add(1);
+            }
+        }
+    }
+
+    pub(super) fn record_store_conditional_failure(&mut self) {
+        self.lsq_store_conditional_failures = self.lsq_store_conditional_failures.saturating_add(1);
+    }
+
+    pub(super) fn record_lsq_operation_latency(
+        &mut self,
+        operation: O3RuntimeLsqOperation,
+        latency_ticks: u64,
+    ) {
+        if operation == O3RuntimeLsqOperation::None {
+            return;
+        }
+        let aggregate_samples = self.lsq_data_latency_samples;
+        self.lsq_data_latency_samples = aggregate_samples.saturating_add(1);
+        self.lsq_data_latency_ticks = self.lsq_data_latency_ticks.saturating_add(latency_ticks);
+        self.lsq_data_latency_max_ticks = self.lsq_data_latency_max_ticks.max(latency_ticks);
+        if aggregate_samples == 0 || latency_ticks < self.lsq_data_latency_min_ticks {
+            self.lsq_data_latency_min_ticks = latency_ticks;
+        }
+
+        let index = operation.index();
+        let samples = self.lsq_operation_latency_samples[index];
+        self.lsq_operation_latency_samples[index] = samples.saturating_add(1);
+        self.lsq_operation_latency_ticks[index] =
+            self.lsq_operation_latency_ticks[index].saturating_add(latency_ticks);
+        self.lsq_operation_latency_max_ticks[index] =
+            self.lsq_operation_latency_max_ticks[index].max(latency_ticks);
+        if samples == 0 || latency_ticks < self.lsq_operation_latency_min_ticks[index] {
+            self.lsq_operation_latency_min_ticks[index] = latency_ticks;
+        }
+    }
+
+    fn record_branch_repair(&mut self, event: O3RuntimeTraceRecord) {
+        if !event.branch_event() {
+            return;
+        }
+        let index = event.branch_kind().index();
+        let repaired = if event.branch_predicted_target().is_some()
+            && event.branch_resolved_target().is_none()
+        {
+            self.branch_repair_targetless_mismatches =
+                self.branch_repair_targetless_mismatches.saturating_add(1);
+            self.branch_repair_targetless_mismatch_kinds[index] =
+                self.branch_repair_targetless_mismatch_kinds[index].saturating_add(1);
+            true
+        } else if event
+            .branch_predicted_target()
+            .zip(event.branch_resolved_target())
+            .is_some_and(|(predicted, resolved)| predicted != resolved)
+        {
+            self.branch_repair_wrong_targets = self.branch_repair_wrong_targets.saturating_add(1);
+            self.branch_repair_wrong_target_kinds[index] =
+                self.branch_repair_wrong_target_kinds[index].saturating_add(1);
+            true
+        } else if event.branch_predicted_taken() != event.branch_resolved_taken() {
+            self.branch_repair_direction_only_mismatches = self
+                .branch_repair_direction_only_mismatches
+                .saturating_add(1);
+            self.branch_repair_direction_only_kinds[index] =
+                self.branch_repair_direction_only_kinds[index].saturating_add(1);
+            true
+        } else {
+            false
+        };
+        if repaired {
+            self.record_iew_branch_mispredict_split(event);
+        }
+    }
+
+    fn record_iew_branch_mispredict_split(&mut self, event: O3RuntimeTraceRecord) {
+        if event.branch_predicted_taken() {
+            self.iew_predicted_taken_incorrect =
+                self.iew_predicted_taken_incorrect.saturating_add(1);
+        } else {
+            self.iew_predicted_not_taken_incorrect =
+                self.iew_predicted_not_taken_incorrect.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_store_to_load_forwarding(
+        &mut self,
+        access: &MemoryAccessKind,
+        fetch_request: MemoryRequestId,
+        register_writes: &[RegisterWrite],
+        prior_store: Option<O3StoreForwardingEntry>,
+        trace_sequence: Option<u64>,
+    ) -> (
+        O3StoreForwardingObservation,
+        Option<O3PendingLoadForwardingMatch>,
+    ) {
+        let Some(prior_store) = prior_store else {
+            return (O3StoreForwardingObservation::default(), None);
+        };
+        let Some(load) = o3_load_forwarding_access(access) else {
+            return (O3StoreForwardingObservation::default(), None);
+        };
+        if load.address != prior_store.address || load.bytes != prior_store.bytes {
+            return (O3StoreForwardingObservation::default(), None);
+        }
+
+        self.lsq_store_to_load_forwarding_candidates = self
+            .lsq_store_to_load_forwarding_candidates
+            .saturating_add(1);
+        let mut observation = O3StoreForwardingObservation {
+            candidate: true,
+            matched: false,
+        };
+        match o3_load_register_value(register_writes, load.register) {
+            Some(value) => {
+                if o3_low_bytes_equal(value, prior_store.value, load.bytes) {
+                    self.record_store_to_load_forwarding_match();
+                    observation.matched = true;
+                }
+                (observation, None)
+            }
+            None => (
+                observation,
+                Some(O3PendingLoadForwardingMatch {
+                    fetch_request,
+                    address: load.address,
+                    bytes: load.bytes,
+                    value: prior_store.value,
+                    trace_sequence,
+                }),
+            ),
+        }
+    }
+
+    pub(super) fn record_store_to_load_forwarding_match(&mut self) {
+        self.lsq_store_to_load_forwarding_matches =
+            self.lsq_store_to_load_forwarding_matches.saturating_add(1);
     }
 }

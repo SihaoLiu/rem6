@@ -1124,6 +1124,8 @@ fn emit_o3_runtime_stats(
         ("dispatched_insts", o3.instructions()),
         ("insts_to_commit", o3.rob_commits()),
         ("writeback_count", o3.instructions()),
+        ("producer_inst", o3.iew_producer_insts()),
+        ("consumer_inst", o3.iew_consumer_insts()),
         (
             "predicted_taken_incorrect",
             o3.iew_predicted_taken_incorrect(),

@@ -167,6 +167,8 @@ struct RiscvO3RuntimeCpuStats {
     iew_dispatched_insts: StatId,
     iew_insts_to_commit: StatId,
     iew_writeback_count: StatId,
+    iew_producer_inst: StatId,
+    iew_consumer_inst: StatId,
     iew_predicted_taken_incorrect: StatId,
     iew_predicted_not_taken_incorrect: StatId,
     max_rob_occupancy: StatId,
@@ -282,6 +284,18 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "iew.writeback_count",
+                "Count",
+            )?,
+            iew_producer_inst: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.producer_inst",
+                "Count",
+            )?,
+            iew_consumer_inst: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.consumer_inst",
                 "Count",
             )?,
             iew_predicted_taken_incorrect: register_o3_counter(
@@ -430,6 +444,16 @@ impl RiscvO3RuntimeCpuStats {
                 self.iew_writeback_count,
                 previous.instructions(),
                 current.instructions(),
+            ),
+            (
+                self.iew_producer_inst,
+                previous.iew_producer_insts(),
+                current.iew_producer_insts(),
+            ),
+            (
+                self.iew_consumer_inst,
+                previous.iew_consumer_insts(),
+                current.iew_consumer_insts(),
             ),
             (
                 self.iew_predicted_taken_incorrect,
@@ -588,6 +612,8 @@ impl RiscvO3RuntimeCpuStats {
             (self.iew_dispatched_insts, snapshot.instructions()),
             (self.iew_insts_to_commit, snapshot.rob_commits()),
             (self.iew_writeback_count, snapshot.instructions()),
+            (self.iew_producer_inst, snapshot.iew_producer_insts()),
+            (self.iew_consumer_inst, snapshot.iew_consumer_insts()),
             (
                 self.iew_predicted_taken_incorrect,
                 snapshot.iew_predicted_taken_incorrect(),

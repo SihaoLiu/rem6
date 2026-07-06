@@ -9,7 +9,8 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
-    RegisterWrite, RiscvExecutionRecord, RiscvInstruction, RiscvVectorFloatInstruction,
+    RegisterWrite, RiscvCounterCsr, RiscvCounterInhibitCsr, RiscvCounterInhibitCsrInstruction,
+    RiscvCsrOp, RiscvExecutionRecord, RiscvInstruction, RiscvVectorFloatInstruction,
     RiscvVectorMaskMode, RiscvVectorMemoryInstruction, VectorRegister,
 };
 use rem6_kernel::PartitionId;
@@ -22,6 +23,14 @@ const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES + 4 * 4;
+const O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET + 4;
+const O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET + 4;
+const O3_RUNTIME_CHECKPOINT_RENAME_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET + 4;
+const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES: usize = 8 + 8 + 1 + 4 + 1;
+const O3_RUNTIME_CHECKPOINT_LSQ_ENTRY_BYTES: usize = 8 + 1 + 8 + 4 + 1 + 1;
+const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES: usize = 1 + 4 + 4;
+const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize =
+    O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES + 1;
 const O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES: usize =
     (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES: usize =
@@ -37,12 +46,14 @@ const O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES: usize = 4 * 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES: usize =
     (3 + BranchTargetKind::COUNT * 3) * 8;
 const O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 * 8;
+const O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES: usize = 2 * 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
     + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES;
+    + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+    + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -229,7 +240,8 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
             + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
             + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
             + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..],
+            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES..],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 3;
@@ -338,7 +350,7 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = payload.encode();
+    let encoded = strip_current_rename_dependency_bytes(&payload.encode());
     let stats_offset = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
@@ -355,7 +367,8 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
         &encoded[lsq_ordering_offset..branch_repair_offset],
         &encoded[branch_repair_offset
             + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..],
+            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES..],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 4;
@@ -434,7 +447,7 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = payload.encode();
+    let encoded = strip_current_rename_dependency_bytes(&payload.encode());
     let stats_offset = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
@@ -451,8 +464,9 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     let mut encoded = [
         &encoded[..lsq_latency_offset],
         &encoded[lsq_ordering_offset..iew_split_offset],
-        &encoded
-            [iew_split_offset + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES..],
+        &encoded[iew_split_offset
+            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES..],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 5;
@@ -976,12 +990,172 @@ fn o3_runtime_checkpoint_encoding_is_stable_after_out_of_order_rename_retire() {
     assert_eq!(decoded.snapshot().rename_map()[1].architectural(), 11);
 }
 
+#[test]
+fn o3_runtime_checkpoint_restore_preserves_counted_dependency_producers() {
+    let core = RiscvCore::new(core(0x8000));
+    for (pc, sequence, rd, rs1, value) in [
+        (0x8000, 20, reg(5), reg(0), 7),
+        (0x8004, 21, reg(6), reg(5), 8),
+    ] {
+        let instruction = RiscvInstruction::Addi {
+            rd,
+            rs1,
+            imm: Immediate::new(i64::try_from(value).unwrap()),
+        };
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                pc,
+                pc + 4,
+                vec![RegisterWrite::new(rd, value)],
+                None,
+            ),
+        ));
+    }
+    assert_eq!(core.o3_runtime_stats().iew_producer_insts(), 1);
+    assert_eq!(core.o3_runtime_stats().iew_consumer_insts(), 1);
+
+    let payload = core.o3_runtime_checkpoint_payload();
+    core.restore_o3_runtime_checkpoint_payload(payload).unwrap();
+
+    let instruction = RiscvInstruction::Addi {
+        rd: reg(7),
+        rs1: reg(5),
+        imm: Immediate::new(9),
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8008, 22),
+        instruction,
+        RiscvExecutionRecord::new(
+            instruction,
+            0x8008,
+            0x800c,
+            vec![RegisterWrite::new(reg(7), 9)],
+            None,
+        ),
+    ));
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.iew_producer_insts(), 1);
+    assert_eq!(stats.iew_consumer_insts(), 2);
+}
+
+#[test]
+fn o3_runtime_dependency_fanout_counts_csr_register_sources() {
+    let core = RiscvCore::new(core(0x8000));
+    let producer = RiscvInstruction::Addi {
+        rd: reg(5),
+        rs1: reg(0),
+        imm: Immediate::new(7),
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8000, 20),
+        producer,
+        RiscvExecutionRecord::new(
+            producer,
+            0x8000,
+            0x8004,
+            vec![RegisterWrite::new(reg(5), 7)],
+            None,
+        ),
+    ));
+    let direct_csr_source = RiscvInstruction::WriteCounterCsr {
+        rd: reg(0),
+        csr: RiscvCounterCsr::Cycle,
+        rs1: reg(5),
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8004, 21),
+        direct_csr_source,
+        RiscvExecutionRecord::new(direct_csr_source, 0x8004, 0x8008, Vec::new(), None),
+    ));
+    let wrapped_csr_source =
+        RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::register(
+            reg(0),
+            RiscvCounterInhibitCsr::Mcountinhibit,
+            RiscvCsrOp::Write,
+            reg(5),
+        ));
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8008, 22),
+        wrapped_csr_source,
+        RiscvExecutionRecord::new(wrapped_csr_source, 0x8008, 0x800c, Vec::new(), None),
+    ));
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.iew_producer_insts(), 1);
+    assert_eq!(stats.iew_consumer_insts(), 2);
+}
+
+#[test]
+fn o3_runtime_dependency_fanout_counts_sfence_vma_sources() {
+    let core = RiscvCore::new(core(0x8000));
+    for (pc, sequence, rd, value) in [(0x8000, 20, reg(5), 7), (0x8004, 21, reg(6), 8)] {
+        let producer = RiscvInstruction::Addi {
+            rd,
+            rs1: reg(0),
+            imm: Immediate::new(value),
+        };
+        core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            producer,
+            RiscvExecutionRecord::new(
+                producer,
+                pc,
+                pc + 4,
+                vec![RegisterWrite::new(rd, value as u64)],
+                None,
+            ),
+        ));
+    }
+    let sfence = RiscvInstruction::SfenceVma {
+        rs1: reg(5),
+        rs2: reg(6),
+    };
+    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
+        fetch_event(0x8008, 22),
+        sfence,
+        RiscvExecutionRecord::new(sfence, 0x8008, 0x800c, Vec::new(), None),
+    ));
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.iew_producer_insts(), 2);
+    assert_eq!(stats.iew_consumer_insts(), 2);
+}
+
 fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {
     let pending_len_bytes = payload
         [O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET..O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET + 4]
         .try_into()
         .unwrap();
     O3_RUNTIME_CHECKPOINT_HEADER_BYTES + u32::from_le_bytes(pending_len_bytes) as usize
+}
+
+fn strip_current_rename_dependency_bytes(payload: &[u8]) -> Vec<u8> {
+    let pending_len = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
+    let rob_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
+    let lsq_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET) as usize;
+    let rename_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_RENAME_COUNT_OFFSET) as usize;
+    let mut offset = O3_RUNTIME_CHECKPOINT_HEADER_BYTES
+        + pending_len
+        + rob_count * O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES
+        + lsq_count * O3_RUNTIME_CHECKPOINT_LSQ_ENTRY_BYTES;
+    let mut legacy = Vec::with_capacity(payload.len().saturating_sub(rename_count));
+    legacy.extend_from_slice(&payload[..offset]);
+    for _ in 0..rename_count {
+        legacy
+            .extend_from_slice(&payload[offset..offset + O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES]);
+        offset += O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES_WITH_DEPENDENCY;
+    }
+    legacy.extend_from_slice(&payload[offset..]);
+    legacy
+}
+
+fn checkpoint_u32(payload: &[u8], offset: usize) -> u32 {
+    let bytes = payload[offset..offset + 4].try_into().unwrap();
+    u32::from_le_bytes(bytes)
 }
 
 fn core(entry: u64) -> CpuCore {

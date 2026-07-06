@@ -857,6 +857,20 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_json_stat(
         &json,
+        "sim.cpu0.o3.iew.producer_inst",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.consumer_inst",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "system.cpu.iew.dispatchedInsts",
         "Count",
         6,
@@ -912,6 +926,18 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
             .pointer("/rename_map_entries")
             .and_then(Value::as_u64),
         Some(3)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/iew_producer_insts")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/iew_consumer_insts")
+            .and_then(Value::as_u64),
+        Some(4)
     );
 }
 
@@ -1185,6 +1211,8 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         ),
         ("sim.host_actions.stats_dump.cpu0.o3.iew.insts_to_commit", 6),
         ("sim.host_actions.stats_dump.cpu0.o3.iew.writeback_count", 6),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.producer_inst", 3),
+        ("sim.host_actions.stats_dump.cpu0.o3.iew.consumer_inst", 4),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
@@ -1484,6 +1512,20 @@ fn rem6_run_m5_reset_stats_clears_detailed_o3_runtime_stats() {
     assert_json_stat(&json, "sim.cpu0.o3.lsq_stores", "Count", 0, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.lsq_load_bytes", "Byte", 4, "monotonic");
     assert_json_stat(&json, "sim.cpu0.o3.lsq_store_bytes", "Byte", 0, "monotonic");
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.producer_inst",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.iew.consumer_inst",
+        "Count",
+        1,
+        "monotonic",
+    );
 }
 
 #[test]
@@ -3834,6 +3876,8 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit::total", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.writebackCount::total", 6);
+    assert_text_count_stat(&stdout, "system.cpu.iew.producerInst::total", 3);
+    assert_text_count_stat(&stdout, "system.cpu.iew.consumerInst::total", 4);
     let writeback_count = text_stat_u64(&stdout, "system.cpu.iew.writebackCount::total");
     let cycles = text_stat_u64(&stdout, "system.cpu.numCycles");
     assert_text_ratio_stat(
@@ -3841,6 +3885,14 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
         "system.cpu.iew.wbRate",
         &fixed_ratio_text(writeback_count, cycles),
         "(Count/Cycle)",
+    );
+    let producer_insts = text_stat_u64(&stdout, "system.cpu.iew.producerInst::total");
+    let consumer_insts = text_stat_u64(&stdout, "system.cpu.iew.consumerInst::total");
+    assert_text_ratio_stat(
+        &stdout,
+        "system.cpu.iew.wbFanout",
+        &fixed_ratio_text(producer_insts, consumer_insts),
+        "(Count/Count)",
     );
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
@@ -4240,6 +4292,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.dispatched_insts");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.insts_to_commit");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_count");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.producer_inst");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.consumer_inst");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_taken_incorrect");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_not_taken_incorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
@@ -4316,8 +4370,13 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispStoreInsts",
         "system.cpu.iew.instsToCommit::total",
         "sim.cpu0.o3.iew.writeback_count",
+        "sim.cpu0.o3.iew.producer_inst",
+        "sim.cpu0.o3.iew.consumer_inst",
         "system.cpu.iew.writebackCount::total",
+        "system.cpu.iew.producerInst::total",
+        "system.cpu.iew.consumerInst::total",
         "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
         "sim.cpu0.o3.iew.predicted_taken_incorrect",
         "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
         "system.cpu.iew.predictedTakenIncorrect",

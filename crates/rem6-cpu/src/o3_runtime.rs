@@ -21,9 +21,12 @@ use crate::RiscvDataAccessEventKind;
 mod o3_runtime_checkpoint;
 #[path = "o3_runtime_stats.rs"]
 mod o3_runtime_stats;
+#[path = "o3_source_operands.rs"]
+mod o3_source_operands;
 
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 pub use o3_runtime_stats::O3RuntimeStats;
+use o3_source_operands::o3_scalar_integer_source_registers;
 
 const U64_BYTES: usize = 8;
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
@@ -254,6 +257,7 @@ pub struct O3RuntimeState {
     data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
+    dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -268,6 +272,7 @@ impl O3RuntimeState {
         self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
+        self.dependency_producers_with_consumers.clear();
         Ok(())
     }
 
@@ -276,8 +281,11 @@ impl O3RuntimeState {
         payload: O3RuntimeCheckpointPayload,
     ) -> Result<(), O3RuntimeError> {
         let stats = payload.stats();
+        let dependency_producers_with_consumers =
+            payload.dependency_producers_with_consumers().clone();
         self.restore(payload.into_snapshot())?;
         self.stats = stats;
+        self.dependency_producers_with_consumers = dependency_producers_with_consumers;
         Ok(())
     }
 
@@ -338,6 +346,7 @@ impl O3RuntimeState {
         self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
+        self.dependency_producers_with_consumers.clear();
     }
 
     pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
@@ -367,6 +376,7 @@ impl O3RuntimeState {
     fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) -> O3RuntimeTraceRecord {
         let sequence = self.allocate_sequence();
         let record = execution.execution();
+        self.record_scalar_integer_dependencies(&record.instruction());
         let destination = self.record_rename_map_entries(record);
         let (lsq_loads, lsq_stores) = record
             .memory_access()
@@ -496,6 +506,30 @@ impl O3RuntimeState {
         }
 
         first_destination
+    }
+
+    fn record_scalar_integer_dependencies(
+        &mut self,
+        instruction: &rem6_isa_riscv::RiscvInstruction,
+    ) {
+        for register in o3_scalar_integer_source_registers(instruction) {
+            if register.is_zero() {
+                continue;
+            }
+            let Some(source) = self.snapshot.rename_map.iter().find(|entry| {
+                entry.register_class() == O3RegisterClass::Integer
+                    && entry.architectural() == u32::from(register.index())
+            }) else {
+                continue;
+            };
+            if self
+                .dependency_producers_with_consumers
+                .insert(source.physical())
+            {
+                self.stats.record_iew_dependency_producer();
+            }
+            self.stats.record_iew_dependency_consumer();
+        }
     }
 
     fn install_rename_map_entry(
@@ -680,6 +714,7 @@ impl Default for O3RuntimeState {
             data_access_sequences: BTreeMap::new(),
             trace_data_access_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
+            dependency_producers_with_consumers: BTreeSet::new(),
             next_sequence: 0,
             next_physical_register: 1,
         }
@@ -712,208 +747,6 @@ struct O3PendingLoadForwardingMatch {
     bytes: u32,
     value: u64,
     trace_sequence: Option<u64>,
-}
-
-impl O3RuntimeStats {
-    fn observe_rob_occupancy(&mut self, occupancy: usize) {
-        self.max_rob_occupancy = self
-            .max_rob_occupancy
-            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
-    }
-
-    fn observe_lsq_occupancy(&mut self, occupancy: usize) {
-        self.max_lsq_occupancy = self
-            .max_lsq_occupancy
-            .max(u64::try_from(occupancy).unwrap_or(u64::MAX));
-    }
-
-    fn set_rename_map_entries(&mut self, entries: usize) {
-        self.rename_map_entries = u64::try_from(entries).unwrap_or(u64::MAX);
-    }
-
-    fn record_retired_instruction(
-        &mut self,
-        execution: &RiscvCpuExecutionEvent,
-        trace_record: O3RuntimeTraceRecord,
-    ) {
-        self.instructions = self.instructions.saturating_add(1);
-        self.rob_allocations = self.rob_allocations.saturating_add(1);
-        self.rob_commits = self.rob_commits.saturating_add(1);
-        self.record_branch_repair(trace_record);
-
-        let record = execution.execution();
-        let fu_latency_cycles =
-            crate::riscv_execute::in_order_execute_wait_cycles(record.instruction());
-        if fu_latency_cycles > 0 {
-            self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
-            self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);
-            if let Some(class) = o3_fu_latency_class(record.instruction()) {
-                let index = class.index();
-                self.fu_latency_class_instructions[index] =
-                    self.fu_latency_class_instructions[index].saturating_add(1);
-                self.fu_latency_class_cycles[index] =
-                    self.fu_latency_class_cycles[index].saturating_add(fu_latency_cycles);
-            }
-        }
-
-        self.rename_writes = self
-            .rename_writes
-            .saturating_add(o3_rename_write_count(record));
-
-        if let Some(access) = record.memory_access() {
-            let (loads, stores) = o3_lsq_access_counts(access);
-            self.lsq_loads = self.lsq_loads.saturating_add(loads);
-            self.lsq_stores = self.lsq_stores.saturating_add(stores);
-            let (load_bytes, store_bytes) = o3_lsq_access_bytes(access);
-            self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(load_bytes);
-            self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(store_bytes);
-
-            let operation = o3_lsq_operation(access);
-            let operation_index = operation.index();
-            self.lsq_operation_counts[operation_index] =
-                self.lsq_operation_counts[operation_index].saturating_add(1);
-
-            let ordering = o3_lsq_ordering(access);
-            if ordering != O3RuntimeLsqOrdering::None {
-                let ordering_index = ordering.index();
-                self.lsq_ordering_counts[ordering_index] =
-                    self.lsq_ordering_counts[ordering_index].saturating_add(1);
-            }
-        }
-    }
-
-    fn record_store_conditional_failure(&mut self) {
-        self.lsq_store_conditional_failures = self.lsq_store_conditional_failures.saturating_add(1);
-    }
-
-    fn record_lsq_operation_latency(
-        &mut self,
-        operation: O3RuntimeLsqOperation,
-        latency_ticks: u64,
-    ) {
-        if operation == O3RuntimeLsqOperation::None {
-            return;
-        }
-        let aggregate_samples = self.lsq_data_latency_samples;
-        self.lsq_data_latency_samples = aggregate_samples.saturating_add(1);
-        self.lsq_data_latency_ticks = self.lsq_data_latency_ticks.saturating_add(latency_ticks);
-        self.lsq_data_latency_max_ticks = self.lsq_data_latency_max_ticks.max(latency_ticks);
-        if aggregate_samples == 0 || latency_ticks < self.lsq_data_latency_min_ticks {
-            self.lsq_data_latency_min_ticks = latency_ticks;
-        }
-
-        let index = operation.index();
-        let samples = self.lsq_operation_latency_samples[index];
-        self.lsq_operation_latency_samples[index] = samples.saturating_add(1);
-        self.lsq_operation_latency_ticks[index] =
-            self.lsq_operation_latency_ticks[index].saturating_add(latency_ticks);
-        self.lsq_operation_latency_max_ticks[index] =
-            self.lsq_operation_latency_max_ticks[index].max(latency_ticks);
-        if samples == 0 || latency_ticks < self.lsq_operation_latency_min_ticks[index] {
-            self.lsq_operation_latency_min_ticks[index] = latency_ticks;
-        }
-    }
-
-    fn record_branch_repair(&mut self, event: O3RuntimeTraceRecord) {
-        if !event.branch_event() {
-            return;
-        }
-        let index = event.branch_kind().index();
-        let repaired = if event.branch_predicted_target().is_some()
-            && event.branch_resolved_target().is_none()
-        {
-            self.branch_repair_targetless_mismatches =
-                self.branch_repair_targetless_mismatches.saturating_add(1);
-            self.branch_repair_targetless_mismatch_kinds[index] =
-                self.branch_repair_targetless_mismatch_kinds[index].saturating_add(1);
-            true
-        } else if event
-            .branch_predicted_target()
-            .zip(event.branch_resolved_target())
-            .is_some_and(|(predicted, resolved)| predicted != resolved)
-        {
-            self.branch_repair_wrong_targets = self.branch_repair_wrong_targets.saturating_add(1);
-            self.branch_repair_wrong_target_kinds[index] =
-                self.branch_repair_wrong_target_kinds[index].saturating_add(1);
-            true
-        } else if event.branch_predicted_taken() != event.branch_resolved_taken() {
-            self.branch_repair_direction_only_mismatches = self
-                .branch_repair_direction_only_mismatches
-                .saturating_add(1);
-            self.branch_repair_direction_only_kinds[index] =
-                self.branch_repair_direction_only_kinds[index].saturating_add(1);
-            true
-        } else {
-            false
-        };
-        if repaired {
-            self.record_iew_branch_mispredict_split(event);
-        }
-    }
-
-    fn record_iew_branch_mispredict_split(&mut self, event: O3RuntimeTraceRecord) {
-        if event.branch_predicted_taken() {
-            self.iew_predicted_taken_incorrect =
-                self.iew_predicted_taken_incorrect.saturating_add(1);
-        } else {
-            self.iew_predicted_not_taken_incorrect =
-                self.iew_predicted_not_taken_incorrect.saturating_add(1);
-        }
-    }
-
-    fn record_store_to_load_forwarding(
-        &mut self,
-        access: &MemoryAccessKind,
-        fetch_request: MemoryRequestId,
-        register_writes: &[rem6_isa_riscv::RegisterWrite],
-        prior_store: Option<O3StoreForwardingEntry>,
-        trace_sequence: Option<u64>,
-    ) -> (
-        O3StoreForwardingObservation,
-        Option<O3PendingLoadForwardingMatch>,
-    ) {
-        let Some(prior_store) = prior_store else {
-            return (O3StoreForwardingObservation::default(), None);
-        };
-        let Some(load) = o3_load_forwarding_access(access) else {
-            return (O3StoreForwardingObservation::default(), None);
-        };
-        if load.address != prior_store.address || load.bytes != prior_store.bytes {
-            return (O3StoreForwardingObservation::default(), None);
-        }
-
-        self.lsq_store_to_load_forwarding_candidates = self
-            .lsq_store_to_load_forwarding_candidates
-            .saturating_add(1);
-        let mut observation = O3StoreForwardingObservation {
-            candidate: true,
-            matched: false,
-        };
-        match o3_load_register_value(register_writes, load.register) {
-            Some(value) => {
-                if o3_low_bytes_equal(value, prior_store.value, load.bytes) {
-                    self.record_store_to_load_forwarding_match();
-                    observation.matched = true;
-                }
-                (observation, None)
-            }
-            None => (
-                observation,
-                Some(O3PendingLoadForwardingMatch {
-                    fetch_request,
-                    address: load.address,
-                    bytes: load.bytes,
-                    value: prior_store.value,
-                    trace_sequence,
-                }),
-            ),
-        }
-    }
-
-    fn record_store_to_load_forwarding_match(&mut self) {
-        self.lsq_store_to_load_forwarding_matches =
-            self.lsq_store_to_load_forwarding_matches.saturating_add(1);
-    }
 }
 
 fn next_runtime_sequence(snapshot: &O3RuntimeSnapshot) -> u64 {
@@ -1865,9 +1698,10 @@ impl crate::RiscvCore {
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
-        O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+        O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
             state.o3_runtime.snapshot(),
             state.o3_runtime.stats(),
+            state.o3_runtime.dependency_producers_with_consumers.clone(),
         )
         .expect("captured RISC-V O3 runtime checkpoint is internally consistent")
     }
