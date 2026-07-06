@@ -170,6 +170,22 @@ fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
     let stage_advanced_cycles = in_order_stage_metric_values(&json, "advanced_cycles");
     let stage_retired = in_order_stage_metric_values(&json, "retired");
     let stage_retired_cycles = in_order_stage_metric_values(&json, "retired_cycles");
+    assert_eq!(
+        in_order_artifact_stage_metric_values(&json, "advanced"),
+        stage_advanced
+    );
+    assert_eq!(
+        in_order_artifact_stage_metric_values(&json, "advanced_cycles"),
+        stage_advanced_cycles
+    );
+    assert_eq!(
+        in_order_artifact_stage_metric_values(&json, "retired"),
+        stage_retired
+    );
+    assert_eq!(
+        in_order_artifact_stage_metric_values(&json, "retired_cycles"),
+        stage_retired_cycles
+    );
     let aggregate_advanced = json_stat_value(&json, "sim.cpu0.pipeline.in_order.advanced");
     let aggregate_retired = json_stat_value(&json, "sim.cpu0.pipeline.in_order.retired");
 
@@ -1235,6 +1251,19 @@ fn in_order_stage_metric_values(json: &Value, metric: &str) -> [u64; 5] {
             json,
             &format!("sim.cpu0.pipeline.in_order.stage.{stage}.{metric}"),
         )
+    })
+}
+
+fn in_order_artifact_stage_metric_values(json: &Value, metric: &str) -> [u64; 5] {
+    ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
+        let pointer = format!("/cores/0/in_order_pipeline/stage_{metric}/{stage}");
+        json.pointer(&pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing artifact in-order stage metric {metric} for {stage} at {pointer}: {json}"
+                )
+            })
     })
 }
 

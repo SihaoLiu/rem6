@@ -575,6 +575,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.cpu0.pipeline.in_order.execute_wait_cycles",
         "sim.cpu0.pipeline.in_order.stage.fetch1.advanced_cycles",
         "sim.cpu0.pipeline.in_order.stage.commit.retired_cycles",
+        "/cores/0/in_order_pipeline/stage_advanced/fetch1",
+        "/cores/0/in_order_pipeline/stage_retired_cycles/commit",
         "sim.cpu0.pipeline.in_order.flush_cause.branch_prediction.stage.fetch1.flushed_cycles",
         "sim.cpu0.pipeline.in_order.flush_cause.trap_redirect.stage.commit.flushed_cycles",
         "sim.cpu0.pipeline.in_order.redirect_cause.branch_prediction.stage.fetch1.flushed_cycles",
