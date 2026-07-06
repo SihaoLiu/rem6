@@ -1,5 +1,5 @@
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
-use rem6_stats::StatSnapshot;
+use rem6_stats::{StatResetPolicy, StatSnapshot};
 
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
 
@@ -114,6 +114,66 @@ fn append_gem5_branch_predictor_json_alias_stats(
             &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::total"),
         );
 
+        for kind in BranchTargetKind::ALL {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.squashes.{}",
+                    kind.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.branchPred.squashes_0::{}",
+                    kind.gem5_branch_type_name()
+                ),
+            );
+        }
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!("sim.cpu{cpu}.branch_predictor.squashes.total"),
+            &format!("{alias_prefix}.branchPred.squashes_0::total"),
+        );
+
+        if let Some((indirect_lookups, unit, reset_policy)) =
+            gem5_indirect_branch_lookups(snapshot, cpu)
+        {
+            append_gem5_json_alias_from_value(
+                snapshot,
+                records,
+                next_id,
+                &format!("{alias_prefix}.branchPred.indirectLookups"),
+                unit,
+                indirect_lookups,
+                reset_policy,
+            );
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+                &format!("{alias_prefix}.branchPred.indirectHits"),
+            );
+            if let Some(indirect_hits) = snapshot_sample_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+            ) {
+                if let Some(indirect_misses) = indirect_lookups.checked_sub(indirect_hits) {
+                    append_gem5_json_alias_from_value(
+                        snapshot,
+                        records,
+                        next_id,
+                        &format!("{alias_prefix}.branchPred.indirectMisses"),
+                        unit,
+                        indirect_misses,
+                        reset_policy,
+                    );
+                }
+            }
+        }
+
         append_gem5_json_alias_from_paths(
             snapshot,
             records,
@@ -121,6 +181,15 @@ fn append_gem5_branch_predictor_json_alias_stats(
             &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
             &format!("{alias_prefix}.branchPred.indirectMispredicted"),
         );
+        for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!("sim.cpu{cpu}.branch_predictor.ras.{name}"),
+                &format!("{alias_prefix}.branchPred.ras.{name}"),
+            );
+        }
         for kind in BranchTargetKind::ALL {
             for (source_family, alias_family) in [
                 ("lookups", "lookups_0"),
@@ -625,6 +694,51 @@ fn append_gem5_json_alias_from_paths(
         ));
         *next_id = next_id.saturating_add(1);
     }
+}
+
+fn append_gem5_json_alias_from_value(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    alias_path: &str,
+    unit: &str,
+    value: u64,
+    reset_policy: StatResetPolicy,
+) {
+    if snapshot_sample(snapshot, alias_path).is_none() {
+        records.push(json_record_for_derived_counter(
+            *next_id,
+            alias_path,
+            unit,
+            value,
+            reset_policy,
+        ));
+        *next_id = next_id.saturating_add(1);
+    }
+}
+
+fn gem5_indirect_branch_lookups(
+    snapshot: &StatSnapshot,
+    cpu: u64,
+) -> Option<(u64, &str, StatResetPolicy)> {
+    let mut lookups = 0_u64;
+    let mut unit = None;
+    let mut reset_policy = None;
+    for kind in [
+        BranchTargetKind::IndirectConditional,
+        BranchTargetKind::IndirectUnconditional,
+        BranchTargetKind::CallIndirect,
+    ] {
+        let source_path = format!(
+            "sim.cpu{cpu}.branch_predictor.lookups.{}",
+            kind.canonical_stat_name()
+        );
+        let source = snapshot_sample(snapshot, &source_path)?;
+        lookups = lookups.saturating_add(source.value());
+        unit.get_or_insert(source.unit());
+        reset_policy.get_or_insert(source.reset_policy());
+    }
+    Some((lookups, unit?, reset_policy?))
 }
 
 fn gem5_json_cpu_alias_prefix(core_count: u64, cpu: u64) -> String {

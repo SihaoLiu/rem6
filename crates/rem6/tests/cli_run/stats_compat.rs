@@ -461,7 +461,17 @@ fn assert_gem5_branch_predictor_json_aliases_absent(json: &Value, alias_prefix: 
         "branchPred.btb.mispredict::total",
         "branchPred.predTakenBTBMiss",
         "branchPred.mispredictDueToBTBMiss_0::total",
+        "branchPred.squashes_0::total",
+        "branchPred.indirectLookups",
+        "branchPred.indirectHits",
+        "branchPred.indirectMisses",
         "branchPred.indirectMispredicted",
+        "branchPred.ras.pushes",
+        "branchPred.ras.pops",
+        "branchPred.ras.squashes",
+        "branchPred.ras.used",
+        "branchPred.ras.correct",
+        "branchPred.ras.incorrect",
     ] {
         assert_json_stat_absent(json, &format!("{alias_prefix}.{alias_suffix}"));
     }
@@ -476,6 +486,10 @@ fn assert_gem5_branch_predictor_json_aliases_absent(json: &Value, alias_prefix: 
         assert_json_stat_absent(
             json,
             &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::{alias_kind}"),
+        );
+        assert_json_stat_absent(
+            json,
+            &format!("{alias_prefix}.branchPred.squashes_0::{alias_kind}"),
         );
 
         for alias_family in [
@@ -18063,6 +18077,13 @@ fn rem6_run_stats_emit_ras_target_provider_from_real_call_return_fetch() {
             .and_then(Value::as_u64),
         Some(ras_used)
     );
+    for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+        assert_json_stat_alias(
+            &artifact,
+            &format!("sim.cpu0.branch_predictor.ras.{name}"),
+            &format!("system.cpu.branchPred.ras.{name}"),
+        );
+    }
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.total"),
         stat_value(
@@ -18207,6 +18228,13 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
                 .and_then(Value::as_u64),
             Some(ras_used)
         );
+        for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+            assert_json_stat_alias(
+                &artifact,
+                &format!("sim.cpu{cpu}.branch_predictor.ras.{name}"),
+                &format!("system.cpu{cpu}.branchPred.ras.{name}"),
+            );
+        }
         assert_eq!(
             stat_value(
                 &stdout,
@@ -18237,6 +18265,7 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
             "core {cpu} did not execute the function body:\n{stdout}"
         );
     }
+    assert_json_stat_absent(&artifact, "system.cpu.branchPred.ras.pushes");
 
     let stdout = run("text");
     for cpu in [0, 1] {
@@ -18367,6 +18396,42 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
             assert!(indirect_provider > 0, "{stdout}");
             assert_eq!(indirect_hits, indirect_provider);
             assert_eq!(indirect_mispredicted, expected_indirect_mispredicted);
+            let indirect_lookups = stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_conditional"),
+            ) + stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_unconditional"),
+            ) + stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.call_indirect"),
+            );
+            let alias_prefix = if cores == 1 {
+                "system.cpu".to_string()
+            } else {
+                format!("system.cpu{cpu}")
+            };
+            assert!(indirect_lookups > 0, "{stdout}");
+            assert_json_stat_count_value(
+                &artifact,
+                &format!("{alias_prefix}.branchPred.indirectLookups"),
+                indirect_lookups,
+            );
+            assert_json_stat_alias(
+                &artifact,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+                &format!("{alias_prefix}.branchPred.indirectHits"),
+            );
+            assert_json_stat_count_value(
+                &artifact,
+                &format!("{alias_prefix}.branchPred.indirectMisses"),
+                indirect_lookups - indirect_hits,
+            );
+            assert_json_stat_alias(
+                &artifact,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
+                &format!("{alias_prefix}.branchPred.indirectMispredicted"),
+            );
             assert_eq!(
                 artifact
                     .pointer(&format!(
@@ -18391,6 +18456,11 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                     &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras")
                 ) + indirect_provider
             );
+        }
+        if cores == 2 {
+            assert_json_stat_absent(&artifact, "system.cpu.branchPred.indirectLookups");
+            assert_json_stat_absent(&artifact, "system.cpu.branchPred.indirectHits");
+            assert_json_stat_absent(&artifact, "system.cpu.branchPred.indirectMisses");
         }
         for cpu in 0..cores {
             assert_eq!(
@@ -18963,6 +19033,18 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
             .pointer("/cores/0/branch_predictor/squashes/direct_conditional")
             .and_then(Value::as_u64),
         Some(removed_youngers)
+    );
+    for (source_kind, alias_kind) in BRANCH_TARGET_KIND_JSON_ALIASES {
+        assert_json_stat_alias(
+            &artifact,
+            &format!("sim.cpu0.branch_predictor.squashes.{source_kind}"),
+            &format!("system.cpu.branchPred.squashes_0::{alias_kind}"),
+        );
+    }
+    assert_json_stat_alias(
+        &artifact,
+        "sim.cpu0.branch_predictor.squashes.total",
+        "system.cpu.branchPred.squashes_0::total",
     );
     assert_eq!(
         stat_value(
@@ -20092,6 +20174,21 @@ fn assert_json_stat_alias(json: &Value, source_path: &str, alias_path: &str) {
         alias.get("reset_policy"),
         source.get("reset_policy"),
         "{alias_path}"
+    );
+}
+
+fn assert_json_stat_count_value(json: &Value, path: &str, expected_value: u64) {
+    let stat = json_stat_record(json, path).unwrap_or_else(|| panic!("missing JSON stat {path}"));
+
+    assert_eq!(
+        stat.get("value").and_then(Value::as_u64),
+        Some(expected_value),
+        "{path}"
+    );
+    assert_eq!(
+        stat.get("unit").and_then(Value::as_str),
+        Some("Count"),
+        "{path}"
     );
 }
 
