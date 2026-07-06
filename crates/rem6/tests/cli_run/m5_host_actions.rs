@@ -2044,6 +2044,22 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
     );
     assert_stats_dump_sample(
         pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
+        "counter",
+        "Count",
+        3,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
+        "counter",
+        "Count",
+        3,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        pre_reset_dump,
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
         "counter",
         "Count",
@@ -2082,6 +2098,8 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_taken_incorrect",
         "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_not_taken_incorrect",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
+        "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");

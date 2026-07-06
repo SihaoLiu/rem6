@@ -175,6 +175,8 @@ struct RiscvO3RuntimeCpuStats {
     iew_consumer_inst: StatId,
     iew_predicted_taken_incorrect: StatId,
     iew_predicted_not_taken_incorrect: StatId,
+    iew_branch_mispredicts: StatId,
+    commit_branch_mispredicts: StatId,
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
@@ -333,6 +335,18 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "iew.predicted_not_taken_incorrect",
+                "Count",
+            )?,
+            iew_branch_mispredicts: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.branch_mispredicts",
+                "Count",
+            )?,
+            commit_branch_mispredicts: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.branch_mispredicts",
                 "Count",
             )?,
             max_rob_occupancy: register_o3_counter(
@@ -504,6 +518,16 @@ impl RiscvO3RuntimeCpuStats {
                 self.iew_predicted_not_taken_incorrect,
                 previous.iew_predicted_not_taken_incorrect(),
                 current.iew_predicted_not_taken_incorrect(),
+            ),
+            (
+                self.iew_branch_mispredicts,
+                o3_branch_mispredicts(previous),
+                o3_branch_mispredicts(current),
+            ),
+            (
+                self.commit_branch_mispredicts,
+                o3_branch_mispredicts(previous),
+                o3_branch_mispredicts(current),
             ),
             (
                 self.max_rob_occupancy,
@@ -680,6 +704,11 @@ impl RiscvO3RuntimeCpuStats {
                 self.iew_predicted_not_taken_incorrect,
                 snapshot.iew_predicted_not_taken_incorrect(),
             ),
+            (self.iew_branch_mispredicts, o3_branch_mispredicts(snapshot)),
+            (
+                self.commit_branch_mispredicts,
+                o3_branch_mispredicts(snapshot),
+            ),
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
             (self.rename_map_entries, snapshot.rename_map_entries()),
@@ -782,6 +811,12 @@ fn register_o3_counter(
     unit: &str,
 ) -> Result<StatId, StatsError> {
     registry.register_counter(format!("{prefix}.{name}"), unit)
+}
+
+fn o3_branch_mispredicts(stats: O3RuntimeStats) -> u64 {
+    stats
+        .iew_predicted_taken_incorrect()
+        .saturating_add(stats.iew_predicted_not_taken_incorrect())
 }
 
 fn register_o3_lsq_operation_counters(

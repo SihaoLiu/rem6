@@ -601,6 +601,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_targetless_mismatch_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.iq.branch_insts_issued",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.branch_mispredicts",
+        "sim.host_actions.stats_dump.cpu0.o3.commit.branch_mispredicts",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.float_misc",
