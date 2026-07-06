@@ -151,6 +151,38 @@ pub(super) fn emit_cpu_run_stats(
         emit_in_order_stage_stats(
             stats,
             core,
+            "advanced",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_advanced.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "advanced_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_advanced_cycles.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "retired",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_retired.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "retired_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_retired_cycles.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
             "resource_blocked",
             "Count",
             StatResetPolicy::Monotonic,

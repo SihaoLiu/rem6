@@ -18,6 +18,7 @@ use crate::parallel_stats::{
 use crate::pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_execute_wait_cycles,
     in_order_pipeline_fetch_wait_cycles, in_order_pipeline_run_summary,
+    in_order_pipeline_stage_advanced, in_order_pipeline_stage_advanced_cycles,
     in_order_pipeline_stage_branch_prediction_flushed,
     in_order_pipeline_stage_branch_prediction_flushed_cycles, in_order_pipeline_stage_flushed,
     in_order_pipeline_stage_flushed_cycles, in_order_pipeline_stage_in_flight,
@@ -25,8 +26,8 @@ use crate::pipeline_stats::{
     in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_ordering_blocked_cycles,
     in_order_pipeline_stage_resource_blocked, in_order_pipeline_stage_resource_blocked_cycles,
     in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause,
-    in_order_pipeline_stage_resource_blocked_for_stall_cause,
-    in_order_pipeline_stage_trap_redirect_flushed,
+    in_order_pipeline_stage_resource_blocked_for_stall_cause, in_order_pipeline_stage_retired,
+    in_order_pipeline_stage_retired_cycles, in_order_pipeline_stage_trap_redirect_flushed,
     in_order_pipeline_stage_trap_redirect_flushed_cycles, in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
@@ -160,6 +161,10 @@ pub(super) fn execution_summary(
         let pipeline_stage_max_in_flight =
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
+        let pipeline_stage_advanced = in_order_pipeline_stage_advanced(&core);
+        let pipeline_stage_advanced_cycles = in_order_pipeline_stage_advanced_cycles(&core);
+        let pipeline_stage_retired = in_order_pipeline_stage_retired(&core);
+        let pipeline_stage_retired_cycles = in_order_pipeline_stage_retired_cycles(&core);
         let pipeline_stage_resource_blocked = in_order_pipeline_stage_resource_blocked(&core);
         let pipeline_stage_resource_blocked_cycles =
             in_order_pipeline_stage_resource_blocked_cycles(&core);
@@ -240,6 +245,10 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_in_flight: pipeline_stage_in_flight,
             in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
             in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,
+            in_order_pipeline_stage_advanced: pipeline_stage_advanced,
+            in_order_pipeline_stage_advanced_cycles: pipeline_stage_advanced_cycles,
+            in_order_pipeline_stage_retired: pipeline_stage_retired,
+            in_order_pipeline_stage_retired_cycles: pipeline_stage_retired_cycles,
             in_order_pipeline_stage_resource_blocked: pipeline_stage_resource_blocked,
             in_order_pipeline_stage_resource_blocked_cycles: pipeline_stage_resource_blocked_cycles,
             in_order_pipeline_fetch_wait_stage_resource_blocked:

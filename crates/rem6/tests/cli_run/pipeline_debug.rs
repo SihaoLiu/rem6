@@ -105,6 +105,106 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
 }
 
 #[test]
+fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13),  // addi x5, x0, 1
+        i_type(2, 0, 0x0, 6, 0x13),  // addi x6, x0, 2
+        i_type(3, 0, 0x0, 7, 0x13),  // addi x7, x0, 3
+        i_type(4, 0, 0x0, 28, 0x13), // addi x28, x0, 4
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-stage-movement-matrix-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-in-order-width",
+            "3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        json.pointer("/debug/pipeline_trace").is_none(),
+        "normal stats evidence should not require Pipeline debug trace: {stdout}"
+    );
+    assert!(stdout.contains("\"x5\":\"0x1\""));
+    assert!(stdout.contains("\"x6\":\"0x2\""));
+    assert!(stdout.contains("\"x7\":\"0x3\""));
+    assert!(stdout.contains("\"x28\":\"0x4\""));
+    assert_eq!(
+        json_stat_value(
+            &json,
+            "sim.cpu0.pipeline.in_order.branch_prediction_redirects"
+        ),
+        0
+    );
+    assert_eq!(
+        json_stat_value(
+            &json,
+            "sim.cpu0.pipeline.in_order.branch_prediction_flushes"
+        ),
+        0
+    );
+
+    let stage_advanced = in_order_stage_metric_values(&json, "advanced");
+    let stage_advanced_cycles = in_order_stage_metric_values(&json, "advanced_cycles");
+    let stage_retired = in_order_stage_metric_values(&json, "retired");
+    let stage_retired_cycles = in_order_stage_metric_values(&json, "retired_cycles");
+    let aggregate_advanced = json_stat_value(&json, "sim.cpu0.pipeline.in_order.advanced");
+    let aggregate_retired = json_stat_value(&json, "sim.cpu0.pipeline.in_order.retired");
+
+    assert_eq!(
+        stage_advanced.iter().sum::<u64>(),
+        aggregate_advanced,
+        "stage advanced matrix must account for aggregate movement: {stage_advanced:?}"
+    );
+    assert_eq!(
+        stage_retired.iter().sum::<u64>(),
+        aggregate_retired,
+        "stage retired matrix must account for aggregate retired movement: {stage_retired:?}"
+    );
+    assert!(
+        stage_advanced_cycles.iter().any(|cycles| *cycles > 0),
+        "stage advanced cycles should be visible in normal stats: {stage_advanced_cycles:?}"
+    );
+    assert!(
+        stage_retired_cycles.iter().any(|cycles| *cycles > 0),
+        "stage retired cycles should be visible in normal stats: {stage_retired_cycles:?}"
+    );
+    assert!(
+        stage_advanced
+            .iter()
+            .zip(stage_advanced_cycles.iter())
+            .any(|(advanced, cycles)| advanced > cycles),
+        "widened pipeline should distinguish movement counts from cycle presence: advanced={stage_advanced:?} cycles={stage_advanced_cycles:?}"
+    );
+    assert!(
+        stage_retired[4] > 0,
+        "retirement movement should be attributed to commit stage: {stage_retired:?}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1

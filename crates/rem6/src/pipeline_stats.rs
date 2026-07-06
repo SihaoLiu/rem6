@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    CpuFetchEventKind, InOrderPipelineInstruction, InOrderPipelineRedirectCause,
-    InOrderPipelineRunSummary, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvCore,
+    CpuFetchEventKind, InOrderPipelineAdvance, InOrderPipelineInstruction,
+    InOrderPipelineRedirectCause, InOrderPipelineRunSummary, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -109,6 +109,54 @@ pub(super) fn in_order_pipeline_stage_occupied_cycles(
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),
         |summary, record| summary.saturating_add(stage_in_flight_from_snapshot(record.before())),
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_advanced(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_advances(record.plan().advanced()))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_advanced_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_advances(
+                record.plan().advanced(),
+            ))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_retired(core: &RiscvCore) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_retiring_advances(
+                record.plan().advanced(),
+            ))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_retired_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_retiring_advances(
+                record.plan().advanced(),
+            ))
+        },
     )
 }
 
@@ -300,6 +348,58 @@ fn stage_summary_from_instructions(
     let mut summary = Rem6InOrderPipelineStageSummary::default();
     for instruction in instructions {
         summary.record_stage(instruction.stage());
+    }
+    summary
+}
+
+fn stage_summary_from_advances(
+    advances: &[InOrderPipelineAdvance],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for advance in advances {
+        summary.record_stage(advance.source_stage());
+    }
+    summary
+}
+
+fn stage_presence_summary_from_advances(
+    advances: &[InOrderPipelineAdvance],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for stage in InOrderPipelineStage::ALL {
+        if advances
+            .iter()
+            .any(|advance| advance.source_stage() == stage)
+        {
+            summary.record_stage(stage);
+        }
+    }
+    summary
+}
+
+fn stage_summary_from_retiring_advances(
+    advances: &[InOrderPipelineAdvance],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for advance in advances {
+        if advance.retires() {
+            summary.record_stage(advance.source_stage());
+        }
+    }
+    summary
+}
+
+fn stage_presence_summary_from_retiring_advances(
+    advances: &[InOrderPipelineAdvance],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for stage in InOrderPipelineStage::ALL {
+        if advances
+            .iter()
+            .any(|advance| advance.retires() && advance.source_stage() == stage)
+        {
+            summary.record_stage(stage);
+        }
     }
     summary
 }
