@@ -4210,15 +4210,27 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
         .sum::<u64>();
     assert!(stall_cycles > 0, "stall cause {cause}: {trace:?}");
     let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
+    let mut stage_records = BTreeMap::<String, u64>::new();
     for record in &wait_records {
+        let mut record_stages = BTreeSet::new();
         for blocked in record_array(record, "resource_blocked") {
             let stage = blocked
                 .get("stage")
                 .and_then(Value::as_str)
                 .unwrap_or_else(|| panic!("missing blocked instruction stage: {blocked}"));
-            *stage_resource_blocked
-                .entry(stat_path_segment(stage))
-                .or_default() += 1;
+            let stage = stat_path_segment(stage);
+            *stage_resource_blocked.entry(stage.clone()).or_default() += 1;
+            record_stages.insert(stage);
+        }
+        for blocked in record_array(record, "ordering_blocked") {
+            let stage = blocked
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing ordering-blocked instruction stage: {blocked}"));
+            record_stages.insert(stat_path_segment(stage));
+        }
+        for stage in record_stages {
+            *stage_records.entry(stage).or_default() += 1;
         }
     }
     assert!(
@@ -4239,6 +4251,22 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
         stall_cycles,
         "monotonic",
     );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            &format!("/debug/pipeline_summary/stall_cause/{cause}/records")
+        ),
+        wait_records.len() as u64,
+        "pipeline summary stall cause {cause} should count records"
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            &format!("/debug/pipeline_summary/stall_cause/{cause}/stall_cycles")
+        ),
+        stall_cycles,
+        "pipeline summary stall cause {cause} should count stall cycles"
+    );
     for (stage, resource_blocked) in stage_resource_blocked {
         assert_stat(
             stdout,
@@ -4247,6 +4275,28 @@ fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
             resource_blocked,
             "monotonic",
         );
+    }
+    for (stage, records) in &stage_records {
+        assert_eq!(
+            json_path_u64(
+                &json,
+                &format!("/debug/pipeline_summary/stall_cause/{cause}/stage/{stage}/records")
+            ),
+            *records,
+            "pipeline summary stall cause {cause} stage {stage} should count active records"
+        );
+    }
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        if !stage_records.contains_key(stage) {
+            assert_eq!(
+                json_path_u64(
+                    &json,
+                    &format!("/debug/pipeline_summary/stall_cause/{cause}/stage/{stage}/records")
+                ),
+                0,
+                "pipeline summary stall cause {cause} stage {stage} should expose a zero record lane"
+            );
+        }
     }
 }
 

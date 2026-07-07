@@ -98,6 +98,7 @@ struct Rem6PipelineTraceStageTotals {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6PipelineTraceResourceTotals {
+    records: u64,
     resource_blocked: u64,
     resource_blocked_cycles: u64,
     ordering_blocked: u64,
@@ -499,6 +500,7 @@ impl Rem6PipelineTraceResourceTotals {
         ordering_blocked: u64,
         ordering_blocked_cycles: u64,
     ) {
+        self.records = self.records.saturating_add(1);
         self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
         self.resource_blocked_cycles = self
             .resource_blocked_cycles
@@ -511,7 +513,8 @@ impl Rem6PipelineTraceResourceTotals {
 
     fn to_json(self) -> String {
         format!(
-            "{{\"resource_blocked\":{},\"resource_blocked_cycles\":{},\"ordering_blocked\":{},\"ordering_blocked_cycles\":{}}}",
+            "{{\"records\":{},\"resource_blocked\":{},\"resource_blocked_cycles\":{},\"ordering_blocked\":{},\"ordering_blocked_cycles\":{}}}",
+            self.records,
             self.resource_blocked,
             self.resource_blocked_cycles,
             self.ordering_blocked,
