@@ -3018,6 +3018,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
             1,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+            2,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_taken_kind.direct_conditional",
             1,
         ),
@@ -3087,6 +3095,8 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.not_taken_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_taken_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_not_taken_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_target_mismatch_kind.direct_conditional",
@@ -3115,6 +3125,128 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
     assert_json_stat(
         &json,
         "sim.cpu0.o3.branch_event.squashes",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
+    let path = detailed_o3_indirect_call_wrong_target_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-branch-event-link-kind-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu0.o3.branch_event.branches", 2),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_unconditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_write_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.call_indirect",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+            1,
+        ),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", "Count", value, "resettable");
+    }
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.branches",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_writes",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_writes",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_write_kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_event.without_link_write_kind.call_indirect",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
         "Count",
         0,
         "monotonic",
@@ -8727,6 +8859,41 @@ fn detailed_o3_branch_dump_reset_stats_binary(name: &str) -> std::path::PathBuf 
         words.push(0);
     }
     words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_indirect_call_wrong_target_dump_reset_stats_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    let data_start = 112_i32;
+    let mut words = vec![
+        u_type(0, 11, 0x17),
+        i_type(16, 11, 0x0, 11, 0x13),
+        i_type(0, 11, 0x0, 1, 0x67),
+        i_type(99, 0, 0x0, 6, 0x13),
+        m5op(M5_SWITCH_CPU),
+        u_type(0, 11, 0x17),
+        i_type(16, 11, 0x0, 11, 0x13),
+        j_type(-20, 0),
+        i_type(77, 0, 0x0, 6, 0x13),
+        u_type(0, 10, 0x17),
+        i_type(data_start - 36, 10, 0x0, 10, 0x13),
+        s_type(0, 11, 10, 0b011),
+        s_type(8, 1, 10, 0b011),
+        s_type(16, 6, 10, 0b011),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_DUMP_RESET_STATS),
+    ];
+    append_integer_mul_div_work(&mut words);
+    words.push(m5op(M5_DUMP_STATS));
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

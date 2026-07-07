@@ -1219,6 +1219,7 @@ fn emit_o3_runtime_stats(
     for kind in BranchTargetKind::ALL {
         let branch_event_resolved = o3.branch_event_resolved_target_kind(kind);
         let branch_event_link = o3.branch_event_link_write_kind(kind);
+        let branch_event_no_link = o3.branch_event_without_link_write_kind(kind);
         let branch_event_squash = o3.branch_event_squash_kind(kind);
         let branch_event_squashed_link = o3.branch_event_squashed_target_link_write_kind(kind);
         let branch_event_squashed_no_link =
@@ -1252,6 +1253,7 @@ fn emit_o3_runtime_stats(
             ),
             ("branch_event.resolved_target_kind", branch_event_resolved),
             ("branch_event.link_write_kind", branch_event_link),
+            ("branch_event.without_link_write_kind", branch_event_no_link),
             ("branch_event.squash_kind", branch_event_squash),
             (
                 "branch_event.squashed_target_link_write_kind",

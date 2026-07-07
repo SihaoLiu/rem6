@@ -8874,6 +8874,20 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
     assert_eq!(json_record_u64(branch_event, "link_writes"), 1);
     assert_eq!(json_record_u64(branch_event, "without_link_writes"), 1);
     assert_eq!(
+        branch_event
+            .pointer("/without_link_write_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(0),
+        "call-indirect runtime matrix should subtract link-write branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/without_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-unconditional runtime matrix should expose branches without link writes: {branch_event}"
+    );
+    assert_eq!(
         json_record_u64(branch_event, "squashed_targets_with_link_writes"),
         1
     );
@@ -8941,6 +8955,16 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ("sim.cpu0.o3.branch_event.resolved_targets", "Count", 2),
         ("sim.cpu0.o3.branch_event.link_writes", "Count", 1),
         ("sim.cpu0.o3.branch_event.without_link_writes", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_event.without_link_write_kind.call_indirect",
+            "Count",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
         (
             "sim.cpu0.o3.branch_event.squashed_targets_with_link_writes",
             "Count",
@@ -11299,6 +11323,20 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     );
     assert_eq!(
         branch_event
+            .pointer("/without_link_write_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose branches without link writes: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/without_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "direct-unconditional runtime matrix should expose branches without link writes: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
             .pointer("/predicted_target_mismatch_kind/direct_conditional")
             .and_then(Value::as_u64),
         Some(1),
@@ -11394,6 +11432,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "sim.cpu0.o3.branch_event.not_taken_kind.direct_conditional",
             "Count",
             1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.without_link_write_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+            "Count",
+            2,
         ),
         (
             "sim.cpu0.o3.branch_event.predicted_target_mismatch_kind.direct_conditional",
