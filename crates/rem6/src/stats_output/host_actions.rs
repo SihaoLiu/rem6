@@ -5,6 +5,8 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
 use crate::Rem6HostActionSummary;
 
+const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
+
 pub(super) fn emit_run_host_action_stats(
     stats: &mut StatsRegistry,
     summary: &Rem6HostActionSummary,
@@ -34,11 +36,39 @@ pub(super) fn emit_run_host_action_stats(
         guest_host_call_response_payload_bytes += call.response_payload_bytes;
     }
 
+    let mut execution_mode_authority_modes = BTreeMap::<&'static str, u64>::new();
+    let mut execution_mode_authority_target_modes = BTreeMap::<(String, &'static str), u64>::new();
+    for authority in &summary.execution_modes {
+        *execution_mode_authority_modes
+            .entry(authority.mode)
+            .or_default() += 1;
+        *execution_mode_authority_target_modes
+            .entry((stat_path_segment(&authority.target), authority.mode))
+            .or_default() += 1;
+    }
+
+    let mut switch_modes = BTreeMap::<&'static str, u64>::new();
+    let mut switch_previous_modes = BTreeMap::<&'static str, u64>::new();
+    let mut switch_previous_mode_none = 0;
+    for switch in &summary.execution_mode_switches {
+        *switch_modes.entry(switch.mode).or_default() += 1;
+        if let Some(previous_mode) = switch.previous_mode {
+            *switch_previous_modes.entry(previous_mode).or_default() += 1;
+        } else {
+            switch_previous_mode_none += 1;
+        }
+    }
+
     let mut switch_state_transfer_count = 0;
     let mut switch_state_transfer_components = 0;
     let mut switch_state_transfer_chunks = 0;
     let mut switch_state_transfer_payload_bytes = 0;
+    let mut switch_quiescence_validated = 0;
+    let mut switch_quiescence_captured_components = 0;
+    let mut switch_quiescence_captured_chunks = 0;
+    let mut switch_quiescence_captured_payload_bytes = 0;
     let mut switch_quiescence_checker = None;
+    let mut switch_quiescence_target_validated = BTreeMap::<String, u64>::new();
     let mut switch_state_transfer_component_stats =
         BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
@@ -52,6 +82,15 @@ pub(super) fn emit_run_host_action_stats(
         switch_state_transfer_components += transfer.component_count;
         switch_state_transfer_chunks += transfer.chunk_count;
         switch_state_transfer_payload_bytes += transfer.payload_bytes;
+        if transfer.quiescence_gate.validated {
+            switch_quiescence_validated += 1;
+            *switch_quiescence_target_validated
+                .entry(stat_path_segment(&transfer.quiescence_gate.target))
+                .or_default() += 1;
+        }
+        switch_quiescence_captured_components += transfer.quiescence_gate.captured_component_count;
+        switch_quiescence_captured_chunks += transfer.quiescence_gate.captured_chunk_count;
+        switch_quiescence_captured_payload_bytes += transfer.quiescence_gate.captured_payload_bytes;
         if let Some(checker) = transfer.quiescence_gate.checker {
             switch_quiescence_checker = Some(checker);
         }
@@ -117,6 +156,26 @@ pub(super) fn emit_run_host_action_stats(
             "execution_mode_switch_state_transfer_chunks",
             switch_state_transfer_chunks,
         ),
+        (
+            "execution_mode_switch.quiescence.validated",
+            switch_quiescence_validated,
+        ),
+        (
+            "execution_mode_switch.quiescence.captured_components",
+            switch_quiescence_captured_components,
+        ),
+        (
+            "execution_mode_switch.quiescence.captured_chunks",
+            switch_quiescence_captured_chunks,
+        ),
+        (
+            "execution_mode_authority.targets",
+            summary.execution_modes.len() as u64,
+        ),
+        (
+            "execution_mode_switch.previous_mode.none",
+            switch_previous_mode_none,
+        ),
         ("stops", summary.stops.len() as u64),
     ];
     for (name, value) in samples {
@@ -126,6 +185,50 @@ pub(super) fn emit_run_host_action_stats(
             "Count",
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+    for mode in EXECUTION_MODE_STAT_LANES {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_authority.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution_mode_authority_modes
+                .get(mode)
+                .copied()
+                .unwrap_or_default(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            switch_modes.get(mode).copied().unwrap_or_default(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.previous_mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            switch_previous_modes.get(mode).copied().unwrap_or_default(),
+        )?;
+    }
+    for ((target, mode), count) in execution_mode_authority_target_modes {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_authority.target.{target}.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            count,
+        )?;
+    }
+    for (target, validated) in switch_quiescence_target_validated {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.quiescence.target.{target}.validated"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            validated,
         )?;
     }
     if let Some(checker) = switch_quiescence_checker {
@@ -171,6 +274,13 @@ pub(super) fn emit_run_host_action_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         switch_state_transfer_payload_bytes,
+    )?;
+    increment_stat(
+        stats,
+        "sim.host_actions.execution_mode_switch.quiescence.captured_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        switch_quiescence_captured_payload_bytes,
     )?;
     for (component_path, component_stats) in switch_state_transfer_component_stats {
         increment_stat(

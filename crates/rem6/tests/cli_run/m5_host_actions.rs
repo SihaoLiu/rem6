@@ -6921,6 +6921,188 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_stats_expose_m5_switch_cpu_mode_authority_matrix() {
+    for mode in ["detailed", "timing", "functional"] {
+        let program = riscv64_program(&[
+            m5op(M5_SWITCH_CPU),
+            i_type(0, 0, 0x0, 10, 0x13),
+            m5op(M5_EXIT),
+        ]);
+        let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+        let path = temp_binary(&format!("m5-switch-cpu-mode-authority-{mode}"), &elf);
+        let mut args = vec![
+            "run".to_string(),
+            "--isa".to_string(),
+            "riscv".to_string(),
+            "--binary".to_string(),
+            path.to_str().unwrap().to_string(),
+            "--max-tick".to_string(),
+            "80".to_string(),
+            "--stats-format".to_string(),
+            "json".to_string(),
+            "--execute".to_string(),
+            "--memory-system".to_string(),
+            "direct".to_string(),
+        ];
+        if mode != "detailed" {
+            args.push("--m5-switch-cpu-mode".to_string());
+            args.push(mode.to_string());
+        }
+
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args(args)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+        assert_eq!(
+            json.pointer("/simulation/status").and_then(Value::as_str),
+            Some("stopped_by_host")
+        );
+        let host_actions = json
+            .pointer("/host_actions")
+            .expect("run JSON should include host action outcomes");
+        let (switch_tick, _) = assert_execution_mode_switch(
+            host_actions,
+            0,
+            "cpu0",
+            None,
+            mode,
+            "execution-mode-switch-cpu0",
+        );
+        assert!(
+            host_actions
+                .pointer("/stops/0/tick")
+                .and_then(Value::as_u64)
+                .is_some_and(|stop_tick| stop_tick > switch_tick),
+            "m5_switch_cpu {mode} mode should continue to m5_exit: {host_actions}"
+        );
+        let execution_modes = host_actions
+            .pointer("/execution_modes")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("missing final execution-mode authority: {host_actions}"));
+        assert_eq!(
+            execution_modes.len(),
+            1,
+            "single switch should leave one final execution-mode authority: {execution_modes:?}"
+        );
+        assert_eq!(
+            execution_modes[0]
+                .pointer("/target")
+                .and_then(Value::as_str),
+            Some("cpu0")
+        );
+        assert_eq!(
+            execution_modes[0].pointer("/mode").and_then(Value::as_str),
+            Some(mode)
+        );
+
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_authority.targets",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!("sim.host_actions.execution_mode_authority.target.cpu0.mode.{mode}"),
+            "Count",
+            1,
+            "monotonic",
+        );
+        for lane in ["functional", "timing", "detailed"] {
+            let expected = u64::from(lane == mode);
+            assert_json_stat(
+                &json,
+                &format!("sim.host_actions.execution_mode_authority.mode.{lane}"),
+                "Count",
+                expected,
+                "monotonic",
+            );
+            assert_json_stat(
+                &json,
+                &format!("sim.host_actions.execution_mode_switch.mode.{lane}"),
+                "Count",
+                expected,
+                "monotonic",
+            );
+            assert_json_stat(
+                &json,
+                &format!("sim.host_actions.execution_mode_switch.previous_mode.{lane}"),
+                "Count",
+                0,
+                "monotonic",
+            );
+        }
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.previous_mode.none",
+            "Count",
+            1,
+            "monotonic",
+        );
+
+        let transfer = host_actions
+            .pointer("/execution_mode_switches/0/state_transfer")
+            .unwrap_or_else(|| panic!("missing execution-mode state transfer: {host_actions}"));
+        let quiescence_gate = transfer
+            .pointer("/quiescence_gate")
+            .unwrap_or_else(|| panic!("missing execution-mode quiescence gate: {transfer}"));
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.quiescence.validated",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.validated",
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.quiescence.captured_components",
+            "Count",
+            quiescence_gate
+                .pointer("/captured_component_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing quiescence component count: {quiescence_gate}")),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.quiescence.captured_chunks",
+            "Count",
+            quiescence_gate
+                .pointer("/captured_chunk_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing quiescence chunk count: {quiescence_gate}")),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            "sim.host_actions.execution_mode_switch.quiescence.captured_payload_bytes",
+            "Byte",
+            quiescence_gate
+                .pointer("/captured_payload_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing quiescence payload bytes: {quiescence_gate}")),
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
     let program = riscv64_program(&[
         i_type(7, 0, 0x0, 5, 0x13),
