@@ -135,3 +135,65 @@ impl Rem6O3BranchDirectionMismatchTotals {
         );
     }
 }
+
+fn o3_branch_direction_mismatch_kind_json<F>(count: F) -> String
+where
+    F: Fn(BranchTargetKind) -> u64,
+{
+    let fields = BranchTargetKind::ALL
+        .into_iter()
+        .map(|kind| format!("\"{}\":{}", kind.canonical_stat_name(), count(kind)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+pub(super) fn o3_branch_direction_mismatch_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let mut totals = Rem6O3BranchDirectionMismatchTotals::default();
+    for event in events {
+        if !event.branch_event() {
+            continue;
+        }
+        totals.add_event(
+            event,
+            event.branch_predicted_taken() != event.branch_resolved_taken(),
+            event.branch_squashed_target().is_some(),
+        );
+    }
+
+    let kind =
+        o3_branch_direction_mismatch_kind_json(|branch_kind| totals.kinds[branch_kind.index()]);
+    let link_write_kind = o3_branch_direction_mismatch_kind_json(|branch_kind| {
+        totals.link_write_kinds[branch_kind.index()]
+    });
+    let without_link_write_kind = o3_branch_direction_mismatch_kind_json(|branch_kind| {
+        totals.without_link_write_kinds[branch_kind.index()]
+    });
+    let squashed_target_kind = o3_branch_direction_mismatch_kind_json(|branch_kind| {
+        totals.squashed_target_kinds[branch_kind.index()]
+    });
+    let squashed_target_link_write_kind = o3_branch_direction_mismatch_kind_json(|branch_kind| {
+        totals.squashed_target_link_write_kinds[branch_kind.index()]
+    });
+    let squashed_target_without_link_write_kind =
+        o3_branch_direction_mismatch_kind_json(|branch_kind| {
+            totals.squashed_target_without_link_write_kinds[branch_kind.index()]
+        });
+    let squashed_target_link_writes = totals
+        .squashed_targets
+        .saturating_sub(totals.squashed_target_without_link_writes);
+    format!(
+        "{{\"mismatches\":{},\"without_link_writes\":{},\"squashed_targets\":{},\"squashed_target_without_link_writes\":{},\"squashed_target_link_writes\":{},\"kind\":{},\"link_write_kind\":{},\"without_link_write_kind\":{},\"squashed_target_kind\":{},\"squashed_target_link_write_kind\":{},\"squashed_target_without_link_write_kind\":{}}}",
+        totals.mismatches,
+        totals.without_link_writes,
+        totals.squashed_targets,
+        totals.squashed_target_without_link_writes,
+        squashed_target_link_writes,
+        kind,
+        link_write_kind,
+        without_link_write_kind,
+        squashed_target_kind,
+        squashed_target_link_write_kind,
+        squashed_target_without_link_write_kind,
+    )
+}
