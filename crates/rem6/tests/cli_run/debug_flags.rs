@@ -3390,15 +3390,20 @@ fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
-fn detailed_o3_store_forwarding_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
+fn detailed_o3_store_forwarding_suppression_debug_binary(
+    name: &str,
+    load_offset: i32,
+    load_funct3: u32,
+    expected_register: u8,
+) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
         u_type(0, 5, 0x17),
         i_type(60, 5, 0x0, 5, 0x13),
         i_type(0x5a, 0, 0x0, 11, 0x13),
         s_type(0, 11, 5, 0b010),
-        i_type(4, 5, 0b010, 12, 0x03),
-        b_type(8, 0, 12, 0x1),
+        i_type(load_offset, 5, load_funct3, 12, 0x03),
+        b_type(8, expected_register, 12, 0x1),
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ];
@@ -3409,6 +3414,20 @@ fn detailed_o3_store_forwarding_mismatch_debug_binary(name: &str) -> std::path::
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
+}
+
+fn detailed_o3_store_forwarding_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 4, 0b010, 0)
+}
+
+fn detailed_o3_store_forwarding_byte_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 0, 0b100, 11)
+}
+
+fn detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 4, 0b100, 0)
 }
 
 fn hart1_detailed_o3_debug_binary(name: &str) -> std::path::PathBuf {
@@ -11455,118 +11474,204 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
 }
 
 #[test]
-fn rem6_run_o3_debug_flag_suppresses_store_forwarding_on_address_mismatch() {
-    let path = detailed_o3_store_forwarding_mismatch_debug_binary(
-        "debug-flags-o3-store-forwarding-address-mismatch",
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "160",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--memory-system",
-            "direct",
-            "--debug-flags",
-            "O3",
-        ])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: Value = serde_json::from_str(&stdout).unwrap();
-    let trace = json
-        .pointer("/debug/o3_trace")
-        .and_then(Value::as_array)
-        .expect("debug O3 trace array");
-    assert_eq!(trace.len(), 1);
-    let record = &trace[0];
-    assert_eq!(
-        json_record_u64(record, "store_load_forwarding_candidates"),
-        0
-    );
-    assert_eq!(json_record_u64(record, "store_load_forwarding_matches"), 0);
-
-    let events = record
-        .pointer("/events")
-        .and_then(Value::as_array)
-        .expect("O3 trace events array");
-    assert_eq!(events.len(), 7);
-    assert_o3_event_with_store_forwarding(
-        &events[3],
-        3,
-        "0x80000010",
-        0,
-        0,
-        1,
-        false,
-        false,
-        false,
-    );
-    assert_o3_event_with_store_forwarding(
-        &events[4],
-        4,
-        "0x80000014",
-        1,
-        1,
-        0,
-        false,
-        false,
-        false,
-    );
-    assert_eq!(
-        json_record_str(&events[3], "lsq_store_address"),
-        "0x80000040"
-    );
-    assert_eq!(json_record_u64(&events[3], "lsq_store_bytes"), 4);
-    assert_eq!(
-        json_record_str(&events[4], "lsq_load_address"),
-        "0x80000044"
-    );
-    assert_eq!(json_record_u64(&events[4], "lsq_load_bytes"), 4);
-
-    for (path, unit, value) in [
-        ("sim.debug.o3_trace.records", "Count", 1),
-        ("sim.debug.o3_trace.instructions", "Count", 7),
-        ("sim.debug.o3_trace.lsq_loads", "Count", 1),
-        ("sim.debug.o3_trace.lsq_stores", "Count", 1),
+fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
+    for (path, load_address, load_bytes, address_mismatches, byte_mismatches) in [
         (
-            "sim.debug.o3_trace.store_load_forwarding_candidates",
-            "Count",
+            detailed_o3_store_forwarding_mismatch_debug_binary(
+                "debug-flags-o3-store-forwarding-address-mismatch",
+            ),
+            "0x80000044",
+            4,
+            1,
             0,
         ),
         (
-            "sim.debug.o3_trace.store_load_forwarding_matches",
-            "Count",
+            detailed_o3_store_forwarding_byte_mismatch_debug_binary(
+                "debug-flags-o3-store-forwarding-byte-mismatch",
+            ),
+            "0x80000040",
+            1,
             0,
-        ),
-        ("sim.debug.o3_trace.event.records", "Count", 7),
-        ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
-        ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
-        (
-            "sim.debug.o3_trace.event.store_load_forwarding_candidates",
-            "Count",
-            0,
+            1,
         ),
         (
-            "sim.debug.o3_trace.event.store_load_forwarding_matches",
-            "Count",
+            detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
+                "debug-flags-o3-store-forwarding-address-byte-mismatch",
+            ),
+            "0x80000044",
+            1,
+            1,
             0,
         ),
     ] {
-        assert_stat(&stdout, path, unit, value, "monotonic");
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "160",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--memory-system",
+                "direct",
+                "--debug-flags",
+                "O3",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout).unwrap();
+        let trace = json
+            .pointer("/debug/o3_trace")
+            .and_then(Value::as_array)
+            .expect("debug O3 trace array");
+        assert_eq!(trace.len(), 1);
+        let record = &trace[0];
+        for (field, value) in [
+            ("store_load_forwarding_candidates", 0),
+            ("store_load_forwarding_matches", 0),
+            ("store_load_forwarding_suppressed", 1),
+            (
+                "store_load_forwarding_address_mismatches",
+                address_mismatches,
+            ),
+            ("store_load_forwarding_byte_mismatches", byte_mismatches),
+        ] {
+            assert_eq!(
+                json_record_u64(record, field),
+                value,
+                "O3 trace field {field}"
+            );
+        }
+
+        let events = record
+            .pointer("/events")
+            .and_then(Value::as_array)
+            .expect("O3 trace events array");
+        assert_eq!(events.len(), 7);
+        assert_o3_event_with_store_forwarding(
+            &events[3],
+            3,
+            "0x80000010",
+            0,
+            0,
+            1,
+            false,
+            false,
+            false,
+        );
+        assert_o3_event_with_store_forwarding(
+            &events[4],
+            4,
+            "0x80000014",
+            1,
+            1,
+            0,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            json_record_str(&events[3], "lsq_store_address"),
+            "0x80000040"
+        );
+        assert_eq!(json_record_u64(&events[3], "lsq_store_bytes"), 4);
+        assert_eq!(
+            json_record_str(&events[4], "lsq_load_address"),
+            load_address
+        );
+        assert_eq!(json_record_u64(&events[4], "lsq_load_bytes"), load_bytes);
+        for field in [
+            "store_load_forwarding_suppressed",
+            "store_load_forwarding_address_mismatch",
+            "store_load_forwarding_byte_mismatch",
+        ] {
+            assert_eq!(json_record_bool(&events[3], field), false);
+        }
+        assert_eq!(
+            json_record_bool(&events[4], "store_load_forwarding_suppressed"),
+            true
+        );
+        assert_eq!(
+            json_record_bool(&events[4], "store_load_forwarding_address_mismatch"),
+            address_mismatches == 1
+        );
+        assert_eq!(
+            json_record_bool(&events[4], "store_load_forwarding_byte_mismatch"),
+            byte_mismatches == 1
+        );
+
+        for (path, unit, value) in [
+            ("sim.debug.o3_trace.records", "Count", 1),
+            ("sim.debug.o3_trace.instructions", "Count", 7),
+            ("sim.debug.o3_trace.lsq_loads", "Count", 1),
+            ("sim.debug.o3_trace.lsq_stores", "Count", 1),
+            (
+                "sim.debug.o3_trace.store_load_forwarding_candidates",
+                "Count",
+                0,
+            ),
+            (
+                "sim.debug.o3_trace.store_load_forwarding_matches",
+                "Count",
+                0,
+            ),
+            (
+                "sim.debug.o3_trace.store_load_forwarding_suppressed",
+                "Count",
+                1,
+            ),
+            (
+                "sim.debug.o3_trace.store_load_forwarding_address_mismatches",
+                "Count",
+                address_mismatches,
+            ),
+            (
+                "sim.debug.o3_trace.store_load_forwarding_byte_mismatches",
+                "Count",
+                byte_mismatches,
+            ),
+            ("sim.debug.o3_trace.event.records", "Count", 7),
+            ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
+            ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
+            (
+                "sim.debug.o3_trace.event.store_load_forwarding_candidates",
+                "Count",
+                0,
+            ),
+            (
+                "sim.debug.o3_trace.event.store_load_forwarding_matches",
+                "Count",
+                0,
+            ),
+            (
+                "sim.debug.o3_trace.event.store_load_forwarding_suppressed",
+                "Count",
+                1,
+            ),
+            (
+                "sim.debug.o3_trace.event.store_load_forwarding_address_mismatches",
+                "Count",
+                address_mismatches,
+            ),
+            (
+                "sim.debug.o3_trace.event.store_load_forwarding_byte_mismatches",
+                "Count",
+                byte_mismatches,
+            ),
+        ] {
+            assert_stat(&stdout, path, unit, value, "monotonic");
+        }
     }
 }
 

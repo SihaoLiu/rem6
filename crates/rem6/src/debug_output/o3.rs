@@ -16,6 +16,8 @@ mod o3_branch_repair;
 mod o3_branch_stats;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
+#[path = "o3_fu_latency_stats.rs"]
+mod o3_fu_latency_stats;
 
 use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;
 use o3_branch_repair::{
@@ -43,6 +45,7 @@ use o3_branch_stats::{
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
 use o3_event_json::o3_event_to_json;
+use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
@@ -84,6 +87,14 @@ const fn min_latency_ticks(current: Option<u64>, latency: u64) -> Option<u64> {
     })
 }
 
+fn add_counter(counter: &mut u64, value: u64) {
+    *counter = (*counter).saturating_add(value);
+}
+
+fn add_bool_counter(counter: &mut u64, value: bool) {
+    add_counter(counter, u64::from(value));
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6O3FuLatencyClassTotals {
     instructions: u64,
@@ -108,164 +119,6 @@ impl Rem6O3FuLatencyClassTotals {
         average_ticks(self.cycles, self.instructions)
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Rem6O3FuLatencyClassStatNames {
-    class: O3RuntimeFuLatencyClass,
-    instructions: &'static str,
-    cycles: &'static str,
-    max_cycles: &'static str,
-    min_cycles: &'static str,
-    avg_cycles: &'static str,
-}
-
-const REM6_O3_FU_LATENCY_CLASS_STATS: [Rem6O3FuLatencyClassStatNames;
-    O3RuntimeFuLatencyClass::COUNT] = [
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarIntegerMul,
-        instructions: "event.fu_integer_mul_instructions",
-        cycles: "event.fu_integer_mul_latency_cycles",
-        max_cycles: "event.fu_integer_mul_latency_max_cycles",
-        min_cycles: "event.fu_integer_mul_latency_min_cycles",
-        avg_cycles: "event.fu_integer_mul_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarIntegerDiv,
-        instructions: "event.fu_integer_div_instructions",
-        cycles: "event.fu_integer_div_latency_cycles",
-        max_cycles: "event.fu_integer_div_latency_max_cycles",
-        min_cycles: "event.fu_integer_div_latency_min_cycles",
-        avg_cycles: "event.fu_integer_div_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatAdd,
-        instructions: "event.fu_float_add_instructions",
-        cycles: "event.fu_float_add_latency_cycles",
-        max_cycles: "event.fu_float_add_latency_max_cycles",
-        min_cycles: "event.fu_float_add_latency_min_cycles",
-        avg_cycles: "event.fu_float_add_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatCompare,
-        instructions: "event.fu_float_compare_instructions",
-        cycles: "event.fu_float_compare_latency_cycles",
-        max_cycles: "event.fu_float_compare_latency_max_cycles",
-        min_cycles: "event.fu_float_compare_latency_min_cycles",
-        avg_cycles: "event.fu_float_compare_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatMisc,
-        instructions: "event.fu_float_misc_instructions",
-        cycles: "event.fu_float_misc_latency_cycles",
-        max_cycles: "event.fu_float_misc_latency_max_cycles",
-        min_cycles: "event.fu_float_misc_latency_min_cycles",
-        avg_cycles: "event.fu_float_misc_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatMul,
-        instructions: "event.fu_float_mul_instructions",
-        cycles: "event.fu_float_mul_latency_cycles",
-        max_cycles: "event.fu_float_mul_latency_max_cycles",
-        min_cycles: "event.fu_float_mul_latency_min_cycles",
-        avg_cycles: "event.fu_float_mul_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatFma,
-        instructions: "event.fu_float_fma_instructions",
-        cycles: "event.fu_float_fma_latency_cycles",
-        max_cycles: "event.fu_float_fma_latency_max_cycles",
-        min_cycles: "event.fu_float_fma_latency_min_cycles",
-        avg_cycles: "event.fu_float_fma_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatDiv,
-        instructions: "event.fu_float_div_instructions",
-        cycles: "event.fu_float_div_latency_cycles",
-        max_cycles: "event.fu_float_div_latency_max_cycles",
-        min_cycles: "event.fu_float_div_latency_min_cycles",
-        avg_cycles: "event.fu_float_div_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::ScalarFloatSqrt,
-        instructions: "event.fu_float_sqrt_instructions",
-        cycles: "event.fu_float_sqrt_latency_cycles",
-        max_cycles: "event.fu_float_sqrt_latency_max_cycles",
-        min_cycles: "event.fu_float_sqrt_latency_min_cycles",
-        avg_cycles: "event.fu_float_sqrt_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorIntegerMul,
-        instructions: "event.fu_vector_integer_mul_instructions",
-        cycles: "event.fu_vector_integer_mul_latency_cycles",
-        max_cycles: "event.fu_vector_integer_mul_latency_max_cycles",
-        min_cycles: "event.fu_vector_integer_mul_latency_min_cycles",
-        avg_cycles: "event.fu_vector_integer_mul_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorIntegerDiv,
-        instructions: "event.fu_vector_integer_div_instructions",
-        cycles: "event.fu_vector_integer_div_latency_cycles",
-        max_cycles: "event.fu_vector_integer_div_latency_max_cycles",
-        min_cycles: "event.fu_vector_integer_div_latency_min_cycles",
-        avg_cycles: "event.fu_vector_integer_div_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatAdd,
-        instructions: "event.fu_vector_float_add_instructions",
-        cycles: "event.fu_vector_float_add_latency_cycles",
-        max_cycles: "event.fu_vector_float_add_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_add_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_add_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatCompare,
-        instructions: "event.fu_vector_float_compare_instructions",
-        cycles: "event.fu_vector_float_compare_latency_cycles",
-        max_cycles: "event.fu_vector_float_compare_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_compare_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_compare_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatMisc,
-        instructions: "event.fu_vector_float_misc_instructions",
-        cycles: "event.fu_vector_float_misc_latency_cycles",
-        max_cycles: "event.fu_vector_float_misc_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_misc_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_misc_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatMul,
-        instructions: "event.fu_vector_float_mul_instructions",
-        cycles: "event.fu_vector_float_mul_latency_cycles",
-        max_cycles: "event.fu_vector_float_mul_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_mul_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_mul_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatFma,
-        instructions: "event.fu_vector_float_fma_instructions",
-        cycles: "event.fu_vector_float_fma_latency_cycles",
-        max_cycles: "event.fu_vector_float_fma_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_fma_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_fma_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatDiv,
-        instructions: "event.fu_vector_float_div_instructions",
-        cycles: "event.fu_vector_float_div_latency_cycles",
-        max_cycles: "event.fu_vector_float_div_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_div_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_div_latency_avg_cycles",
-    },
-    Rem6O3FuLatencyClassStatNames {
-        class: O3RuntimeFuLatencyClass::VectorFloatSqrt,
-        instructions: "event.fu_vector_float_sqrt_instructions",
-        cycles: "event.fu_vector_float_sqrt_latency_cycles",
-        max_cycles: "event.fu_vector_float_sqrt_latency_max_cycles",
-        min_cycles: "event.fu_vector_float_sqrt_latency_min_cycles",
-        avg_cycles: "event.fu_vector_float_sqrt_latency_avg_cycles",
-    },
-];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreScope {
@@ -298,6 +151,9 @@ struct Rem6O3TraceTotals {
     float_stores: u64,
     store_load_forwarding_candidates: u64,
     store_load_forwarding_matches: u64,
+    store_load_forwarding_suppressed: u64,
+    store_load_forwarding_address_mismatches: u64,
+    store_load_forwarding_byte_mismatches: u64,
     fu_latency_instructions: u64,
     fu_latency_cycles: u64,
     fu_integer_mul_instructions: u64,
@@ -415,6 +271,9 @@ struct Rem6O3TraceTotals {
     event_lsq_store_bytes: u64,
     event_store_load_forwarding_candidates: u64,
     event_store_load_forwarding_matches: u64,
+    event_store_load_forwarding_suppressed: u64,
+    event_store_load_forwarding_address_mismatches: u64,
+    event_store_load_forwarding_byte_mismatches: u64,
     event_fu_latency_instructions: u64,
     event_fu_latency_cycles: u64,
     event_fu_latency_max_cycles: u64,
@@ -515,7 +374,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -537,6 +396,9 @@ impl Rem6O3TraceRecord {
             self.stats.lsq_store_bytes(),
             self.stats.lsq_store_to_load_forwarding_candidates(),
             self.stats.lsq_store_to_load_forwarding_matches(),
+            self.stats.lsq_store_to_load_forwarding_suppressed(),
+            self.stats.lsq_store_to_load_forwarding_address_mismatches(),
+            self.stats.lsq_store_to_load_forwarding_byte_mismatches(),
             self.stats.fu_latency_instructions(),
             self.stats.fu_latency_cycles(),
             self.stats.fu_integer_mul_instructions(),
@@ -627,46 +489,61 @@ impl Rem6O3TraceTotals {
                 .checkpoint_restore_payload_bytes
                 .max(restore.payload_bytes);
         }
-        self.instructions = self.instructions.saturating_add(stats.instructions());
-        self.rob_allocations = self.rob_allocations.saturating_add(stats.rob_allocations());
-        self.rob_commits = self.rob_commits.saturating_add(stats.rob_commits());
-        self.rename_writes = self.rename_writes.saturating_add(stats.rename_writes());
-        self.lsq_loads = self.lsq_loads.saturating_add(stats.lsq_loads());
-        self.lsq_stores = self.lsq_stores.saturating_add(stats.lsq_stores());
-        self.lsq_load_bytes = self.lsq_load_bytes.saturating_add(stats.lsq_load_bytes());
-        self.lsq_store_bytes = self.lsq_store_bytes.saturating_add(stats.lsq_store_bytes());
-        self.store_load_forwarding_candidates = self
-            .store_load_forwarding_candidates
-            .saturating_add(stats.lsq_store_to_load_forwarding_candidates());
-        self.store_load_forwarding_matches = self
-            .store_load_forwarding_matches
-            .saturating_add(stats.lsq_store_to_load_forwarding_matches());
-        self.fu_latency_instructions = self
-            .fu_latency_instructions
-            .saturating_add(stats.fu_latency_instructions());
-        self.fu_latency_cycles = self
-            .fu_latency_cycles
-            .saturating_add(stats.fu_latency_cycles());
-        self.fu_integer_mul_instructions = self
-            .fu_integer_mul_instructions
-            .saturating_add(stats.fu_integer_mul_instructions());
-        self.fu_integer_mul_latency_cycles = self
-            .fu_integer_mul_latency_cycles
-            .saturating_add(stats.fu_integer_mul_latency_cycles());
-        self.fu_integer_div_instructions = self
-            .fu_integer_div_instructions
-            .saturating_add(stats.fu_integer_div_instructions());
-        self.fu_integer_div_latency_cycles = self
-            .fu_integer_div_latency_cycles
-            .saturating_add(stats.fu_integer_div_latency_cycles());
+        add_counter(&mut self.instructions, stats.instructions());
+        add_counter(&mut self.rob_allocations, stats.rob_allocations());
+        add_counter(&mut self.rob_commits, stats.rob_commits());
+        add_counter(&mut self.rename_writes, stats.rename_writes());
+        add_counter(&mut self.lsq_loads, stats.lsq_loads());
+        add_counter(&mut self.lsq_stores, stats.lsq_stores());
+        add_counter(&mut self.lsq_load_bytes, stats.lsq_load_bytes());
+        add_counter(&mut self.lsq_store_bytes, stats.lsq_store_bytes());
+        add_counter(
+            &mut self.store_load_forwarding_candidates,
+            stats.lsq_store_to_load_forwarding_candidates(),
+        );
+        add_counter(
+            &mut self.store_load_forwarding_matches,
+            stats.lsq_store_to_load_forwarding_matches(),
+        );
+        add_counter(
+            &mut self.store_load_forwarding_suppressed,
+            stats.lsq_store_to_load_forwarding_suppressed(),
+        );
+        add_counter(
+            &mut self.store_load_forwarding_address_mismatches,
+            stats.lsq_store_to_load_forwarding_address_mismatches(),
+        );
+        add_counter(
+            &mut self.store_load_forwarding_byte_mismatches,
+            stats.lsq_store_to_load_forwarding_byte_mismatches(),
+        );
+        add_counter(
+            &mut self.fu_latency_instructions,
+            stats.fu_latency_instructions(),
+        );
+        add_counter(&mut self.fu_latency_cycles, stats.fu_latency_cycles());
+        add_counter(
+            &mut self.fu_integer_mul_instructions,
+            stats.fu_integer_mul_instructions(),
+        );
+        add_counter(
+            &mut self.fu_integer_mul_latency_cycles,
+            stats.fu_integer_mul_latency_cycles(),
+        );
+        add_counter(
+            &mut self.fu_integer_div_instructions,
+            stats.fu_integer_div_instructions(),
+        );
+        add_counter(
+            &mut self.fu_integer_div_latency_cycles,
+            stats.fu_integer_div_latency_cycles(),
+        );
         self.max_rob_occupancy = self.max_rob_occupancy.max(stats.max_rob_occupancy());
         self.max_lsq_occupancy = self.max_lsq_occupancy.max(stats.max_lsq_occupancy());
-        self.rename_map_entries = self
-            .rename_map_entries
-            .saturating_add(stats.rename_map_entries());
+        add_counter(&mut self.rename_map_entries, stats.rename_map_entries());
         for event in record.events() {
             let event_tick = event.tick();
-            self.event_records = self.event_records.saturating_add(1);
+            add_counter(&mut self.event_records, 1);
             self.event_first_tick = Some(
                 self.event_first_tick
                     .map_or(event_tick, |tick| tick.min(event_tick)),
@@ -680,25 +557,16 @@ impl Rem6O3TraceTotals {
             self.event_max_rename_map_entries = self
                 .event_max_rename_map_entries
                 .max(event.rename_map_entries());
-            self.event_system_events = self
-                .event_system_events
-                .saturating_add(u64::from(event.system_event()));
-            self.event_rob_allocations = self
-                .event_rob_allocations
-                .saturating_add(u64::from(event.rob_allocated()));
-            self.event_rob_commits = self
-                .event_rob_commits
-                .saturating_add(u64::from(event.rob_committed()));
-            self.event_rename_writes = self
-                .event_rename_writes
-                .saturating_add(event.rename_writes());
-            self.event_lsq_loads = self.event_lsq_loads.saturating_add(event.lsq_loads());
-            self.event_lsq_stores = self.event_lsq_stores.saturating_add(event.lsq_stores());
+            add_bool_counter(&mut self.event_system_events, event.system_event());
+            add_bool_counter(&mut self.event_rob_allocations, event.rob_allocated());
+            add_bool_counter(&mut self.event_rob_commits, event.rob_committed());
+            add_counter(&mut self.event_rename_writes, event.rename_writes());
+            add_counter(&mut self.event_lsq_loads, event.lsq_loads());
+            add_counter(&mut self.event_lsq_stores, event.lsq_stores());
             let lsq_data_latency_ticks = event.lsq_data_latency_ticks();
             let lsq_operation = event.lsq_operation();
             if lsq_operation != O3RuntimeLsqOperation::None {
-                self.event_lsq_data_latency_samples =
-                    self.event_lsq_data_latency_samples.saturating_add(1);
+                add_counter(&mut self.event_lsq_data_latency_samples, 1);
                 self.event_lsq_data_latency_min_ticks = min_latency_ticks(
                     self.event_lsq_data_latency_min_ticks,
                     lsq_data_latency_ticks,
@@ -706,28 +574,40 @@ impl Rem6O3TraceTotals {
             }
             self.add_event_lsq_operation(lsq_operation, lsq_data_latency_ticks);
             self.add_event_lsq_ordering(event.lsq_ordering());
-            self.event_lsq_store_conditional_failures = self
-                .event_lsq_store_conditional_failures
-                .saturating_add(u64::from(event.lsq_store_conditional_failed()));
-            self.event_lsq_data_latency_ticks = self
-                .event_lsq_data_latency_ticks
-                .saturating_add(lsq_data_latency_ticks);
+            add_bool_counter(
+                &mut self.event_lsq_store_conditional_failures,
+                event.lsq_store_conditional_failed(),
+            );
+            add_counter(
+                &mut self.event_lsq_data_latency_ticks,
+                lsq_data_latency_ticks,
+            );
             self.event_lsq_data_latency_max_ticks = self
                 .event_lsq_data_latency_max_ticks
                 .max(lsq_data_latency_ticks);
             self.add_event_branch(event);
-            self.event_lsq_load_bytes = self
-                .event_lsq_load_bytes
-                .saturating_add(event.lsq_load_bytes());
-            self.event_lsq_store_bytes = self
-                .event_lsq_store_bytes
-                .saturating_add(event.lsq_store_bytes());
-            self.event_store_load_forwarding_candidates = self
-                .event_store_load_forwarding_candidates
-                .saturating_add(u64::from(event.store_load_forwarding_candidate()));
-            self.event_store_load_forwarding_matches = self
-                .event_store_load_forwarding_matches
-                .saturating_add(u64::from(event.store_load_forwarding_match()));
+            add_counter(&mut self.event_lsq_load_bytes, event.lsq_load_bytes());
+            add_counter(&mut self.event_lsq_store_bytes, event.lsq_store_bytes());
+            add_bool_counter(
+                &mut self.event_store_load_forwarding_candidates,
+                event.store_load_forwarding_candidate(),
+            );
+            add_bool_counter(
+                &mut self.event_store_load_forwarding_matches,
+                event.store_load_forwarding_match(),
+            );
+            add_bool_counter(
+                &mut self.event_store_load_forwarding_suppressed,
+                event.store_load_forwarding_suppressed(),
+            );
+            add_bool_counter(
+                &mut self.event_store_load_forwarding_address_mismatches,
+                event.store_load_forwarding_address_mismatch(),
+            );
+            add_bool_counter(
+                &mut self.event_store_load_forwarding_byte_mismatches,
+                event.store_load_forwarding_byte_mismatch(),
+            );
             let fu_latency_cycles = event.fu_latency_cycles();
             self.event_fu_latency_cycles = self
                 .event_fu_latency_cycles
@@ -1109,6 +989,18 @@ impl Rem6O3TraceTotals {
                 "store_load_forwarding_matches",
                 self.store_load_forwarding_matches,
             ),
+            (
+                "store_load_forwarding_suppressed",
+                self.store_load_forwarding_suppressed,
+            ),
+            (
+                "store_load_forwarding_address_mismatches",
+                self.store_load_forwarding_address_mismatches,
+            ),
+            (
+                "store_load_forwarding_byte_mismatches",
+                self.store_load_forwarding_byte_mismatches,
+            ),
             ("fu_latency_instructions", self.fu_latency_instructions),
             (
                 "fu_integer_mul_instructions",
@@ -1277,6 +1169,18 @@ impl Rem6O3TraceTotals {
             (
                 "event.store_load_forwarding_matches",
                 self.event_store_load_forwarding_matches,
+            ),
+            (
+                "event.store_load_forwarding_suppressed",
+                self.event_store_load_forwarding_suppressed,
+            ),
+            (
+                "event.store_load_forwarding_address_mismatches",
+                self.event_store_load_forwarding_address_mismatches,
+            ),
+            (
+                "event.store_load_forwarding_byte_mismatches",
+                self.event_store_load_forwarding_byte_mismatches,
             ),
             (
                 "event.fu_latency_instructions",

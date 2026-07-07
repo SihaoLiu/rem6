@@ -577,12 +577,22 @@ impl O3RuntimeStats {
         let Some(load) = o3_load_forwarding_access(access) else {
             return (O3StoreForwardingObservation::default(), None);
         };
-        if load.address != prior_store.address || load.bytes != prior_store.bytes {
+        let address_mismatch = load.address != prior_store.address;
+        let byte_mismatch = load.bytes != prior_store.bytes;
+        if address_mismatch || byte_mismatch {
             self.record_store_to_load_forwarding_suppressed(
                 o3_lsq_operation(access),
-                load.address != prior_store.address,
+                address_mismatch,
             );
-            return (O3StoreForwardingObservation::default(), None);
+            return (
+                O3StoreForwardingObservation {
+                    suppressed: true,
+                    address_mismatch,
+                    byte_mismatch: !address_mismatch && byte_mismatch,
+                    ..O3StoreForwardingObservation::default()
+                },
+                None,
+            );
         }
 
         self.lsq_store_to_load_forwarding_candidates = self
@@ -595,6 +605,7 @@ impl O3RuntimeStats {
         let mut observation = O3StoreForwardingObservation {
             candidate: true,
             matched: false,
+            ..O3StoreForwardingObservation::default()
         };
         match o3_load_register_value(register_writes, load.register) {
             Some(value) => {

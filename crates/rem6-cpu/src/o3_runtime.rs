@@ -365,7 +365,13 @@ impl O3RuntimeState {
             execution,
             trace_enabled.then_some(trace_record.sequence()),
         );
-        trace_record.set_store_load_forwarding(observation.candidate, observation.matched);
+        trace_record.set_store_load_forwarding(
+            observation.candidate,
+            observation.matched,
+            observation.suppressed,
+            observation.address_mismatch,
+            observation.byte_mismatch,
+        );
         self.record_data_access_sequence(execution, trace_record.sequence());
         if trace_enabled {
             self.record_trace_data_access_sequence(execution, trace_record.sequence());
@@ -732,6 +738,9 @@ struct O3StoreForwardingWindow {
 struct O3StoreForwardingObservation {
     candidate: bool,
     matched: bool,
+    suppressed: bool,
+    address_mismatch: bool,
+    byte_mismatch: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
