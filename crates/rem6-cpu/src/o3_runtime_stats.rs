@@ -251,6 +251,12 @@ impl O3RuntimeStats {
         self.branch_repair_direction_only_kinds[kind.index()]
     }
 
+    pub fn branch_event_misprediction_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_repair_targetless_mismatch_kind(kind)
+            .saturating_add(self.branch_repair_wrong_target_kind(kind))
+            .saturating_add(self.branch_repair_direction_only_kind(kind))
+    }
+
     pub fn branch_event_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_event_kinds[kind.index()]
     }

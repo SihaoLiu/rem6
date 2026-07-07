@@ -855,6 +855,11 @@ impl RiscvO3RuntimeCpuStats {
                     current.branch_event_resolved_target_kind(kind),
                 ),
                 (
+                    event_stats.misprediction,
+                    previous.branch_event_misprediction_kind(kind),
+                    current.branch_event_misprediction_kind(kind),
+                ),
+                (
                     event_stats.link_write,
                     previous.branch_event_link_write_kind(kind),
                     current.branch_event_link_write_kind(kind),
@@ -1295,6 +1300,10 @@ impl RiscvO3RuntimeCpuStats {
                 (
                     event_stats.resolved_target,
                     snapshot.branch_event_resolved_target_kind(kind),
+                ),
+                (
+                    event_stats.misprediction,
+                    snapshot.branch_event_misprediction_kind(kind),
                 ),
                 (
                     event_stats.link_write,

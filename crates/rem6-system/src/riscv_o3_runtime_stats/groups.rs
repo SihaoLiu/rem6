@@ -27,6 +27,7 @@ pub(super) struct RiscvO3RuntimeBranchEventKindStats {
     pub(super) predicted_target_match: StatId,
     pub(super) predicted_target_mismatch: StatId,
     pub(super) resolved_target: StatId,
+    pub(super) misprediction: StatId,
     pub(super) link_write: StatId,
     pub(super) without_link_write: StatId,
     pub(super) squash: StatId,

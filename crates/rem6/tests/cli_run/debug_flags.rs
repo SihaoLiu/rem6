@@ -8888,6 +8888,20 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         "direct-unconditional runtime matrix should expose branches without link writes: {branch_event}"
     );
     assert_eq!(
+        branch_event
+            .pointer("/misprediction_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(1),
+        "call-indirect runtime matrix should expose mispredicted branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/misprediction_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-unconditional runtime matrix should expose mispredicted branches: {branch_event}"
+    );
+    assert_eq!(
         json_record_u64(branch_event, "squashed_targets_with_link_writes"),
         1
     );
@@ -8962,6 +8976,16 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ),
         (
             "sim.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.misprediction_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.misprediction_kind.direct_unconditional",
             "Count",
             1,
         ),
@@ -11342,6 +11366,20 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         Some(1),
         "direct-conditional runtime matrix should expose predicted target mismatches: {branch_event}"
     );
+    assert_eq!(
+        branch_event
+            .pointer("/misprediction_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose mispredicted branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/misprediction_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "direct-unconditional runtime matrix should expose mispredicted branches: {branch_event}"
+    );
     let event_summary = record
         .pointer("/event_summary")
         .expect("O3 trace event summary should be embedded with the trace record");
@@ -11447,6 +11485,16 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
             "sim.cpu0.o3.branch_event.predicted_target_mismatch_kind.direct_conditional",
             "Count",
             1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.misprediction_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.misprediction_kind.direct_unconditional",
+            "Count",
+            2,
         ),
         (
             "sim.debug.o3_trace.event.branch_direction_mismatches",

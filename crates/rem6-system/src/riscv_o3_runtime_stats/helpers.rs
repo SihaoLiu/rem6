@@ -261,6 +261,7 @@ pub(super) fn register_o3_branch_event_kind_counters(
         predicted_target_match: StatId::new(0),
         predicted_target_mismatch: StatId::new(0),
         resolved_target: StatId::new(0),
+        misprediction: StatId::new(0),
         link_write: StatId::new(0),
         without_link_write: StatId::new(0),
         squash: StatId::new(0),
@@ -322,6 +323,12 @@ pub(super) fn register_o3_branch_event_kind_counters(
                 registry,
                 prefix,
                 &format!("branch_event.resolved_target_kind.{stat_name}"),
+                "Count",
+            )?,
+            misprediction: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.misprediction_kind.{stat_name}"),
                 "Count",
             )?,
             link_write: register_o3_counter(

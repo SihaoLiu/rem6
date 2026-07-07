@@ -1252,6 +1252,10 @@ fn emit_o3_runtime_stats(
                 o3.branch_event_predicted_target_mismatch_kind(kind),
             ),
             ("branch_event.resolved_target_kind", branch_event_resolved),
+            (
+                "branch_event.misprediction_kind",
+                o3.branch_event_misprediction_kind(kind),
+            ),
             ("branch_event.link_write_kind", branch_event_link),
             ("branch_event.without_link_write_kind", branch_event_no_link),
             ("branch_event.squash_kind", branch_event_squash),
