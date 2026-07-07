@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchTargetKind, O3RuntimeTraceRecord};
+use rem6_cpu::{BranchTargetKind, O3RuntimeStats, O3RuntimeTraceRecord};
 
 use super::{o3_branch_stats::push_o3_branch_kind_count_stats, Rem6O3TraceStat};
 
@@ -91,6 +91,36 @@ impl Rem6O3BranchRepairTotals {
             |kind| self.direction_only_kinds[kind.index()],
         );
     }
+}
+
+fn o3_branch_repair_kind_json<F>(count: F) -> String
+where
+    F: Fn(BranchTargetKind) -> u64,
+{
+    let fields = BranchTargetKind::ALL
+        .into_iter()
+        .map(|kind| format!("\"{}\":{}", kind.canonical_stat_name(), count(kind)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+pub(super) fn o3_branch_repair_to_json(stats: O3RuntimeStats) -> String {
+    let targetless_mismatch_kind =
+        o3_branch_repair_kind_json(|kind| stats.branch_repair_targetless_mismatch_kind(kind));
+    let wrong_target_kind =
+        o3_branch_repair_kind_json(|kind| stats.branch_repair_wrong_target_kind(kind));
+    let direction_only_kind =
+        o3_branch_repair_kind_json(|kind| stats.branch_repair_direction_only_kind(kind));
+    format!(
+        "{{\"targetless_mismatches\":{},\"wrong_targets\":{},\"direction_only_mismatches\":{},\"targetless_mismatch_kind\":{},\"wrong_target_kind\":{},\"direction_only_kind\":{}}}",
+        stats.branch_repair_targetless_mismatches(),
+        stats.branch_repair_wrong_targets(),
+        stats.branch_repair_direction_only_mismatches(),
+        targetless_mismatch_kind,
+        wrong_target_kind,
+        direction_only_kind,
+    )
 }
 
 pub(super) fn o3_branch_repair_kind(event: &O3RuntimeTraceRecord) -> Rem6O3BranchRepairKind {

@@ -8095,7 +8095,38 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         .and_then(Value::as_array)
         .expect("debug O3 trace array");
     assert_eq!(trace.len(), 1);
-    let events = trace[0]
+    let record = &trace[0];
+    let branch_repair = record
+        .pointer("/branch_repair")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-repair summary: {record}"));
+    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 0);
+    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 1);
+    assert_eq!(
+        json_record_u64(branch_repair, "direction_only_mismatches"),
+        1
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/wrong_target_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-repair summary should expose call-indirect wrong targets: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/direction_only_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-repair summary should expose direct-unconditional direction-only repairs: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/targetless_mismatch_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 trace branch-repair summary should include zero-valued branch kinds: {branch_repair}"
+    );
+    let events = record
         .pointer("/events")
         .and_then(Value::as_array)
         .expect("O3 trace events array");
@@ -8561,7 +8592,38 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
         .and_then(Value::as_array)
         .expect("debug O3 trace array");
     assert_eq!(trace.len(), 1);
-    let events = trace[0]
+    let record = &trace[0];
+    let branch_repair = record
+        .pointer("/branch_repair")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-repair summary: {record}"));
+    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 1);
+    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 0);
+    assert_eq!(
+        json_record_u64(branch_repair, "direction_only_mismatches"),
+        2
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/targetless_mismatch_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-repair summary should expose direct-conditional targetless repairs: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/direction_only_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "O3 trace branch-repair summary should expose direct-unconditional direction-only repairs: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/wrong_target_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 trace branch-repair summary should include zero-valued wrong-target branch kinds: {branch_repair}"
+    );
+    let events = record
         .pointer("/events")
         .and_then(Value::as_array)
         .expect("O3 trace events array");
