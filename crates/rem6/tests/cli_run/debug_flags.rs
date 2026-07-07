@@ -11042,6 +11042,80 @@ fn rem6_run_o3_debug_flag_classifies_float_fu_latency_events() {
         float_cycles,
         "{record:?}"
     );
+    let runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .expect("runtime O3 summary");
+    let fu_latency_class = record
+        .pointer("/fu_latency_class")
+        .expect("debug O3 trace FU latency class matrix");
+    let expected_fu_classes = [
+        "integer_mul",
+        "integer_div",
+        "float_add",
+        "float_compare",
+        "float_misc",
+        "float_mul",
+        "float_fma",
+        "float_div",
+        "float_sqrt",
+        "vector_integer_mul",
+        "vector_integer_div",
+        "vector_float_add",
+        "vector_float_compare",
+        "vector_float_misc",
+        "vector_float_mul",
+        "vector_float_fma",
+        "vector_float_div",
+        "vector_float_sqrt",
+    ];
+    let fu_latency_class_object = fu_latency_class
+        .as_object()
+        .expect("debug O3 trace FU latency class object");
+    assert_eq!(
+        fu_latency_class_object.len(),
+        expected_fu_classes.len(),
+        "debug O3 trace FU latency class fixed axis: {fu_latency_class:?}"
+    );
+    for class in expected_fu_classes {
+        assert!(
+            fu_latency_class_object.contains_key(class),
+            "debug O3 trace FU latency class should include {class}: {fu_latency_class:?}"
+        );
+    }
+    for (class, instructions, cycles) in [
+        ("float_mul", 1, scalar_float_mul_cycles),
+        ("float_div", 1, scalar_float_div_cycles),
+        ("vector_float_mul", 1, vector_float_mul_cycles),
+        ("vector_float_div", 1, vector_float_div_cycles),
+        ("float_add", 0, 0),
+        ("integer_mul", 0, 0),
+        ("integer_div", 0, 0),
+        ("vector_integer_mul", 0, 0),
+    ] {
+        let class_summary = fu_latency_class
+            .pointer(&format!("/{class}"))
+            .unwrap_or_else(|| panic!("missing FU latency class {class}: {fu_latency_class:?}"));
+        assert_eq!(
+            json_record_u64(class_summary, "instructions"),
+            instructions,
+            "O3 trace FU latency class {class} instructions"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "cycles"),
+            cycles,
+            "O3 trace FU latency class {class} cycles"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "instructions"),
+            json_record_u64(runtime, &format!("fu_{class}_instructions")),
+            "O3 trace should mirror runtime FU class {class} instructions"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "cycles"),
+            json_record_u64(runtime, &format!("fu_{class}_latency_cycles")),
+            "O3 trace should mirror runtime FU class {class} cycles"
+        );
+    }
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.records", "Count", 1),

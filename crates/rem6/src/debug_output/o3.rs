@@ -57,7 +57,8 @@ use o3_event_json::o3_event_to_json;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
 use o3_lsq_json::o3_lsq_to_json;
 use o3_summary_json::{
-    o3_commit_to_json, o3_iew_to_json, o3_iq_to_json, o3_rename_to_json, o3_rob_to_json,
+    o3_commit_to_json, o3_fu_latency_class_to_json, o3_iew_to_json, o3_iq_to_json,
+    o3_rename_to_json, o3_rob_to_json,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,6 +349,7 @@ impl Rem6O3TraceRecord {
         let iq = o3_iq_to_json(self.stats);
         let iew = o3_iew_to_json(self.stats);
         let commit = o3_commit_to_json(self.stats);
+        let fu_latency_class = o3_fu_latency_class_to_json(self.stats);
         let branch_event = o3_branch_event_json(self.stats);
         let branch_repair = o3_branch_repair_to_json(self.stats);
         let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(&self.events);
@@ -397,7 +399,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -428,6 +430,7 @@ impl Rem6O3TraceRecord {
             self.stats.fu_integer_mul_latency_cycles(),
             self.stats.fu_integer_div_instructions(),
             self.stats.fu_integer_div_latency_cycles(),
+            fu_latency_class,
             self.stats.max_rob_occupancy(),
             self.stats.max_lsq_occupancy(),
             self.stats.rename_map_entries(),

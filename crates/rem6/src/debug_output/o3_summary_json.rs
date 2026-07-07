@@ -29,6 +29,22 @@ fn o3_branch_mispredicts(stats: O3RuntimeStats) -> u64 {
         .saturating_add(stats.iew_predicted_not_taken_incorrect())
 }
 
+pub(super) fn o3_fu_latency_class_to_json(stats: O3RuntimeStats) -> String {
+    let fields = O3RuntimeFuLatencyClass::ALL
+        .into_iter()
+        .map(|class| {
+            format!(
+                "\"{}\":{{\"instructions\":{},\"cycles\":{}}}",
+                class.stat_stem(),
+                stats.fu_latency_class_instructions(class),
+                stats.fu_latency_class_cycles(class)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
 pub(super) fn o3_iq_to_json(stats: O3RuntimeStats) -> String {
     let issued_inst_type = o3_inst_type_json(stats);
     format!(
