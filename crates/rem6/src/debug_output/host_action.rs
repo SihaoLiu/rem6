@@ -1,10 +1,15 @@
+use std::collections::BTreeMap;
+
 use crate::formatting::json_escape;
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
+
+const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionTraceRecord {
@@ -229,20 +234,104 @@ fn checkpoint_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActionTraceR
 }
 
 fn checkpoint_restore_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActionTraceRecord {
+    let fields = vec![
+        field_string("label", action.label.as_str()),
+        field_u64("manifest_tick", action.manifest_tick),
+        field_u64("component_count", action.component_count),
+        field_u64("chunk_count", action.chunk_count),
+        field_u64("payload_bytes", action.payload_bytes),
+        field_json(
+            "execution_mode_authority",
+            checkpoint_restore_authority_json(action),
+        ),
+    ];
     Rem6HostActionTraceRecord::new(
         "checkpoint_restore",
         51,
         action.tick,
         Some(action.event),
         Some(action.source),
-        vec![
-            field_string("label", action.label.as_str()),
-            field_u64("manifest_tick", action.manifest_tick),
-            field_u64("component_count", action.component_count),
-            field_u64("chunk_count", action.chunk_count),
-            field_u64("payload_bytes", action.payload_bytes),
-        ],
+        fields,
     )
+}
+
+fn checkpoint_restore_authority_json(action: &Rem6HostCheckpointSummary) -> String {
+    execution_mode_authority_to_json(
+        u64::from(action.execution_mode_authority_present),
+        u64::from(action.execution_mode_authority_cleared),
+        u64::from(action.execution_mode_authority_decode_error),
+        &action.execution_modes,
+    )
+}
+
+fn execution_mode_authority_to_json(
+    present_manifests: u64,
+    cleared_manifests: u64,
+    decode_errors: u64,
+    execution_modes: &[Rem6HostExecutionModeSummary],
+) -> String {
+    let mode = execution_mode_counts_to_json(execution_modes.iter().map(|mode| mode.mode));
+    let target = execution_mode_targets_to_json(execution_modes);
+    format!(
+        "{{\"present_manifests\":{},\"cleared_manifests\":{},\"decode_errors\":{},\"targets\":{},\"mode\":{},\"target\":{}}}",
+        present_manifests,
+        cleared_manifests,
+        decode_errors,
+        execution_modes.len(),
+        mode,
+        target
+    )
+}
+
+fn execution_mode_counts_to_json<'a>(modes: impl Iterator<Item = &'a str>) -> String {
+    let mut counts = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
+    for mode in modes {
+        if let Some(index) = execution_mode_authority_lane_index(mode) {
+            counts[index] = counts[index].saturating_add(1);
+        }
+    }
+    execution_mode_count_array_to_json(counts)
+}
+
+fn execution_mode_count_array_to_json(
+    counts: [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()],
+) -> String {
+    let fields = EXECUTION_MODE_AUTHORITY_JSON_LANES
+        .iter()
+        .zip(counts)
+        .map(|(mode, count)| format!("\"{mode}\":{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn execution_mode_targets_to_json(execution_modes: &[Rem6HostExecutionModeSummary]) -> String {
+    let mut targets = BTreeMap::<&str, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
+    for execution_mode in execution_modes {
+        let Some(index) = execution_mode_authority_lane_index(execution_mode.mode) else {
+            continue;
+        };
+        let counts = targets.entry(execution_mode.target.as_str()).or_default();
+        counts[index] = counts[index].saturating_add(1);
+    }
+    let fields = targets
+        .into_iter()
+        .map(|(target, counts)| {
+            format!(
+                "\"{}\":{{\"mode\":{}}}",
+                json_escape(target),
+                execution_mode_count_array_to_json(counts)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn execution_mode_authority_lane_index(mode: &str) -> Option<usize> {
+    EXECUTION_MODE_AUTHORITY_JSON_LANES
+        .iter()
+        .position(|lane| *lane == mode)
 }
 
 fn execution_mode_switch_record(

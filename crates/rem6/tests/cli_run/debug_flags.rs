@@ -6188,6 +6188,27 @@ fn rem6_run_host_action_debug_flag_emits_scheduled_checkpoint_restore_trace() {
             "restored manifest {field} should match the baseline checkpoint"
         );
     }
+    let authority = restore
+        .pointer("/execution_mode_authority")
+        .unwrap_or_else(|| panic!("checkpoint restore trace should expose authority: {restore}"));
+    for (path, expected) in [
+        ("/present_manifests", 1),
+        ("/cleared_manifests", 0),
+        ("/decode_errors", 0),
+        ("/targets", 1),
+        ("/mode/functional", 0),
+        ("/mode/timing", 0),
+        ("/mode/detailed", 1),
+        ("/target/cpu0/mode/functional", 0),
+        ("/target/cpu0/mode/timing", 0),
+        ("/target/cpu0/mode/detailed", 1),
+    ] {
+        assert_eq!(
+            authority.pointer(path).and_then(Value::as_u64),
+            Some(expected),
+            "checkpoint restore authority path {path}: {authority}"
+        );
+    }
 
     assert_stat(
         &stdout,
