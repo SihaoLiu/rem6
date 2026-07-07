@@ -9237,6 +9237,44 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         Some(0),
         "O3 trace branch-repair summary should include zero-valued branch kinds: {branch_repair}"
     );
+    let branch_event = record
+        .pointer("/branch_event")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-event summary: {record}"));
+    for (path, value) in [
+        ("/squashed_target_kind/call_indirect", 1),
+        ("/squashed_target_kind/direct_unconditional", 1),
+        ("/squashed_target_kind/direct_conditional", 0),
+    ] {
+        assert_eq!(
+            branch_event.pointer(path).and_then(Value::as_u64),
+            Some(value),
+            "O3 trace branch-event squashed-target-kind path {path}: {branch_event}"
+        );
+    }
+    for branch_kind in [
+        "call_indirect",
+        "direct_unconditional",
+        "direct_conditional",
+    ] {
+        assert_eq!(
+            branch_event
+                .pointer(&format!("/squashed_target_kind/{branch_kind}"))
+                .and_then(Value::as_u64),
+            Some(
+                branch_event
+                    .pointer(&format!("/squashed_target_link_write_kind/{branch_kind}"))
+                    .and_then(Value::as_u64)
+                    .unwrap()
+                    + branch_event
+                        .pointer(&format!(
+                            "/squashed_target_without_link_write_kind/{branch_kind}"
+                        ))
+                        .and_then(Value::as_u64)
+                        .unwrap()
+            ),
+            "O3 trace branch-event squashed-target conservation for {branch_kind}: {branch_event}"
+        );
+    }
     let event_summary_branch_repair = record
         .pointer("/event_summary/branch_repair")
         .expect("O3 event summary branch-repair matrix");
@@ -9437,6 +9475,9 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "/squashed_target_without_link_write_kind/direct_unconditional",
             1,
         ),
+        ("/squashed_target_kind/call_indirect", 1),
+        ("/squashed_target_kind/direct_unconditional", 1),
+        ("/squashed_target_kind/direct_conditional", 0),
     ] {
         assert_eq!(
             event_summary_branch_event
@@ -9444,6 +9485,32 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
                 .and_then(Value::as_u64),
             Some(value),
             "O3 event summary wrong-target branch-event path {path}: {event_summary_branch_event}"
+        );
+    }
+    for branch_kind in [
+        "call_indirect",
+        "direct_unconditional",
+        "direct_conditional",
+    ] {
+        assert_eq!(
+            event_summary_branch_event
+                .pointer(&format!("/squashed_target_kind/{branch_kind}"))
+                .and_then(Value::as_u64),
+            Some(
+                event_summary_branch_event
+                    .pointer(&format!(
+                        "/squashed_target_link_write_kind/{branch_kind}"
+                    ))
+                    .and_then(Value::as_u64)
+                    .unwrap()
+                    + event_summary_branch_event
+                        .pointer(&format!(
+                            "/squashed_target_without_link_write_kind/{branch_kind}"
+                        ))
+                        .and_then(Value::as_u64)
+                        .unwrap()
+            ),
+            "O3 event summary branch-event squashed-target conservation for {branch_kind}: {event_summary_branch_event}"
         );
     }
     let event_summary_iew = record
