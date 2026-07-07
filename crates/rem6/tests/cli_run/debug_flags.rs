@@ -8877,6 +8877,11 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ("resolved_targets", 2),
         ("mispredictions", 2),
         ("squashes", 2),
+        ("link_writes", 1),
+        ("without_link_writes", 1),
+        ("squashed_targets", 2),
+        ("squashed_targets_with_link_writes", 1),
+        ("squashed_targets_without_link_writes", 1),
     ] {
         assert_eq!(
             json_record_u64(event_summary_branch_event, field),
@@ -8900,6 +8905,15 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         ("/misprediction_kind/direct_unconditional", 1),
         ("/squash_kind/call_indirect", 1),
         ("/squash_kind/direct_unconditional", 1),
+        ("/link_write_kind/call_indirect", 1),
+        ("/link_write_kind/direct_unconditional", 0),
+        ("/squashed_target_link_write_kind/call_indirect", 1),
+        ("/squashed_target_link_write_kind/direct_unconditional", 0),
+        ("/squashed_target_without_link_write_kind/call_indirect", 0),
+        (
+            "/squashed_target_without_link_write_kind/direct_unconditional",
+            1,
+        ),
     ] {
         assert_eq!(
             event_summary_branch_event

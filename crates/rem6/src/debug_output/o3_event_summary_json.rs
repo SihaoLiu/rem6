@@ -99,6 +99,9 @@ struct O3EventSummaryBranchEvent {
     resolved_targets: u64,
     mispredictions: u64,
     squashes: u64,
+    link_writes: u64,
+    squashed_targets: u64,
+    squashed_target_without_link_writes: u64,
     kinds: [u64; BranchTargetKind::COUNT],
     taken_kinds: [u64; BranchTargetKind::COUNT],
     not_taken_kinds: [u64; BranchTargetKind::COUNT],
@@ -110,6 +113,9 @@ struct O3EventSummaryBranchEvent {
     resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     misprediction_kinds: [u64; BranchTargetKind::COUNT],
     squash_kinds: [u64; BranchTargetKind::COUNT],
+    link_write_kinds: [u64; BranchTargetKind::COUNT],
+    squashed_target_link_write_kinds: [u64; BranchTargetKind::COUNT],
+    squashed_target_without_link_write_kinds: [u64; BranchTargetKind::COUNT],
 }
 
 impl O3EventSummaryBranchEvent {
@@ -126,6 +132,9 @@ impl O3EventSummaryBranchEvent {
             .is_some_and(|target| Some(target) != event.branch_resolved_target());
         let branch_kind = event.branch_kind();
         let index = branch_kind.index();
+        let link_write = event.branch_link_register_write();
+        let squashed_target = event.branch_squashed_target().is_some();
+        let squashed_target_without_link_write = squashed_target && !link_write;
 
         self.branches = self.branches.saturating_add(1);
         self.taken = self
@@ -152,6 +161,13 @@ impl O3EventSummaryBranchEvent {
         self.squashes = self
             .squashes
             .saturating_add(u64::from(event.branch_squash()));
+        self.link_writes = self.link_writes.saturating_add(u64::from(link_write));
+        self.squashed_targets = self
+            .squashed_targets
+            .saturating_add(u64::from(squashed_target));
+        self.squashed_target_without_link_writes = self
+            .squashed_target_without_link_writes
+            .saturating_add(u64::from(squashed_target_without_link_write));
 
         self.kinds[index] = self.kinds[index].saturating_add(1);
         if event.branch_resolved_taken() {
@@ -186,6 +202,17 @@ impl O3EventSummaryBranchEvent {
         if event.branch_squash() {
             self.squash_kinds[index] = self.squash_kinds[index].saturating_add(1);
         }
+        if link_write {
+            self.link_write_kinds[index] = self.link_write_kinds[index].saturating_add(1);
+        }
+        if squashed_target && link_write {
+            self.squashed_target_link_write_kinds[index] =
+                self.squashed_target_link_write_kinds[index].saturating_add(1);
+        }
+        if squashed_target_without_link_write {
+            self.squashed_target_without_link_write_kinds[index] =
+                self.squashed_target_without_link_write_kinds[index].saturating_add(1);
+        }
     }
 
     const fn not_taken(self) -> u64 {
@@ -194,6 +221,15 @@ impl O3EventSummaryBranchEvent {
 
     const fn predicted_not_taken(self) -> u64 {
         self.branches.saturating_sub(self.predicted_taken)
+    }
+
+    const fn without_link_writes(self) -> u64 {
+        self.branches.saturating_sub(self.link_writes)
+    }
+
+    const fn squashed_targets_with_link_writes(self) -> u64 {
+        self.squashed_targets
+            .saturating_sub(self.squashed_target_without_link_writes)
     }
 }
 
@@ -378,8 +414,16 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
     });
     let squash_kind =
         event_summary_branch_kind_json(|branch_kind| summary.squash_kinds[branch_kind.index()]);
+    let link_write_kind =
+        event_summary_branch_kind_json(|branch_kind| summary.link_write_kinds[branch_kind.index()]);
+    let squashed_target_link_write_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.squashed_target_link_write_kinds[branch_kind.index()]
+    });
+    let squashed_target_without_link_write_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.squashed_target_without_link_write_kinds[branch_kind.index()]
+    });
     format!(
-        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"squashes\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"squash_kind\":{squash_kind}}}",
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"link_writes\":{},\"without_link_writes\":{},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"link_write_kind\":{link_write_kind},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
         summary.branches,
         summary.taken,
         summary.not_taken(),
@@ -390,7 +434,12 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
         summary.predicted_target_mismatches,
         summary.resolved_targets,
         summary.mispredictions,
+        summary.link_writes,
+        summary.without_link_writes(),
         summary.squashes,
+        summary.squashed_targets,
+        summary.squashed_targets_with_link_writes(),
+        summary.squashed_target_without_link_writes,
     )
 }
 
