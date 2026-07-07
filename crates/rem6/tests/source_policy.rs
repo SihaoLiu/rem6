@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
+const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -236,6 +237,17 @@ fn cli_stats_output_cpu_stays_focused() {
     assert!(
         lines <= MAX_STATS_OUTPUT_CPU_LINES,
         "src/stats_output/cpu.rs should delegate detailed CPU stat families to focused modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_m5_host_actions_root_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/m5_host_actions.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_M5_HOST_ACTIONS_ROOT_LINES,
+        "tests/cli_run/m5_host_actions.rs should delegate detailed host-action families to focused modules, but it has {lines} lines"
     );
 }
 
