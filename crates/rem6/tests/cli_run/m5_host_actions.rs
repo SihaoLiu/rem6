@@ -6479,6 +6479,9 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
 
     for (pointer, value) in [
         ("/cores/0/o3_runtime/branch_event/branches", 1),
+        ("/cores/0/o3_runtime/branch_event/taken", 1),
+        ("/cores/0/o3_runtime/branch_event/not_taken", 0),
+        ("/cores/0/o3_runtime/branch_event/resolved_targets", 1),
         ("/cores/0/o3_runtime/branch_event/kind/return", 1),
         ("/cores/0/o3_runtime/branch_event/taken_kind/return", 1),
         (
@@ -6521,6 +6524,9 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
 
     for (path, value) in [
         ("sim.cpu0.o3.branch_event.branches", 1),
+        ("sim.cpu0.o3.branch_event.taken", 1),
+        ("sim.cpu0.o3.branch_event.not_taken", 0),
+        ("sim.cpu0.o3.branch_event.resolved_targets", 1),
         ("sim.cpu0.o3.branch_event.kind.return", 1),
         ("sim.cpu0.o3.branch_event.taken_kind.return", 1),
         ("sim.cpu0.o3.branch_event.resolved_target_kind.return", 1),

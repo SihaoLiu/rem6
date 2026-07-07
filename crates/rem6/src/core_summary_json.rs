@@ -417,8 +417,11 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
                 .branch_event_squashed_target_without_link_write_kind(branch_kind)
         });
     format!(
-        "{{\"branches\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"resolved_targets\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
         summary.o3_runtime.branch_events(),
+        summary.o3_runtime.branch_event_taken(),
+        summary.o3_runtime.branch_event_not_taken(),
+        summary.o3_runtime.branch_event_resolved_targets(),
         summary.o3_runtime.branch_event_link_writes(),
         summary.o3_runtime.branch_event_without_link_writes(),
         summary.o3_runtime.branch_event_squashes(),

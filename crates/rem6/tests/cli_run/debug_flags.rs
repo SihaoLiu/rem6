@@ -7794,6 +7794,9 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         .expect("structured O3 branch-event runtime matrix");
 
     assert_eq!(json_record_u64(branch_event, "branches"), 2);
+    assert_eq!(json_record_u64(branch_event, "taken"), 2);
+    assert_eq!(json_record_u64(branch_event, "not_taken"), 0);
+    assert_eq!(json_record_u64(branch_event, "resolved_targets"), 2);
     assert_eq!(json_record_u64(branch_event, "link_writes"), 1);
     assert_eq!(json_record_u64(branch_event, "without_link_writes"), 1);
     assert_eq!(
@@ -7859,6 +7862,9 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
 
     for (path, unit, value) in [
         ("sim.cpu0.o3.branch_event.branches", "Count", 2),
+        ("sim.cpu0.o3.branch_event.taken", "Count", 2),
+        ("sim.cpu0.o3.branch_event.not_taken", "Count", 0),
+        ("sim.cpu0.o3.branch_event.resolved_targets", "Count", 2),
         ("sim.cpu0.o3.branch_event.link_writes", "Count", 1),
         ("sim.cpu0.o3.branch_event.without_link_writes", "Count", 1),
         (
@@ -9265,6 +9271,14 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_not_taken() {
     assert_eq!(json_record_bool(branch, "branch_squash"), false);
     assert_eq!(branch.get("branch_squashed_target"), Some(&Value::Null));
 
+    let branch_event = json
+        .pointer("/cores/0/o3_runtime/branch_event")
+        .expect("structured O3 branch-event runtime matrix");
+    assert_eq!(json_record_u64(branch_event, "branches"), 1);
+    assert_eq!(json_record_u64(branch_event, "taken"), 0);
+    assert_eq!(json_record_u64(branch_event, "not_taken"), 1);
+    assert_eq!(json_record_u64(branch_event, "resolved_targets"), 0);
+
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 1),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 0),
@@ -9307,6 +9321,10 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_not_taken() {
             "Count",
             0,
         ),
+        ("sim.cpu0.o3.branch_event.branches", "Count", 1),
+        ("sim.cpu0.o3.branch_event.taken", "Count", 0),
+        ("sim.cpu0.o3.branch_event.not_taken", "Count", 1),
+        ("sim.cpu0.o3.branch_event.resolved_targets", "Count", 0),
         ("sim.debug.o3_trace.event.lsq_operation.store", "Count", 2),
         ("sim.debug.o3_trace.event.lsq_store_bytes", "Byte", 16),
     ] {
