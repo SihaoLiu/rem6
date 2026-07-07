@@ -601,6 +601,16 @@ pub(super) fn o3_trace_stats(records: &[Rem6O3TraceRecord]) -> Vec<Rem6O3TraceSt
     }
     totals.stats()
 }
+pub(super) fn o3_trace_cpu_stats(records: &[Rem6O3TraceRecord]) -> Vec<(u32, Rem6O3TraceStat)> {
+    let mut cpu_totals = std::collections::BTreeMap::<u32, Rem6O3TraceTotals>::new();
+    for record in records {
+        cpu_totals.entry(record.cpu()).or_default().add(record);
+    }
+    cpu_totals
+        .into_iter()
+        .flat_map(|(cpu, totals)| totals.stats().into_iter().map(move |stat| (cpu, stat)))
+        .collect()
+}
 
 impl Rem6O3TraceTotals {
     fn add(&mut self, record: &Rem6O3TraceRecord) {

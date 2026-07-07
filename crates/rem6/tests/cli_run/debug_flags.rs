@@ -12872,6 +12872,30 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
             event_ticks.windows(2).all(|window| window[0] < window[1]),
             "O3 event ticks should be strictly increasing per CPU: {event_ticks:?}"
         );
+        let first_event_tick = *event_ticks.first().expect("per-CPU O3 event tick");
+        let last_event_tick = *event_ticks.last().expect("per-CPU O3 event tick");
+        let event_tick_span = last_event_tick.saturating_sub(first_event_tick);
+        for (suffix, unit, value) in [
+            ("records", "Count", 1),
+            ("instructions", "Count", 6),
+            ("rob_allocations", "Count", 6),
+            ("rob_commits", "Count", 6),
+            ("rename_writes", "Count", 4),
+            ("lsq_loads", "Count", 1),
+            ("lsq_stores", "Count", 1),
+            ("event.records", "Count", events.len() as u64),
+            ("event.first_tick", "Tick", first_event_tick),
+            ("event.last_tick", "Tick", last_event_tick),
+            ("event.tick_span", "Tick", event_tick_span),
+        ] {
+            assert_stat(
+                &stdout,
+                &format!("sim.debug.o3_trace.cpu.cpu{cpu}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
         all_event_ticks.extend(event_ticks);
     }
     let first_tick = *all_event_ticks.iter().min().expect("O3 event tick");

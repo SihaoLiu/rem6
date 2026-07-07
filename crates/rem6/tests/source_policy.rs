@@ -642,6 +642,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.o3_trace.store_load_forwarding_suppressed",
         "sim.debug.o3_trace.store_load_forwarding_address_mismatches",
         "sim.debug.o3_trace.store_load_forwarding_byte_mismatches",
+        "sim.debug.o3_trace.cpu.cpu0.records",
+        "sim.debug.o3_trace.cpu.cpu1.event.tick_span",
         "sim.debug.o3_trace.event.system_events",
         "/debug/o3_trace/0/event_summary/records",
         "/debug/o3_trace/0/event_summary/span_ticks",
