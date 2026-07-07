@@ -6283,6 +6283,44 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
             .filter(|event| event.get("lsq_operation").and_then(Value::as_str) == Some("store"))
             .count() as u64
     );
+    let event_summary_branch_event = event_summary
+        .pointer("/branch_event")
+        .expect("O3 straight-line event summary should include a branch-event zero object");
+    for field in [
+        "branches",
+        "taken",
+        "not_taken",
+        "predicted_taken",
+        "predicted_not_taken",
+        "predicted_targets",
+        "predicted_target_matches",
+        "predicted_target_mismatches",
+        "resolved_targets",
+        "mispredictions",
+        "squashes",
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_event, field),
+            0,
+            "O3 straight-line event summary branch-event field {field}"
+        );
+    }
+    for path in [
+        "/kind/direct_conditional",
+        "/kind/direct_unconditional",
+        "/misprediction_kind/direct_conditional",
+        "/misprediction_kind/direct_unconditional",
+        "/squash_kind/direct_conditional",
+        "/squash_kind/direct_unconditional",
+    ] {
+        assert_eq!(
+            event_summary_branch_event
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(0),
+            "O3 straight-line event summary branch-event path {path}: {event_summary_branch_event}"
+        );
+    }
     assert_eq!(json_record_str(&events[3], "lsq_operation"), "load");
     assert_eq!(json_record_str(&events[4], "lsq_operation"), "store");
 
@@ -8736,6 +8774,53 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         Some(0),
         "O3 trace branch-target mismatch summary should include zero-valued targetless lanes: {branch_target_mismatch}"
     );
+    let event_summary_branch_event = record
+        .pointer("/event_summary/branch_event")
+        .expect("O3 event summary branch-event matrix");
+    for (field, value) in [
+        ("branches", 2),
+        ("taken", 2),
+        ("not_taken", 0),
+        ("predicted_taken", 1),
+        ("predicted_not_taken", 1),
+        ("predicted_targets", 1),
+        ("predicted_target_matches", 0),
+        ("predicted_target_mismatches", 1),
+        ("resolved_targets", 2),
+        ("mispredictions", 2),
+        ("squashes", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_event, field),
+            value,
+            "O3 event summary wrong-target branch-event field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/kind/call_indirect", 1),
+        ("/kind/direct_unconditional", 1),
+        ("/taken_kind/call_indirect", 1),
+        ("/taken_kind/direct_unconditional", 1),
+        ("/predicted_taken_kind/call_indirect", 1),
+        ("/predicted_not_taken_kind/direct_unconditional", 1),
+        ("/predicted_target_kind/call_indirect", 1),
+        ("/predicted_target_match_kind/call_indirect", 0),
+        ("/predicted_target_mismatch_kind/call_indirect", 1),
+        ("/resolved_target_kind/call_indirect", 1),
+        ("/resolved_target_kind/direct_unconditional", 1),
+        ("/misprediction_kind/call_indirect", 1),
+        ("/misprediction_kind/direct_unconditional", 1),
+        ("/squash_kind/call_indirect", 1),
+        ("/squash_kind/direct_unconditional", 1),
+    ] {
+        assert_eq!(
+            event_summary_branch_event
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary wrong-target branch-event path {path}: {event_summary_branch_event}"
+        );
+    }
     let events = record
         .pointer("/events")
         .and_then(Value::as_array)
@@ -10361,6 +10446,57 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
         Some(1),
         "direct-conditional runtime matrix should expose predicted target matches: {branch_event}"
     );
+    let event_summary = trace[0]
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    let event_summary_branch_event = event_summary
+        .pointer("/branch_event")
+        .expect("O3 event summary branch-event matrix");
+    for (field, value) in [
+        ("branches", 3),
+        ("taken", 3),
+        ("not_taken", 0),
+        ("predicted_taken", 1),
+        ("predicted_not_taken", 2),
+        ("predicted_targets", 1),
+        ("predicted_target_matches", 1),
+        ("predicted_target_mismatches", 0),
+        ("resolved_targets", 3),
+        ("mispredictions", 2),
+        ("squashes", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_event, field),
+            value,
+            "O3 event summary branch-event field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/kind/direct_conditional", 2),
+        ("/kind/direct_unconditional", 1),
+        ("/taken_kind/direct_conditional", 2),
+        ("/taken_kind/direct_unconditional", 1),
+        ("/not_taken_kind/direct_conditional", 0),
+        ("/predicted_taken_kind/direct_conditional", 1),
+        ("/predicted_not_taken_kind/direct_conditional", 1),
+        ("/predicted_target_kind/direct_conditional", 1),
+        ("/predicted_target_match_kind/direct_conditional", 1),
+        ("/predicted_target_mismatch_kind/direct_conditional", 0),
+        ("/resolved_target_kind/direct_conditional", 2),
+        ("/resolved_target_kind/direct_unconditional", 1),
+        ("/misprediction_kind/direct_conditional", 1),
+        ("/misprediction_kind/direct_unconditional", 1),
+        ("/squash_kind/direct_conditional", 1),
+        ("/squash_kind/direct_unconditional", 1),
+    ] {
+        assert_eq!(
+            event_summary_branch_event
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary branch-event path {path}: {event_summary_branch_event}"
+        );
+    }
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),
@@ -10713,6 +10849,55 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         Some(1),
         "direct-conditional runtime matrix should expose predicted target mismatches: {branch_event}"
     );
+    let event_summary = record
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    let event_summary_branch_event = event_summary
+        .pointer("/branch_event")
+        .expect("O3 event summary branch-event matrix");
+    for (field, value) in [
+        ("branches", 3),
+        ("taken", 2),
+        ("not_taken", 1),
+        ("predicted_taken", 1),
+        ("predicted_not_taken", 2),
+        ("predicted_targets", 1),
+        ("predicted_target_matches", 0),
+        ("predicted_target_mismatches", 1),
+        ("resolved_targets", 2),
+        ("mispredictions", 3),
+        ("squashes", 3),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_event, field),
+            value,
+            "O3 event summary mismatch branch-event field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/kind/direct_conditional", 1),
+        ("/kind/direct_unconditional", 2),
+        ("/taken_kind/direct_unconditional", 2),
+        ("/not_taken_kind/direct_conditional", 1),
+        ("/predicted_taken_kind/direct_conditional", 1),
+        ("/predicted_not_taken_kind/direct_unconditional", 2),
+        ("/predicted_target_kind/direct_conditional", 1),
+        ("/predicted_target_match_kind/direct_conditional", 0),
+        ("/predicted_target_mismatch_kind/direct_conditional", 1),
+        ("/resolved_target_kind/direct_unconditional", 2),
+        ("/misprediction_kind/direct_conditional", 1),
+        ("/misprediction_kind/direct_unconditional", 2),
+        ("/squash_kind/direct_conditional", 1),
+        ("/squash_kind/direct_unconditional", 2),
+    ] {
+        assert_eq!(
+            event_summary_branch_event
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary mismatch branch-event path {path}: {event_summary_branch_event}"
+        );
+    }
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),

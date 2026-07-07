@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+    BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeTraceRecord,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -84,6 +85,115 @@ impl O3EventSummaryLsqForwarding {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3EventSummaryBranchEvent {
+    branches: u64,
+    taken: u64,
+    predicted_taken: u64,
+    predicted_targets: u64,
+    predicted_target_matches: u64,
+    predicted_target_mismatches: u64,
+    resolved_targets: u64,
+    mispredictions: u64,
+    squashes: u64,
+    kinds: [u64; BranchTargetKind::COUNT],
+    taken_kinds: [u64; BranchTargetKind::COUNT],
+    not_taken_kinds: [u64; BranchTargetKind::COUNT],
+    predicted_taken_kinds: [u64; BranchTargetKind::COUNT],
+    predicted_not_taken_kinds: [u64; BranchTargetKind::COUNT],
+    predicted_target_kinds: [u64; BranchTargetKind::COUNT],
+    predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
+    predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
+    resolved_target_kinds: [u64; BranchTargetKind::COUNT],
+    misprediction_kinds: [u64; BranchTargetKind::COUNT],
+    squash_kinds: [u64; BranchTargetKind::COUNT],
+}
+
+impl O3EventSummaryBranchEvent {
+    fn add_event(&mut self, event: O3RuntimeTraceRecord) {
+        if !event.branch_event() {
+            return;
+        }
+
+        let predicted_target_matches = event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) == event.branch_resolved_target());
+        let predicted_target_mismatches = event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) != event.branch_resolved_target());
+        let branch_kind = event.branch_kind();
+        let index = branch_kind.index();
+
+        self.branches = self.branches.saturating_add(1);
+        self.taken = self
+            .taken
+            .saturating_add(u64::from(event.branch_resolved_taken()));
+        self.predicted_taken = self
+            .predicted_taken
+            .saturating_add(u64::from(event.branch_predicted_taken()));
+        self.predicted_targets = self
+            .predicted_targets
+            .saturating_add(u64::from(event.branch_predicted_target().is_some()));
+        self.predicted_target_matches = self
+            .predicted_target_matches
+            .saturating_add(u64::from(predicted_target_matches));
+        self.predicted_target_mismatches = self
+            .predicted_target_mismatches
+            .saturating_add(u64::from(predicted_target_mismatches));
+        self.resolved_targets = self
+            .resolved_targets
+            .saturating_add(u64::from(event.branch_resolved_target().is_some()));
+        self.mispredictions = self
+            .mispredictions
+            .saturating_add(u64::from(event.branch_mispredicted()));
+        self.squashes = self
+            .squashes
+            .saturating_add(u64::from(event.branch_squash()));
+
+        self.kinds[index] = self.kinds[index].saturating_add(1);
+        if event.branch_resolved_taken() {
+            self.taken_kinds[index] = self.taken_kinds[index].saturating_add(1);
+        } else {
+            self.not_taken_kinds[index] = self.not_taken_kinds[index].saturating_add(1);
+        }
+        if event.branch_predicted_taken() {
+            self.predicted_taken_kinds[index] = self.predicted_taken_kinds[index].saturating_add(1);
+        } else {
+            self.predicted_not_taken_kinds[index] =
+                self.predicted_not_taken_kinds[index].saturating_add(1);
+        }
+        if event.branch_predicted_target().is_some() {
+            self.predicted_target_kinds[index] =
+                self.predicted_target_kinds[index].saturating_add(1);
+        }
+        if predicted_target_matches {
+            self.predicted_target_match_kinds[index] =
+                self.predicted_target_match_kinds[index].saturating_add(1);
+        }
+        if predicted_target_mismatches {
+            self.predicted_target_mismatch_kinds[index] =
+                self.predicted_target_mismatch_kinds[index].saturating_add(1);
+        }
+        if event.branch_resolved_target().is_some() {
+            self.resolved_target_kinds[index] = self.resolved_target_kinds[index].saturating_add(1);
+        }
+        if event.branch_mispredicted() {
+            self.misprediction_kinds[index] = self.misprediction_kinds[index].saturating_add(1);
+        }
+        if event.branch_squash() {
+            self.squash_kinds[index] = self.squash_kinds[index].saturating_add(1);
+        }
+    }
+
+    const fn not_taken(self) -> u64 {
+        self.branches.saturating_sub(self.taken)
+    }
+
+    const fn predicted_not_taken(self) -> u64 {
+        self.branches.saturating_sub(self.predicted_taken)
+    }
+}
+
 pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
     let records = events.len() as u64;
     let first_tick = events.first().map_or(0, |event| event.tick());
@@ -132,9 +242,10 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
         &lsq_operation_forwarding,
     );
     let lsq_ordering = event_summary_lsq_ordering_json(events);
+    let branch_event = event_summary_branch_event_json(events);
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"branch_event\":{branch_event},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         last_tick.saturating_sub(first_tick),
         lsq_forwarding.candidates,
         lsq_forwarding.matches,
@@ -224,6 +335,67 @@ fn event_summary_lsq_operation_json(
                 forwarding.byte_mismatches,
             )
         })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let mut summary = O3EventSummaryBranchEvent::default();
+    for event in events {
+        summary.add_event(*event);
+    }
+    let kind = event_summary_branch_kind_json(|branch_kind| summary.kinds[branch_kind.index()]);
+    let taken_kind =
+        event_summary_branch_kind_json(|branch_kind| summary.taken_kinds[branch_kind.index()]);
+    let not_taken_kind =
+        event_summary_branch_kind_json(|branch_kind| summary.not_taken_kinds[branch_kind.index()]);
+    let predicted_taken_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.predicted_taken_kinds[branch_kind.index()]
+    });
+    let predicted_not_taken_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.predicted_not_taken_kinds[branch_kind.index()]
+    });
+    let predicted_target_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.predicted_target_kinds[branch_kind.index()]
+    });
+    let predicted_target_match_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.predicted_target_match_kinds[branch_kind.index()]
+    });
+    let predicted_target_mismatch_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.predicted_target_mismatch_kinds[branch_kind.index()]
+    });
+    let resolved_target_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.resolved_target_kinds[branch_kind.index()]
+    });
+    let misprediction_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.misprediction_kinds[branch_kind.index()]
+    });
+    let squash_kind =
+        event_summary_branch_kind_json(|branch_kind| summary.squash_kinds[branch_kind.index()]);
+    format!(
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"squashes\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"squash_kind\":{squash_kind}}}",
+        summary.branches,
+        summary.taken,
+        summary.not_taken(),
+        summary.predicted_taken,
+        summary.predicted_not_taken(),
+        summary.predicted_targets,
+        summary.predicted_target_matches,
+        summary.predicted_target_mismatches,
+        summary.resolved_targets,
+        summary.mispredictions,
+        summary.squashes,
+    )
+}
+
+fn event_summary_branch_kind_json<F>(count: F) -> String
+where
+    F: Fn(BranchTargetKind) -> u64,
+{
+    let fields = BranchTargetKind::ALL
+        .into_iter()
+        .map(|kind| format!("\"{}\":{}", kind.canonical_stat_name(), count(kind)))
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{fields}}}")
