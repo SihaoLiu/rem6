@@ -1,5 +1,6 @@
 use crate::formatting::json_escape;
 use crate::{
+    Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
     Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
@@ -25,6 +26,7 @@ struct Rem6HostActionTraceField {
 enum Rem6HostActionTraceValue {
     Bool(bool),
     I64(i64),
+    Json(String),
     String(String),
     U64(u64),
 }
@@ -79,6 +81,7 @@ impl Rem6HostActionTraceValue {
         match self {
             Self::Bool(value) => value.to_string(),
             Self::I64(value) => value.to_string(),
+            Self::Json(value) => value.clone(),
             Self::String(value) => format!("\"{}\"", json_escape(value)),
             Self::U64(value) => value.to_string(),
         }
@@ -260,6 +263,7 @@ fn execution_mode_switch_record(
             field_u64("state_transfer_components", transfer.component_count),
             field_u64("state_transfer_chunks", transfer.chunk_count),
             field_u64("state_transfer_payload_bytes", transfer.payload_bytes),
+            field_json("state_transfer", state_transfer_json(transfer)),
         ]);
         if let Some(checker) = transfer.quiescence_gate.checker {
             fields.extend([
@@ -275,6 +279,39 @@ fn execution_mode_switch_record(
         Some(action.event),
         Some(action.source),
         fields,
+    )
+}
+
+fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> String {
+    format!(
+        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{}}}",
+        json_escape(&transfer.manifest_label),
+        transfer.manifest_tick,
+        transfer.component_count,
+        transfer.chunk_count,
+        transfer.payload_bytes,
+        quiescence_gate_json(&transfer.quiescence_gate),
+    )
+}
+
+fn quiescence_gate_json(gate: &Rem6ExecutionModeQuiescenceGateSummary) -> String {
+    let checker = gate
+        .checker
+        .map(|checker| {
+            format!(
+                ",\"checker\":{{\"checked_instructions\":{},\"mismatches\":{}}}",
+                checker.checked_instructions, checker.mismatches
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{{\"validated\":{},\"target\":\"{}\",\"captured_component_count\":{},\"captured_chunk_count\":{},\"captured_payload_bytes\":{}{}}}",
+        gate.validated,
+        json_escape(&gate.target),
+        gate.captured_component_count,
+        gate.captured_chunk_count,
+        gate.captured_payload_bytes,
+        checker,
     )
 }
 
@@ -307,6 +344,13 @@ fn field_string(name: &'static str, value: impl Into<String>) -> Rem6HostActionT
     Rem6HostActionTraceField {
         name,
         value: Rem6HostActionTraceValue::String(value.into()),
+    }
+}
+
+fn field_json(name: &'static str, value: impl Into<String>) -> Rem6HostActionTraceField {
+    Rem6HostActionTraceField {
+        name,
+        value: Rem6HostActionTraceValue::Json(value.into()),
     }
 }
 
