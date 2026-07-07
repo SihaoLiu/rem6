@@ -6458,6 +6458,29 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         json_record_u64(event_summary, "rename_writes"),
         rename_writes
     );
+    let event_summary_rob = event_summary
+        .pointer("/rob")
+        .expect("O3 event summary should include a nested ROB matrix");
+    assert_eq!(
+        json_record_u64(event_summary_rob, "allocations"),
+        rob_allocations
+    );
+    assert_eq!(json_record_u64(event_summary_rob, "commits"), rob_commits);
+    assert_eq!(
+        json_record_u64(event_summary_rob, "max_occupancy"),
+        json_record_u64(event_summary, "max_rob_occupancy")
+    );
+    let event_summary_rename = event_summary
+        .pointer("/rename")
+        .expect("O3 event summary should include a nested rename matrix");
+    assert_eq!(
+        json_record_u64(event_summary_rename, "writes"),
+        rename_writes
+    );
+    assert_eq!(
+        json_record_u64(event_summary_rename, "map_entries"),
+        json_record_u64(event_summary, "max_rename_map_entries")
+    );
     assert_eq!(json_record_u64(event_summary, "lsq_loads"), lsq_loads);
     assert_eq!(json_record_u64(event_summary, "lsq_stores"), lsq_stores);
     assert_eq!(
