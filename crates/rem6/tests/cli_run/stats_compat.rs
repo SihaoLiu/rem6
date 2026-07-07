@@ -5064,6 +5064,26 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_e8_e16_e32_e64_m1_load_me
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_fault_only_first_later_line_fault() {
+    let stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-fault-only-first-e32-later-line-fault",
+        &fault_only_first_later_line_fault_program(),
+        160,
+    );
+
+    assert_eq!(
+        simulation_trap(&stats).as_deref(),
+        Some("environment_call"),
+        "fault-only-first e32 later-line fault should reach the guest ecall instead of a data fault\nstats:\n{stats}"
+    );
+    assert_eq!(
+        stat_value(&stats, "sim.cpu0.instructions.committed"),
+        20,
+        "fault-only-first e32 load should retire after loading the first lane, suppressing the later unmapped-line lane and reducing vl for the following store\nstats:\n{stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_fault_only_e32_m2_full_register_group_memory() {
     let normal_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-full-lmul2-load-store-fault-only-baseline",
@@ -8203,6 +8223,52 @@ fn unit_stride_memory_program(use_vector_memory: bool) -> Vec<u8> {
 
 fn unit_stride_vector_memory_program(vtype: u32, avl: i32, load: u32, store: u32) -> Vec<u8> {
     unit_stride_memory_program_with_move(vtype, avl, [load, store])
+}
+
+fn fault_only_first_later_line_fault_program() -> Vec<u8> {
+    const DEST_OFFSET_BYTES: i32 = 256;
+    const INITIAL_VECTOR_OFFSET_BYTES: i32 = 264;
+    const EXPECTED_LANE1_OFFSET_BYTES: i32 = 272;
+    const FAULT_ONLY_SOURCE_OFFSET_BYTES: usize = 0xffc;
+
+    let words = [
+        u_type(0x1000, 10, 0x17),                           // auipc x10, 0x1
+        i_type(-4, 10, 0b000, 10, 0x13), // addi x10, x10, -4; source at end of mapped page
+        u_type(0, 16, 0x17),             // auipc x16, 0
+        i_type(DEST_OFFSET_BYTES - 8, 16, 0b000, 16, 0x13), // addi x16, x16, dest
+        u_type(0, 17, 0x17),             // auipc x17, 0
+        i_type(INITIAL_VECTOR_OFFSET_BYTES - 16, 17, 0b000, 17, 0x13), // addi x17, x17, initial vector
+        u_type(0, 18, 0x17),                                           // auipc x18, 0
+        i_type(EXPECTED_LANE1_OFFSET_BYTES - 24, 18, 0b000, 18, 0x13), // addi x18, x18, expected lane 1
+        i_type(2, 0, 0b000, 11, 0x13),                                 // addi x11, x0, 2
+        vsetvli_type(0xd0, 11, 5), // vsetvli x5, x11, e32, m1, ta, ma
+        vector_unit_stride_load_type(true, 0b110, 17, 1), // vle32.v v1, (x17)
+        vector_unit_stride_fault_only_load_type(true, 0b110, 10, 1), // vle32ff.v v1, (x10)
+        vector_unit_stride_store_type(true, 0b110, 16, 1), // vse32.v v1, (x16)
+        i_type(0, 16, 0b010, 12, 0x03), // lw x12, 0(x16)
+        i_type(0, 10, 0b010, 13, 0x03), // lw x13, 0(x10)
+        b_type(20, 13, 12, 0b001), // bne x12, x13, fail
+        i_type(4, 16, 0b010, 14, 0x03), // lw x14, 4(x16)
+        i_type(0, 18, 0b010, 15, 0x03), // lw x15, 0(x18)
+        b_type(8, 15, 14, 0b001),  // bne x14, x15, fail
+        0x0000_0073,               // ecall
+        0x0000_0000,               // fail: invalid instruction
+    ];
+
+    let mut program = riscv64_program(&words);
+    while program.len() < DEST_OFFSET_BYTES as usize {
+        program.push(0);
+    }
+    program.extend_from_slice(&0x1111_1111_u32.to_le_bytes());
+    program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
+    program.extend_from_slice(&0xaaaa_5555_u32.to_le_bytes());
+    program.extend_from_slice(&0xbbbb_6666_u32.to_le_bytes());
+    program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
+    while program.len() < FAULT_ONLY_SOURCE_OFFSET_BYTES {
+        program.push(0);
+    }
+    program.extend_from_slice(&0xcafe_babe_u32.to_le_bytes());
+    program
 }
 
 fn unit_stride_memory_program_with_move(vtype: u32, avl: i32, memory_move: [u32; 2]) -> Vec<u8> {

@@ -349,6 +349,7 @@ fn hart_builds_fault_only_e8_e16_e32_e64_m1_vector_memory_accesses() {
             byte_len: 4,
             byte_mask: None,
             group_registers: 1,
+            fault_only_first: true,
         })
     );
 
@@ -371,6 +372,7 @@ fn hart_builds_fault_only_e8_e16_e32_e64_m1_vector_memory_accesses() {
             byte_len: 8,
             byte_mask: None,
             group_registers: 1,
+            fault_only_first: true,
         })
     );
 
@@ -393,6 +395,7 @@ fn hart_builds_fault_only_e8_e16_e32_e64_m1_vector_memory_accesses() {
             byte_len: 16,
             byte_mask: None,
             group_registers: 1,
+            fault_only_first: true,
         })
     );
 
@@ -415,6 +418,7 @@ fn hart_builds_fault_only_e8_e16_e32_e64_m1_vector_memory_accesses() {
             byte_len: 8,
             byte_mask: None,
             group_registers: 1,
+            fault_only_first: true,
         })
     );
 }
@@ -440,6 +444,7 @@ fn hart_builds_fault_only_e32_m2_full_register_group_vector_memory_accesses() {
             byte_len: 32,
             byte_mask: None,
             group_registers: 2,
+            fault_only_first: true,
         })
     );
 }
@@ -465,6 +470,7 @@ fn hart_builds_fault_only_e32_m4_full_register_group_vector_memory_accesses() {
             byte_len: 64,
             byte_mask: None,
             group_registers: 4,
+            fault_only_first: true,
         })
     );
 }
@@ -490,6 +496,7 @@ fn hart_builds_fault_only_e32_m8_full_register_group_vector_memory_accesses() {
             byte_len: 128,
             byte_mask: None,
             group_registers: 8,
+            fault_only_first: true,
         })
     );
 }
@@ -573,6 +580,7 @@ fn hart_builds_masked_unit_stride_vector_memory_accesses() {
             byte_len: 16,
             byte_mask: Some(e32_byte_mask([true, false, true, false])),
             group_registers: 1,
+            fault_only_first: false,
         })
     );
 
@@ -5212,6 +5220,7 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_all_m1_element_widths(
                 byte_len: expected_bytes,
                 byte_mask: Some(element_byte_mask(&active_lanes, width.bytes())),
                 group_registers: 1,
+                fault_only_first: false,
             })
         );
     }
@@ -5247,6 +5256,7 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_e32_m2_register_group(
             byte_len: 32,
             byte_mask: Some(byte_mask.clone()),
             group_registers: 2,
+            fault_only_first: false,
         })
     );
 
@@ -5320,6 +5330,7 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_e16_m2_register_group(
             byte_len: 32,
             byte_mask: Some(byte_mask.clone()),
             group_registers: 2,
+            fault_only_first: false,
         })
     );
 
@@ -5442,6 +5453,7 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_e32_m4_register_group(
             byte_len: 64,
             byte_mask: Some(byte_mask.clone()),
             group_registers: 4,
+            fault_only_first: false,
         })
     );
 
@@ -5524,6 +5536,7 @@ fn hart_builds_masked_unit_stride_vector_memory_masks_for_e32_m8_register_group(
             byte_len: 128,
             byte_mask: Some(byte_mask.clone()),
             group_registers: 8,
+            fault_only_first: false,
         })
     );
 

@@ -498,6 +498,7 @@ mod tests {
             byte_len,
             byte_mask: None,
             group_registers,
+            fault_only_first: false,
         }
     }
 

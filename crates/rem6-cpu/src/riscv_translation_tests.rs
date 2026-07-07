@@ -41,5 +41,6 @@ fn vector_load_unit_stride(address: u64) -> MemoryAccessKind {
         byte_len: 32,
         byte_mask: None,
         group_registers: 2,
+        fault_only_first: false,
     }
 }

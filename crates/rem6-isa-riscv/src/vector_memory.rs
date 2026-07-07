@@ -84,7 +84,7 @@ pub(crate) fn memory_access(
             {
                 return Err(());
             }
-            unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
+            unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan, true)
         }
         RiscvVectorMemoryInstruction::LoadSegmentUnitStride {
             vd,
@@ -321,7 +321,7 @@ fn unit_stride_load_memory_access(
     {
         return Err(());
     }
-    unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan)
+    unit_stride_load_memory_access_with_plan(hart, vd, rs1, width, mask, plan, false)
 }
 
 fn supported_fault_only_unit_stride_load_shape(
@@ -341,6 +341,7 @@ fn unit_stride_load_memory_access_with_plan(
     width: MemoryWidth,
     mask: RiscvVectorMaskMode,
     plan: UnitStrideAccessPlan,
+    fault_only_first: bool,
 ) -> Result<Option<MemoryAccessKind>, ()> {
     if plan.byte_len == 0 {
         return Ok(None);
@@ -360,6 +361,7 @@ fn unit_stride_load_memory_access_with_plan(
         byte_len: plan.byte_len,
         byte_mask,
         group_registers: plan.group_registers,
+        fault_only_first,
     }))
 }
 

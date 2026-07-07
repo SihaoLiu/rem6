@@ -4,13 +4,20 @@ use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, RiscvPmaAccessKind, RiscvPmpAccessKind,
     RISCV_VECTOR_REGISTER_BYTES,
 };
-use rem6_memory::{AccessSize, Address, MemoryError};
+use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryError};
 
 use crate::RiscvCpuError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MaskedVectorRequestSpan {
     pub(crate) address: Address,
+    pub(crate) size: AccessSize,
+    pub(crate) byte_offset: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FaultOnlyFirstLinePrefix {
+    pub(crate) access: MemoryAccessKind,
     pub(crate) size: AccessSize,
     pub(crate) byte_offset: usize,
 }
@@ -113,6 +120,54 @@ pub(crate) fn masked_vector_memory_request_span(
         size,
         byte_offset: start,
     })
+}
+
+pub(crate) fn fault_only_first_line_prefix(
+    access: &MemoryAccessKind,
+    address: Address,
+    size: AccessSize,
+    byte_offset: usize,
+    line_layout: CacheLineLayout,
+) -> Result<Option<FaultOnlyFirstLinePrefix>, RiscvCpuError> {
+    let MemoryAccessKind::VectorLoadUnitStride {
+        width,
+        byte_len: _,
+        byte_mask: None,
+        fault_only_first: true,
+        ..
+    } = access
+    else {
+        return Ok(None);
+    };
+
+    let line_offset = line_layout.line_offset(address);
+    let line_remaining = line_layout.bytes() - line_offset;
+    if size.bytes() <= line_remaining {
+        return Ok(None);
+    }
+
+    let element_bytes = width.bytes() as u64;
+    let prefix_bytes = line_remaining - (line_remaining % element_bytes);
+    if prefix_bytes == 0 || prefix_bytes >= size.bytes() {
+        return Ok(None);
+    }
+
+    let prefix_len = usize::try_from(prefix_bytes).map_err(|_| {
+        RiscvCpuError::Memory(MemoryError::AccessSizeTooLarge {
+            size: AccessSize::new(prefix_bytes).expect("nonzero prefix size"),
+        })
+    })?;
+    let mut access = access.clone();
+    let MemoryAccessKind::VectorLoadUnitStride { byte_len, .. } = &mut access else {
+        unreachable!("matched vector unit-stride load above");
+    };
+    *byte_len = (*byte_len).min(prefix_len);
+
+    Ok(Some(FaultOnlyFirstLinePrefix {
+        access,
+        size: AccessSize::new(prefix_bytes).map_err(RiscvCpuError::Memory)?,
+        byte_offset,
+    }))
 }
 
 fn preserves_full_register_group_request_span(access: &MemoryAccessKind) -> bool {
@@ -839,6 +894,7 @@ mod tests {
                 MemoryWidth::Word.bytes(),
             )),
             group_registers: 2,
+            fault_only_first: false,
         };
         let span = masked_vector_memory_request_span(
             &access,
@@ -989,6 +1045,7 @@ mod tests {
             byte_len: lanes.len() * MemoryWidth::Word.bytes(),
             byte_mask: Some(lane_mask(lanes, MemoryWidth::Word.bytes())),
             group_registers: 1,
+            fault_only_first: false,
         }
     }
 

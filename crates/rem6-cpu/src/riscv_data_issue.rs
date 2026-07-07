@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, RiscvHartState,
-    RiscvPrivilegeMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvPrivilegeMode, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
@@ -25,7 +25,8 @@ use crate::{
 mod request_helpers;
 
 pub(crate) use request_helpers::{
-    access_address, access_size, masked_vector_memory_request_span, vector_store_request_payload,
+    access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
+    vector_store_request_payload,
 };
 use request_helpers::{
     normalized_masked_indexed_load_data, normalized_masked_load_data,
@@ -202,7 +203,7 @@ impl RiscvCore {
         if let Some(fetch) = self.data_translation_page_map_required_fetch() {
             return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
         }
-        let Some((fetch_request, access)) = self.next_unissued_data_access() else {
+        let Some((fetch_request, mut access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
 
@@ -235,27 +236,58 @@ impl RiscvCore {
         let base_address = Address::new(access_address(&access));
         let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
         let address = request_span.address;
-        let size = request_span.size;
-        self.check_pmp_data_access(fetch_request, &access, size, address)?;
-        self.check_pma_data_access(
-            fetch_request,
-            &access,
-            size,
-            address,
-            request_span.byte_offset,
-        )?;
+        let mut size = request_span.size;
+        let mut request_byte_offset = request_span.byte_offset;
         let line_layout = data
             .line_layout_for_access(address, size)
             .map_err(RiscvCpuError::Memory)?;
         let line_offset = line_layout.line_offset(address);
-        if line_offset + size.bytes() > line_layout.bytes()
-            && !supports_cross_line_data_access(&access, address, size, line_layout)
-        {
-            return Err(RiscvCpuError::DataAccessCrossesLine {
-                address,
-                size,
-                line_size: line_layout.bytes(),
-            });
+        let mut data_access_validated = false;
+        if line_offset + size.bytes() > line_layout.bytes() {
+            let full_access_error =
+                if supports_cross_line_data_access(&access, address, size, line_layout) {
+                    match self.check_pmp_data_access(fetch_request, &access, size, address) {
+                        Ok(()) => match self.check_pma_data_access(
+                            fetch_request,
+                            &access,
+                            size,
+                            address,
+                            request_byte_offset,
+                        ) {
+                            Ok(()) => {
+                                data_access_validated = true;
+                                None
+                            }
+                            Err(error) => Some(error),
+                        },
+                        Err(error) => Some(error),
+                    }
+                } else {
+                    Some(RiscvCpuError::DataAccessCrossesLine {
+                        address,
+                        size,
+                        line_size: line_layout.bytes(),
+                    })
+                };
+            if let Some(error) = full_access_error {
+                if let Some(prefix) = fault_only_first_line_prefix(
+                    &access,
+                    address,
+                    size,
+                    request_byte_offset,
+                    line_layout,
+                )? {
+                    access = prefix.access;
+                    size = prefix.size;
+                    request_byte_offset = prefix.byte_offset;
+                } else {
+                    return Err(error);
+                }
+            }
+        }
+        if !data_access_validated {
+            self.check_pmp_data_access(fetch_request, &access, size, address)?;
+            self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
         }
 
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
@@ -272,7 +304,7 @@ impl RiscvCore {
             access,
             size,
             physical_address: address,
-            request_byte_offset: request_span.byte_offset,
+            request_byte_offset,
             line_layout: Some(line_layout),
         }))
     }
@@ -990,9 +1022,11 @@ fn record_load_completion(
         }
         MemoryAccessKind::VectorLoadUnitStride {
             vd,
+            width,
             byte_len,
             byte_mask,
             group_registers,
+            fault_only_first,
             ..
         } => {
             let data = data.expect(missing_data);
@@ -1014,6 +1048,13 @@ fn record_load_completion(
                 destination[..*byte_len].copy_from_slice(&data);
             }
             write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
+            if *fault_only_first {
+                let completed_vl = (*byte_len / width.bytes()) as u32;
+                let vector_config = state.hart.vector_config();
+                state
+                    .hart
+                    .set_vector_config(RiscvVectorConfig::new(completed_vl, vector_config.vtype()));
+            }
         }
         MemoryAccessKind::VectorLoadSegmentUnitStride {
             vd,

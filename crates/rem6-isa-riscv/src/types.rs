@@ -275,6 +275,7 @@ pub enum MemoryAccessKind {
         byte_len: usize,
         byte_mask: Option<Vec<bool>>,
         group_registers: usize,
+        fault_only_first: bool,
     },
     VectorLoadSegmentUnitStride {
         vd: VectorRegister,
