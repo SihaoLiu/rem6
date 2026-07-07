@@ -10949,6 +10949,65 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
     let first_tick = event_ticks[0];
     let last_tick = *event_ticks.last().expect("O3 event tick");
     let tick_span = last_tick.saturating_sub(first_tick);
+    let event_summary = record
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    let event_fu_latency_instructions = events
+        .iter()
+        .filter(|event| json_record_u64(event, "fu_latency_cycles") > 0)
+        .count() as u64;
+    let event_fu_latency_cycles = events
+        .iter()
+        .map(|event| json_record_u64(event, "fu_latency_cycles"))
+        .sum::<u64>();
+    assert_eq!(
+        json_record_u64(event_summary, "fu_latency_instructions"),
+        event_fu_latency_instructions
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "fu_latency_cycles"),
+        event_fu_latency_cycles
+    );
+    assert_eq!(json_record_u64(event_summary, "fu_latency_max_cycles"), 19);
+    assert_eq!(json_record_u64(event_summary, "fu_latency_min_cycles"), 2);
+    assert_eq!(json_record_u64(event_summary, "fu_latency_avg_cycles"), 10);
+    let event_summary_fu_latency_class = event_summary
+        .pointer("/fu_latency_class")
+        .expect("O3 trace event summary FU latency class matrix");
+    for (class, instructions, cycles) in [("integer_mul", 1, 2), ("integer_div", 1, 19)] {
+        let class_summary = event_summary_fu_latency_class
+            .pointer(&format!("/{class}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing event summary FU latency class {class}: {event_summary_fu_latency_class:?}"
+                )
+            });
+        assert_eq!(
+            json_record_u64(class_summary, "instructions"),
+            instructions,
+            "event summary FU latency class {class} instructions"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "cycles"),
+            cycles,
+            "event summary FU latency class {class} cycles"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "max_cycles"),
+            cycles,
+            "event summary FU latency class {class} max cycles"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "min_cycles"),
+            cycles,
+            "event summary FU latency class {class} min cycles"
+        );
+        assert_eq!(
+            json_record_u64(class_summary, "avg_cycles"),
+            cycles,
+            "event summary FU latency class {class} avg cycles"
+        );
+    }
     for (path, unit, value) in [
         ("sim.debug.o3_trace.records", "Count", 1),
         ("sim.debug.o3_trace.instructions", "Count", 5),
