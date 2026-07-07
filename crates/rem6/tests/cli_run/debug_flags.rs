@@ -7926,6 +7926,25 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
             );
         }
     }
+    let event_summary = record
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    let event_summary_ordering = event_summary
+        .pointer("/lsq_ordering")
+        .expect("O3 event summary LSQ ordering matrix");
+    for (ordering, value) in [("acquire", 1), ("release", 1), ("acquire_release", 1)] {
+        assert_eq!(
+            event_summary_ordering
+                .pointer(&format!("/{ordering}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary LSQ ordering {ordering}: {event_summary_ordering}"
+        );
+    }
+    assert!(
+        event_summary_ordering.pointer("/none").is_none(),
+        "O3 event summary LSQ ordering matrix should track ordered lanes only: {event_summary_ordering}"
+    );
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 24),

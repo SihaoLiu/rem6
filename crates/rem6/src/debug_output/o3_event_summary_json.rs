@@ -1,4 +1,6 @@
-use rem6_cpu::{O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeTraceRecord};
+use rem6_cpu::{
+    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct O3EventSummaryFuLatency {
@@ -96,9 +98,10 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let lsq_data_latency = event_summary_lsq_latency_json(lsq_data_latency);
     let lsq_operation =
         event_summary_lsq_operation_json(&lsq_operation_counts, &lsq_operation_latencies);
+    let lsq_ordering = event_summary_lsq_ordering_json(events);
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         last_tick.saturating_sub(first_tick),
         fu_latency.instructions,
         fu_latency.cycles,
@@ -157,6 +160,23 @@ fn event_summary_lsq_operation_json(
                 counts[operation.index()]
             )
         })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn event_summary_lsq_ordering_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let mut counts = [0_u64; O3RuntimeLsqOrdering::COUNT];
+    for event in events {
+        let ordering = event.lsq_ordering();
+        if ordering == O3RuntimeLsqOrdering::None {
+            continue;
+        }
+        counts[ordering.index()] = counts[ordering.index()].saturating_add(1);
+    }
+    let fields = O3RuntimeLsqOrdering::TRACKED
+        .into_iter()
+        .map(|ordering| format!("\"{}\":{}", ordering.as_str(), counts[ordering.index()]))
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{fields}}}")
