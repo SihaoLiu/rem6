@@ -672,6 +672,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.timing",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
         "sim.host_actions.execution_mode_switch.mode.functional",
+        "sim.host_actions.execution_mode_switch.target.cpu0.mode.functional",
+        "sim.host_actions.execution_mode_switch.target.cpu0.mode.timing",
         "sim.host_actions.execution_mode_switch.target.cpu0.mode.detailed",
         "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.none",
         "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.detailed",

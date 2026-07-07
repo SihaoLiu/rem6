@@ -7633,6 +7633,13 @@ fn rem6_run_stats_expose_m5_switch_cpu_mode_authority_matrix() {
             );
             assert_json_stat(
                 &json,
+                &format!("sim.host_actions.execution_mode_switch.target.cpu0.mode.{lane}"),
+                "Count",
+                expected,
+                "monotonic",
+            );
+            assert_json_stat(
+                &json,
                 &format!("sim.host_actions.execution_mode_switch.previous_mode.{lane}"),
                 "Count",
                 0,

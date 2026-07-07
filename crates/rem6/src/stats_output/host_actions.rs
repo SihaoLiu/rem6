@@ -76,6 +76,7 @@ pub(super) fn emit_run_host_action_stats(
     }
 
     let mut switch_modes = BTreeMap::<&'static str, u64>::new();
+    let mut switch_targets_seen = BTreeSet::<String>::new();
     let mut switch_target_modes = BTreeMap::<(String, &'static str), u64>::new();
     let mut switch_previous_modes = BTreeMap::<&'static str, u64>::new();
     let mut switch_previous_target_modes = BTreeMap::<(String, &'static str), u64>::new();
@@ -83,6 +84,7 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_previous_target_mode_none = BTreeMap::<String, u64>::new();
     for switch in &summary.execution_mode_switches {
         let target = stat_path_segment(&switch.target);
+        switch_targets_seen.insert(target.clone());
         *switch_modes.entry(switch.mode).or_default() += 1;
         *switch_target_modes
             .entry((target.clone(), switch.mode))
@@ -299,14 +301,19 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for ((target, mode), count) in switch_target_modes {
-        increment_stat(
-            stats,
-            &format!("sim.host_actions.execution_mode_switch.target.{target}.mode.{mode}"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            count,
-        )?;
+    for target in switch_targets_seen {
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_switch.target.{target}.mode.{mode}"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                switch_target_modes
+                    .get(&(target.clone(), mode))
+                    .copied()
+                    .unwrap_or_default(),
+            )?;
+        }
     }
     for ((target, mode), count) in switch_previous_target_modes {
         increment_stat(
