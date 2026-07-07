@@ -41,9 +41,9 @@ use memory::{
     Rem6MemoryTraceStat,
 };
 use o3::{
-    o3_trace_authority_stats, o3_trace_cpu_checkpoint_restore_authority_stats, o3_trace_cpu_stats,
-    o3_trace_records, o3_trace_stats, Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord,
-    Rem6O3TraceStat,
+    o3_trace_authority_stats, o3_trace_cpu_checkpoint_restore_authority_stats,
+    o3_trace_cpu_execution_mode_authority_stats, o3_trace_cpu_stats, o3_trace_records,
+    o3_trace_stats, Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord, Rem6O3TraceStat,
 };
 use pipeline::{pipeline_trace_records, pipeline_trace_summary_to_json, Rem6PipelineTraceRecord};
 pub(crate) use sbi::Rem6SbiTraceInputs;
@@ -521,7 +521,13 @@ impl Rem6DebugSummary {
         &self,
         stat_path_segment: impl Fn(&str) -> String,
     ) -> Vec<(u32, Rem6O3ExecutionModeAuthorityStat)> {
-        o3_trace_cpu_checkpoint_restore_authority_stats(&self.o3_trace, stat_path_segment)
+        let mut stats =
+            o3_trace_cpu_execution_mode_authority_stats(&self.o3_trace, &stat_path_segment);
+        stats.extend(o3_trace_cpu_checkpoint_restore_authority_stats(
+            &self.o3_trace,
+            stat_path_segment,
+        ));
+        stats
     }
 
     pub(crate) fn fetch_trace_count(&self) -> u64 {

@@ -15,6 +15,13 @@ pub(super) struct Rem6O3ExecutionModeTraceTotals {
     counts: [u64; 3],
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Rem6O3ExecutionModeAuthorityTotals {
+    targets: u64,
+    modes: [u64; 3],
+    target_modes: BTreeMap<String, [u64; 3]>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6O3ExecutionModeAuthorityStat {
     path: String,
@@ -41,6 +48,51 @@ impl Rem6O3ExecutionModeTraceTotals {
     }
 }
 
+impl Rem6O3ExecutionModeAuthorityTotals {
+    fn add_record(
+        &mut self,
+        record: &Rem6O3TraceRecord,
+        stat_path_segment: &impl Fn(&str) -> String,
+    ) {
+        let Some(mode) = record.execution_mode() else {
+            return;
+        };
+        let Some(index) = execution_mode_index(mode) else {
+            return;
+        };
+        self.targets = self.targets.saturating_add(1);
+        self.modes[index] = self.modes[index].saturating_add(1);
+        let target = stat_path_segment(record.target());
+        let counts = self.target_modes.entry(target).or_default();
+        counts[index] = counts[index].saturating_add(1);
+    }
+
+    fn stats(self) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
+        let mut stats = Vec::with_capacity(
+            1 + EXECUTION_MODE_STATS.len() + self.target_modes.len() * EXECUTION_MODE_STATS.len(),
+        );
+        stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+            "execution_mode_authority.targets".to_string(),
+            self.targets,
+        ));
+        for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+            stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+                format!("execution_mode_authority.mode.{mode}"),
+                self.modes[index],
+            ));
+        }
+        for (target, counts) in self.target_modes {
+            for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+                stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+                    format!("execution_mode_authority.target.{target}.mode.{mode}"),
+                    counts[index],
+                ));
+            }
+        }
+        stats
+    }
+}
+
 impl Rem6O3ExecutionModeAuthorityStat {
     pub(super) fn new(path: String, value: u64) -> Self {
         Self { path, value }
@@ -59,46 +111,30 @@ pub(super) fn o3_trace_execution_mode_authority_stats(
     records: &[Rem6O3TraceRecord],
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
-    let mut targets = 0_u64;
-    let mut modes = [0_u64; 3];
-    let mut target_modes = BTreeMap::<String, [u64; 3]>::new();
-
+    let mut totals = Rem6O3ExecutionModeAuthorityTotals::default();
     for record in records {
-        let Some(mode) = record.execution_mode() else {
-            continue;
-        };
-        let Some(index) = execution_mode_index(mode) else {
-            continue;
-        };
-        targets = targets.saturating_add(1);
-        modes[index] = modes[index].saturating_add(1);
-        let target = stat_path_segment(record.target());
-        let counts = target_modes.entry(target).or_default();
-        counts[index] = counts[index].saturating_add(1);
+        totals.add_record(record, &stat_path_segment);
     }
+    totals.stats()
+}
 
-    let mut stats = Vec::with_capacity(
-        1 + EXECUTION_MODE_STATS.len() + target_modes.len() * EXECUTION_MODE_STATS.len(),
-    );
-    stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-        "execution_mode_authority.targets".to_string(),
-        targets,
-    ));
-    for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
-        stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-            format!("execution_mode_authority.mode.{mode}"),
-            modes[index],
-        ));
-    }
-    for (target, counts) in target_modes {
-        for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
-            stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-                format!("execution_mode_authority.target.{target}.mode.{mode}"),
-                counts[index],
-            ));
+pub(in crate::debug_output) fn o3_trace_cpu_execution_mode_authority_stats(
+    records: &[Rem6O3TraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<(u32, Rem6O3ExecutionModeAuthorityStat)> {
+    let mut cpu_totals = BTreeMap::<u32, Rem6O3ExecutionModeAuthorityTotals>::new();
+    for record in records {
+        if record.execution_mode().is_some() {
+            cpu_totals
+                .entry(record.cpu())
+                .or_default()
+                .add_record(record, &stat_path_segment);
         }
     }
-    stats
+    cpu_totals
+        .into_iter()
+        .flat_map(|(cpu, totals)| totals.stats().into_iter().map(move |stat| (cpu, stat)))
+        .collect()
 }
 
 pub(super) fn o3_trace_execution_mode_authority_to_json(
