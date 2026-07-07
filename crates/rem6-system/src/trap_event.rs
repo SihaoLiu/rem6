@@ -1309,7 +1309,7 @@ fn guest_event_from_riscv_system_event(
     }
 }
 
-pub(crate) fn execution_mode_target_for_cpu(cpu: CpuId) -> ExecutionModeTarget {
+pub fn execution_mode_target_for_cpu(cpu: CpuId) -> ExecutionModeTarget {
     ExecutionModeTarget::new(format!("cpu{}", cpu.get()))
 }
 

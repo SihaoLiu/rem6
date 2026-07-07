@@ -84,6 +84,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.riscv_in_order_width_is_explicit() {
         return Err(Rem6CliError::RiscvInOrderWidthRequiresExecution);
     }
+    if config.riscv_execution_mode_is_explicit() {
+        return Err(Rem6CliError::RiscvExecutionModeRequiresExecution);
+    }
     if config.m5_switch_cpu_mode_is_explicit() {
         return Err(Rem6CliError::M5SwitchCpuModeRequiresExecution);
     }
@@ -176,6 +179,9 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if config.riscv_in_order_width_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvInOrderWidthRequiresRiscv);
+    }
+    if config.riscv_execution_mode_is_explicit() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::RiscvExecutionModeRequiresRiscv);
     }
     if config.m5_switch_cpu_mode_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::M5SwitchCpuModeRequiresRiscv);

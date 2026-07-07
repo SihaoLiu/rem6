@@ -274,8 +274,9 @@ pub use traffic_replay_cpu::{
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
-    guest_trap_from_riscv, guest_trap_kind_from_riscv, RiscvTrapEventPort, ScheduledRiscvTrap,
-    SystemEventPort, SystemHostEventPort,
+    execution_mode_target_for_cpu as riscv_execution_mode_target_for_cpu, guest_trap_from_riscv,
+    guest_trap_kind_from_riscv, RiscvTrapEventPort, ScheduledRiscvTrap, SystemEventPort,
+    SystemHostEventPort,
 };
 pub use uart_checkpoint::{
     Pl011UartCheckpointBank, Pl011UartCheckpointError, Pl011UartCheckpointPort,

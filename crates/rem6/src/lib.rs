@@ -18,10 +18,10 @@ use rem6_stats::{
     StatsRegistry,
 };
 use rem6_system::{
-    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvGuestFileIdentity,
-    RiscvInstructionStats, RiscvO3RuntimeStats, RiscvSeAuxvEntry, RiscvSeStartupConfig,
-    RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
-    RISCV_LINUX_AT_ENTRY,
+    riscv_execution_mode_target_for_cpu, GuestSourceId, GuestTrapKind, HostEventPolicy,
+    RiscvDataAccessStats, RiscvGuestFileIdentity, RiscvInstructionStats, RiscvO3RuntimeStats,
+    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRunDriver, RiscvTrapEventPort,
+    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -866,6 +866,15 @@ fn execute_riscv(
         )
         .map_err(stats_error)?
     };
+    if let Some(mode) = config.riscv_execution_mode() {
+        let mut controller = controller.lock().unwrap();
+        for cpu_index in 0..core_count {
+            controller.executor_mut().set_execution_mode(
+                riscv_execution_mode_target_for_cpu(CpuId::new(cpu_index)),
+                mode,
+            );
+        }
+    }
     {
         let mut controller = controller.lock().unwrap();
         for response in config.guest_host_call_responses() {

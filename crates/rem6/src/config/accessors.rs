@@ -114,6 +114,14 @@ impl Rem6RunConfig {
         self.riscv_in_order_width.is_some()
     }
 
+    pub const fn riscv_execution_mode(&self) -> Option<ExecutionMode> {
+        self.riscv_execution_mode
+    }
+
+    pub const fn riscv_execution_mode_is_explicit(&self) -> bool {
+        self.riscv_execution_mode.is_some()
+    }
+
     pub const fn m5_switch_cpu_mode(&self) -> ExecutionMode {
         match self.m5_switch_cpu_mode {
             Some(mode) => mode,

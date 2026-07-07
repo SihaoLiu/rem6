@@ -523,6 +523,14 @@ impl SystemActionExecutor {
         &self.execution_modes
     }
 
+    pub fn set_execution_mode(
+        &mut self,
+        target: ExecutionModeTarget,
+        mode: ExecutionMode,
+    ) -> Option<ExecutionMode> {
+        self.execution_modes.insert(target, mode)
+    }
+
     pub fn register_guest_host_call_response(
         &mut self,
         selector: u64,

@@ -201,6 +201,34 @@ fn rem6_run_rejects_m5_switch_cpu_mode_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_riscv_execution_mode_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-execution-mode-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--riscv-execution-mode",
+            "detailed",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--riscv-execution-mode requires --execute"));
+}
+
+#[test]
 fn rem6_run_rejects_host_checkpoint_flags_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let checkpoint_path = temp_binary("host-checkpoint-without-execute", &elf);
@@ -359,6 +387,35 @@ fn rem6_run_rejects_m5_switch_cpu_mode_without_riscv_isa() {
 }
 
 #[test]
+fn rem6_run_rejects_riscv_execution_mode_without_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("riscv-execution-mode-without-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--riscv-execution-mode",
+            "detailed",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--riscv-execution-mode requires --isa riscv"));
+}
+
+#[test]
 fn rem6_run_rejects_fabric_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("fabric-without-execute", &elf);
@@ -509,6 +566,35 @@ fn rem6_run_rejects_invalid_m5_switch_cpu_mode_values() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("invalid m5 switch CPU mode atomic"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_riscv_execution_mode_values() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-execution-mode-invalid", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--riscv-execution-mode",
+            "atomic",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid RISC-V execution mode atomic"));
 }
 
 #[test]
@@ -1808,6 +1894,30 @@ fn rem6_run_config_scan_treats_m5_switch_cpu_mode_as_value_taking() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("invalid m5 switch CPU mode --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
+fn rem6_run_config_scan_treats_riscv_execution_mode_as_value_taking() {
+    let bogus_config = temp_output("riscv-execution-mode-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--riscv-execution-mode",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid RISC-V execution mode --config"),
         "stderr: {stderr}"
     );
     assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));

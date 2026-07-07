@@ -38,6 +38,8 @@ mod m5_host_actions;
 mod m5_periodic_checkpoint;
 #[path = "cli_run/multi_run.rs"]
 mod multi_run;
+#[path = "cli_run/o3_start_mode.rs"]
+mod o3_start_mode;
 #[path = "cli_run/pc_count_probes.rs"]
 mod pc_count_probes;
 #[path = "cli_run/pipeline_debug.rs"]
