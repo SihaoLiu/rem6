@@ -194,6 +194,7 @@ struct RiscvO3RuntimeStructuralAliasStats {
     lsq_added_loads_and_stores: StatId,
     lsq_store_load_forwarding_candidates: StatId,
     lsq_store_load_forwarding_matches: StatId,
+    lsq_store_load_forwarding_suppressed: StatId,
     lsq_forw_loads: StatId,
     lsq_max_occupancy: StatId,
     iq_insts_issued: StatId,
@@ -418,6 +419,12 @@ impl RiscvO3RuntimeStructuralAliasStats {
                 "lsq0.storeLoadForwardingMatches",
                 "Count",
             )?,
+            lsq_store_load_forwarding_suppressed: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.storeLoadForwardingSuppressed",
+                "Count",
+            )?,
             lsq_forw_loads: register_o3_counter(registry, prefix, "lsq0.forwLoads", "Count")?,
             lsq_max_occupancy: register_o3_counter(registry, prefix, "lsq0.maxOccupancy", "Count")?,
             iq_insts_issued: register_o3_counter(registry, prefix, "iq.instsIssued", "Count")?,
@@ -499,7 +506,7 @@ impl RiscvO3RuntimeStructuralAliasStats {
         Ok(())
     }
 
-    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 23] {
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 24] {
         [
             (self.rob_writes, stats.rob_allocations()),
             (self.rob_reads, stats.rob_commits()),
@@ -524,6 +531,10 @@ impl RiscvO3RuntimeStructuralAliasStats {
             (
                 self.lsq_store_load_forwarding_matches,
                 stats.lsq_store_to_load_forwarding_matches(),
+            ),
+            (
+                self.lsq_store_load_forwarding_suppressed,
+                stats.lsq_store_to_load_forwarding_suppressed(),
             ),
             (
                 self.lsq_forw_loads,
@@ -565,14 +576,17 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_bytes: StatId,
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
+    lsq_store_to_load_forwarding_suppressed: StatId,
     structural_aliases: RiscvO3RuntimeStructuralAliasStats,
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_total: StatId,
     lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_suppressed: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_candidate_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_match_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_suppressed_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
@@ -647,6 +661,12 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq_store_to_load_forwarding_matches",
                 "Count",
             )?,
+            lsq_store_to_load_forwarding_suppressed: register_o3_counter(
+                registry,
+                &prefix,
+                "lsq_store_to_load_forwarding_suppressed",
+                "Count",
+            )?,
             structural_aliases: RiscvO3RuntimeStructuralAliasStats::register(
                 registry,
                 &gem5_cpu_alias_prefix,
@@ -672,6 +692,11 @@ impl RiscvO3RuntimeCpuStats {
                 &prefix,
                 "forwarding_matches",
             )?,
+            lsq_operation_forwarding_suppressed: register_o3_lsq_operation_forwarding_counters(
+                registry,
+                &prefix,
+                "forwarding_suppressed",
+            )?,
             lsq_operation_forwarding_candidate_aliases:
                 register_o3_lsq_operation_forwarding_alias_counters(
                     registry,
@@ -683,6 +708,12 @@ impl RiscvO3RuntimeCpuStats {
                     registry,
                     &gem5_cpu_alias_prefix,
                     "storeLoadForwardingMatches",
+                )?,
+            lsq_operation_forwarding_suppressed_aliases:
+                register_o3_lsq_operation_forwarding_alias_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeLoadForwardingSuppressed",
                 )?,
             lsq_data_latency: register_o3_lsq_latency_counters(
                 registry,
@@ -933,6 +964,11 @@ impl RiscvO3RuntimeCpuStats {
                 current.lsq_store_to_load_forwarding_matches(),
             ),
             (
+                self.lsq_store_to_load_forwarding_suppressed,
+                previous.lsq_store_to_load_forwarding_suppressed(),
+                current.lsq_store_to_load_forwarding_suppressed(),
+            ),
+            (
                 self.lsq_store_conditional_failures,
                 previous.lsq_store_conditional_failures(),
                 current.lsq_store_conditional_failures(),
@@ -1157,6 +1193,19 @@ impl RiscvO3RuntimeCpuStats {
                     match_delta,
                 )?;
             }
+            let suppressed_delta = current
+                .lsq_operation_forwarding_suppressed(operation)
+                .saturating_sub(previous.lsq_operation_forwarding_suppressed(operation));
+            if suppressed_delta != 0 {
+                registry.increment(
+                    self.lsq_operation_forwarding_suppressed[operation.index()],
+                    suppressed_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_forwarding_suppressed_aliases[operation.index()],
+                    suppressed_delta,
+                )?;
+            }
         }
         self.set_lsq_latency_snapshot(registry, current)?;
         let mut lsq_ordering_delta_total = 0_u64;
@@ -1218,6 +1267,10 @@ impl RiscvO3RuntimeCpuStats {
             (
                 self.lsq_store_to_load_forwarding_matches,
                 snapshot.lsq_store_to_load_forwarding_matches(),
+            ),
+            (
+                self.lsq_store_to_load_forwarding_suppressed,
+                snapshot.lsq_store_to_load_forwarding_suppressed(),
             ),
             (
                 self.lsq_store_conditional_failures,
@@ -1307,12 +1360,20 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_operation_forwarding_matches(operation),
             )?;
             registry.set_resettable_counter(
+                self.lsq_operation_forwarding_suppressed[operation.index()],
+                snapshot.lsq_operation_forwarding_suppressed(operation),
+            )?;
+            registry.set_resettable_counter(
                 self.lsq_operation_forwarding_candidate_aliases[operation.index()],
                 snapshot.lsq_operation_forwarding_candidates(operation),
             )?;
             registry.set_resettable_counter(
                 self.lsq_operation_forwarding_match_aliases[operation.index()],
                 snapshot.lsq_operation_forwarding_matches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_suppressed_aliases[operation.index()],
+                snapshot.lsq_operation_forwarding_suppressed(operation),
             )?;
         }
         self.set_lsq_latency_snapshot(registry, snapshot)?;

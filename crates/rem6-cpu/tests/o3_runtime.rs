@@ -33,10 +33,14 @@ const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize =
     O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES + 1;
 const O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES: usize =
     (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
+const O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES: usize =
+    O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES + 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES: usize =
     O3RuntimeLsqOperation::TRACKED.len() * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES: usize =
     O3RuntimeLsqOperation::TRACKED.len() * 2 * 8;
+const O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES: usize =
+    (1 + O3RuntimeLsqOperation::TRACKED.len()) * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES: usize =
     (O3RuntimeLsqOrdering::TRACKED.len() + 1) * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES: usize =
@@ -51,16 +55,20 @@ const O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 *
 const O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES: usize = 2 * 8;
 const O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES: usize = 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES: usize = BranchTargetKind::COUNT * 6 * 8;
-const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
-    + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
+    (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
+        + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
+    O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION
+        + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -234,10 +242,12 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
         ));
     }
 
-    let encoded = core.o3_runtime_checkpoint_payload().encode();
+    let encoded = strip_current_lsq_forwarding_suppression_stats(
+        &core.o3_runtime_checkpoint_payload().encode(),
+    );
     let stats_offset = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION)
         .unwrap();
     let newer_stats_offset = stats_offset + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES;
     let branch_event_offset = encoded
@@ -364,10 +374,12 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = strip_current_rename_dependency_bytes(&payload.encode());
+    let encoded = strip_current_lsq_forwarding_suppression_stats(
+        &strip_current_rename_dependency_bytes(&payload.encode()),
+    );
     let stats_offset = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION)
         .unwrap();
     let lsq_latency_offset = stats_offset
         + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES
@@ -468,10 +480,12 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = strip_current_rename_dependency_bytes(&payload.encode());
+    let encoded = strip_current_lsq_forwarding_suppression_stats(
+        &strip_current_rename_dependency_bytes(&payload.encode()),
+    );
     let stats_offset = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION)
         .unwrap();
     let lsq_latency_offset = stats_offset
         + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES
@@ -1179,6 +1193,30 @@ fn strip_current_rename_dependency_bytes(payload: &[u8]) -> Vec<u8> {
     }
     legacy.extend_from_slice(&payload[offset..]);
     legacy
+}
+
+fn strip_current_lsq_forwarding_suppression_stats(payload: &[u8]) -> Vec<u8> {
+    let stats_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    let operation_suppression_offset = stats_offset
+        + O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES;
+    let operation_suppression_bytes =
+        O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES - 8;
+    let aggregate_suppression_offset = stats_offset + 10 * 8;
+    let without_operation_suppression = [
+        &payload[..operation_suppression_offset],
+        &payload[operation_suppression_offset + operation_suppression_bytes..],
+    ]
+    .concat();
+    [
+        &without_operation_suppression[..aggregate_suppression_offset],
+        &without_operation_suppression[aggregate_suppression_offset + 8..],
+    ]
+    .concat()
 }
 
 fn checkpoint_u32(payload: &[u8], offset: usize) -> u32 {

@@ -1102,6 +1102,10 @@ fn emit_o3_runtime_stats(
             o3.lsq_store_to_load_forwarding_matches(),
         ),
         (
+            "lsq_store_to_load_forwarding_suppressed",
+            o3.lsq_store_to_load_forwarding_suppressed(),
+        ),
+        (
             "branch_repair_targetless_mismatches",
             o3.branch_repair_targetless_mismatches(),
         ),
@@ -1118,13 +1122,7 @@ fn emit_o3_runtime_stats(
         ("max_lsq_occupancy", o3.max_lsq_occupancy()),
         ("rename_map_entries", o3.rename_map_entries()),
     ] {
-        increment_stat(
-            stats,
-            &format!("sim.cpu{}.o3.{name}", core.cpu),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
+        increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
     for kind in BranchTargetKind::ALL {
         let branch_event_resolved = o3.branch_event_resolved_target_kind(kind);
@@ -1155,29 +1153,25 @@ fn emit_o3_runtime_stats(
                 o3.branch_repair_direction_only_kind(kind),
             ),
         ] {
-            increment_stat(
+            increment_count_stat(
                 stats,
-                &format!(
+                format!(
                     "sim.cpu{}.o3.{name}.{}",
                     core.cpu,
                     kind.canonical_stat_name()
                 ),
-                "Count",
-                StatResetPolicy::Monotonic,
                 value,
             )?;
         }
     }
     for class in O3RuntimeFuLatencyClass::ALL {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "sim.cpu{}.o3.fu_{}_instructions",
                 core.cpu,
                 class.stat_stem()
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             o3.fu_latency_class_instructions(class),
         )?;
     }
@@ -1217,15 +1211,13 @@ fn emit_o3_runtime_stats(
         )?;
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "sim.cpu{}.o3.lsq_operation.{}",
                 core.cpu,
                 operation.as_str()
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             o3.lsq_operation_count(operation),
         )?;
         for (suffix, value) in [
@@ -1237,17 +1229,19 @@ fn emit_o3_runtime_stats(
                 "forwarding_matches",
                 o3.lsq_operation_forwarding_matches(operation),
             ),
+            (
+                "forwarding_suppressed",
+                o3.lsq_operation_forwarding_suppressed(operation),
+            ),
         ] {
-            increment_stat(
+            increment_count_stat(
                 stats,
-                &format!(
+                format!(
                     "sim.cpu{}.o3.lsq_operation.{}_{}",
                     core.cpu,
                     operation.as_str(),
                     suffix
                 ),
-                "Count",
-                StatResetPolicy::Monotonic,
                 value,
             )?;
         }
@@ -1458,6 +1452,10 @@ fn emit_o3_runtime_stats(
             "lsq0.storeLoadForwardingMatches",
             o3.lsq_store_to_load_forwarding_matches(),
         ),
+        (
+            "lsq0.storeLoadForwardingSuppressed",
+            o3.lsq_store_to_load_forwarding_suppressed(),
+        ),
         ("lsq0.forwLoads", o3.lsq_store_to_load_forwarding_matches()),
         ("lsq0.maxOccupancy", o3.max_lsq_occupancy()),
         ("iq.instsIssued", o3.instructions()),
@@ -1467,13 +1465,7 @@ fn emit_o3_runtime_stats(
         ),
         ("iq.branchInstsIssued", o3.iq_branch_insts_issued()),
     ] {
-        increment_stat(
-            stats,
-            &format!("{gem5_cpu_alias_prefix}.{name}"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
+        increment_count_stat(stats, format!("{gem5_cpu_alias_prefix}.{name}"), value)?;
     }
     for (name, value) in [
         ("lsq0.loadBytes", o3.lsq_load_bytes()),
@@ -1491,14 +1483,12 @@ fn emit_o3_runtime_stats(
     for operation in O3RuntimeLsqOperation::TRACKED {
         let value = o3.lsq_operation_count(operation);
         lsq_operation_total = lsq_operation_total.saturating_add(value);
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "{gem5_cpu_alias_prefix}.lsq0.operation.{}",
                 o3_lsq_operation_alias(operation)
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             value,
         )?;
         let operation_alias = o3_lsq_operation_alias(operation);
@@ -1511,12 +1501,14 @@ fn emit_o3_runtime_stats(
                 "storeLoadForwardingMatches",
                 o3.lsq_operation_forwarding_matches(operation),
             ),
+            (
+                "storeLoadForwardingSuppressed",
+                o3.lsq_operation_forwarding_suppressed(operation),
+            ),
         ] {
-            increment_stat(
+            increment_count_stat(
                 stats,
-                &format!("{gem5_cpu_alias_prefix}.lsq0.operation.{operation_alias}.{name}"),
-                "Count",
-                StatResetPolicy::Monotonic,
+                format!("{gem5_cpu_alias_prefix}.lsq0.operation.{operation_alias}.{name}"),
                 value,
             )?;
         }
@@ -1660,6 +1652,14 @@ fn emit_o3_runtime_stats(
         )?;
     }
     Ok(())
+}
+
+fn increment_count_stat(
+    stats: &mut StatsRegistry,
+    name: String,
+    value: u64,
+) -> Result<(), Rem6CliError> {
+    increment_stat(stats, &name, "Count", StatResetPolicy::Monotonic, value)
 }
 
 fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {

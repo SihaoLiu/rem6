@@ -26,9 +26,11 @@ pub struct O3RuntimeStats {
     pub(crate) lsq_store_bytes: u64,
     pub(crate) lsq_store_to_load_forwarding_candidates: u64,
     pub(crate) lsq_store_to_load_forwarding_matches: u64,
+    pub(crate) lsq_store_to_load_forwarding_suppressed: u64,
     pub(crate) lsq_operation_counts: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_forwarding_candidates: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_forwarding_matches: [u64; O3RuntimeLsqOperation::COUNT],
+    pub(crate) lsq_operation_forwarding_suppressed: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_data_latency_samples: u64,
     pub(crate) lsq_data_latency_ticks: u64,
     pub(crate) lsq_data_latency_max_ticks: u64,
@@ -107,6 +109,10 @@ impl O3RuntimeStats {
         self.lsq_store_to_load_forwarding_matches
     }
 
+    pub const fn lsq_store_to_load_forwarding_suppressed(self) -> u64 {
+        self.lsq_store_to_load_forwarding_suppressed
+    }
+
     pub fn lsq_operation_count(self, operation: O3RuntimeLsqOperation) -> u64 {
         self.lsq_operation_counts[operation.index()]
     }
@@ -117,6 +123,10 @@ impl O3RuntimeStats {
 
     pub fn lsq_operation_forwarding_matches(self, operation: O3RuntimeLsqOperation) -> u64 {
         self.lsq_operation_forwarding_matches[operation.index()]
+    }
+
+    pub fn lsq_operation_forwarding_suppressed(self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.lsq_operation_forwarding_suppressed[operation.index()]
     }
 
     pub const fn lsq_data_latency_samples(self) -> u64 {
@@ -316,6 +326,7 @@ impl O3RuntimeStats {
             || self.lsq_store_bytes != 0
             || self.lsq_store_to_load_forwarding_candidates != 0
             || self.lsq_store_to_load_forwarding_matches != 0
+            || self.lsq_store_to_load_forwarding_suppressed != 0
             || self.lsq_data_latency_samples != 0
             || self.lsq_data_latency_ticks != 0
             || self.lsq_data_latency_max_ticks != 0
@@ -542,6 +553,7 @@ impl O3RuntimeStats {
             return (O3StoreForwardingObservation::default(), None);
         };
         if load.address != prior_store.address || load.bytes != prior_store.bytes {
+            self.record_store_to_load_forwarding_suppressed(o3_lsq_operation(access));
             return (O3StoreForwardingObservation::default(), None);
         }
 
@@ -587,5 +599,14 @@ impl O3RuntimeStats {
         let operation_index = operation.index();
         self.lsq_operation_forwarding_matches[operation_index] =
             self.lsq_operation_forwarding_matches[operation_index].saturating_add(1);
+    }
+
+    fn record_store_to_load_forwarding_suppressed(&mut self, operation: O3RuntimeLsqOperation) {
+        self.lsq_store_to_load_forwarding_suppressed = self
+            .lsq_store_to_load_forwarding_suppressed
+            .saturating_add(1);
+        let operation_index = operation.index();
+        self.lsq_operation_forwarding_suppressed[operation_index] =
+            self.lsq_operation_forwarding_suppressed[operation_index].saturating_add(1);
     }
 }
