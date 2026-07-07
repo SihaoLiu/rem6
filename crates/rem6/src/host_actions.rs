@@ -130,6 +130,7 @@ impl Rem6HostActionSummary {
                         event.get(),
                         source.get(),
                         manifest,
+                        false,
                     ));
                 }
                 SystemActionOutcome::CheckpointRestored {
@@ -143,6 +144,7 @@ impl Rem6HostActionSummary {
                         event.get(),
                         source.get(),
                         manifest,
+                        true,
                     );
                     summary.checkpoint_restored_count += 1;
                     summary.checkpoint_restored_component_count += restored.component_count;
@@ -197,8 +199,11 @@ fn checkpoint_summary_from_manifest(
     event: u64,
     source: u32,
     manifest: &rem6_checkpoint::CheckpointManifest,
+    is_restore: bool,
 ) -> Rem6HostCheckpointSummary {
     let manifest_summary = manifest.summary();
+    let (execution_mode_authority_present, execution_mode_authority_decode_error, execution_modes) =
+        execution_mode_authority_from_manifest(manifest);
     let components = manifest
         .states()
         .iter()
@@ -213,8 +218,58 @@ fn checkpoint_summary_from_manifest(
         component_count: manifest_summary.component_count() as u64,
         chunk_count: manifest_summary.chunk_count() as u64,
         payload_bytes: manifest_summary.payload_bytes() as u64,
+        execution_mode_authority_present,
+        execution_mode_authority_cleared: is_restore
+            && !execution_mode_authority_present
+            && !execution_mode_authority_decode_error,
+        execution_mode_authority_decode_error,
+        execution_modes,
         components,
     }
+}
+
+fn execution_mode_authority_from_manifest(
+    manifest: &rem6_checkpoint::CheckpointManifest,
+) -> (bool, bool, Vec<Rem6HostExecutionModeSummary>) {
+    let Some(state) = manifest
+        .states()
+        .iter()
+        .find(|state| state.component().as_str() == "host.execution_modes")
+    else {
+        return (false, false, Vec::new());
+    };
+    let Some(chunk) = state.chunks().iter().find(|chunk| chunk.name() == "modes") else {
+        return (false, true, Vec::new());
+    };
+    match decode_execution_mode_authority(chunk.payload()) {
+        Some(modes) => (true, false, modes),
+        None => (false, true, Vec::new()),
+    }
+}
+
+fn decode_execution_mode_authority(payload: &[u8]) -> Option<Vec<Rem6HostExecutionModeSummary>> {
+    let mut cursor = 0;
+    let count = read_checkpoint_u64(payload, &mut cursor)? as usize;
+    let mut modes = Vec::new();
+    for _ in 0..count {
+        let target_len = read_checkpoint_u64(payload, &mut cursor)? as usize;
+        let target_end = cursor.checked_add(target_len)?;
+        let target = std::str::from_utf8(payload.get(cursor..target_end)?)
+            .ok()?
+            .to_string();
+        cursor = target_end;
+        let mode = execution_mode_name_from_code(*payload.get(cursor)?)?;
+        cursor += 1;
+        modes.push(Rem6HostExecutionModeSummary { target, mode });
+    }
+    (cursor == payload.len()).then_some(modes)
+}
+
+fn read_checkpoint_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
+    let end = cursor.checked_add(8)?;
+    let bytes = payload.get(*cursor..end)?.try_into().ok()?;
+    *cursor = end;
+    Some(u64::from_le_bytes(bytes))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -313,6 +368,15 @@ const fn execution_mode_name(mode: ExecutionMode) -> &'static str {
         ExecutionMode::Functional => "functional",
         ExecutionMode::Timing => "timing",
         ExecutionMode::Detailed => "detailed",
+    }
+}
+
+const fn execution_mode_name_from_code(code: u8) -> Option<&'static str> {
+    match code {
+        0 => Some("functional"),
+        1 => Some("timing"),
+        2 => Some("detailed"),
+        _ => None,
     }
 }
 
@@ -605,6 +669,10 @@ pub(crate) struct Rem6HostCheckpointSummary {
     pub(crate) component_count: u64,
     pub(crate) chunk_count: u64,
     pub(crate) payload_bytes: u64,
+    pub(crate) execution_mode_authority_present: bool,
+    pub(crate) execution_mode_authority_cleared: bool,
+    pub(crate) execution_mode_authority_decode_error: bool,
+    pub(crate) execution_modes: Vec<Rem6HostExecutionModeSummary>,
     pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
 }
 

@@ -47,6 +47,31 @@ pub(super) fn emit_run_host_action_stats(
             .or_default() += 1;
     }
 
+    let mut checkpoint_restore_execution_mode_authority_manifests = 0;
+    let mut checkpoint_restore_execution_mode_authority_cleared_manifests = 0;
+    let mut checkpoint_restore_execution_mode_authority_targets = 0;
+    let mut checkpoint_restore_execution_mode_authority_modes =
+        BTreeMap::<&'static str, u64>::new();
+    let mut checkpoint_restore_execution_mode_authority_target_modes =
+        BTreeMap::<(String, &'static str), u64>::new();
+    for restore in &summary.checkpoint_restores {
+        if restore.execution_mode_authority_present {
+            checkpoint_restore_execution_mode_authority_manifests += 1;
+        }
+        if restore.execution_mode_authority_cleared {
+            checkpoint_restore_execution_mode_authority_cleared_manifests += 1;
+        }
+        checkpoint_restore_execution_mode_authority_targets += restore.execution_modes.len() as u64;
+        for authority in &restore.execution_modes {
+            *checkpoint_restore_execution_mode_authority_modes
+                .entry(authority.mode)
+                .or_default() += 1;
+            *checkpoint_restore_execution_mode_authority_target_modes
+                .entry((stat_path_segment(&authority.target), authority.mode))
+                .or_default() += 1;
+        }
+    }
+
     let mut switch_modes = BTreeMap::<&'static str, u64>::new();
     let mut switch_previous_modes = BTreeMap::<&'static str, u64>::new();
     let mut switch_previous_mode_none = 0;
@@ -141,6 +166,18 @@ pub(super) fn emit_run_host_action_stats(
             summary.checkpoint_restored_chunk_count,
         ),
         (
+            "checkpoint_restore.execution_mode_authority.manifests",
+            checkpoint_restore_execution_mode_authority_manifests,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.cleared_manifests",
+            checkpoint_restore_execution_mode_authority_cleared_manifests,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.targets",
+            checkpoint_restore_execution_mode_authority_targets,
+        ),
+        (
             "execution_mode_switches",
             summary.execution_mode_switch_count,
         ),
@@ -200,6 +237,16 @@ pub(super) fn emit_run_host_action_stats(
         )?;
         increment_stat(
             stats,
+            &format!("sim.host_actions.checkpoint_restore.execution_mode_authority.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checkpoint_restore_execution_mode_authority_modes
+                .get(mode)
+                .copied()
+                .unwrap_or_default(),
+        )?;
+        increment_stat(
+            stats,
             &format!("sim.host_actions.execution_mode_switch.mode.{mode}"),
             "Count",
             StatResetPolicy::Monotonic,
@@ -217,6 +264,17 @@ pub(super) fn emit_run_host_action_stats(
         increment_stat(
             stats,
             &format!("sim.host_actions.execution_mode_authority.target.{target}.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            count,
+        )?;
+    }
+    for ((target, mode), count) in checkpoint_restore_execution_mode_authority_target_modes {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
+            ),
             "Count",
             StatResetPolicy::Monotonic,
             count,

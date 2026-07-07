@@ -1537,8 +1537,14 @@ impl Rem6HostCheckpointSummary {
             .map(Rem6HostCheckpointComponentSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let execution_modes = self
+            .execution_modes
+            .iter()
+            .map(Rem6HostExecutionModeSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"tick\":{},\"event\":{},\"source\":{},\"label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"components\":[{}]}}",
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"execution_mode_authority_present\":{},\"execution_mode_authority_cleared\":{},\"execution_mode_authority_decode_error\":{},\"execution_modes\":[{}],\"components\":[{}]}}",
             self.tick,
             self.event,
             self.source,
@@ -1547,6 +1553,10 @@ impl Rem6HostCheckpointSummary {
             self.component_count,
             self.chunk_count,
             self.payload_bytes,
+            self.execution_mode_authority_present,
+            self.execution_mode_authority_cleared,
+            self.execution_mode_authority_decode_error,
+            execution_modes,
             components,
         )
     }

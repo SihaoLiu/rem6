@@ -5416,6 +5416,52 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
         Some("o3-baseline"),
         "restored checkpoint detail should identify the restored manifest: {restored_checkpoint}"
     );
+    assert_eq!(
+        restored_checkpoint
+            .pointer("/execution_mode_authority_present")
+            .and_then(Value::as_bool),
+        Some(true),
+        "restored detailed checkpoint should report decoded execution-mode authority: {restored_checkpoint}"
+    );
+    assert_eq!(
+        restored_checkpoint
+            .pointer("/execution_mode_authority_cleared")
+            .and_then(Value::as_bool),
+        Some(false),
+        "restored detailed checkpoint should not report absent-authority rollback: {restored_checkpoint}"
+    );
+    assert_eq!(
+        restored_checkpoint
+            .pointer("/execution_mode_authority_decode_error")
+            .and_then(Value::as_bool),
+        Some(false),
+        "restored detailed checkpoint should decode execution-mode authority cleanly: {restored_checkpoint}"
+    );
+    let restored_execution_modes = restored_checkpoint
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "restored detailed checkpoint should expose decoded modes: {restored_checkpoint}"
+            )
+        });
+    assert_eq!(
+        restored_execution_modes.len(),
+        1,
+        "restored detailed checkpoint should decode one target authority: {restored_execution_modes:?}"
+    );
+    assert_eq!(
+        restored_execution_modes[0]
+            .pointer("/target")
+            .and_then(Value::as_str),
+        Some("cpu0")
+    );
+    assert_eq!(
+        restored_execution_modes[0]
+            .pointer("/mode")
+            .and_then(Value::as_str),
+        Some("detailed")
+    );
     let restored_execution_mode_component = restored_checkpoint
         .pointer("/components")
         .and_then(Value::as_array)
@@ -5530,6 +5576,43 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
         "sim.host_actions.checkpoint_restored_payload_bytes",
         "Byte",
         restored_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.manifests",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.cleared_manifests",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.targets",
+        "Count",
+        1,
+        "monotonic",
+    );
+    for (mode, expected) in [("functional", 0), ("timing", 0), ("detailed", 1)] {
+        assert_json_stat(
+            &json,
+            &format!("sim.host_actions.checkpoint_restore.execution_mode_authority.mode.{mode}"),
+            "Count",
+            expected,
+            "monotonic",
+        );
+    }
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+        "Count",
+        1,
         "monotonic",
     );
 }
@@ -7097,6 +7180,154 @@ fn rem6_run_stats_expose_m5_switch_cpu_mode_authority_matrix() {
                 .pointer("/captured_payload_bytes")
                 .and_then(Value::as_u64)
                 .unwrap_or_else(|| panic!("missing quiescence payload bytes: {quiescence_gate}")),
+            "monotonic",
+        );
+    }
+}
+
+#[test]
+fn rem6_run_restores_m5_switch_cpu_transfer_and_reports_authority_rollback() {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        i_type(7, 0, 0x0, 5, 0x13),
+        i_type(1, 5, 0x0, 5, 0x13),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-generated-transfer-restore", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "8:execution-mode-switch-cpu0-3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let (switch_tick, transfer_label) = assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu0",
+        None,
+        "detailed",
+        "execution-mode-switch-cpu0",
+    );
+    assert_eq!(
+        transfer_label,
+        format!("execution-mode-switch-cpu0-{switch_tick}")
+    );
+    assert_eq!(
+        transfer_label, "execution-mode-switch-cpu0-3",
+        "test assumes the first m5_switch_cpu transfer label remains tick-derived: {host_actions}"
+    );
+
+    let restores = host_actions
+        .pointer("/checkpoint_restores")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint restores: {host_actions}"));
+    let restore = restores
+        .first()
+        .unwrap_or_else(|| panic!("missing generated transfer restore: {host_actions}"));
+    assert_eq!(
+        restore.pointer("/label").and_then(Value::as_str),
+        Some(transfer_label.as_str())
+    );
+    assert_eq!(
+        restore
+            .pointer("/execution_mode_authority_present")
+            .and_then(Value::as_bool),
+        Some(false),
+        "restored pre-switch transfer manifest should report that no authority payload was captured: {restore}"
+    );
+    assert_eq!(
+        restore
+            .pointer("/execution_mode_authority_cleared")
+            .and_then(Value::as_bool),
+        Some(true),
+        "restoring the generated pre-switch transfer should explicitly report authority rollback: {restore}"
+    );
+    assert_eq!(
+        restore
+            .pointer("/execution_mode_authority_decode_error")
+            .and_then(Value::as_bool),
+        Some(false),
+        "restored absent authority should not be reported as malformed: {restore}"
+    );
+    assert_eq!(
+        restore
+            .pointer("/execution_modes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "restoring the pre-switch transfer manifest should roll authority back to no owner: {restore}"
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/execution_modes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "final execution-mode authority should remain rolled back after generated transfer restore: {host_actions}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.cleared_manifests",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.targets",
+        "Count",
+        0,
+        "monotonic",
+    );
+    for lane in ["functional", "timing", "detailed"] {
+        assert_json_stat(
+            &json,
+            &format!("sim.host_actions.checkpoint_restore.execution_mode_authority.mode.{lane}"),
+            "Count",
+            0,
             "monotonic",
         );
     }
