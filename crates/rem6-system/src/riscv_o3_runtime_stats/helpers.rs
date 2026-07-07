@@ -265,6 +265,7 @@ pub(super) fn register_o3_branch_event_kind_counters(
         link_write: StatId::new(0),
         without_link_write: StatId::new(0),
         squash: StatId::new(0),
+        squashed_target: StatId::new(0),
         squashed_target_link_write: StatId::new(0),
         squashed_target_without_link_write: StatId::new(0),
     }; BranchTargetKind::COUNT];
@@ -347,6 +348,12 @@ pub(super) fn register_o3_branch_event_kind_counters(
                 registry,
                 prefix,
                 &format!("branch_event.squash_kind.{stat_name}"),
+                "Count",
+            )?,
+            squashed_target: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.squashed_target_kind.{stat_name}"),
                 "Count",
             )?,
             squashed_target_link_write: register_o3_counter(

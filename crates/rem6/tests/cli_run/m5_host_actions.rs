@@ -3058,6 +3058,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
             2,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_unconditional",
+            2,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_without_link_write_kind.direct_conditional",
             1,
         ),
@@ -3117,6 +3125,8 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.misprediction_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squash_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squash_kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_without_link_write_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
     ] {
@@ -3244,6 +3254,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.misprediction_kind.direct_unconditional",
             1,
         ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_unconditional",
+            1,
+        ),
     ] {
         assert_stats_dump_sample(pre_reset_dump, path, "counter", "Count", value, "resettable");
     }
@@ -3263,6 +3281,8 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.misprediction_kind.call_indirect",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.misprediction_kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.direct_unconditional",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }

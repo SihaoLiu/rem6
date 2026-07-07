@@ -887,6 +887,11 @@ impl RiscvO3RuntimeCpuStats {
                     current.branch_event_squash_kind(kind),
                 ),
                 (
+                    event_stats.squashed_target,
+                    previous.branch_event_squashed_target_kind(kind),
+                    current.branch_event_squashed_target_kind(kind),
+                ),
+                (
                     event_stats.squashed_target_link_write,
                     previous.branch_event_squashed_target_link_write_kind(kind),
                     current.branch_event_squashed_target_link_write_kind(kind),
@@ -1330,6 +1335,10 @@ impl RiscvO3RuntimeCpuStats {
                     snapshot.branch_event_without_link_write_kind(kind),
                 ),
                 (event_stats.squash, snapshot.branch_event_squash_kind(kind)),
+                (
+                    event_stats.squashed_target,
+                    snapshot.branch_event_squashed_target_kind(kind),
+                ),
                 (
                     event_stats.squashed_target_link_write,
                     snapshot.branch_event_squashed_target_link_write_kind(kind),

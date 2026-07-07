@@ -385,6 +385,10 @@ impl O3RuntimeStats {
         self.branch_event_squashes()
     }
 
+    pub fn branch_event_squashed_target_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_squash_kind(kind)
+    }
+
     pub fn branch_event_squashed_targets_without_link_writes(self) -> u64 {
         self.branch_event_squashed_target_without_link_write_kinds
             .into_iter()

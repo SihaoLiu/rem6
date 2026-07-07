@@ -31,6 +31,7 @@ pub(super) struct RiscvO3RuntimeBranchEventKindStats {
     pub(super) link_write: StatId,
     pub(super) without_link_write: StatId,
     pub(super) squash: StatId,
+    pub(super) squashed_target: StatId,
     pub(super) squashed_target_link_write: StatId,
     pub(super) squashed_target_without_link_write: StatId,
 }

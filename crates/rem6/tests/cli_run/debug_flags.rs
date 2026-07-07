@@ -8908,6 +8908,20 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
     );
     assert_eq!(
         branch_event
+            .pointer("/squashed_target_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(1),
+        "call-indirect runtime matrix should expose squashed targets by branch kind: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/squashed_target_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-unconditional runtime matrix should expose squashed targets by branch kind: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
             .pointer("/squashed_target_link_write_kind/call_indirect")
             .and_then(Value::as_u64),
         Some(1),
@@ -8993,6 +9007,16 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ),
         (
             "sim.cpu0.o3.branch_event.squashed_targets_with_link_writes",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_kind.direct_unconditional",
             "Count",
             1,
         ),
