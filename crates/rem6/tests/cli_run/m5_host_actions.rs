@@ -4279,6 +4279,248 @@ fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
     );
 }
 
+#[test]
+fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
+    let path = detailed_o3_ordered_atomic_lsq_binary(
+        "m5-switch-cpu-detailed-o3-nested-rob-lsq-runtime-json",
+    );
+    let json = ordered_atomic_lsq_runtime_json(&path, Some("direct"), "220");
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+    for (pointer, stat_path) in [
+        ("/rob/allocations", "sim.cpu0.o3.rob_allocations"),
+        ("/rob/commits", "sim.cpu0.o3.rob_commits"),
+        ("/rob/max_occupancy", "sim.cpu0.o3.max_rob_occupancy"),
+        ("/rename/writes", "sim.cpu0.o3.rename_writes"),
+        ("/rename/map_entries", "sim.cpu0.o3.rename_map_entries"),
+        ("/lsq/loads", "sim.cpu0.o3.lsq_loads"),
+        ("/lsq/stores", "sim.cpu0.o3.lsq_stores"),
+        (
+            "/lsq/data_latency/samples",
+            "sim.cpu0.o3.lsq_data_latency_samples",
+        ),
+        (
+            "/lsq/data_latency/ticks",
+            "sim.cpu0.o3.lsq_data_latency_ticks",
+        ),
+        (
+            "/lsq/data_latency/max_ticks",
+            "sim.cpu0.o3.lsq_data_latency_max_ticks",
+        ),
+        (
+            "/lsq/data_latency/min_ticks",
+            "sim.cpu0.o3.lsq_data_latency_min_ticks",
+        ),
+        (
+            "/lsq/data_latency/avg_ticks",
+            "sim.cpu0.o3.lsq_data_latency_avg_ticks",
+        ),
+        ("/lsq/max_occupancy", "sim.cpu0.o3.max_lsq_occupancy"),
+    ] {
+        let structured = o3_runtime
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
+            });
+        assert_eq!(
+            structured,
+            json_stat_value(&json, stat_path),
+            "nested O3 runtime {pointer} should match stat path {stat_path}"
+        );
+        assert!(
+            structured > 0,
+            "representative O3 runtime nested lane {pointer} should be positive: {o3_runtime}"
+        );
+    }
+
+    for (pointer, stat_path, value) in [
+        ("/lsq/load_bytes", "sim.cpu0.o3.lsq_load_bytes", 24),
+        ("/lsq/store_bytes", "sim.cpu0.o3.lsq_store_bytes", 40),
+        (
+            "/lsq/store_conditional_failures",
+            "sim.cpu0.o3.lsq_store_conditional_failures",
+            0,
+        ),
+        (
+            "/lsq/operation/load/count",
+            "sim.cpu0.o3.lsq_operation.load",
+            1,
+        ),
+        (
+            "/lsq/operation/store/count",
+            "sim.cpu0.o3.lsq_operation.store",
+            3,
+        ),
+        (
+            "/lsq/operation/load_reserved/count",
+            "sim.cpu0.o3.lsq_operation.load_reserved",
+            1,
+        ),
+        (
+            "/lsq/operation/store_conditional/count",
+            "sim.cpu0.o3.lsq_operation.store_conditional",
+            1,
+        ),
+        (
+            "/lsq/operation/atomic/count",
+            "sim.cpu0.o3.lsq_operation.atomic",
+            1,
+        ),
+        (
+            "/lsq/operation/vector_load/count",
+            "sim.cpu0.o3.lsq_operation.vector_load",
+            0,
+        ),
+        (
+            "/lsq/operation/vector_store/count",
+            "sim.cpu0.o3.lsq_operation.vector_store",
+            0,
+        ),
+        (
+            "/lsq/ordering/acquire",
+            "sim.cpu0.o3.lsq_ordering.acquire",
+            1,
+        ),
+        (
+            "/lsq/ordering/release",
+            "sim.cpu0.o3.lsq_ordering.release",
+            1,
+        ),
+        (
+            "/lsq/ordering/acquire_release",
+            "sim.cpu0.o3.lsq_ordering.acquire_release",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            o3_runtime.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose {pointer}: {o3_runtime}"
+        );
+        assert_eq!(
+            json_stat_value(&json, stat_path),
+            value,
+            "stat path {stat_path} should match nested O3 runtime expectation"
+        );
+    }
+
+    for operation in [
+        "load",
+        "store",
+        "load_reserved",
+        "store_conditional",
+        "atomic",
+    ] {
+        for (metric, stat_suffix) in [
+            ("samples", "latency_samples"),
+            ("ticks", "latency_ticks"),
+            ("max_ticks", "latency_max_ticks"),
+            ("min_ticks", "latency_min_ticks"),
+            ("avg_ticks", "latency_avg_ticks"),
+        ] {
+            let pointer = format!("/lsq/operation/{operation}/latency/{metric}");
+            let stat_path = format!("sim.cpu0.o3.lsq_operation.{operation}_{stat_suffix}");
+            let structured = o3_runtime
+                .pointer(&pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
+                });
+            assert_eq!(
+                structured,
+                json_stat_value(&json, &stat_path),
+                "nested O3 runtime {pointer} should match stat path {stat_path}"
+            );
+            assert!(
+                structured > 0,
+                "active LSQ operation latency metric {pointer} should be positive: {o3_runtime}"
+            );
+        }
+    }
+    for operation in ["float_load", "float_store", "vector_load", "vector_store"] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/lsq/operation/{operation}/latency/ticks"))
+                .and_then(Value::as_u64),
+            Some(0),
+            "inactive LSQ operation latency should stay zero for {operation}: {o3_runtime}"
+        );
+    }
+
+    let forwarding_path =
+        detailed_o3_lsq_store_load_match_binary("m5-switch-cpu-o3-nested-lsq-forwarding-json");
+    let forwarding_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            forwarding_path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        forwarding_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&forwarding_output.stderr)
+    );
+    let forwarding_json: Value = serde_json::from_slice(&forwarding_output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let forwarding_o3 = forwarding_json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| {
+            panic!("run JSON should include core O3 runtime state: {forwarding_json}")
+        });
+    for (pointer, stat_path) in [
+        (
+            "/lsq/store_load_forwarding_candidates",
+            "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+        ),
+        (
+            "/lsq/store_load_forwarding_matches",
+            "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        ),
+        (
+            "/lsq/operation/load/forwarding_candidates",
+            "sim.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        ),
+        (
+            "/lsq/operation/load/forwarding_matches",
+            "sim.cpu0.o3.lsq_operation.load_forwarding_matches",
+        ),
+    ] {
+        assert_eq!(
+            forwarding_o3.pointer(pointer).and_then(Value::as_u64),
+            Some(1),
+            "nested O3 forwarding JSON should expose {pointer}: {forwarding_o3}"
+        );
+        assert_json_stat(&forwarding_json, stat_path, "Count", 1, "monotonic");
+    }
+    for pointer in [
+        "/lsq/operation/store/forwarding_candidates",
+        "/lsq/operation/store/forwarding_matches",
+        "/lsq/operation/atomic/forwarding_candidates",
+        "/lsq/operation/atomic/forwarding_matches",
+    ] {
+        assert_eq!(
+            forwarding_o3.pointer(pointer).and_then(Value::as_u64),
+            Some(0),
+            "inactive O3 forwarding lane should stay zero at {pointer}: {forwarding_o3}"
+        );
+    }
+}
+
 fn ordered_atomic_lsq_runtime_json(
     path: &Path,
     memory_system: Option<&str>,

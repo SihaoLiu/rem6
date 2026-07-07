@@ -163,6 +163,105 @@ fn o3_runtime_commit_json(summary: &Rem6CoreSummary) -> String {
     )
 }
 
+fn o3_runtime_rob_json(summary: &Rem6CoreSummary) -> String {
+    format!(
+        "{{\"allocations\":{},\"commits\":{},\"max_occupancy\":{}}}",
+        summary.o3_runtime.rob_allocations(),
+        summary.o3_runtime.rob_commits(),
+        summary.o3_runtime.max_rob_occupancy()
+    )
+}
+
+fn o3_runtime_rename_json(summary: &Rem6CoreSummary) -> String {
+    format!(
+        "{{\"writes\":{},\"map_entries\":{}}}",
+        summary.o3_runtime.rename_writes(),
+        summary.o3_runtime.rename_map_entries()
+    )
+}
+
+fn o3_runtime_latency_json(
+    samples: u64,
+    ticks: u64,
+    max_ticks: u64,
+    min_ticks: u64,
+    avg_ticks: u64,
+) -> String {
+    format!(
+        "{{\"samples\":{samples},\"ticks\":{ticks},\"max_ticks\":{max_ticks},\"min_ticks\":{min_ticks},\"avg_ticks\":{avg_ticks}}}"
+    )
+}
+
+fn o3_runtime_lsq_operation_matrix_json(summary: &Rem6CoreSummary) -> String {
+    let fields = O3RuntimeLsqOperation::TRACKED
+        .into_iter()
+        .map(|operation| {
+            let latency = o3_runtime_latency_json(
+                summary.o3_runtime.lsq_operation_latency_samples(operation),
+                summary.o3_runtime.lsq_operation_latency_ticks(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_latency_max_ticks(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_latency_min_ticks(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_latency_avg_ticks(operation),
+            );
+            format!(
+                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"latency\":{latency}}}",
+                operation.as_str(),
+                summary.o3_runtime.lsq_operation_count(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_forwarding_candidates(operation),
+                summary.o3_runtime.lsq_operation_forwarding_matches(operation),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn o3_runtime_lsq_ordering_matrix_json(summary: &Rem6CoreSummary) -> String {
+    let fields = O3RuntimeLsqOrdering::TRACKED
+        .into_iter()
+        .map(|ordering| {
+            format!(
+                "\"{}\":{}",
+                ordering.as_str(),
+                summary.o3_runtime.lsq_ordering_count(ordering)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn o3_runtime_lsq_json(summary: &Rem6CoreSummary) -> String {
+    let data_latency = o3_runtime_latency_json(
+        summary.o3_runtime.lsq_data_latency_samples(),
+        summary.o3_runtime.lsq_data_latency_ticks(),
+        summary.o3_runtime.lsq_data_latency_max_ticks(),
+        summary.o3_runtime.lsq_data_latency_min_ticks(),
+        summary.o3_runtime.lsq_data_latency_avg_ticks(),
+    );
+    let operation = o3_runtime_lsq_operation_matrix_json(summary);
+    let ordering = o3_runtime_lsq_ordering_matrix_json(summary);
+    format!(
+        "{{\"loads\":{},\"stores\":{},\"load_bytes\":{},\"store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_conditional_failures\":{},\"max_occupancy\":{},\"data_latency\":{data_latency},\"operation\":{operation},\"ordering\":{ordering}}}",
+        summary.o3_runtime.lsq_loads(),
+        summary.o3_runtime.lsq_stores(),
+        summary.o3_runtime.lsq_load_bytes(),
+        summary.o3_runtime.lsq_store_bytes(),
+        summary.o3_runtime.lsq_store_to_load_forwarding_candidates(),
+        summary.o3_runtime.lsq_store_to_load_forwarding_matches(),
+        summary.o3_runtime.lsq_store_conditional_failures(),
+        summary.o3_runtime.max_lsq_occupancy(),
+    )
+}
+
 fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
     O3RuntimeLsqOperation::TRACKED
         .into_iter()
@@ -334,8 +433,11 @@ impl Rem6CoreSummary {
             let iq = o3_runtime_iq_json(self);
             let iew = o3_runtime_iew_json(self);
             let commit = o3_runtime_commit_json(self);
+            let rob = o3_runtime_rob_json(self);
+            let rename = o3_runtime_rename_json(self);
+            let lsq = o3_runtime_lsq_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -346,6 +448,9 @@ impl Rem6CoreSummary {
                 self.o3_runtime.lsq_store_bytes(),
                 self.o3_runtime.lsq_store_to_load_forwarding_candidates(),
                 self.o3_runtime.lsq_store_to_load_forwarding_matches(),
+                rob,
+                rename,
+                lsq,
                 iq,
                 iew,
                 commit,
