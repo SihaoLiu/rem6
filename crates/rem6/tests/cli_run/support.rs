@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde_json::Value;
+
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const PT_NOTE: u32 = 4;
 const PT_PHDR: u32 = 6;
@@ -1710,6 +1712,636 @@ pub(crate) fn stat_path_segment(segment: &str) -> String {
     } else {
         output
     }
+}
+
+const PIPELINE_SUMMARY_STAGES: [&str; 5] = ["fetch1", "fetch2", "decode", "execute", "commit"];
+const PIPELINE_SUMMARY_STALL_CAUSES: [&str; 3] = ["fetch_wait", "data_wait", "execute_wait"];
+const PIPELINE_SUMMARY_REDIRECT_CAUSES: [&str; 3] =
+    ["branch_prediction", "trap_redirect", "interrupt_redirect"];
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryExpected {
+    totals: PipelineSummaryRecordTotals,
+    stages: [PipelineSummaryStageTotals; PIPELINE_SUMMARY_STAGES.len()],
+    stall_causes: [PipelineSummaryStallCauseTotals; PIPELINE_SUMMARY_STALL_CAUSES.len()],
+    flush_causes: [PipelineSummaryFlushCauseTotals; PIPELINE_SUMMARY_REDIRECT_CAUSES.len()],
+    redirect_causes: [PipelineSummaryFlushCauseTotals; PIPELINE_SUMMARY_REDIRECT_CAUSES.len()],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryRecordTotals {
+    records: u64,
+    stall_cycles: u64,
+    state_changed: u64,
+    advanced: u64,
+    retired: u64,
+    flushed: u64,
+    resource_blocked: u64,
+    ordering_blocked: u64,
+    branch_predictions: u64,
+    branch_mispredictions: u64,
+    branch_prediction_flushed: u64,
+    redirects: u64,
+    before_in_flight: u64,
+    after_in_flight: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryStageTotals {
+    before_in_flight: u64,
+    before_in_flight_cycles: u64,
+    after_in_flight: u64,
+    after_in_flight_cycles: u64,
+    advanced: u64,
+    advanced_cycles: u64,
+    retired: u64,
+    retired_cycles: u64,
+    flushed: u64,
+    flushed_cycles: u64,
+    branch_prediction_flushed: u64,
+    branch_prediction_flushed_cycles: u64,
+    trap_redirect_flushed: u64,
+    trap_redirect_flushed_cycles: u64,
+    interrupt_redirect_flushed: u64,
+    interrupt_redirect_flushed_cycles: u64,
+    resource_blocked: u64,
+    resource_blocked_cycles: u64,
+    ordering_blocked: u64,
+    ordering_blocked_cycles: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryResourceTotals {
+    resource_blocked: u64,
+    resource_blocked_cycles: u64,
+    ordering_blocked: u64,
+    ordering_blocked_cycles: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryFlushTotals {
+    flushed: u64,
+    flushed_cycles: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryStallCauseTotals {
+    totals: PipelineSummaryRecordTotals,
+    stages: [PipelineSummaryResourceTotals; PIPELINE_SUMMARY_STAGES.len()],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineSummaryFlushCauseTotals {
+    totals: PipelineSummaryRecordTotals,
+    stages: [PipelineSummaryFlushTotals; PIPELINE_SUMMARY_STAGES.len()],
+}
+
+impl PipelineSummaryExpected {
+    fn add_record(&mut self, record: &Value) {
+        self.totals.add_record(record);
+
+        let before_in_flight =
+            pipeline_summary_stage_instruction_counts(record, "before_in_flight");
+        let after_in_flight = pipeline_summary_stage_instruction_counts(record, "after_in_flight");
+        let (advanced, retired) = pipeline_summary_stage_advance_counts(record);
+        let resource_blocked =
+            pipeline_summary_stage_instruction_counts(record, "resource_blocked");
+        let ordering_blocked =
+            pipeline_summary_stage_instruction_counts(record, "ordering_blocked");
+        let flushed = pipeline_summary_stage_instruction_counts(record, "flushed");
+
+        for index in 0..PIPELINE_SUMMARY_STAGES.len() {
+            self.stages[index].add_stage_record(
+                before_in_flight[index],
+                after_in_flight[index],
+                advanced[index],
+                retired[index],
+                flushed[index],
+                resource_blocked[index],
+                ordering_blocked[index],
+            );
+        }
+
+        match pipeline_summary_optional_str(record, "flush_cause") {
+            Some("branch_prediction") => {
+                for (index, flushed) in flushed.iter().copied().enumerate() {
+                    if flushed > 0 {
+                        self.stages[index].branch_prediction_flushed = self.stages[index]
+                            .branch_prediction_flushed
+                            .saturating_add(flushed);
+                        self.stages[index].branch_prediction_flushed_cycles = self.stages[index]
+                            .branch_prediction_flushed_cycles
+                            .saturating_add(1);
+                    }
+                }
+            }
+            Some("trap_redirect") => {
+                for (index, flushed) in flushed.iter().copied().enumerate() {
+                    if flushed > 0 {
+                        self.stages[index].trap_redirect_flushed = self.stages[index]
+                            .trap_redirect_flushed
+                            .saturating_add(flushed);
+                        self.stages[index].trap_redirect_flushed_cycles = self.stages[index]
+                            .trap_redirect_flushed_cycles
+                            .saturating_add(1);
+                    }
+                }
+            }
+            Some("interrupt_redirect") => {
+                for (index, flushed) in flushed.iter().copied().enumerate() {
+                    if flushed > 0 {
+                        self.stages[index].interrupt_redirect_flushed = self.stages[index]
+                            .interrupt_redirect_flushed
+                            .saturating_add(flushed);
+                        self.stages[index].interrupt_redirect_flushed_cycles = self.stages[index]
+                            .interrupt_redirect_flushed_cycles
+                            .saturating_add(1);
+                    }
+                }
+            }
+            Some(cause) => panic!("unknown Pipeline flush cause {cause}: {record}"),
+            None => {}
+        }
+
+        if let Some(cause) = pipeline_summary_optional_str(record, "stall_cause") {
+            let index = pipeline_summary_stall_cause_index(cause);
+            self.stall_causes[index].totals.add_record(record);
+            let stall_cycles = pipeline_summary_u64(record, "stall_cycles");
+            for stage in 0..PIPELINE_SUMMARY_STAGES.len() {
+                if resource_blocked[stage] > 0 || ordering_blocked[stage] > 0 {
+                    self.stall_causes[index].stages[stage].add_record(
+                        resource_blocked[stage],
+                        u64::from(resource_blocked[stage] > 0).saturating_mul(stall_cycles),
+                        ordering_blocked[stage],
+                        u64::from(ordering_blocked[stage] > 0).saturating_mul(stall_cycles),
+                    );
+                }
+            }
+        }
+
+        if let Some(cause) = pipeline_summary_optional_str(record, "flush_cause") {
+            let index = pipeline_summary_redirect_cause_index(cause);
+            self.flush_causes[index].totals.add_record(record);
+            for stage in 0..PIPELINE_SUMMARY_STAGES.len() {
+                if flushed[stage] > 0 {
+                    self.flush_causes[index].stages[stage].add_record(flushed[stage], 1);
+                }
+            }
+        }
+
+        if let Some(cause) = pipeline_summary_optional_str(record, "redirect_cause") {
+            let index = pipeline_summary_redirect_cause_index(cause);
+            self.redirect_causes[index].totals.add_record(record);
+            for stage in 0..PIPELINE_SUMMARY_STAGES.len() {
+                if flushed[stage] > 0 {
+                    self.redirect_causes[index].stages[stage].add_record(flushed[stage], 1);
+                }
+            }
+        }
+    }
+}
+
+impl PipelineSummaryRecordTotals {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        self.stall_cycles = self
+            .stall_cycles
+            .saturating_add(pipeline_summary_u64(record, "stall_cycles"));
+        self.state_changed = self
+            .state_changed
+            .saturating_add(u64::from(pipeline_summary_bool(record, "state_changed")));
+        self.advanced = self
+            .advanced
+            .saturating_add(pipeline_summary_array(record, "advanced").len() as u64);
+        self.retired = self.retired.saturating_add(
+            pipeline_summary_array(record, "advanced")
+                .iter()
+                .filter(|advance| pipeline_summary_bool(advance, "retires"))
+                .count() as u64,
+        );
+        self.flushed = self
+            .flushed
+            .saturating_add(pipeline_summary_array(record, "flushed").len() as u64);
+        self.resource_blocked = self
+            .resource_blocked
+            .saturating_add(pipeline_summary_array(record, "resource_blocked").len() as u64);
+        self.ordering_blocked = self
+            .ordering_blocked
+            .saturating_add(pipeline_summary_array(record, "ordering_blocked").len() as u64);
+        self.branch_predictions = self
+            .branch_predictions
+            .saturating_add(pipeline_summary_u64(record, "branch_predictions"));
+        self.branch_mispredictions = self
+            .branch_mispredictions
+            .saturating_add(pipeline_summary_u64(record, "branch_mispredictions"));
+        self.branch_prediction_flushed = self
+            .branch_prediction_flushed
+            .saturating_add(pipeline_summary_u64(record, "branch_prediction_flushed"));
+        self.redirects = self.redirects.saturating_add(u64::from(
+            record
+                .get("redirect_target")
+                .is_some_and(|value| !value.is_null()),
+        ));
+        self.before_in_flight = self
+            .before_in_flight
+            .saturating_add(pipeline_summary_array(record, "before_in_flight").len() as u64);
+        self.after_in_flight = self
+            .after_in_flight
+            .saturating_add(pipeline_summary_array(record, "after_in_flight").len() as u64);
+    }
+
+    fn fields(self) -> [(&'static str, u64); 14] {
+        [
+            ("records", self.records),
+            ("stall_cycles", self.stall_cycles),
+            ("state_changed", self.state_changed),
+            ("advanced", self.advanced),
+            ("retired", self.retired),
+            ("flushed", self.flushed),
+            ("resource_blocked", self.resource_blocked),
+            ("ordering_blocked", self.ordering_blocked),
+            ("branch_predictions", self.branch_predictions),
+            ("branch_mispredictions", self.branch_mispredictions),
+            ("branch_prediction_flushed", self.branch_prediction_flushed),
+            ("redirects", self.redirects),
+            ("before_in_flight", self.before_in_flight),
+            ("after_in_flight", self.after_in_flight),
+        ]
+    }
+}
+
+impl PipelineSummaryStageTotals {
+    fn add_stage_record(
+        &mut self,
+        before_in_flight: u64,
+        after_in_flight: u64,
+        advanced: u64,
+        retired: u64,
+        flushed: u64,
+        resource_blocked: u64,
+        ordering_blocked: u64,
+    ) {
+        if before_in_flight > 0 {
+            self.before_in_flight = self.before_in_flight.saturating_add(before_in_flight);
+            self.before_in_flight_cycles = self.before_in_flight_cycles.saturating_add(1);
+        }
+        if after_in_flight > 0 {
+            self.after_in_flight = self.after_in_flight.saturating_add(after_in_flight);
+            self.after_in_flight_cycles = self.after_in_flight_cycles.saturating_add(1);
+        }
+        if advanced > 0 {
+            self.advanced = self.advanced.saturating_add(advanced);
+            self.advanced_cycles = self.advanced_cycles.saturating_add(1);
+        }
+        if retired > 0 {
+            self.retired = self.retired.saturating_add(retired);
+            self.retired_cycles = self.retired_cycles.saturating_add(1);
+        }
+        if flushed > 0 {
+            self.flushed = self.flushed.saturating_add(flushed);
+            self.flushed_cycles = self.flushed_cycles.saturating_add(1);
+        }
+        if resource_blocked > 0 {
+            self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
+            self.resource_blocked_cycles = self.resource_blocked_cycles.saturating_add(1);
+        }
+        if ordering_blocked > 0 {
+            self.ordering_blocked = self.ordering_blocked.saturating_add(ordering_blocked);
+            self.ordering_blocked_cycles = self.ordering_blocked_cycles.saturating_add(1);
+        }
+    }
+
+    fn fields(self) -> [(&'static str, u64); 20] {
+        [
+            ("before_in_flight", self.before_in_flight),
+            ("before_in_flight_cycles", self.before_in_flight_cycles),
+            ("after_in_flight", self.after_in_flight),
+            ("after_in_flight_cycles", self.after_in_flight_cycles),
+            ("advanced", self.advanced),
+            ("advanced_cycles", self.advanced_cycles),
+            ("retired", self.retired),
+            ("retired_cycles", self.retired_cycles),
+            ("flushed", self.flushed),
+            ("flushed_cycles", self.flushed_cycles),
+            ("branch_prediction_flushed", self.branch_prediction_flushed),
+            (
+                "branch_prediction_flushed_cycles",
+                self.branch_prediction_flushed_cycles,
+            ),
+            ("trap_redirect_flushed", self.trap_redirect_flushed),
+            (
+                "trap_redirect_flushed_cycles",
+                self.trap_redirect_flushed_cycles,
+            ),
+            (
+                "interrupt_redirect_flushed",
+                self.interrupt_redirect_flushed,
+            ),
+            (
+                "interrupt_redirect_flushed_cycles",
+                self.interrupt_redirect_flushed_cycles,
+            ),
+            ("resource_blocked", self.resource_blocked),
+            ("resource_blocked_cycles", self.resource_blocked_cycles),
+            ("ordering_blocked", self.ordering_blocked),
+            ("ordering_blocked_cycles", self.ordering_blocked_cycles),
+        ]
+    }
+}
+
+impl PipelineSummaryResourceTotals {
+    fn add_record(
+        &mut self,
+        resource_blocked: u64,
+        resource_blocked_cycles: u64,
+        ordering_blocked: u64,
+        ordering_blocked_cycles: u64,
+    ) {
+        self.resource_blocked = self.resource_blocked.saturating_add(resource_blocked);
+        self.resource_blocked_cycles = self
+            .resource_blocked_cycles
+            .saturating_add(resource_blocked_cycles);
+        self.ordering_blocked = self.ordering_blocked.saturating_add(ordering_blocked);
+        self.ordering_blocked_cycles = self
+            .ordering_blocked_cycles
+            .saturating_add(ordering_blocked_cycles);
+    }
+
+    fn fields(self) -> [(&'static str, u64); 4] {
+        [
+            ("resource_blocked", self.resource_blocked),
+            ("resource_blocked_cycles", self.resource_blocked_cycles),
+            ("ordering_blocked", self.ordering_blocked),
+            ("ordering_blocked_cycles", self.ordering_blocked_cycles),
+        ]
+    }
+}
+
+impl PipelineSummaryFlushTotals {
+    fn add_record(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.flushed = self.flushed.saturating_add(flushed);
+        self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
+    }
+
+    fn fields(self) -> [(&'static str, u64); 2] {
+        [
+            ("flushed", self.flushed),
+            ("flushed_cycles", self.flushed_cycles),
+        ]
+    }
+}
+
+pub(crate) fn assert_pipeline_summary_matches_trace(json: &Value) {
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let summary = json
+        .pointer("/debug/pipeline_summary")
+        .unwrap_or_else(|| panic!("missing Pipeline debug summary JSON: {json}"));
+
+    let mut expected = PipelineSummaryExpected::default();
+    for record in trace {
+        expected.add_record(record);
+    }
+
+    assert_pipeline_summary_record_totals(summary, expected.totals, "pipeline_summary");
+
+    let stage_summary = pipeline_summary_child(summary, "stage", "pipeline_summary");
+    for (index, stage) in PIPELINE_SUMMARY_STAGES.iter().enumerate() {
+        let node = pipeline_summary_child(stage_summary, stage, "pipeline_summary.stage");
+        assert_pipeline_summary_stage_totals(
+            node,
+            expected.stages[index],
+            &format!("pipeline_summary.stage.{stage}"),
+        );
+    }
+
+    assert_pipeline_summary_stall_causes(summary, &expected);
+    assert_pipeline_summary_flush_causes(summary, "flush_cause", &expected.flush_causes);
+    assert_pipeline_summary_flush_causes(summary, "redirect_cause", &expected.redirect_causes);
+}
+
+pub(crate) fn pipeline_summary_path_u64(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing u64 at {pointer}: {json}"))
+}
+
+fn assert_pipeline_summary_stall_causes(summary: &Value, expected: &PipelineSummaryExpected) {
+    let stall_summary = pipeline_summary_child(summary, "stall_cause", "pipeline_summary");
+    for (cause_index, cause) in PIPELINE_SUMMARY_STALL_CAUSES.iter().enumerate() {
+        let cause_node =
+            pipeline_summary_child(stall_summary, cause, "pipeline_summary.stall_cause");
+        assert_pipeline_summary_record_totals(
+            cause_node,
+            expected.stall_causes[cause_index].totals,
+            &format!("pipeline_summary.stall_cause.{cause}"),
+        );
+        let stage_summary = pipeline_summary_child(
+            cause_node,
+            "stage",
+            &format!("pipeline_summary.stall_cause.{cause}"),
+        );
+        for (stage_index, stage) in PIPELINE_SUMMARY_STAGES.iter().enumerate() {
+            let stage_node = pipeline_summary_child(
+                stage_summary,
+                stage,
+                &format!("pipeline_summary.stall_cause.{cause}.stage"),
+            );
+            assert_pipeline_summary_resource_totals(
+                stage_node,
+                expected.stall_causes[cause_index].stages[stage_index],
+                &format!("pipeline_summary.stall_cause.{cause}.stage.{stage}"),
+            );
+        }
+    }
+}
+
+fn assert_pipeline_summary_flush_causes(
+    summary: &Value,
+    family: &str,
+    expected: &[PipelineSummaryFlushCauseTotals; PIPELINE_SUMMARY_REDIRECT_CAUSES.len()],
+) {
+    let family_summary = pipeline_summary_child(summary, family, "pipeline_summary");
+    for (cause_index, cause) in PIPELINE_SUMMARY_REDIRECT_CAUSES.iter().enumerate() {
+        let cause_node =
+            pipeline_summary_child(family_summary, cause, &format!("pipeline_summary.{family}"));
+        assert_pipeline_summary_record_totals(
+            cause_node,
+            expected[cause_index].totals,
+            &format!("pipeline_summary.{family}.{cause}"),
+        );
+        let stage_summary = pipeline_summary_child(
+            cause_node,
+            "stage",
+            &format!("pipeline_summary.{family}.{cause}"),
+        );
+        for (stage_index, stage) in PIPELINE_SUMMARY_STAGES.iter().enumerate() {
+            let stage_node = pipeline_summary_child(
+                stage_summary,
+                stage,
+                &format!("pipeline_summary.{family}.{cause}.stage"),
+            );
+            assert_pipeline_summary_flush_totals(
+                stage_node,
+                expected[cause_index].stages[stage_index],
+                &format!("pipeline_summary.{family}.{cause}.stage.{stage}"),
+            );
+        }
+    }
+}
+
+fn assert_pipeline_summary_record_totals(
+    node: &Value,
+    expected: PipelineSummaryRecordTotals,
+    context: &str,
+) {
+    for (field, value) in expected.fields() {
+        assert_eq!(
+            node.get(field).and_then(Value::as_u64),
+            Some(value),
+            "Pipeline summary field mismatch for {context}.{field}: {node}"
+        );
+    }
+}
+
+fn assert_pipeline_summary_stage_totals(
+    node: &Value,
+    expected: PipelineSummaryStageTotals,
+    context: &str,
+) {
+    for (field, value) in expected.fields() {
+        assert_eq!(
+            node.get(field).and_then(Value::as_u64),
+            Some(value),
+            "Pipeline summary field mismatch for {context}.{field}: {node}"
+        );
+    }
+}
+
+fn assert_pipeline_summary_resource_totals(
+    node: &Value,
+    expected: PipelineSummaryResourceTotals,
+    context: &str,
+) {
+    for (field, value) in expected.fields() {
+        assert_eq!(
+            node.get(field).and_then(Value::as_u64),
+            Some(value),
+            "Pipeline summary field mismatch for {context}.{field}: {node}"
+        );
+    }
+}
+
+fn assert_pipeline_summary_flush_totals(
+    node: &Value,
+    expected: PipelineSummaryFlushTotals,
+    context: &str,
+) {
+    for (field, value) in expected.fields() {
+        assert_eq!(
+            node.get(field).and_then(Value::as_u64),
+            Some(value),
+            "Pipeline summary field mismatch for {context}.{field}: {node}"
+        );
+    }
+}
+
+fn pipeline_summary_child<'a>(node: &'a Value, field: &str, context: &str) -> &'a Value {
+    node.get(field)
+        .unwrap_or_else(|| panic!("missing Pipeline summary child {context}.{field}: {node}"))
+}
+
+fn pipeline_summary_stage_instruction_counts(
+    record: &Value,
+    field: &str,
+) -> [u64; PIPELINE_SUMMARY_STAGES.len()] {
+    let mut counts = [0u64; PIPELINE_SUMMARY_STAGES.len()];
+    for instruction in pipeline_summary_array(record, field) {
+        let stage = instruction
+            .get("stage")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing Pipeline instruction stage in {field}: {record}"));
+        let index = pipeline_summary_stage_index(stage);
+        counts[index] = counts[index].saturating_add(1);
+    }
+    counts
+}
+
+fn pipeline_summary_stage_advance_counts(
+    record: &Value,
+) -> (
+    [u64; PIPELINE_SUMMARY_STAGES.len()],
+    [u64; PIPELINE_SUMMARY_STAGES.len()],
+) {
+    let mut advanced = [0u64; PIPELINE_SUMMARY_STAGES.len()];
+    let mut retired = [0u64; PIPELINE_SUMMARY_STAGES.len()];
+    for advance in pipeline_summary_array(record, "advanced") {
+        let stage = advance
+            .get("source_stage")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing Pipeline advance source_stage: {record}"));
+        let index = pipeline_summary_stage_index(stage);
+        advanced[index] = advanced[index].saturating_add(1);
+        if pipeline_summary_bool(advance, "retires") {
+            retired[index] = retired[index].saturating_add(1);
+        }
+    }
+    (advanced, retired)
+}
+
+fn pipeline_summary_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
+    record
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| panic!("missing Pipeline trace array field {field}: {record}"))
+}
+
+fn pipeline_summary_u64(record: &Value, field: &str) -> u64 {
+    record
+        .get(field)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing Pipeline trace u64 field {field}: {record}"))
+}
+
+fn pipeline_summary_bool(record: &Value, field: &str) -> bool {
+    record
+        .get(field)
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("missing Pipeline trace bool field {field}: {record}"))
+}
+
+fn pipeline_summary_optional_str<'a>(record: &'a Value, field: &str) -> Option<&'a str> {
+    match record.get(field) {
+        Some(value) if value.is_null() => None,
+        Some(value) => Some(value.as_str().unwrap_or_else(|| {
+            panic!("Pipeline trace field {field} is not a string/null: {record}")
+        })),
+        None => panic!("missing Pipeline trace optional string field {field}: {record}"),
+    }
+}
+
+fn pipeline_summary_stage_index(stage: &str) -> usize {
+    PIPELINE_SUMMARY_STAGES
+        .iter()
+        .position(|candidate| *candidate == stage)
+        .unwrap_or_else(|| panic!("unknown Pipeline summary stage {stage}"))
+}
+
+fn pipeline_summary_stall_cause_index(cause: &str) -> usize {
+    PIPELINE_SUMMARY_STALL_CAUSES
+        .iter()
+        .position(|candidate| *candidate == cause)
+        .unwrap_or_else(|| panic!("unknown Pipeline stall cause {cause}"))
+}
+
+fn pipeline_summary_redirect_cause_index(cause: &str) -> usize {
+    PIPELINE_SUMMARY_REDIRECT_CAUSES
+        .iter()
+        .position(|candidate| *candidate == cause)
+        .unwrap_or_else(|| panic!("unknown Pipeline redirect/flush cause {cause}"))
 }
 
 pub(crate) fn assert_stat_greater_than(

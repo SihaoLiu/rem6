@@ -3,7 +3,8 @@ use std::{collections::BTreeMap, path::Path, process::Command};
 use serde_json::Value;
 
 use crate::support::{
-    assert_stat, b_type, csr_read, i_type, riscv64_elf, riscv64_program, temp_binary, u_type,
+    assert_pipeline_summary_matches_trace, assert_stat, b_type, csr_read, i_type, riscv64_elf,
+    riscv64_program, temp_binary, u_type,
 };
 
 const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
@@ -89,6 +90,7 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_cause() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let interrupt_redirect = trace
         .iter()
         .find(|record| {
@@ -261,6 +263,7 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let fetch_pcs = fetch_trace_pcs_by_sequence(&json);
     let interrupt_redirect = trace
         .iter()

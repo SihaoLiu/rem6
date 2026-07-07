@@ -38,7 +38,7 @@ use memory::{
     Rem6MemoryTraceStat,
 };
 use o3::{o3_trace_records, o3_trace_stats, Rem6O3TraceRecord, Rem6O3TraceStat};
-use pipeline::{pipeline_trace_records, Rem6PipelineTraceRecord};
+use pipeline::{pipeline_trace_records, pipeline_trace_summary_to_json, Rem6PipelineTraceRecord};
 pub(crate) use sbi::Rem6SbiTraceInputs;
 use sbi::{sbi_trace_records, Rem6SbiTraceRecord};
 use trace_stats::{
@@ -981,6 +981,7 @@ impl Rem6DebugSummary {
             .map(Rem6PipelineTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let pipeline_summary = pipeline_trace_summary_to_json(&self.pipeline_trace);
         let o3_trace = self
             .o3_trace
             .iter()
@@ -1055,10 +1056,11 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"o3_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"sbi_trace\":[{}],\"syscall_trace\":[{}]}}",
+            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"pipeline_summary\":{},\"o3_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"sbi_trace\":[{}],\"syscall_trace\":[{}]}}",
             flags,
             branch_trace,
             pipeline_trace,
+            pipeline_summary,
             o3_trace,
             exec_trace,
             fetch_trace,

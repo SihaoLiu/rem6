@@ -320,6 +320,25 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
         ),
         0
     );
+    let debug_stdout =
+        run_execute_wait_ordering_program_with_debug(&path, "json", Some("Pipeline"));
+    let debug_json: Value = serde_json::from_str(&debug_stdout).unwrap();
+    assert_pipeline_summary_matches_trace(&debug_json);
+    let execute_wait_summary_ordering_cycles = ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .map(|stage| {
+            pipeline_summary_path_u64(
+                &debug_json,
+                &format!(
+                    "/debug/pipeline_summary/stall_cause/execute_wait/stage/{stage}/ordering_blocked_cycles"
+                ),
+            )
+        });
+    assert!(
+        execute_wait_summary_ordering_cycles
+            .iter()
+            .any(|cycles| *cycles > 0),
+        "Pipeline debug summary should preserve execute_wait ordering-blocked stage cycles: {debug_stdout}"
+    );
 
     let execute_wait_cycles =
         json_stat_value(&json, "sim.cpu0.pipeline.in_order.execute_wait_cycles");
@@ -990,6 +1009,7 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let mut aggregate_stage_blocked = BTreeMap::<String, u64>::new();
     let mut aggregate_stage_blocked_cycles = BTreeMap::<String, u64>::new();
     for record in trace {
@@ -1051,6 +1071,38 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
     assert!(
         !stage_blocked_cycles.is_empty(),
         "data_wait stall records should preserve blocked stages: {wait_records:?}"
+    );
+    let pipeline_summary = json
+        .pointer("/debug/pipeline_summary")
+        .unwrap_or_else(|| panic!("missing pipeline summary JSON: {json}"));
+    let data_wait_summary = pipeline_summary
+        .pointer("/stall_cause/data_wait")
+        .unwrap_or_else(|| panic!("missing data_wait pipeline summary: {pipeline_summary}"));
+    assert_eq!(
+        json_record_u64(pipeline_summary, "records"),
+        trace.len() as u64,
+        "pipeline summary should cover the emitted Pipeline debug records"
+    );
+    assert_eq!(
+        json_record_u64(data_wait_summary, "stall_cycles"),
+        stall_cycles,
+        "pipeline summary should preserve data_wait stall cycles"
+    );
+    for (stage, cycles) in &stage_blocked_cycles {
+        assert_eq!(
+            data_wait_summary
+                .pointer(&format!("/stage/{stage}/resource_blocked_cycles"))
+                .and_then(Value::as_u64),
+            Some(*cycles),
+            "pipeline summary should preserve data_wait resource-blocked cycles for {stage}: {data_wait_summary}"
+        );
+    }
+    assert_eq!(
+        pipeline_summary
+            .pointer("/stall_cause/fetch_wait/stage/execute/resource_blocked_cycles")
+            .and_then(Value::as_u64),
+        Some(0),
+        "pipeline summary should include explicit zero lanes for absent cause-stage combinations"
     );
 
     assert_stat(
@@ -1162,6 +1214,7 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let redirect_records = trace
         .iter()
         .filter(|record| {
@@ -1210,12 +1263,12 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
             "monotonic",
         );
     }
-    for (stage, cycles) in stage_flushed_cycles {
+    for (stage, cycles) in &stage_flushed_cycles {
         assert_stat(
             &stdout,
             &format!("sim.debug.pipeline_trace.stage.{stage}.trap_redirect_flushed_cycles"),
             "Cycle",
-            cycles,
+            *cycles,
             "monotonic",
         );
         assert_stat(
@@ -1224,10 +1277,46 @@ fn rem6_run_pipeline_debug_flag_attributes_trap_redirect_stage_cycles() {
                 "sim.debug.pipeline_trace.redirect_cause.trap_redirect.stage.{stage}.flushed_cycles"
             ),
             "Cycle",
-            cycles,
+            *cycles,
             "monotonic",
         );
     }
+    let pipeline_summary = json
+        .pointer("/debug/pipeline_summary")
+        .unwrap_or_else(|| panic!("missing pipeline summary JSON: {json}"));
+    let trap_redirect_summary = pipeline_summary
+        .pointer("/redirect_cause/trap_redirect")
+        .unwrap_or_else(|| panic!("missing trap_redirect pipeline summary: {pipeline_summary}"));
+    assert_eq!(
+        json_record_u64(pipeline_summary, "records"),
+        trace.len() as u64,
+        "pipeline summary should cover the emitted Pipeline debug records"
+    );
+    for (stage, flushed) in &stage_flushed {
+        assert_eq!(
+            trap_redirect_summary
+                .pointer(&format!("/stage/{stage}/flushed"))
+                .and_then(Value::as_u64),
+            Some(*flushed),
+            "pipeline summary should preserve trap_redirect flushed count for {stage}: {trap_redirect_summary}"
+        );
+    }
+    for (stage, cycles) in &stage_flushed_cycles {
+        assert_eq!(
+            trap_redirect_summary
+                .pointer(&format!("/stage/{stage}/flushed_cycles"))
+                .and_then(Value::as_u64),
+            Some(*cycles),
+            "pipeline summary should preserve trap_redirect flushed cycles for {stage}: {trap_redirect_summary}"
+        );
+    }
+    assert_eq!(
+        pipeline_summary
+            .pointer("/redirect_cause/branch_prediction/stage/commit/flushed_cycles")
+            .and_then(Value::as_u64),
+        Some(0),
+        "pipeline summary should include explicit zero lanes for absent redirect cause-stage combinations"
+    );
     let branch_redirect_stage_flushed_cycles = json
         .pointer("/stats")
         .and_then(Value::as_array)
@@ -1306,6 +1395,7 @@ fn rem6_run_pipeline_debug_flag_attributes_in_flight_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let before = stage_in_flight_counts(trace, "before_in_flight");
     let after = stage_in_flight_counts(trace, "after_in_flight");
     assert!(
@@ -1412,6 +1502,7 @@ fn rem6_run_pipeline_debug_flag_attributes_advance_retire_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let movement = stage_movement_counts(trace);
     assert!(
         movement.values().any(|summary| summary.advanced_cycles > 0),
@@ -1516,6 +1607,7 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
         .pointer("/debug/pipeline_trace")
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
     let flush_records = trace
         .iter()
         .filter(|record| {
@@ -1583,6 +1675,44 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
             "monotonic",
         );
     }
+    let pipeline_summary = json
+        .pointer("/debug/pipeline_summary")
+        .unwrap_or_else(|| panic!("missing pipeline summary JSON: {json}"));
+    let branch_flush_summary = pipeline_summary
+        .pointer("/flush_cause/branch_prediction")
+        .unwrap_or_else(|| {
+            panic!("missing branch_prediction pipeline summary: {pipeline_summary}")
+        });
+    assert_eq!(
+        json_record_u64(pipeline_summary, "records"),
+        trace.len() as u64,
+        "pipeline summary should cover the emitted Pipeline debug records"
+    );
+    for (stage, flushed) in &stage_flushed {
+        assert_eq!(
+            branch_flush_summary
+                .pointer(&format!("/stage/{stage}/flushed"))
+                .and_then(Value::as_u64),
+            Some(*flushed),
+            "pipeline summary should preserve branch_prediction flushed count for {stage}: {branch_flush_summary}"
+        );
+    }
+    for (stage, cycles) in &stage_flushed_cycles {
+        assert_eq!(
+            branch_flush_summary
+                .pointer(&format!("/stage/{stage}/flushed_cycles"))
+                .and_then(Value::as_u64),
+            Some(*cycles),
+            "pipeline summary should preserve branch_prediction flushed cycles for {stage}: {branch_flush_summary}"
+        );
+    }
+    assert_eq!(
+        pipeline_summary
+            .pointer("/flush_cause/trap_redirect/stage/commit/flushed_cycles")
+            .and_then(Value::as_u64),
+        Some(0),
+        "pipeline summary should include explicit zero lanes for absent flush cause-stage combinations"
+    );
     for (stage, cycles) in stage_flushed_cycles {
         assert_stat(
             &stdout,
@@ -1648,25 +1778,35 @@ fn text_stat_value(stdout: &str, path: &str) -> u64 {
 }
 
 fn run_execute_wait_ordering_program(path: &std::path::Path, stats_format: &str) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "240",
-            "--stats-format",
-            stats_format,
-            "--execute",
-            "--memory-system",
-            "direct",
-            "--riscv-in-order-width",
-            "4",
-        ])
-        .output()
-        .unwrap();
+    run_execute_wait_ordering_program_with_debug(path, stats_format, None)
+}
+
+fn run_execute_wait_ordering_program_with_debug(
+    path: &std::path::Path,
+    stats_format: &str,
+    debug_flags: Option<&str>,
+) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "240",
+        "--stats-format",
+        stats_format,
+        "--execute",
+        "--memory-system",
+        "direct",
+        "--riscv-in-order-width",
+        "4",
+    ]);
+    if let Some(debug_flags) = debug_flags {
+        command.args(["--debug-flags", debug_flags]);
+    }
+    let output = command.output().unwrap();
 
     assert!(
         output.status.success(),
