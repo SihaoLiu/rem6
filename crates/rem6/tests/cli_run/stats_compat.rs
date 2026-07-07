@@ -5304,6 +5304,43 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_e16_lmul2_register_
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_e16_lmul4_register_group_memory() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-full-e16-lmul4-load-store",
+        &unit_stride_e16_lmul4_vector_memory_program(),
+        520,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "e16/m4 unit-stride vector memory should move a full 64-byte register-group payload through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&direct_stats).as_deref(),
+        Some("environment_call"),
+        "e16/m4 unit-stride vector memory should reach the success ecall after guest-side halfword movement checks\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-unit-stride-full-e16-lmul4-load-store",
+        &unit_stride_e16_lmul4_vector_memory_program(),
+        1800,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        104,
+        "cache-backed e16/m4 unit-stride vector memory should move a full 64-byte register-group payload through the top-level run path\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&cache_stats).as_deref(),
+        Some("environment_call"),
+        "cache-backed e16/m4 unit-stride vector memory should reach the success ecall after guest-side halfword movement checks\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul2_register_group_memory() {
     let vector_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-full-lmul2-load-store",
@@ -8367,6 +8404,17 @@ fn unit_stride_e16_lmul2_vector_memory_program() -> Vec<u8> {
     )
 }
 
+fn unit_stride_e16_lmul4_vector_memory_program() -> Vec<u8> {
+    unit_stride_register_group_vector_memory_program_with_shape(
+        32,
+        2,
+        512,
+        0xca,
+        vector_unit_stride_load_type(true, 0b101, 10, 4),
+        vector_unit_stride_store_type(true, 0b101, 16, 4),
+    )
+}
+
 fn fault_only_lmul2_vector_memory_program(data_words: usize) -> Vec<u8> {
     unit_stride_lmul2_vector_memory_program_with_load(
         data_words,
@@ -8409,10 +8457,28 @@ fn unit_stride_lmul2_vector_memory_program_with_shape(
     load: u32,
     store: u32,
 ) -> Vec<u8> {
+    unit_stride_register_group_vector_memory_program_with_shape(
+        data_elements,
+        element_bytes,
+        data_offset_bytes,
+        vtype,
+        load,
+        store,
+    )
+}
+
+fn unit_stride_register_group_vector_memory_program_with_shape(
+    data_elements: usize,
+    element_bytes: usize,
+    data_offset_bytes: i32,
+    vtype: u32,
+    load: u32,
+    store: u32,
+) -> Vec<u8> {
     assert!((1..=32).contains(&data_elements));
     assert!(data_offset_bytes > 0 && data_offset_bytes % 4 == 0);
     assert!(matches!(element_bytes, 1 | 2 | 4 | 8));
-    assert!(data_elements * element_bytes <= 32);
+    assert!(data_elements * element_bytes <= 128);
     let data_bytes = (data_elements * element_bytes) as i32;
     let load_fun3 = match element_bytes {
         1 => 0b000,
