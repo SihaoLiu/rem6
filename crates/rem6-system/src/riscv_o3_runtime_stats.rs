@@ -172,6 +172,7 @@ struct RiscvO3RuntimeBranchRepairStats {
 struct RiscvO3RuntimeBranchEventKindStats {
     kind: StatId,
     taken: StatId,
+    not_taken: StatId,
     predicted_taken: StatId,
     predicted_not_taken: StatId,
     predicted_target: StatId,
@@ -1415,6 +1416,11 @@ impl RiscvO3RuntimeCpuStats {
                     current.branch_event_taken_kind(kind),
                 ),
                 (
+                    event_stats.not_taken,
+                    previous.branch_event_not_taken_kind(kind),
+                    current.branch_event_not_taken_kind(kind),
+                ),
+                (
                     event_stats.predicted_taken,
                     previous.branch_event_predicted_taken_kind(kind),
                     current.branch_event_predicted_taken_kind(kind),
@@ -1854,6 +1860,10 @@ impl RiscvO3RuntimeCpuStats {
                 (event_stats.kind, snapshot.branch_event_kind(kind)),
                 (event_stats.taken, snapshot.branch_event_taken_kind(kind)),
                 (
+                    event_stats.not_taken,
+                    snapshot.branch_event_not_taken_kind(kind),
+                ),
+                (
                     event_stats.predicted_taken,
                     snapshot.branch_event_predicted_taken_kind(kind),
                 ),
@@ -2222,6 +2232,7 @@ fn register_o3_branch_event_kind_counters(
     let mut stats = [RiscvO3RuntimeBranchEventKindStats {
         kind: StatId::new(0),
         taken: StatId::new(0),
+        not_taken: StatId::new(0),
         predicted_taken: StatId::new(0),
         predicted_not_taken: StatId::new(0),
         predicted_target: StatId::new(0),
@@ -2246,6 +2257,12 @@ fn register_o3_branch_event_kind_counters(
                 registry,
                 prefix,
                 &format!("branch_event.taken_kind.{stat_name}"),
+                "Count",
+            )?,
+            not_taken: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.not_taken_kind.{stat_name}"),
                 "Count",
             )?,
             predicted_taken: register_o3_counter(

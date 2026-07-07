@@ -11292,6 +11292,13 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     );
     assert_eq!(
         branch_event
+            .pointer("/not_taken_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose not-taken branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
             .pointer("/predicted_target_mismatch_kind/direct_conditional")
             .and_then(Value::as_u64),
         Some(1),
@@ -11380,6 +11387,11 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         ),
         (
             "sim.cpu0.o3.branch_event.predicted_target_mismatches",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.not_taken_kind.direct_conditional",
             "Count",
             1,
         ),

@@ -1227,6 +1227,10 @@ fn emit_o3_runtime_stats(
             ("branch_event.kind", o3.branch_event_kind(kind)),
             ("branch_event.taken_kind", o3.branch_event_taken_kind(kind)),
             (
+                "branch_event.not_taken_kind",
+                o3.branch_event_not_taken_kind(kind),
+            ),
+            (
                 "branch_event.predicted_taken_kind",
                 o3.branch_event_predicted_taken_kind(kind),
             ),

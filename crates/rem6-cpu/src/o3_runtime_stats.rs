@@ -276,6 +276,11 @@ impl O3RuntimeStats {
         self.branch_event_taken_kinds[kind.index()]
     }
 
+    pub fn branch_event_not_taken_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_kind(kind)
+            .saturating_sub(self.branch_event_taken_kind(kind))
+    }
+
     pub fn branch_event_predicted_taken(self) -> u64 {
         self.branch_event_predicted_taken_kinds
             .into_iter()

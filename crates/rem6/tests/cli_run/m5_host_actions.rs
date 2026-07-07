@@ -3014,6 +3014,10 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
             2,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.not_taken_kind.direct_conditional",
+            1,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_taken_kind.direct_conditional",
             1,
         ),
@@ -3082,6 +3086,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_targets_without_link_writes",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.not_taken_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_taken_kind.direct_conditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_not_taken_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_target_mismatch_kind.direct_conditional",
