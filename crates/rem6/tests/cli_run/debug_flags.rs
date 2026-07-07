@@ -10989,6 +10989,30 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_not_taken() {
     assert_eq!(json_record_u64(branch_event, "taken"), 0);
     assert_eq!(json_record_u64(branch_event, "not_taken"), 1);
     assert_eq!(json_record_u64(branch_event, "resolved_targets"), 0);
+    let debug_branch_event = json
+        .pointer("/debug/o3_trace/0/branch_event")
+        .expect("debug O3 branch-event matrix");
+    assert_eq!(
+        debug_branch_event
+            .pointer("/not_taken_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "debug O3 branch-event matrix should expose direct-conditional not-taken outcomes: {debug_branch_event}"
+    );
+    assert_eq!(
+        debug_branch_event
+            .pointer("/not_taken_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(0),
+        "debug O3 branch-event matrix should expose zero call-indirect not-taken outcomes: {debug_branch_event}"
+    );
+    assert_eq!(
+        debug_branch_event
+            .pointer("/not_taken_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "debug O3 branch-event matrix should expose zero direct-unconditional not-taken outcomes: {debug_branch_event}"
+    );
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 1),
