@@ -16,6 +16,8 @@ mod o3_branch_repair;
 mod o3_branch_stats;
 #[path = "o3_branch_target_mismatch.rs"]
 mod o3_branch_target_mismatch;
+#[path = "o3_checkpoint_restore_json.rs"]
+mod o3_checkpoint_restore_json;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
 #[path = "o3_fu_latency_stats.rs"]
@@ -53,6 +55,10 @@ use o3_branch_stats::{
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
 use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
+use o3_checkpoint_restore_json::{
+    o3_checkpoint_restore_to_json, Rem6O3CheckpointRestoreAuthorityTotals,
+    Rem6O3CheckpointRestoreScope,
+};
 use o3_event_json::o3_event_to_json;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
 use o3_lsq_json::o3_lsq_to_json;
@@ -134,16 +140,6 @@ impl Rem6O3FuLatencyClassTotals {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Rem6O3CheckpointRestoreScope {
-    count: u64,
-    labels: Vec<String>,
-    label: String,
-    tick: u64,
-    manifest_tick: u64,
-    payload_bytes: u64,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6O3TraceTotals {
     records: u64,
@@ -153,6 +149,7 @@ struct Rem6O3TraceTotals {
     checkpoint_restore_records: u64,
     checkpoint_restore_tick: u64,
     checkpoint_restore_payload_bytes: u64,
+    checkpoint_restore_authority: Rem6O3CheckpointRestoreAuthorityTotals,
     instructions: u64,
     rob_allocations: u64,
     rob_commits: u64,
@@ -350,6 +347,7 @@ impl Rem6O3TraceRecord {
         let iew = o3_iew_to_json(self.stats);
         let commit = o3_commit_to_json(self.stats);
         let fu_latency_class = o3_fu_latency_class_to_json(self.stats);
+        let checkpoint_restore = o3_checkpoint_restore_to_json(self.checkpoint_restore.as_ref());
         let branch_event = o3_branch_event_json(self.stats);
         let branch_repair = o3_branch_repair_to_json(self.stats);
         let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(&self.events);
@@ -399,7 +397,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -411,6 +409,7 @@ impl Rem6O3TraceRecord {
             checkpoint_restore_tick,
             checkpoint_restore_manifest_tick,
             checkpoint_restore_payload_bytes,
+            checkpoint_restore,
             self.stats.instructions(),
             self.stats.rob_allocations(),
             self.stats.rob_commits(),
@@ -588,6 +587,7 @@ impl Rem6O3TraceTotals {
             self.checkpoint_restore_payload_bytes = self
                 .checkpoint_restore_payload_bytes
                 .max(restore.payload_bytes);
+            self.checkpoint_restore_authority.add(restore);
         }
         add_counter(&mut self.instructions, stats.instructions());
         add_counter(&mut self.rob_allocations, stats.rob_allocations());
@@ -1301,6 +1301,7 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
+        self.checkpoint_restore_authority.push_stats(&mut stats);
         self.event_branch_direction_mismatches
             .push_stats(&mut stats);
         self.event_branch_repairs.push_stats(&mut stats);
@@ -1757,22 +1758,5 @@ impl Rem6O3TraceTotals {
             }
         }
         stats
-    }
-}
-
-impl Rem6O3CheckpointRestoreScope {
-    fn from_summaries(summaries: &[Rem6HostCheckpointSummary]) -> Option<Self> {
-        let summary = summaries.last()?;
-        Some(Self {
-            count: summaries.len() as u64,
-            labels: summaries
-                .iter()
-                .map(|summary| summary.label.clone())
-                .collect(),
-            label: summary.label.clone(),
-            tick: summary.tick,
-            manifest_tick: summary.manifest_tick,
-            payload_bytes: summary.payload_bytes,
-        })
     }
 }

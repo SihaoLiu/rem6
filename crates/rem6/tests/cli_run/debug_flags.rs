@@ -6357,6 +6357,27 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
         restore.pointer("/label").and_then(Value::as_str),
         Some("debug-baseline")
     );
+    let restore_execution_modes = restore
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .expect("restored checkpoint execution-mode authority");
+    assert_eq!(
+        restore_execution_modes.len(),
+        1,
+        "restored checkpoint should decode one execution-mode authority: {restore_execution_modes:?}"
+    );
+    assert_eq!(
+        restore_execution_modes[0]
+            .pointer("/target")
+            .and_then(Value::as_str),
+        Some("cpu0")
+    );
+    assert_eq!(
+        restore_execution_modes[0]
+            .pointer("/mode")
+            .and_then(Value::as_str),
+        Some("detailed")
+    );
     assert!(restored_payload_bytes > 0, "restore payload: {restore}");
     assert_eq!(restored_payload_bytes, checkpoint_payload_bytes);
 
@@ -6396,6 +6417,68 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
         json_record_u64(record, "checkpoint_restore_payload_bytes"),
         restored_payload_bytes
     );
+    let restore_scope = record
+        .pointer("/checkpoint_restore")
+        .unwrap_or_else(|| panic!("O3 trace should expose structured restore scope: {record}"));
+    assert_eq!(
+        restore_scope.pointer("/count").and_then(Value::as_u64),
+        Some(1)
+    );
+    let scope_labels = restore_scope
+        .pointer("/labels")
+        .and_then(Value::as_array)
+        .expect("structured O3 restore label array")
+        .iter()
+        .map(|label| label.as_str().expect("restore label string"))
+        .collect::<Vec<_>>();
+    assert_eq!(scope_labels, ["debug-baseline"]);
+    assert_eq!(
+        restore_scope
+            .pointer("/latest_label")
+            .and_then(Value::as_str),
+        Some("debug-baseline")
+    );
+    assert_eq!(
+        restore_scope
+            .pointer("/latest_tick")
+            .and_then(Value::as_u64),
+        Some(restore_tick)
+    );
+    assert_eq!(
+        restore_scope
+            .pointer("/latest_manifest_tick")
+            .and_then(Value::as_u64),
+        Some(restored_manifest_tick)
+    );
+    assert_eq!(
+        restore_scope
+            .pointer("/latest_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(restored_payload_bytes)
+    );
+    let authority = restore_scope
+        .pointer("/execution_mode_authority")
+        .unwrap_or_else(|| {
+            panic!("O3 restore scope should expose execution-mode authority: {restore_scope}")
+        });
+    for (path, expected) in [
+        ("/present_manifests", 1),
+        ("/cleared_manifests", 0),
+        ("/decode_errors", 0),
+        ("/targets", 1),
+        ("/mode/functional", 0),
+        ("/mode/timing", 0),
+        ("/mode/detailed", 1),
+        ("/target/cpu0/mode/functional", 0),
+        ("/target/cpu0/mode/timing", 0),
+        ("/target/cpu0/mode/detailed", 1),
+    ] {
+        assert_eq!(
+            authority.pointer(path).and_then(Value::as_u64),
+            Some(expected),
+            "authority path {path}: {authority}"
+        );
+    }
 
     let events = record
         .pointer("/events")
@@ -6438,6 +6521,41 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             restored_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.manifests",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.cleared_manifests",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.decode_errors",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.functional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.timing",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.detailed",
+            "Count",
+            1,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -6803,6 +6921,18 @@ fn rem6_run_o3_debug_flag_scopes_multicore_checkpoint_restore_traces() {
     let restored_manifest_tick = json_record_u64(restore, "manifest_tick");
     let restored_payload_bytes = json_record_u64(restore, "payload_bytes");
     assert!(restored_payload_bytes > 0, "restore payload: {restore}");
+    let restore_execution_modes = restore
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .expect("host restore execution-mode authority");
+    let mut restore_mode_counts = BTreeMap::<&str, u64>::new();
+    for execution_mode in restore_execution_modes {
+        let mode = execution_mode
+            .pointer("/mode")
+            .and_then(Value::as_str)
+            .expect("restore authority mode");
+        *restore_mode_counts.entry(mode).or_default() += 1;
+    }
 
     let trace = json
         .pointer("/debug/o3_trace")
@@ -6880,6 +7010,41 @@ fn rem6_run_o3_debug_flag_scopes_multicore_checkpoint_restore_traces() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             restored_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.manifests",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.cleared_manifests",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.decode_errors",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.targets",
+            "Count",
+            restore_execution_modes.len() as u64,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.functional",
+            "Count",
+            restore_mode_counts.get("functional").copied().unwrap_or(0),
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.timing",
+            "Count",
+            restore_mode_counts.get("timing").copied().unwrap_or(0),
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.detailed",
+            "Count",
+            restore_mode_counts.get("detailed").copied().unwrap_or(0),
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
