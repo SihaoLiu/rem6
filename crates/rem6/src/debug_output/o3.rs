@@ -24,6 +24,8 @@ mod o3_event_iew;
 mod o3_event_json;
 #[path = "o3_event_summary_json.rs"]
 mod o3_event_summary_json;
+#[path = "o3_execution_mode_stats.rs"]
+mod o3_execution_mode_stats;
 #[path = "o3_fu_latency_stats.rs"]
 mod o3_fu_latency_stats;
 #[path = "o3_lsq_json.rs"]
@@ -66,6 +68,7 @@ use o3_checkpoint_restore_json::{
 use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
 use o3_event_summary_json::o3_event_summary_to_json;
+use o3_execution_mode_stats::Rem6O3ExecutionModeTraceTotals;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
 use o3_lsq_json::o3_lsq_to_json;
 use o3_summary_json::{
@@ -149,6 +152,7 @@ impl Rem6O3FuLatencyClassTotals {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6O3TraceTotals {
     records: u64,
+    execution_modes: Rem6O3ExecutionModeTraceTotals,
     stats_epoch: u64,
     stats_reset_tick: u64,
     checkpoint_restores: u64,
@@ -336,6 +340,10 @@ impl Rem6O3TraceRecord {
 
     pub(super) const fn stats_reset_tick(&self) -> u64 {
         self.stats_reset_tick
+    }
+
+    pub(super) const fn execution_mode(&self) -> Option<&'static str> {
+        self.execution_mode
     }
 
     fn checkpoint_restore(&self) -> Option<&Rem6O3CheckpointRestoreScope> {
@@ -599,6 +607,7 @@ impl Rem6O3TraceTotals {
         self.records = self.records.saturating_add(1);
         self.stats_epoch = self.stats_epoch.max(record.stats_epoch());
         self.stats_reset_tick = self.stats_reset_tick.max(record.stats_reset_tick());
+        self.execution_modes.add_record(record);
         if let Some(restore) = record.checkpoint_restore() {
             self.checkpoint_restores = self.checkpoint_restores.max(restore.count);
             self.checkpoint_restore_records = self.checkpoint_restore_records.saturating_add(1);
@@ -1313,6 +1322,7 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
+        self.execution_modes.push_stats(&mut stats);
         for (suffix, value) in self.event_iew.stats() {
             stats.push(Rem6O3TraceStat {
                 suffix,

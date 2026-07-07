@@ -113,6 +113,90 @@ fn rem6_run_records_o3_runtime_stats_from_initial_detailed_mode() {
 }
 
 #[test]
+fn rem6_run_o3_debug_trace_stats_include_initial_detailed_mode_authority() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &o3_start_mode_program());
+    let path = temp_binary("o3-start-detailed-mode-debug-trace", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--riscv-execution-mode",
+            "detailed",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_execution_mode_authority(&json, "detailed");
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/target")
+            .and_then(Value::as_str),
+        Some("cpu0")
+    );
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode")
+            .and_then(Value::as_str),
+        Some("detailed")
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.debug.o3_trace.execution_mode.functional"),
+        0
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.debug.o3_trace.execution_mode.timing"),
+        0
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.debug.o3_trace.execution_mode.detailed"),
+        1
+    );
+    assert_eq!(
+        json_stat_value(
+            &json,
+            "sim.debug.o3_trace.cpu.cpu0.execution_mode.functional"
+        ),
+        0
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.debug.o3_trace.cpu.cpu0.execution_mode.timing"),
+        0
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.debug.o3_trace.cpu.cpu0.execution_mode.detailed"),
+        1
+    );
+}
+
+#[test]
 fn rem6_run_initial_timing_mode_executes_without_o3_runtime_records() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &o3_start_mode_program());
     let path = temp_binary("o3-start-timing-mode", &elf);
