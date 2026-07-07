@@ -55,6 +55,35 @@ impl O3EventSummaryLsqLatency {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3EventSummaryLsqForwarding {
+    candidates: u64,
+    matches: u64,
+    suppressed: u64,
+    address_mismatches: u64,
+    byte_mismatches: u64,
+}
+
+impl O3EventSummaryLsqForwarding {
+    fn add_event(&mut self, event: O3RuntimeTraceRecord) {
+        self.candidates = self
+            .candidates
+            .saturating_add(u64::from(event.store_load_forwarding_candidate()));
+        self.matches = self
+            .matches
+            .saturating_add(u64::from(event.store_load_forwarding_match()));
+        self.suppressed = self
+            .suppressed
+            .saturating_add(u64::from(event.store_load_forwarding_suppressed()));
+        self.address_mismatches = self
+            .address_mismatches
+            .saturating_add(u64::from(event.store_load_forwarding_address_mismatch()));
+        self.byte_mismatches = self
+            .byte_mismatches
+            .saturating_add(u64::from(event.store_load_forwarding_byte_mismatch()));
+    }
+}
+
 pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
     let records = events.len() as u64;
     let first_tick = events.first().map_or(0, |event| event.tick());
@@ -96,13 +125,22 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let (lsq_data_latency, lsq_operation_counts, lsq_operation_latencies) =
         event_summary_lsq_latency(events);
     let lsq_data_latency = event_summary_lsq_latency_json(lsq_data_latency);
-    let lsq_operation =
-        event_summary_lsq_operation_json(&lsq_operation_counts, &lsq_operation_latencies);
+    let (lsq_forwarding, lsq_operation_forwarding) = event_summary_lsq_forwarding(events);
+    let lsq_operation = event_summary_lsq_operation_json(
+        &lsq_operation_counts,
+        &lsq_operation_latencies,
+        &lsq_operation_forwarding,
+    );
     let lsq_ordering = event_summary_lsq_ordering_json(events);
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         last_tick.saturating_sub(first_tick),
+        lsq_forwarding.candidates,
+        lsq_forwarding.matches,
+        lsq_forwarding.suppressed,
+        lsq_forwarding.address_mismatches,
+        lsq_forwarding.byte_mismatches,
         fu_latency.instructions,
         fu_latency.cycles,
         fu_latency.max_cycles,
@@ -135,6 +173,25 @@ fn event_summary_lsq_latency(
     (summary, operation_counts, operation_latencies)
 }
 
+fn event_summary_lsq_forwarding(
+    events: &[O3RuntimeTraceRecord],
+) -> (
+    O3EventSummaryLsqForwarding,
+    [O3EventSummaryLsqForwarding; O3RuntimeLsqOperation::COUNT],
+) {
+    let mut summary = O3EventSummaryLsqForwarding::default();
+    let mut operations = [O3EventSummaryLsqForwarding::default(); O3RuntimeLsqOperation::COUNT];
+    for event in events {
+        summary.add_event(*event);
+        let operation = event.lsq_operation();
+        if operation == O3RuntimeLsqOperation::None {
+            continue;
+        }
+        operations[operation.index()].add_event(*event);
+    }
+    (summary, operations)
+}
+
 fn event_summary_lsq_latency_json(latency: O3EventSummaryLsqLatency) -> String {
     format!(
         "{{\"samples\":{},\"ticks\":{},\"max_ticks\":{},\"min_ticks\":{},\"avg_ticks\":{}}}",
@@ -149,15 +206,22 @@ fn event_summary_lsq_latency_json(latency: O3EventSummaryLsqLatency) -> String {
 fn event_summary_lsq_operation_json(
     counts: &[u64; O3RuntimeLsqOperation::COUNT],
     latencies: &[O3EventSummaryLsqLatency; O3RuntimeLsqOperation::COUNT],
+    forwarding: &[O3EventSummaryLsqForwarding; O3RuntimeLsqOperation::COUNT],
 ) -> String {
     let fields = O3RuntimeLsqOperation::TRACKED
         .into_iter()
         .map(|operation| {
             let latency = event_summary_lsq_latency_json(latencies[operation.index()]);
+            let forwarding = forwarding[operation.index()];
             format!(
-                "\"{}\":{{\"count\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
-                counts[operation.index()]
+                counts[operation.index()],
+                forwarding.candidates,
+                forwarding.matches,
+                forwarding.suppressed,
+                forwarding.address_mismatches,
+                forwarding.byte_mismatches,
             )
         })
         .collect::<Vec<_>>()

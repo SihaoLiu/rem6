@@ -12700,6 +12700,42 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
             "O3 trace field {field}"
         );
     }
+    let event_summary = record
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    for (field, value) in [
+        ("store_load_forwarding_candidates", 1),
+        ("store_load_forwarding_matches", 1),
+        ("store_load_forwarding_suppressed", 0),
+        ("store_load_forwarding_address_mismatches", 0),
+        ("store_load_forwarding_byte_mismatches", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary, field),
+            value,
+            "O3 event summary forwarding field {field}"
+        );
+    }
+    for (operation, expected) in [("load", 1), ("store", 0)] {
+        let operation_summary = event_summary
+            .pointer(&format!("/lsq_operation/{operation}"))
+            .unwrap_or_else(|| {
+                panic!("missing event summary LSQ operation {operation}: {event_summary:?}")
+            });
+        for (field, value) in [
+            ("forwarding_candidates", expected),
+            ("forwarding_matches", expected),
+            ("forwarding_suppressed", 0),
+            ("forwarding_address_mismatches", 0),
+            ("forwarding_byte_mismatches", 0),
+        ] {
+            assert_eq!(
+                json_record_u64(operation_summary, field),
+                value,
+                "O3 event summary {operation} forwarding field {field}"
+            );
+        }
+    }
 
     let events = record
         .pointer("/events")
@@ -12885,6 +12921,57 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
                 json_record_u64(record, field),
                 value,
                 "O3 trace field {field}"
+            );
+        }
+        let event_summary = record
+            .pointer("/event_summary")
+            .expect("O3 trace event summary should be embedded with the trace record");
+        for (field, value) in [
+            ("store_load_forwarding_candidates", 0),
+            ("store_load_forwarding_matches", 0),
+            ("store_load_forwarding_suppressed", 1),
+            (
+                "store_load_forwarding_address_mismatches",
+                address_mismatches,
+            ),
+            ("store_load_forwarding_byte_mismatches", byte_mismatches),
+        ] {
+            assert_eq!(
+                json_record_u64(event_summary, field),
+                value,
+                "O3 event summary forwarding field {field}"
+            );
+        }
+        let load_summary = event_summary
+            .pointer("/lsq_operation/load")
+            .expect("event summary LSQ load lane");
+        for (field, value) in [
+            ("forwarding_candidates", 0),
+            ("forwarding_matches", 0),
+            ("forwarding_suppressed", 1),
+            ("forwarding_address_mismatches", address_mismatches),
+            ("forwarding_byte_mismatches", byte_mismatches),
+        ] {
+            assert_eq!(
+                json_record_u64(load_summary, field),
+                value,
+                "O3 event summary load forwarding field {field}"
+            );
+        }
+        let store_summary = event_summary
+            .pointer("/lsq_operation/store")
+            .expect("event summary LSQ store lane");
+        for field in [
+            "forwarding_candidates",
+            "forwarding_matches",
+            "forwarding_suppressed",
+            "forwarding_address_mismatches",
+            "forwarding_byte_mismatches",
+        ] {
+            assert_eq!(
+                json_record_u64(store_summary, field),
+                0,
+                "O3 event summary store forwarding field {field}"
             );
         }
 
