@@ -7703,6 +7703,75 @@ fn rem6_run_o3_debug_flag_scopes_multicore_checkpoint_restore_traces() {
             "monotonic",
         );
     }
+    for cpu in ["cpu0", "cpu1"] {
+        for (path, value) in [
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.manifests"
+                ),
+                1,
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.cleared_manifests"
+                ),
+                0,
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.decode_errors"
+                ),
+                0,
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.targets"
+                ),
+                restore_execution_modes.len() as u64,
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.mode.functional"
+                ),
+                restore_mode_counts.get("functional").copied().unwrap_or(0),
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.mode.timing"
+                ),
+                restore_mode_counts.get("timing").copied().unwrap_or(0),
+            ),
+            (
+                format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.mode.detailed"
+                ),
+                restore_mode_counts.get("detailed").copied().unwrap_or(0),
+            ),
+        ] {
+            assert_stat(&stdout, &path, "Count", value, "monotonic");
+        }
+        for (target, mode) in [
+            ("cpu0", "functional"),
+            ("cpu0", "timing"),
+            ("cpu0", "detailed"),
+            ("cpu1", "functional"),
+            ("cpu1", "timing"),
+            ("cpu1", "detailed"),
+        ] {
+            assert_stat(
+                &stdout,
+                &format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
+                ),
+                "Count",
+                restore_target_mode_counts
+                    .get(&(target, mode))
+                    .copied()
+                    .unwrap_or(0),
+                "monotonic",
+            );
+        }
+    }
 }
 
 #[test]

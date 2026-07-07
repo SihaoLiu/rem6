@@ -379,6 +379,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for (cpu, stat) in debug.o3_trace_cpu_authority_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.o3_trace.cpu.cpu{cpu}.{}", stat.path()),
+            "Count",
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for stat in debug.host_action_trace_authority_stats(stat_path_segment) {
         increment_stat(
             stats,

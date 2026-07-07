@@ -61,6 +61,7 @@ use o3_branch_stats::{
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
 use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
+pub(super) use o3_checkpoint_restore_json::o3_trace_cpu_checkpoint_restore_authority_stats;
 use o3_checkpoint_restore_json::{
     o3_checkpoint_restore_to_json, o3_trace_checkpoint_restore_authority_stats,
     Rem6O3CheckpointRestoreAuthorityTotals, Rem6O3CheckpointRestoreScope,

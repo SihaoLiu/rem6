@@ -927,6 +927,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.functional",
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.timing",
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+        "sim.debug.o3_trace.cpu.cpu0.checkpoint_restore.execution_mode_authority.target.cpu1.mode.detailed",
+        "sim.debug.o3_trace.cpu.cpu1.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
         "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
         "/cores/0/o3_runtime/branch_event/branches",
         "/cores/0/o3_runtime/branch_event/taken",

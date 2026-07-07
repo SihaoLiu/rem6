@@ -212,6 +212,46 @@ pub(super) fn o3_trace_checkpoint_restore_authority_stats(
     stats
 }
 
+pub(in crate::debug_output) fn o3_trace_cpu_checkpoint_restore_authority_stats(
+    records: &[Rem6O3TraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<(u32, Rem6O3ExecutionModeAuthorityStat)> {
+    let mut cpu_target_modes =
+        BTreeMap::<u32, BTreeMap<String, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>>::new();
+    for record in records {
+        let Some(restore) = record.checkpoint_restore() else {
+            continue;
+        };
+        for (target, counts) in
+            execution_mode_target_counts(&restore.execution_modes, &stat_path_segment)
+        {
+            let target_modes = cpu_target_modes.entry(record.cpu()).or_default();
+            let totals = target_modes.entry(target).or_default();
+            for (index, count) in counts.into_iter().enumerate() {
+                totals[index] = totals[index].max(count);
+            }
+        }
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, target_modes) in cpu_target_modes {
+        for (target, counts) in target_modes {
+            for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
+                stats.push((
+                    cpu,
+                    Rem6O3ExecutionModeAuthorityStat::new(
+                        format!(
+                            "checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
+                        ),
+                        counts[index],
+                    ),
+                ));
+            }
+        }
+    }
+    stats
+}
+
 fn execution_mode_authority_to_json(
     present_manifests: u64,
     cleared_manifests: u64,
