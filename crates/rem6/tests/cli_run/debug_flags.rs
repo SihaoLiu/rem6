@@ -7350,6 +7350,83 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
     assert!(load_reserved_latency > 0, "{events:?}");
     assert!(store_conditional_latency > 0, "{events:?}");
     assert!(atomic_latency > 0, "{events:?}");
+    let lsq_latency_values = events
+        .iter()
+        .map(|event| json_record_u64(event, "lsq_data_latency_ticks"))
+        .filter(|latency| *latency > 0)
+        .collect::<Vec<_>>();
+    let lsq_latency_ticks = lsq_latency_values.iter().sum::<u64>();
+    let lsq_latency_samples = lsq_latency_values.len() as u64;
+    let lsq_latency_min = lsq_latency_values.iter().copied().min().unwrap_or(0);
+    let lsq_latency_max = lsq_latency_values.iter().copied().max().unwrap_or(0);
+    let lsq_latency_avg = if lsq_latency_samples == 0 {
+        0
+    } else {
+        lsq_latency_ticks / lsq_latency_samples
+    };
+    let operation_latency = |operation: &str| {
+        let values = events
+            .iter()
+            .filter(|event| json_record_str(event, "lsq_operation") == operation)
+            .map(|event| json_record_u64(event, "lsq_data_latency_ticks"))
+            .filter(|latency| *latency > 0)
+            .collect::<Vec<_>>();
+        let samples = values.len() as u64;
+        let ticks = values.iter().sum::<u64>();
+        let min_ticks = values.iter().copied().min().unwrap_or(0);
+        let max_ticks = values.iter().copied().max().unwrap_or(0);
+        let avg_ticks = if samples == 0 { 0 } else { ticks / samples };
+        (samples, ticks, max_ticks, min_ticks, avg_ticks)
+    };
+    let lsq = record
+        .pointer("/lsq")
+        .unwrap_or_else(|| panic!("missing O3 trace LSQ summary: {record}"));
+    for (pointer, value) in [
+        ("/loads", 3),
+        ("/stores", 5),
+        ("/load_bytes", 24),
+        ("/store_bytes", 40),
+        ("/store_conditional_failures", 0),
+        ("/max_occupancy", 2),
+        ("/operation/load/count", 1),
+        ("/operation/store/count", 3),
+        ("/operation/load_reserved/count", 1),
+        ("/operation/store_conditional/count", 1),
+        ("/operation/atomic/count", 1),
+        ("/operation/float_load/count", 0),
+        ("/operation/vector_load/count", 0),
+        ("/ordering/acquire", 1),
+        ("/ordering/release", 1),
+        ("/ordering/acquire_release", 1),
+        ("/data_latency/samples", lsq_latency_samples),
+        ("/data_latency/ticks", lsq_latency_ticks),
+        ("/data_latency/max_ticks", lsq_latency_max),
+        ("/data_latency/min_ticks", lsq_latency_min),
+        ("/data_latency/avg_ticks", lsq_latency_avg),
+    ] {
+        assert_eq!(
+            lsq.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "O3 ordered LSQ summary path {pointer}: {lsq}"
+        );
+    }
+    for operation in ["load_reserved", "store_conditional", "atomic"] {
+        let (samples, ticks, max_ticks, min_ticks, avg_ticks) = operation_latency(operation);
+        for (metric, value) in [
+            ("samples", samples),
+            ("ticks", ticks),
+            ("max_ticks", max_ticks),
+            ("min_ticks", min_ticks),
+            ("avg_ticks", avg_ticks),
+        ] {
+            let pointer = format!("/operation/{operation}/latency/{metric}");
+            assert_eq!(
+                lsq.pointer(&pointer).and_then(Value::as_u64),
+                Some(value),
+                "O3 ordered LSQ operation-latency summary path {pointer}: {lsq}"
+            );
+        }
+    }
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 24),

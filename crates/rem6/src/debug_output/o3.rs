@@ -18,6 +18,8 @@ mod o3_branch_stats;
 mod o3_event_json;
 #[path = "o3_fu_latency_stats.rs"]
 mod o3_fu_latency_stats;
+#[path = "o3_lsq_json.rs"]
+mod o3_lsq_json;
 
 use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;
 use o3_branch_repair::{
@@ -46,6 +48,7 @@ use o3_branch_stats::{
 };
 use o3_event_json::o3_event_to_json;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
+use o3_lsq_json::o3_lsq_to_json;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceRecord {
@@ -329,6 +332,7 @@ impl Rem6O3TraceRecord {
     }
 
     pub(super) fn to_json(&self) -> String {
+        let lsq = o3_lsq_to_json(self.stats);
         let branch_event = o3_branch_event_json(self.stats);
         let events = self
             .events
@@ -375,7 +379,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"branch_event\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"lsq\":{},\"branch_event\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -409,6 +413,7 @@ impl Rem6O3TraceRecord {
             self.stats.max_rob_occupancy(),
             self.stats.max_lsq_occupancy(),
             self.stats.rename_map_entries(),
+            lsq,
             branch_event,
             events,
         )
