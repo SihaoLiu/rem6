@@ -9,28 +9,46 @@ pub(super) fn append_gem5_o3_ftq_alias_stats(
     cpu: u64,
     alias_prefix: &str,
 ) {
-    for kind in BranchTargetKind::ALL {
-        let source_path = format!(
-            "sim.cpu{cpu}.o3.branch_event.squashed_target_kind.{}",
-            kind.canonical_stat_name()
-        );
-        let alias_path = format!(
-            "{alias_prefix}.ftq.squashedTargets_0::{}",
-            kind.gem5_branch_type_name()
-        );
-        if let Some(value) = snapshot_value(snapshot, &source_path) {
-            append_derived_count_stat_if_absent(output, snapshot, &alias_path, value);
+    for (source_family, source_total, alias_family) in [
+        (
+            "squashed_target_kind",
+            "squashed_targets",
+            "squashedTargets",
+        ),
+        (
+            "squashed_target_link_write_kind",
+            "squashed_targets_with_link_writes",
+            "squashedTargetsWithLinkWrites",
+        ),
+        (
+            "squashed_target_without_link_write_kind",
+            "squashed_targets_without_link_writes",
+            "squashedTargetsWithoutLinkWrites",
+        ),
+    ] {
+        for kind in BranchTargetKind::ALL {
+            let source_path = format!(
+                "sim.cpu{cpu}.o3.branch_event.{source_family}.{}",
+                kind.canonical_stat_name()
+            );
+            let alias_path = format!(
+                "{alias_prefix}.ftq.{alias_family}_0::{}",
+                kind.gem5_branch_type_name()
+            );
+            if let Some(value) = snapshot_value(snapshot, &source_path) {
+                append_derived_count_stat_if_absent(output, snapshot, &alias_path, value);
+            }
         }
-    }
-    if let Some(value) = snapshot_value(
-        snapshot,
-        &format!("sim.cpu{cpu}.o3.branch_event.squashed_targets"),
-    ) {
-        append_derived_count_stat_if_absent(
-            output,
+        if let Some(value) = snapshot_value(
             snapshot,
-            &format!("{alias_prefix}.ftq.squashedTargets_0::total"),
-            value,
-        );
+            &format!("sim.cpu{cpu}.o3.branch_event.{source_total}"),
+        ) {
+            append_derived_count_stat_if_absent(
+                output,
+                snapshot,
+                &format!("{alias_prefix}.ftq.{alias_family}_0::total"),
+                value,
+            );
+        }
     }
 }

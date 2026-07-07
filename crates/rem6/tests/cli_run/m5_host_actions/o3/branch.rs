@@ -791,6 +791,27 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
             "system.cpu.ftq.squashedTargets_0::total",
             branch_mispredicts,
         ),
+        (
+            "system.cpu.ftq.squashedTargetsWithLinkWrites_0::DirectCond",
+            0,
+        ),
+        (
+            "system.cpu.ftq.squashedTargetsWithLinkWrites_0::DirectUncond",
+            0,
+        ),
+        ("system.cpu.ftq.squashedTargetsWithLinkWrites_0::total", 0),
+        (
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::DirectCond",
+            1,
+        ),
+        (
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+            2,
+        ),
+        (
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::total",
+            branch_mispredicts,
+        ),
     ] {
         assert_text_count_stat(&stdout, path, value);
         assert_text_stat_occurs_once(&stdout, path);

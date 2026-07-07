@@ -316,28 +316,46 @@ fn append_gem5_o3_ftq_json_alias_stats(
     cpu: u64,
     alias_prefix: &str,
 ) {
-    for kind in BranchTargetKind::ALL {
+    for (source_family, source_total, alias_family) in [
+        (
+            "squashed_target_kind",
+            "squashed_targets",
+            "squashedTargets",
+        ),
+        (
+            "squashed_target_link_write_kind",
+            "squashed_targets_with_link_writes",
+            "squashedTargetsWithLinkWrites",
+        ),
+        (
+            "squashed_target_without_link_write_kind",
+            "squashed_targets_without_link_writes",
+            "squashedTargetsWithoutLinkWrites",
+        ),
+    ] {
+        for kind in BranchTargetKind::ALL {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!(
+                    "sim.cpu{cpu}.o3.branch_event.{source_family}.{}",
+                    kind.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.ftq.{alias_family}_0::{}",
+                    kind.gem5_branch_type_name()
+                ),
+            );
+        }
         append_gem5_json_alias_from_paths(
             snapshot,
             records,
             next_id,
-            &format!(
-                "sim.cpu{cpu}.o3.branch_event.squashed_target_kind.{}",
-                kind.canonical_stat_name()
-            ),
-            &format!(
-                "{alias_prefix}.ftq.squashedTargets_0::{}",
-                kind.gem5_branch_type_name()
-            ),
+            &format!("sim.cpu{cpu}.o3.branch_event.{source_total}"),
+            &format!("{alias_prefix}.ftq.{alias_family}_0::total"),
         );
     }
-    append_gem5_json_alias_from_paths(
-        snapshot,
-        records,
-        next_id,
-        &format!("sim.cpu{cpu}.o3.branch_event.squashed_targets"),
-        &format!("{alias_prefix}.ftq.squashedTargets_0::total"),
-    );
 }
 
 fn append_gem5_o3_branch_repair_json_alias_stats(
