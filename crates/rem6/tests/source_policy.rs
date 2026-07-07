@@ -5,6 +5,7 @@ const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
 const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
+const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -260,6 +261,30 @@ fn cli_m5_host_actions_o3_root_stays_focused() {
     assert!(
         lines <= MAX_M5_HOST_ACTIONS_O3_ROOT_LINES,
         "tests/cli_run/m5_host_actions/o3.rs should delegate detailed O3 host-action families to focused modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_m5_host_actions_o3_modules_stay_focused() {
+    let o3_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/m5_host_actions/o3");
+    let mut oversized = Vec::new();
+
+    for path in rust_source_files(&o3_dir) {
+        let lines = line_count(&path);
+        if lines > MAX_M5_HOST_ACTIONS_O3_MODULE_LINES {
+            oversized.push(format!(
+                "{} has {lines} lines",
+                path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                    .unwrap()
+                    .display()
+            ));
+        }
+    }
+
+    assert!(
+        oversized.is_empty(),
+        "O3 host-action child modules exceed {MAX_M5_HOST_ACTIONS_O3_MODULE_LINES} lines: {}",
+        oversized.join(", ")
     );
 }
 
