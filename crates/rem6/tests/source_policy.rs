@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
+const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
@@ -224,6 +225,17 @@ fn cli_stats_output_root_stays_focused() {
     assert!(
         lines <= MAX_FACADE_LINES,
         "src/stats_output.rs should remain a facade over focused stats-output modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_stats_output_cpu_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stats_output/cpu.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_STATS_OUTPUT_CPU_LINES,
+        "src/stats_output/cpu.rs should delegate detailed CPU stat families to focused modules, but it has {lines} lines"
     );
 }
 
