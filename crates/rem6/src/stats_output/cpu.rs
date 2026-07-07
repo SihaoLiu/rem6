@@ -5,6 +5,10 @@ use rem6_cpu::{
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
+use super::o3_runtime::{
+    emit_o3_branch_event_aggregate_stats, increment_count_stat, o3_fu_latency_class_inst_type_stem,
+    o3_lsq_operation_alias, o3_lsq_ordering_alias, ratio_ppm,
+};
 use crate::{Rem6CliError, Rem6CoreSummary};
 
 pub(super) fn emit_cpu_run_stats(
@@ -1132,6 +1136,7 @@ fn emit_o3_runtime_stats(
     ] {
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
+    emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {
         let branch_event_resolved = o3.branch_event_resolved_target_kind(kind);
         let branch_event_link = o3.branch_event_link_write_kind(kind);
@@ -1646,54 +1651,6 @@ fn emit_o3_runtime_stats(
         )?;
     }
     Ok(())
-}
-
-fn increment_count_stat(
-    stats: &mut StatsRegistry,
-    name: String,
-    value: u64,
-) -> Result<(), Rem6CliError> {
-    increment_stat(stats, &name, "Count", StatResetPolicy::Monotonic, value)
-}
-
-fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
-    match operation {
-        O3RuntimeLsqOperation::None => "none",
-        O3RuntimeLsqOperation::Load => "load",
-        O3RuntimeLsqOperation::Store => "store",
-        O3RuntimeLsqOperation::LoadReserved => "loadReserved",
-        O3RuntimeLsqOperation::StoreConditional => "storeConditional",
-        O3RuntimeLsqOperation::Atomic => "atomic",
-        O3RuntimeLsqOperation::FloatLoad => "floatLoad",
-        O3RuntimeLsqOperation::FloatStore => "floatStore",
-        O3RuntimeLsqOperation::VectorLoad => "vectorLoad",
-        O3RuntimeLsqOperation::VectorStore => "vectorStore",
-    }
-}
-
-fn o3_lsq_ordering_alias(ordering: O3RuntimeLsqOrdering) -> &'static str {
-    match ordering {
-        O3RuntimeLsqOrdering::None => "none",
-        O3RuntimeLsqOrdering::Acquire => "acquire",
-        O3RuntimeLsqOrdering::Release => "release",
-        O3RuntimeLsqOrdering::AcquireRelease => "acquireRelease",
-    }
-}
-
-fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
-        _ => class.stat_stem(),
-    }
-}
-
-fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
-    if denominator == 0 {
-        return 0;
-    }
-    let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
-    ppm.min(u128::from(u64::MAX)) as u64
 }
 
 fn emit_branch_predictor_counter_stats<const N: usize>(

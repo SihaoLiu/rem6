@@ -6485,6 +6485,12 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
             1,
         ),
         ("/cores/0/o3_runtime/branch_event/link_write_kind/return", 0),
+        ("/cores/0/o3_runtime/branch_event/squashes", 1),
+        ("/cores/0/o3_runtime/branch_event/squashed_targets", 1),
+        (
+            "/cores/0/o3_runtime/branch_event/squashed_targets_without_link_writes",
+            1,
+        ),
         ("/cores/0/o3_runtime/branch_event/squash_kind/return", 1),
         (
             "/cores/0/o3_runtime/branch_event/squashed_target_without_link_write_kind/return",
@@ -6507,6 +6513,12 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
         ("sim.cpu0.o3.branch_event.taken_kind.return", 1),
         ("sim.cpu0.o3.branch_event.resolved_target_kind.return", 1),
         ("sim.cpu0.o3.branch_event.link_write_kind.return", 0),
+        ("sim.cpu0.o3.branch_event.squashes", 1),
+        ("sim.cpu0.o3.branch_event.squashed_targets", 1),
+        (
+            "sim.cpu0.o3.branch_event.squashed_targets_without_link_writes",
+            1,
+        ),
         ("sim.cpu0.o3.branch_event.squash_kind.return", 1),
         (
             "sim.cpu0.o3.branch_event.squashed_target_without_link_write_kind.return",

@@ -412,7 +412,12 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
                 .branch_event_squashed_target_without_link_write_kind(branch_kind)
         });
     format!(
-        "{{\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_write_kind\":{link_write_kind},\"squash_kind\":{squash_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}"
+        "{{\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        summary.o3_runtime.branch_event_squashes(),
+        summary.o3_runtime.branch_event_squashed_targets(),
+        summary
+            .o3_runtime
+            .branch_event_squashed_targets_without_link_writes(),
     )
 }
 

@@ -267,6 +267,22 @@ impl O3RuntimeStats {
         self.branch_event_squash_kinds[kind.index()]
     }
 
+    pub fn branch_event_squashes(self) -> u64 {
+        self.branch_event_squash_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_squashed_targets(self) -> u64 {
+        self.branch_event_squashes()
+    }
+
+    pub fn branch_event_squashed_targets_without_link_writes(self) -> u64 {
+        self.branch_event_squashed_target_without_link_write_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
     pub fn branch_event_squashed_target_without_link_write_kind(
         self,
         kind: BranchTargetKind,

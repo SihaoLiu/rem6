@@ -14,6 +14,7 @@ mod host_actions;
 mod json_aliases;
 mod memory_resources;
 mod multi_run;
+mod o3_runtime;
 mod resource_acquire;
 mod riscv;
 mod text;
