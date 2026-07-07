@@ -11013,6 +11013,27 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_not_taken() {
         Some(0),
         "debug O3 branch-event matrix should expose zero direct-unconditional not-taken outcomes: {debug_branch_event}"
     );
+    assert_eq!(
+        debug_branch_event
+            .pointer("/without_link_write_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "debug O3 branch-event matrix should expose direct-conditional no-link outcomes: {debug_branch_event}"
+    );
+    assert_eq!(
+        debug_branch_event
+            .pointer("/without_link_write_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(0),
+        "debug O3 branch-event matrix should expose zero call-indirect no-link outcomes: {debug_branch_event}"
+    );
+    assert_eq!(
+        debug_branch_event
+            .pointer("/without_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "debug O3 branch-event matrix should expose zero direct-unconditional no-link outcomes: {debug_branch_event}"
+    );
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 1),

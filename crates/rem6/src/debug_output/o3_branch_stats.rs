@@ -59,6 +59,9 @@ pub(super) fn o3_branch_event_json(stats: O3RuntimeStats) -> String {
         o3_branch_event_kind_json(|branch_kind| stats.branch_event_misprediction_kind(branch_kind));
     let link_write_kind =
         o3_branch_event_kind_json(|branch_kind| stats.branch_event_link_write_kind(branch_kind));
+    let without_link_write_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_without_link_write_kind(branch_kind)
+    });
     let squash_kind =
         o3_branch_event_kind_json(|branch_kind| stats.branch_event_squash_kind(branch_kind));
     let squashed_target_kind = o3_branch_event_kind_json(|branch_kind| {
@@ -71,7 +74,7 @@ pub(super) fn o3_branch_event_json(stats: O3RuntimeStats) -> String {
         stats.branch_event_squashed_target_without_link_write_kind(branch_kind)
     });
     format!(
-        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_kind\":{squashed_target_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"without_link_write_kind\":{without_link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_kind\":{squashed_target_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
         stats.branch_events(),
         stats.branch_event_taken(),
         stats.branch_event_not_taken(),

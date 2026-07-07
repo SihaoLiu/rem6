@@ -1047,6 +1047,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/cores/0/o3_runtime/branch_event/squashed_target_without_link_write_kind/return",
         "/debug/o3_trace/0/branch_event/branches",
         "/debug/o3_trace/0/branch_event/not_taken_kind/direct_conditional",
+        "/debug/o3_trace/0/branch_event/without_link_write_kind/direct_conditional",
         "/debug/o3_trace/0/branch_event/mispredictions",
         "/debug/o3_trace/0/branch_event/misprediction_kind/call_indirect",
         "/debug/o3_trace/0/branch_event/misprediction_kind/direct_unconditional",
