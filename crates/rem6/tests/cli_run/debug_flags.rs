@@ -6398,6 +6398,82 @@ fn rem6_run_o3_debug_flag_marks_lsq_data_response_latency() {
             latency_average_ticks(trace.event_latency_sum, trace.event_latency_samples),
             "monotonic",
         );
+        let json: Value = serde_json::from_str(&trace.stdout).unwrap();
+        let event_summary = json
+            .pointer("/debug/o3_trace/0/event_summary")
+            .expect("O3 trace event summary should be embedded with the trace record");
+        let summary_latency = event_summary
+            .pointer("/lsq_data_latency")
+            .expect("O3 event summary LSQ data latency aggregate");
+        assert_eq!(
+            json_record_u64(summary_latency, "samples"),
+            trace.event_latency_samples
+        );
+        assert_eq!(
+            json_record_u64(summary_latency, "ticks"),
+            trace.event_latency_sum
+        );
+        assert_eq!(
+            json_record_u64(summary_latency, "max_ticks"),
+            trace.event_latency_max
+        );
+        assert_eq!(
+            json_record_u64(summary_latency, "min_ticks"),
+            trace.event_latency_min
+        );
+        assert_eq!(
+            json_record_u64(summary_latency, "avg_ticks"),
+            latency_average_ticks(trace.event_latency_sum, trace.event_latency_samples)
+        );
+        for (operation, latency) in [("load", trace.load_latency), ("store", trace.store_latency)] {
+            let operation_summary = event_summary
+                .pointer(&format!("/lsq_operation/{operation}"))
+                .unwrap_or_else(|| {
+                    panic!("missing event summary LSQ operation {operation}: {event_summary:?}")
+                });
+            assert_eq!(
+                json_record_u64(operation_summary, "count"),
+                1,
+                "event summary LSQ operation {operation} count"
+            );
+            let operation_latency = operation_summary
+                .pointer("/latency")
+                .unwrap_or_else(|| panic!("missing {operation} latency: {operation_summary:?}"));
+            assert_eq!(
+                json_record_u64(operation_latency, "samples"),
+                1,
+                "event summary LSQ operation {operation} latency samples"
+            );
+            assert_eq!(
+                json_record_u64(operation_latency, "ticks"),
+                latency,
+                "event summary LSQ operation {operation} latency ticks"
+            );
+            assert_eq!(
+                json_record_u64(operation_latency, "max_ticks"),
+                latency,
+                "event summary LSQ operation {operation} max latency"
+            );
+            assert_eq!(
+                json_record_u64(operation_latency, "min_ticks"),
+                latency,
+                "event summary LSQ operation {operation} min latency"
+            );
+            assert_eq!(
+                json_record_u64(operation_latency, "avg_ticks"),
+                latency,
+                "event summary LSQ operation {operation} avg latency"
+            );
+        }
+        let absent_operation = event_summary
+            .pointer("/lsq_operation/load_reserved")
+            .expect("event summary LSQ matrix should include load_reserved zero lane");
+        assert_eq!(json_record_u64(absent_operation, "count"), 0);
+        let absent_latency = absent_operation
+            .pointer("/latency")
+            .expect("event summary load_reserved latency lane");
+        assert_eq!(json_record_u64(absent_latency, "samples"), 0);
+        assert_eq!(json_record_u64(absent_latency, "ticks"), 0);
         assert_stat(
             &trace.stdout,
             "sim.debug.o3_trace.event.lsq_operation.load_latency_ticks",
