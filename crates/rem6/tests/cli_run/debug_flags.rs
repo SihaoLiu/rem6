@@ -7102,6 +7102,21 @@ fn rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope() {
             "Count",
             1,
         ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.functional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.timing",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+            "Count",
+            1,
+        ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
@@ -7471,12 +7486,20 @@ fn rem6_run_o3_debug_flag_scopes_multicore_checkpoint_restore_traces() {
         .and_then(Value::as_array)
         .expect("host restore execution-mode authority");
     let mut restore_mode_counts = BTreeMap::<&str, u64>::new();
+    let mut restore_target_mode_counts = BTreeMap::<(&str, &str), u64>::new();
     for execution_mode in restore_execution_modes {
+        let target = execution_mode
+            .pointer("/target")
+            .and_then(Value::as_str)
+            .expect("restore authority target");
         let mode = execution_mode
             .pointer("/mode")
             .and_then(Value::as_str)
             .expect("restore authority mode");
         *restore_mode_counts.entry(mode).or_default() += 1;
+        *restore_target_mode_counts
+            .entry((target, mode))
+            .or_default() += 1;
     }
 
     let trace = json
@@ -7593,6 +7616,27 @@ fn rem6_run_o3_debug_flag_scopes_multicore_checkpoint_restore_traces() {
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+    for (target, mode) in [
+        ("cpu0", "functional"),
+        ("cpu0", "timing"),
+        ("cpu0", "detailed"),
+        ("cpu1", "functional"),
+        ("cpu1", "timing"),
+        ("cpu1", "detailed"),
+    ] {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
+            ),
+            "Count",
+            restore_target_mode_counts
+                .get(&(target, mode))
+                .copied()
+                .unwrap_or(0),
+            "monotonic",
+        );
     }
 }
 

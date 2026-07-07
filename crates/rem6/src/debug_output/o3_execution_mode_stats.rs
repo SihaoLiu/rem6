@@ -42,7 +42,7 @@ impl Rem6O3ExecutionModeTraceTotals {
 }
 
 impl Rem6O3ExecutionModeAuthorityStat {
-    fn new(path: String, value: u64) -> Self {
+    pub(super) fn new(path: String, value: u64) -> Self {
         Self { path, value }
     }
 

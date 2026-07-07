@@ -62,8 +62,8 @@ use o3_branch_stats::{
 };
 use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
 use o3_checkpoint_restore_json::{
-    o3_checkpoint_restore_to_json, Rem6O3CheckpointRestoreAuthorityTotals,
-    Rem6O3CheckpointRestoreScope,
+    o3_checkpoint_restore_to_json, o3_trace_checkpoint_restore_authority_stats,
+    Rem6O3CheckpointRestoreAuthorityTotals, Rem6O3CheckpointRestoreScope,
 };
 use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
@@ -581,7 +581,12 @@ pub(super) fn o3_trace_authority_stats(
     records: &[Rem6O3TraceRecord],
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
-    o3_trace_execution_mode_authority_stats(records, stat_path_segment)
+    let mut stats = o3_trace_execution_mode_authority_stats(records, &stat_path_segment);
+    stats.extend(o3_trace_checkpoint_restore_authority_stats(
+        records,
+        stat_path_segment,
+    ));
+    stats
 }
 
 pub(super) fn o3_trace_cpu_stats(records: &[Rem6O3TraceRecord]) -> Vec<(u32, Rem6O3TraceStat)> {
