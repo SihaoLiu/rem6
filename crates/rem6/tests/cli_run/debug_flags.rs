@@ -12535,6 +12535,29 @@ fn rem6_run_o3_debug_flag_labels_hart_targeted_detailed_mode_trace() {
     );
     assert!(json.pointer("/cores/0/o3_runtime").is_none());
     assert!(json.pointer("/cores/1/o3_runtime").is_some());
+    assert_eq!(
+        record.pointer("/commit"),
+        json.pointer("/cores/1/o3_runtime/commit"),
+        "O3 trace should mirror the runtime commit summary matrix"
+    );
+    let committed_inst_type = record
+        .pointer("/commit/committed_inst_type")
+        .expect("debug O3 trace commit instruction-type matrix");
+    for (field, value) in [
+        ("mem_read", 1),
+        ("mem_write", 1),
+        ("int_mul", 1),
+        ("int_div", 1),
+        ("float_misc", 0),
+        ("vector_integer_mul", 0),
+        ("vector_float_misc", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(committed_inst_type, field),
+            value,
+            "O3 trace commit committed_inst_type.{field}"
+        );
+    }
 
     for (path, unit, value) in [
         ("sim.debug.o3_trace.records", "Count", 1),

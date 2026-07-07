@@ -753,6 +753,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/debug/o3_trace/0/lsq/data_latency/samples",
         "/debug/o3_trace/0/lsq/operation/store_conditional/count",
         "/debug/o3_trace/0/lsq/ordering/acquire_release",
+        "/debug/o3_trace/0/commit/committed_inst_type/int_mul",
+        "/debug/o3_trace/0/commit/committed_inst_type/vector_float_misc",
         "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
         "/cores/0/o3_runtime/branch_event/branches",
         "/cores/0/o3_runtime/branch_event/taken",
