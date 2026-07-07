@@ -301,7 +301,7 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for target in switch_targets_seen {
+    for target in &switch_targets_seen {
         for mode in EXECUTION_MODE_STAT_LANES {
             increment_stat(
                 stats,
@@ -315,19 +315,39 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for ((target, mode), count) in switch_previous_target_modes {
-        increment_stat(
-            stats,
-            &format!("sim.host_actions.execution_mode_switch.previous_mode.target.{target}.{mode}"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            count,
-        )?;
-    }
-    for (target, count) in switch_previous_target_mode_none {
+    for target in &switch_targets_seen {
         increment_stat(
             stats,
             &format!("sim.host_actions.execution_mode_switch.previous_mode.target.{target}.none"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            switch_previous_target_mode_none
+                .get(target)
+                .copied()
+                .unwrap_or_default(),
+        )?;
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch.previous_mode.target.{target}.{mode}"
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                switch_previous_target_modes
+                    .get(&(target.clone(), mode))
+                    .copied()
+                    .unwrap_or_default(),
+            )?;
+        }
+    }
+    for ((target, mode), count) in switch_previous_target_modes {
+        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+            continue;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.previous_mode.target.{target}.{mode}"),
             "Count",
             StatResetPolicy::Monotonic,
             count,

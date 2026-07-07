@@ -676,6 +676,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.execution_mode_switch.target.cpu0.mode.timing",
         "sim.host_actions.execution_mode_switch.target.cpu0.mode.detailed",
         "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.none",
+        "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.functional",
+        "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.timing",
         "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.detailed",
         "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.validated",
         "sim.host_actions.execution_mode_switch.quiescence.captured_payload_bytes",
