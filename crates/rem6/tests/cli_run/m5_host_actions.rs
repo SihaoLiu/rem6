@@ -5940,13 +5940,17 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "monotonic",
         );
     }
-    assert_json_stat(
-        &json,
-        "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
-        "Count",
-        1,
-        "monotonic",
-    );
+    for (mode, expected) in [("functional", 0), ("timing", 0), ("detailed", 1)] {
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.{mode}"
+            ),
+            "Count",
+            expected,
+            "monotonic",
+        );
+    }
 }
 
 #[test]

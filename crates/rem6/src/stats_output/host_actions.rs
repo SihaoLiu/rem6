@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
@@ -52,6 +52,7 @@ pub(super) fn emit_run_host_action_stats(
     let mut checkpoint_restore_execution_mode_authority_targets = 0;
     let mut checkpoint_restore_execution_mode_authority_modes =
         BTreeMap::<&'static str, u64>::new();
+    let mut checkpoint_restore_execution_mode_authority_targets_seen = BTreeSet::<String>::new();
     let mut checkpoint_restore_execution_mode_authority_target_modes =
         BTreeMap::<(String, &'static str), u64>::new();
     for restore in &summary.checkpoint_restores {
@@ -63,11 +64,13 @@ pub(super) fn emit_run_host_action_stats(
         }
         checkpoint_restore_execution_mode_authority_targets += restore.execution_modes.len() as u64;
         for authority in &restore.execution_modes {
+            let target = stat_path_segment(&authority.target);
+            checkpoint_restore_execution_mode_authority_targets_seen.insert(target.clone());
             *checkpoint_restore_execution_mode_authority_modes
                 .entry(authority.mode)
                 .or_default() += 1;
             *checkpoint_restore_execution_mode_authority_target_modes
-                .entry((stat_path_segment(&authority.target), authority.mode))
+                .entry((target, authority.mode))
                 .or_default() += 1;
         }
     }
@@ -280,16 +283,21 @@ pub(super) fn emit_run_host_action_stats(
             count,
         )?;
     }
-    for ((target, mode), count) in checkpoint_restore_execution_mode_authority_target_modes {
-        increment_stat(
-            stats,
-            &format!(
-                "sim.host_actions.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
-            ),
-            "Count",
-            StatResetPolicy::Monotonic,
-            count,
-        )?;
+    for target in checkpoint_restore_execution_mode_authority_targets_seen {
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                checkpoint_restore_execution_mode_authority_target_modes
+                    .get(&(target.clone(), mode))
+                    .copied()
+                    .unwrap_or_default(),
+            )?;
+        }
     }
     for ((target, mode), count) in switch_target_modes {
         increment_stat(
