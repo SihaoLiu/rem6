@@ -169,6 +169,22 @@ struct RiscvO3RuntimeBranchRepairStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvO3RuntimeBranchEventKindStats {
+    kind: StatId,
+    taken: StatId,
+    predicted_taken: StatId,
+    predicted_not_taken: StatId,
+    predicted_target: StatId,
+    predicted_target_match: StatId,
+    predicted_target_mismatch: StatId,
+    resolved_target: StatId,
+    link_write: StatId,
+    squash: StatId,
+    squashed_target_link_write: StatId,
+    squashed_target_without_link_write: StatId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvO3RuntimeLsqLatencyStats {
     samples: StatId,
     ticks: StatId,
@@ -625,6 +641,22 @@ struct RiscvO3RuntimeCpuStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    branch_event_branches: StatId,
+    branch_event_taken: StatId,
+    branch_event_not_taken: StatId,
+    branch_event_predicted_taken: StatId,
+    branch_event_predicted_not_taken: StatId,
+    branch_event_predicted_targets: StatId,
+    branch_event_predicted_target_matches: StatId,
+    branch_event_predicted_target_mismatches: StatId,
+    branch_event_resolved_targets: StatId,
+    branch_event_link_writes: StatId,
+    branch_event_without_link_writes: StatId,
+    branch_event_squashes: StatId,
+    branch_event_squashed_targets: StatId,
+    branch_event_squashed_targets_with_link_writes: StatId,
+    branch_event_squashed_targets_without_link_writes: StatId,
+    branch_event_kinds: [RiscvO3RuntimeBranchEventKindStats; BranchTargetKind::COUNT],
     branch_aliases: RiscvO3RuntimeBranchAliasStats,
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
@@ -821,6 +853,97 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             branch_repair_kinds: register_o3_branch_repair_kind_counters(registry, &prefix)?,
+            branch_event_branches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.branches",
+                "Count",
+            )?,
+            branch_event_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.taken",
+                "Count",
+            )?,
+            branch_event_not_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.not_taken",
+                "Count",
+            )?,
+            branch_event_predicted_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_taken",
+                "Count",
+            )?,
+            branch_event_predicted_not_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_not_taken",
+                "Count",
+            )?,
+            branch_event_predicted_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_targets",
+                "Count",
+            )?,
+            branch_event_predicted_target_matches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_target_matches",
+                "Count",
+            )?,
+            branch_event_predicted_target_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_target_mismatches",
+                "Count",
+            )?,
+            branch_event_resolved_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.resolved_targets",
+                "Count",
+            )?,
+            branch_event_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.link_writes",
+                "Count",
+            )?,
+            branch_event_without_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.without_link_writes",
+                "Count",
+            )?,
+            branch_event_squashes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashes",
+                "Count",
+            )?,
+            branch_event_squashed_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets",
+                "Count",
+            )?,
+            branch_event_squashed_targets_with_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets_with_link_writes",
+                "Count",
+            )?,
+            branch_event_squashed_targets_without_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets_without_link_writes",
+                "Count",
+            )?,
+            branch_event_kinds: register_o3_branch_event_kind_counters(registry, &prefix)?,
             branch_aliases: RiscvO3RuntimeBranchAliasStats::register(
                 registry,
                 &gem5_cpu_alias_prefix,
@@ -1063,6 +1186,81 @@ impl RiscvO3RuntimeCpuStats {
                 current.branch_repair_direction_only_mismatches(),
             ),
             (
+                self.branch_event_branches,
+                previous.branch_events(),
+                current.branch_events(),
+            ),
+            (
+                self.branch_event_taken,
+                previous.branch_event_taken(),
+                current.branch_event_taken(),
+            ),
+            (
+                self.branch_event_not_taken,
+                previous.branch_event_not_taken(),
+                current.branch_event_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_taken,
+                previous.branch_event_predicted_taken(),
+                current.branch_event_predicted_taken(),
+            ),
+            (
+                self.branch_event_predicted_not_taken,
+                previous.branch_event_predicted_not_taken(),
+                current.branch_event_predicted_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_targets,
+                previous.branch_event_predicted_targets(),
+                current.branch_event_predicted_targets(),
+            ),
+            (
+                self.branch_event_predicted_target_matches,
+                previous.branch_event_predicted_target_matches(),
+                current.branch_event_predicted_target_matches(),
+            ),
+            (
+                self.branch_event_predicted_target_mismatches,
+                previous.branch_event_predicted_target_mismatches(),
+                current.branch_event_predicted_target_mismatches(),
+            ),
+            (
+                self.branch_event_resolved_targets,
+                previous.branch_event_resolved_targets(),
+                current.branch_event_resolved_targets(),
+            ),
+            (
+                self.branch_event_link_writes,
+                previous.branch_event_link_writes(),
+                current.branch_event_link_writes(),
+            ),
+            (
+                self.branch_event_without_link_writes,
+                previous.branch_event_without_link_writes(),
+                current.branch_event_without_link_writes(),
+            ),
+            (
+                self.branch_event_squashes,
+                previous.branch_event_squashes(),
+                current.branch_event_squashes(),
+            ),
+            (
+                self.branch_event_squashed_targets,
+                previous.branch_event_squashed_targets(),
+                current.branch_event_squashed_targets(),
+            ),
+            (
+                self.branch_event_squashed_targets_with_link_writes,
+                previous.branch_event_squashed_targets_with_link_writes(),
+                current.branch_event_squashed_targets_with_link_writes(),
+            ),
+            (
+                self.branch_event_squashed_targets_without_link_writes,
+                previous.branch_event_squashed_targets_without_link_writes(),
+                current.branch_event_squashed_targets_without_link_writes(),
+            ),
+            (
                 self.fu_latency_instructions,
                 previous.fu_latency_instructions(),
                 current.fu_latency_instructions(),
@@ -1195,6 +1393,76 @@ impl RiscvO3RuntimeCpuStats {
                     repair_stats.direction_only,
                     previous.branch_repair_direction_only_kind(kind),
                     current.branch_repair_direction_only_kind(kind),
+                ),
+            ] {
+                let delta = current.saturating_sub(previous);
+                if delta != 0 {
+                    registry.increment(stat, delta)?;
+                }
+            }
+        }
+        for kind in BranchTargetKind::ALL {
+            let event_stats = self.branch_event_kinds[kind.index()];
+            for (stat, previous, current) in [
+                (
+                    event_stats.kind,
+                    previous.branch_event_kind(kind),
+                    current.branch_event_kind(kind),
+                ),
+                (
+                    event_stats.taken,
+                    previous.branch_event_taken_kind(kind),
+                    current.branch_event_taken_kind(kind),
+                ),
+                (
+                    event_stats.predicted_taken,
+                    previous.branch_event_predicted_taken_kind(kind),
+                    current.branch_event_predicted_taken_kind(kind),
+                ),
+                (
+                    event_stats.predicted_not_taken,
+                    previous.branch_event_predicted_not_taken_kind(kind),
+                    current.branch_event_predicted_not_taken_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target,
+                    previous.branch_event_predicted_target_kind(kind),
+                    current.branch_event_predicted_target_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target_match,
+                    previous.branch_event_predicted_target_match_kind(kind),
+                    current.branch_event_predicted_target_match_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target_mismatch,
+                    previous.branch_event_predicted_target_mismatch_kind(kind),
+                    current.branch_event_predicted_target_mismatch_kind(kind),
+                ),
+                (
+                    event_stats.resolved_target,
+                    previous.branch_event_resolved_target_kind(kind),
+                    current.branch_event_resolved_target_kind(kind),
+                ),
+                (
+                    event_stats.link_write,
+                    previous.branch_event_link_write_kind(kind),
+                    current.branch_event_link_write_kind(kind),
+                ),
+                (
+                    event_stats.squash,
+                    previous.branch_event_squash_kind(kind),
+                    current.branch_event_squash_kind(kind),
+                ),
+                (
+                    event_stats.squashed_target_link_write,
+                    previous.branch_event_squashed_target_link_write_kind(kind),
+                    current.branch_event_squashed_target_link_write_kind(kind),
+                ),
+                (
+                    event_stats.squashed_target_without_link_write,
+                    previous.branch_event_squashed_target_without_link_write_kind(kind),
+                    current.branch_event_squashed_target_without_link_write_kind(kind),
                 ),
             ] {
                 let delta = current.saturating_sub(previous);
@@ -1396,6 +1664,57 @@ impl RiscvO3RuntimeCpuStats {
                 self.branch_repair_direction_only_mismatches,
                 snapshot.branch_repair_direction_only_mismatches(),
             ),
+            (self.branch_event_branches, snapshot.branch_events()),
+            (self.branch_event_taken, snapshot.branch_event_taken()),
+            (
+                self.branch_event_not_taken,
+                snapshot.branch_event_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_taken,
+                snapshot.branch_event_predicted_taken(),
+            ),
+            (
+                self.branch_event_predicted_not_taken,
+                snapshot.branch_event_predicted_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_targets,
+                snapshot.branch_event_predicted_targets(),
+            ),
+            (
+                self.branch_event_predicted_target_matches,
+                snapshot.branch_event_predicted_target_matches(),
+            ),
+            (
+                self.branch_event_predicted_target_mismatches,
+                snapshot.branch_event_predicted_target_mismatches(),
+            ),
+            (
+                self.branch_event_resolved_targets,
+                snapshot.branch_event_resolved_targets(),
+            ),
+            (
+                self.branch_event_link_writes,
+                snapshot.branch_event_link_writes(),
+            ),
+            (
+                self.branch_event_without_link_writes,
+                snapshot.branch_event_without_link_writes(),
+            ),
+            (self.branch_event_squashes, snapshot.branch_event_squashes()),
+            (
+                self.branch_event_squashed_targets,
+                snapshot.branch_event_squashed_targets(),
+            ),
+            (
+                self.branch_event_squashed_targets_with_link_writes,
+                snapshot.branch_event_squashed_targets_with_link_writes(),
+            ),
+            (
+                self.branch_event_squashed_targets_without_link_writes,
+                snapshot.branch_event_squashed_targets_without_link_writes(),
+            ),
             (
                 self.fu_latency_instructions,
                 snapshot.fu_latency_instructions(),
@@ -1524,6 +1843,52 @@ impl RiscvO3RuntimeCpuStats {
                 (
                     repair_stats.direction_only,
                     snapshot.branch_repair_direction_only_kind(kind),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
+        }
+        for kind in BranchTargetKind::ALL {
+            let event_stats = self.branch_event_kinds[kind.index()];
+            for (stat, value) in [
+                (event_stats.kind, snapshot.branch_event_kind(kind)),
+                (event_stats.taken, snapshot.branch_event_taken_kind(kind)),
+                (
+                    event_stats.predicted_taken,
+                    snapshot.branch_event_predicted_taken_kind(kind),
+                ),
+                (
+                    event_stats.predicted_not_taken,
+                    snapshot.branch_event_predicted_not_taken_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target,
+                    snapshot.branch_event_predicted_target_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target_match,
+                    snapshot.branch_event_predicted_target_match_kind(kind),
+                ),
+                (
+                    event_stats.predicted_target_mismatch,
+                    snapshot.branch_event_predicted_target_mismatch_kind(kind),
+                ),
+                (
+                    event_stats.resolved_target,
+                    snapshot.branch_event_resolved_target_kind(kind),
+                ),
+                (
+                    event_stats.link_write,
+                    snapshot.branch_event_link_write_kind(kind),
+                ),
+                (event_stats.squash, snapshot.branch_event_squash_kind(kind)),
+                (
+                    event_stats.squashed_target_link_write,
+                    snapshot.branch_event_squashed_target_link_write_kind(kind),
+                ),
+                (
+                    event_stats.squashed_target_without_link_write,
+                    snapshot.branch_event_squashed_target_without_link_write_kind(kind),
                 ),
             ] {
                 registry.set_resettable_counter(stat, value)?;
@@ -1843,6 +2208,104 @@ fn register_o3_branch_repair_kind_counters(
                 registry,
                 prefix,
                 &format!("branch_repair_direction_only_kind.{stat_name}"),
+                "Count",
+            )?,
+        };
+    }
+    Ok(stats)
+}
+
+fn register_o3_branch_event_kind_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeBranchEventKindStats; BranchTargetKind::COUNT], StatsError> {
+    let mut stats = [RiscvO3RuntimeBranchEventKindStats {
+        kind: StatId::new(0),
+        taken: StatId::new(0),
+        predicted_taken: StatId::new(0),
+        predicted_not_taken: StatId::new(0),
+        predicted_target: StatId::new(0),
+        predicted_target_match: StatId::new(0),
+        predicted_target_mismatch: StatId::new(0),
+        resolved_target: StatId::new(0),
+        link_write: StatId::new(0),
+        squash: StatId::new(0),
+        squashed_target_link_write: StatId::new(0),
+        squashed_target_without_link_write: StatId::new(0),
+    }; BranchTargetKind::COUNT];
+    for kind in BranchTargetKind::ALL {
+        let stat_name = kind.canonical_stat_name();
+        stats[kind.index()] = RiscvO3RuntimeBranchEventKindStats {
+            kind: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.kind.{stat_name}"),
+                "Count",
+            )?,
+            taken: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.taken_kind.{stat_name}"),
+                "Count",
+            )?,
+            predicted_taken: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.predicted_taken_kind.{stat_name}"),
+                "Count",
+            )?,
+            predicted_not_taken: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.predicted_not_taken_kind.{stat_name}"),
+                "Count",
+            )?,
+            predicted_target: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.predicted_target_kind.{stat_name}"),
+                "Count",
+            )?,
+            predicted_target_match: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.predicted_target_match_kind.{stat_name}"),
+                "Count",
+            )?,
+            predicted_target_mismatch: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.predicted_target_mismatch_kind.{stat_name}"),
+                "Count",
+            )?,
+            resolved_target: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.resolved_target_kind.{stat_name}"),
+                "Count",
+            )?,
+            link_write: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.link_write_kind.{stat_name}"),
+                "Count",
+            )?,
+            squash: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.squash_kind.{stat_name}"),
+                "Count",
+            )?,
+            squashed_target_link_write: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.squashed_target_link_write_kind.{stat_name}"),
+                "Count",
+            )?,
+            squashed_target_without_link_write: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_event.squashed_target_without_link_write_kind.{stat_name}"),
                 "Count",
             )?,
         };
