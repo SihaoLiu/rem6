@@ -663,6 +663,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "--riscv-execution-mode detailed",
         "sim.host_actions.execution_mode_authority.mode.timing",
         "sim.host_actions.execution_mode_authority.mode.detailed",
+        "sim.host_actions.execution_mode_authority.target.cpu0.mode.functional",
+        "sim.host_actions.execution_mode_authority.target.cpu0.mode.timing",
         "sim.host_actions.execution_mode_authority.target.cpu0.mode.detailed",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.manifests",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.cleared_manifests",

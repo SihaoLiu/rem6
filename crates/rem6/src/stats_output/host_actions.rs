@@ -37,13 +37,16 @@ pub(super) fn emit_run_host_action_stats(
     }
 
     let mut execution_mode_authority_modes = BTreeMap::<&'static str, u64>::new();
+    let mut execution_mode_authority_targets_seen = BTreeSet::<String>::new();
     let mut execution_mode_authority_target_modes = BTreeMap::<(String, &'static str), u64>::new();
     for authority in &summary.execution_modes {
+        let target = stat_path_segment(&authority.target);
+        execution_mode_authority_targets_seen.insert(target.clone());
         *execution_mode_authority_modes
             .entry(authority.mode)
             .or_default() += 1;
         *execution_mode_authority_target_modes
-            .entry((stat_path_segment(&authority.target), authority.mode))
+            .entry((target, authority.mode))
             .or_default() += 1;
     }
 
@@ -276,7 +279,24 @@ pub(super) fn emit_run_host_action_stats(
             switch_previous_modes.get(mode).copied().unwrap_or_default(),
         )?;
     }
+    for target in &execution_mode_authority_targets_seen {
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_authority.target.{target}.mode.{mode}"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                execution_mode_authority_target_modes
+                    .get(&(target.clone(), mode))
+                    .copied()
+                    .unwrap_or_default(),
+            )?;
+        }
+    }
     for ((target, mode), count) in execution_mode_authority_target_modes {
+        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+            continue;
+        }
         increment_stat(
             stats,
             &format!("sim.host_actions.execution_mode_authority.target.{target}.mode.{mode}"),
