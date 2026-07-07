@@ -20,6 +20,8 @@ mod o3_branch_target_mismatch;
 mod o3_checkpoint_restore_json;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
+#[path = "o3_event_summary_json.rs"]
+mod o3_event_summary_json;
 #[path = "o3_fu_latency_stats.rs"]
 mod o3_fu_latency_stats;
 #[path = "o3_lsq_json.rs"]
@@ -60,6 +62,7 @@ use o3_checkpoint_restore_json::{
     Rem6O3CheckpointRestoreScope,
 };
 use o3_event_json::o3_event_to_json;
+use o3_event_summary_json::o3_event_summary_to_json;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
 use o3_lsq_json::o3_lsq_to_json;
 use o3_summary_json::{
@@ -448,32 +451,6 @@ impl Rem6O3TraceRecord {
             events,
         )
     }
-}
-
-fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
-    let records = events.len() as u64;
-    let first_tick = events.first().map_or(0, |event| event.tick());
-    let last_tick = events.last().map_or(0, |event| event.tick());
-    let max_rob_occupancy = events
-        .iter()
-        .map(|event| event.rob_occupancy())
-        .max()
-        .unwrap_or(0);
-    let max_lsq_occupancy = events
-        .iter()
-        .map(|event| event.lsq_occupancy())
-        .max()
-        .unwrap_or(0);
-    let max_rename_map_entries = events
-        .iter()
-        .map(|event| event.rename_map_entries())
-        .max()
-        .unwrap_or(0);
-    let system_events = events.iter().filter(|event| event.system_event()).count() as u64;
-    format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events}}}",
-        last_tick.saturating_sub(first_tick),
-    )
 }
 
 fn o3_branch_event_kind_json<F>(count: F) -> String

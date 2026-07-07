@@ -6238,6 +6238,51 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         json_record_u64(event_summary, "system_events"),
         system_events
     );
+    let rob_allocations = events
+        .iter()
+        .filter(|event| event.get("rob_allocated").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    let rob_commits = events
+        .iter()
+        .filter(|event| event.get("rob_committed").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    let rename_writes = events
+        .iter()
+        .map(|event| json_record_u64(event, "rename_writes"))
+        .sum::<u64>();
+    let lsq_loads = events
+        .iter()
+        .map(|event| json_record_u64(event, "lsq_loads"))
+        .sum::<u64>();
+    let lsq_stores = events
+        .iter()
+        .map(|event| json_record_u64(event, "lsq_stores"))
+        .sum::<u64>();
+    assert_eq!(
+        json_record_u64(event_summary, "rob_allocations"),
+        rob_allocations
+    );
+    assert_eq!(json_record_u64(event_summary, "rob_commits"), rob_commits);
+    assert_eq!(
+        json_record_u64(event_summary, "rename_writes"),
+        rename_writes
+    );
+    assert_eq!(json_record_u64(event_summary, "lsq_loads"), lsq_loads);
+    assert_eq!(json_record_u64(event_summary, "lsq_stores"), lsq_stores);
+    assert_eq!(
+        json_record_u64(event_summary, "lsq_operation_load"),
+        events
+            .iter()
+            .filter(|event| event.get("lsq_operation").and_then(Value::as_str) == Some("load"))
+            .count() as u64
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "lsq_operation_store"),
+        events
+            .iter()
+            .filter(|event| event.get("lsq_operation").and_then(Value::as_str) == Some("store"))
+            .count() as u64
+    );
     assert_eq!(json_record_str(&events[3], "lsq_operation"), "load");
     assert_eq!(json_record_str(&events[4], "lsq_operation"), "store");
 
