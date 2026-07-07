@@ -5084,6 +5084,80 @@ fn rem6_run_in_order_pipeline_models_vector_fault_only_first_later_line_fault() 
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_masked_vector_fault_only_first_inactive_later_line() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-fault-only-first-masked-e32-inactive-later-line",
+        &masked_fault_only_first_inactive_later_line_program(),
+        220,
+    );
+
+    assert_eq!(
+        simulation_trap(&direct_stats).as_deref(),
+        Some("environment_call"),
+        "masked fault-only-first e32 load should suppress the inactive later unmapped-line lane and reach the direct-memory success ecall\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        21,
+        "masked fault-only-first e32 load should load lane 0, preserve lane 1, and keep vl for the following store through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-fault-only-first-masked-e32-inactive-later-line",
+        &masked_fault_only_first_inactive_later_line_program(),
+        700,
+    );
+
+    assert_eq!(
+        simulation_trap(&cache_stats).as_deref(),
+        Some("environment_call"),
+        "cache-backed masked fault-only-first e32 load should suppress the inactive later unmapped-line lane and reach the success ecall\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        21,
+        "cache-backed masked fault-only-first e32 load should load lane 0, preserve lane 1, and keep vl for the following store through the top-level run path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_masked_vector_fault_only_first_active_later_line() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-fault-only-first-masked-e32-active-later-line",
+        &masked_fault_only_first_active_later_line_program(),
+        240,
+    );
+
+    assert_eq!(
+        simulation_trap(&direct_stats).as_deref(),
+        Some("environment_call"),
+        "masked fault-only-first e32 load should suppress the active later unmapped-line lane after loading lane 0 and reach the direct-memory success ecall\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        23,
+        "masked fault-only-first e32 load should reduce vl before the following direct-memory store when the active later lane faults\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-fault-only-first-masked-e32-active-later-line",
+        &masked_fault_only_first_active_later_line_program(),
+        760,
+    );
+
+    assert_eq!(
+        simulation_trap(&cache_stats).as_deref(),
+        Some("environment_call"),
+        "cache-backed masked fault-only-first e32 load should suppress the active later unmapped-line lane after loading lane 0 and reach the success ecall\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        23,
+        "cache-backed masked fault-only-first e32 load should reduce vl before the following store when the active later lane faults\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_fault_only_e32_m2_full_register_group_memory() {
     let normal_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-unit-stride-full-lmul2-load-store-fault-only-baseline",
@@ -8333,6 +8407,106 @@ fn fault_only_first_later_line_fault_program() -> Vec<u8> {
     while program.len() < DEST_OFFSET_BYTES as usize {
         program.push(0);
     }
+    program.extend_from_slice(&0x1111_1111_u32.to_le_bytes());
+    program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
+    program.extend_from_slice(&0xaaaa_5555_u32.to_le_bytes());
+    program.extend_from_slice(&0xbbbb_6666_u32.to_le_bytes());
+    program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
+    while program.len() < FAULT_ONLY_SOURCE_OFFSET_BYTES {
+        program.push(0);
+    }
+    program.extend_from_slice(&0xcafe_babe_u32.to_le_bytes());
+    program
+}
+
+fn masked_fault_only_first_inactive_later_line_program() -> Vec<u8> {
+    const MASK_OFFSET_BYTES: i32 = 256;
+    const DEST_OFFSET_BYTES: i32 = 264;
+    const INITIAL_VECTOR_OFFSET_BYTES: i32 = 272;
+    const FAULT_ONLY_SOURCE_OFFSET_BYTES: usize = 0xffc;
+
+    let words = [
+        u_type(0x1000, 10, 0x17),                            // auipc x10, 0x1
+        i_type(-4, 10, 0b000, 10, 0x13), // addi x10, x10, -4; source at end of mapped page
+        u_type(0, 12, 0x17),             // auipc x12, 0
+        i_type(MASK_OFFSET_BYTES - 8, 12, 0b000, 12, 0x13), // addi x12, x12, mask bits
+        u_type(0, 16, 0x17),             // auipc x16, 0
+        i_type(DEST_OFFSET_BYTES - 16, 16, 0b000, 16, 0x13), // addi x16, x16, dest
+        u_type(0, 17, 0x17),             // auipc x17, 0
+        i_type(INITIAL_VECTOR_OFFSET_BYTES - 24, 17, 0b000, 17, 0x13), // addi x17, x17, initial vector
+        i_type(2, 0, 0b000, 11, 0x13),                                 // addi x11, x0, 2
+        vsetvli_type(0xd0, 11, 5), // vsetvli x5, x11, e32, m1, ta, ma
+        vector_unit_stride_load_type(true, 0b110, 12, 0), // vle32.v v0, (x12)
+        vector_unit_stride_load_type(true, 0b110, 17, 1), // vle32.v v1, (x17)
+        vector_unit_stride_fault_only_load_type(false, 0b110, 10, 1), // vle32ff.v v1, (x10), v0.t
+        vector_unit_stride_store_type(true, 0b110, 16, 1), // vse32.v v1, (x16)
+        i_type(0, 16, 0b010, 20, 0x03), // lw x20, 0(x16)
+        i_type(0, 10, 0b010, 21, 0x03), // lw x21, 0(x10)
+        b_type(16, 21, 20, 0b001), // bne x20, x21, fail
+        i_type(4, 16, 0b010, 22, 0x03), // lw x22, 4(x16)
+        i_type(4, 17, 0b010, 23, 0x03), // lw x23, 4(x17)
+        b_type(8, 23, 22, 0b001),  // bne x22, x23, fail
+        0x0000_0073,               // ecall
+        0x0000_0000,               // fail: invalid instruction
+    ];
+
+    let mut program = riscv64_program(&words);
+    while program.len() < MASK_OFFSET_BYTES as usize {
+        program.push(0);
+    }
+    program.extend_from_slice(&0x0000_0001_u32.to_le_bytes());
+    program.extend_from_slice(&0x0000_0000_u32.to_le_bytes());
+    program.extend_from_slice(&0x1111_1111_u32.to_le_bytes());
+    program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
+    program.extend_from_slice(&0xaaaa_5555_u32.to_le_bytes());
+    program.extend_from_slice(&0xbbbb_6666_u32.to_le_bytes());
+    while program.len() < FAULT_ONLY_SOURCE_OFFSET_BYTES {
+        program.push(0);
+    }
+    program.extend_from_slice(&0xcafe_babe_u32.to_le_bytes());
+    program
+}
+
+fn masked_fault_only_first_active_later_line_program() -> Vec<u8> {
+    const MASK_OFFSET_BYTES: i32 = 256;
+    const DEST_OFFSET_BYTES: i32 = 264;
+    const INITIAL_VECTOR_OFFSET_BYTES: i32 = 272;
+    const EXPECTED_LANE1_OFFSET_BYTES: i32 = 280;
+    const FAULT_ONLY_SOURCE_OFFSET_BYTES: usize = 0xffc;
+
+    let words = [
+        u_type(0x1000, 10, 0x17),                            // auipc x10, 0x1
+        i_type(-4, 10, 0b000, 10, 0x13), // addi x10, x10, -4; source at end of mapped page
+        u_type(0, 12, 0x17),             // auipc x12, 0
+        i_type(MASK_OFFSET_BYTES - 8, 12, 0b000, 12, 0x13), // addi x12, x12, mask bits
+        u_type(0, 16, 0x17),             // auipc x16, 0
+        i_type(DEST_OFFSET_BYTES - 16, 16, 0b000, 16, 0x13), // addi x16, x16, dest
+        u_type(0, 17, 0x17),             // auipc x17, 0
+        i_type(INITIAL_VECTOR_OFFSET_BYTES - 24, 17, 0b000, 17, 0x13), // addi x17, x17, initial vector
+        u_type(0, 18, 0x17),                                           // auipc x18, 0
+        i_type(EXPECTED_LANE1_OFFSET_BYTES - 32, 18, 0b000, 18, 0x13), // addi x18, x18, expected lane 1
+        i_type(2, 0, 0b000, 11, 0x13),                                 // addi x11, x0, 2
+        vsetvli_type(0xd0, 11, 5), // vsetvli x5, x11, e32, m1, ta, ma
+        vector_unit_stride_load_type(true, 0b110, 12, 0), // vle32.v v0, (x12)
+        vector_unit_stride_load_type(true, 0b110, 17, 1), // vle32.v v1, (x17)
+        vector_unit_stride_fault_only_load_type(false, 0b110, 10, 1), // vle32ff.v v1, (x10), v0.t
+        vector_unit_stride_store_type(true, 0b110, 16, 1), // vse32.v v1, (x16)
+        i_type(0, 16, 0b010, 20, 0x03), // lw x20, 0(x16)
+        i_type(0, 10, 0b010, 21, 0x03), // lw x21, 0(x10)
+        b_type(16, 21, 20, 0b001), // bne x20, x21, fail
+        i_type(4, 16, 0b010, 22, 0x03), // lw x22, 4(x16)
+        i_type(0, 18, 0b010, 23, 0x03), // lw x23, 0(x18)
+        b_type(8, 23, 22, 0b001),  // bne x22, x23, fail
+        0x0000_0073,               // ecall
+        0x0000_0000,               // fail: invalid instruction
+    ];
+
+    let mut program = riscv64_program(&words);
+    while program.len() < MASK_OFFSET_BYTES as usize {
+        program.push(0);
+    }
+    program.extend_from_slice(&0x0000_0003_u32.to_le_bytes());
+    program.extend_from_slice(&0x0000_0000_u32.to_le_bytes());
     program.extend_from_slice(&0x1111_1111_u32.to_le_bytes());
     program.extend_from_slice(&0x2222_2222_u32.to_le_bytes());
     program.extend_from_slice(&0xaaaa_5555_u32.to_le_bytes());

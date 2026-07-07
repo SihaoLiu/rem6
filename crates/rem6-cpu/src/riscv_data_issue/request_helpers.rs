@@ -132,7 +132,6 @@ pub(crate) fn fault_only_first_line_prefix(
     let MemoryAccessKind::VectorLoadUnitStride {
         width,
         byte_len: _,
-        byte_mask: None,
         fault_only_first: true,
         ..
     } = access
@@ -158,10 +157,23 @@ pub(crate) fn fault_only_first_line_prefix(
         })
     })?;
     let mut access = access.clone();
-    let MemoryAccessKind::VectorLoadUnitStride { byte_len, .. } = &mut access else {
+    let prefix_end = byte_offset.checked_add(prefix_len).ok_or_else(|| {
+        RiscvCpuError::Memory(MemoryError::AccessSizeTooLarge {
+            size: AccessSize::new(prefix_bytes).expect("nonzero prefix size"),
+        })
+    })?;
+    let MemoryAccessKind::VectorLoadUnitStride {
+        byte_len,
+        byte_mask,
+        ..
+    } = &mut access
+    else {
         unreachable!("matched vector unit-stride load above");
     };
-    *byte_len = (*byte_len).min(prefix_len);
+    *byte_len = (*byte_len).min(prefix_end);
+    if let Some(byte_mask) = byte_mask {
+        byte_mask.truncate(*byte_len);
+    }
 
     Ok(Some(FaultOnlyFirstLinePrefix {
         access,
@@ -317,6 +329,7 @@ fn active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
 pub(crate) fn normalized_masked_load_data<'a>(
     expected_len: usize,
     byte_mask: Option<&[bool]>,
+    request_byte_offset: usize,
     data: &'a [u8],
 ) -> Cow<'a, [u8]> {
     if data.len() == expected_len {
@@ -325,15 +338,18 @@ pub(crate) fn normalized_masked_load_data<'a>(
     let Some(byte_mask) = byte_mask else {
         return Cow::Borrowed(data);
     };
-    let Some((start, end)) = active_byte_span(byte_mask) else {
+    if byte_mask.len() != expected_len {
         return Cow::Borrowed(data);
     };
-    if byte_mask.len() != expected_len || end - start != data.len() {
+    let Some(request_end) = request_byte_offset.checked_add(data.len()) else {
+        return Cow::Borrowed(data);
+    };
+    if request_end > expected_len {
         return Cow::Borrowed(data);
     }
 
     let mut expanded = vec![0; expected_len];
-    expanded[start..end].copy_from_slice(data);
+    expanded[request_byte_offset..request_end].copy_from_slice(data);
     Cow::Owned(expanded)
 }
 
@@ -939,6 +955,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(checks, vec![pma_check(0x8004, 16)]);
+    }
+
+    #[test]
+    fn normalized_masked_load_data_expands_prefixed_response_from_request_offset() {
+        let mask = lane_mask(&[false, true, false], MemoryWidth::Word.bytes());
+        let data = [
+            0x11, 0x12, 0x13, 0x14, // active lane 1
+            0x21, 0x22, 0x23, 0x24, // inactive lane 2 included in the issued prefix
+        ];
+
+        let normalized = normalized_masked_load_data(12, Some(&mask), 4, &data);
+
+        assert_eq!(normalized.len(), 12);
+        assert_eq!(&normalized[4..12], &data);
     }
 
     #[test]

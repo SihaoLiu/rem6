@@ -80,7 +80,8 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
-            if mask != RiscvVectorMaskMode::Unmasked
+            if unsupported_masked_fault_only_unit_stride_shape(mask, width, &plan)
+                || masked_load_overlaps_v0(mask, vd, plan.group_registers)
                 || !supported_fault_only_unit_stride_load_shape(width, &plan)
             {
                 return Err(());
@@ -333,6 +334,14 @@ fn supported_fault_only_unit_stride_load_shape(
         || (width == MemoryWidth::Word
             && matches!(plan.group_registers, 2 | 4 | 8)
             && plan.byte_len == plan.group_registers * RISCV_VECTOR_REGISTER_BYTES)
+}
+
+fn unsupported_masked_fault_only_unit_stride_shape(
+    mask: RiscvVectorMaskMode,
+    width: MemoryWidth,
+    plan: &UnitStrideAccessPlan,
+) -> bool {
+    mask.is_masked() && !(width == MemoryWidth::Word && plan.group_registers == 1)
 }
 
 fn unit_stride_load_memory_access_with_plan(

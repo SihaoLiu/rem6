@@ -1030,7 +1030,12 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
-            let data = normalized_masked_load_data(*byte_len, byte_mask.as_deref(), data);
+            let data = normalized_masked_load_data(
+                *byte_len,
+                byte_mask.as_deref(),
+                access.request_byte_offset,
+                data,
+            );
             assert_eq!(*byte_len, data.len(), "vector load response payload width");
             let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
             if let Some(byte_mask) = byte_mask {
@@ -1066,7 +1071,12 @@ fn record_load_completion(
             ..
         } => {
             let data = data.expect(missing_data);
-            let data = normalized_masked_load_data(*byte_len, byte_mask.as_deref(), data);
+            let data = normalized_masked_load_data(
+                *byte_len,
+                byte_mask.as_deref(),
+                access.request_byte_offset,
+                data,
+            );
             assert_eq!(*byte_len, data.len(), "segment vector load response width");
             if let Some(byte_mask) = byte_mask {
                 assert_eq!(
