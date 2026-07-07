@@ -304,6 +304,38 @@ fn append_gem5_o3_json_alias_stats(
                 alias_suffix,
             );
         }
+        append_gem5_o3_branch_repair_json_alias_stats(snapshot, records, next_id, &alias_prefix);
+    }
+}
+
+fn append_gem5_o3_branch_repair_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    alias_prefix: &str,
+) {
+    for (source_suffix, alias_suffix) in [
+        (
+            "iew.branchRepair.targetlessMismatch",
+            "iew.branchRepair_0::TargetlessMismatch",
+        ),
+        (
+            "iew.branchRepair.directionOnly",
+            "iew.branchRepair_0::DirectionOnly",
+        ),
+        (
+            "iew.branchRepair.wrongTarget",
+            "iew.branchRepair_0::WrongTarget",
+        ),
+        ("iew.branchRepair.total", "iew.branchRepair_0::total"),
+    ] {
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!("{alias_prefix}.{source_suffix}"),
+            &format!("{alias_prefix}.{alias_suffix}"),
+        );
     }
 }
 

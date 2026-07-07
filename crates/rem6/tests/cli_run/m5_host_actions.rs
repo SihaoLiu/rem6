@@ -5474,9 +5474,13 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     );
     for (path, value) in [
         ("system.cpu.iew.branchRepair.targetlessMismatch", 1),
+        ("system.cpu.iew.branchRepair_0::TargetlessMismatch", 1),
         ("system.cpu.iew.branchRepair.directionOnly", 2),
+        ("system.cpu.iew.branchRepair_0::DirectionOnly", 2),
         ("system.cpu.iew.branchRepair.wrongTarget", 0),
+        ("system.cpu.iew.branchRepair_0::WrongTarget", 0),
         ("system.cpu.iew.branchRepair.total", branch_mispredicts),
+        ("system.cpu.iew.branchRepair_0::total", branch_mispredicts),
     ] {
         assert_json_stat(&json, path, "Count", value, "monotonic");
     }
@@ -5901,6 +5905,10 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.directionOnly");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.wrongTarget");
     assert_json_stat_absent(&json, "system.cpu.iew.branchRepair.total");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair_0::TargetlessMismatch");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair_0::DirectionOnly");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair_0::WrongTarget");
+    assert_json_stat_absent(&json, "system.cpu.iew.branchRepair_0::total");
     assert_json_stat_absent(&json, "system.cpu.iew.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.rob.maxOccupancy");
