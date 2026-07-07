@@ -223,6 +223,25 @@ pub(super) fn in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_records_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            if record.stall_cause() == Some(cause) {
+                summary.saturating_add(stage_presence_summary_from_instruction_groups(&[
+                    record.plan().resource_blocked(),
+                    record.plan().ordering_blocked(),
+                ]))
+            } else {
+                summary
+            }
+        },
+    )
+}
+
 pub(super) fn in_order_pipeline_stage_ordering_blocked(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -327,6 +346,12 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed(
 pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_branch_prediction_records(core)
+}
+
+pub(super) fn in_order_pipeline_stage_branch_prediction_records(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),
         |summary, record| {
@@ -341,6 +366,12 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_trap_redirect_records(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_records_for_redirect_cause(core, InOrderPipelineRedirectCause::Trap)
+}
+
 pub(super) fn in_order_pipeline_stage_trap_redirect_flushed(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -350,9 +381,15 @@ pub(super) fn in_order_pipeline_stage_trap_redirect_flushed(
 pub(super) fn in_order_pipeline_stage_trap_redirect_flushed_cycles(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
-    in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
+    in_order_pipeline_stage_trap_redirect_records(core)
+}
+
+pub(super) fn in_order_pipeline_stage_interrupt_redirect_records(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    in_order_pipeline_stage_records_for_redirect_cause(
         core,
-        InOrderPipelineRedirectCause::Trap,
+        InOrderPipelineRedirectCause::Interrupt,
     )
 }
 
@@ -368,10 +405,7 @@ pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed(
 pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed_cycles(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
-    in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
-        core,
-        InOrderPipelineRedirectCause::Interrupt,
-    )
+    in_order_pipeline_stage_interrupt_redirect_records(core)
 }
 
 fn in_order_pipeline_stage_flushed_for_redirect_cause(
@@ -389,7 +423,7 @@ fn in_order_pipeline_stage_flushed_for_redirect_cause(
     )
 }
 
-fn in_order_pipeline_stage_flushed_cycles_for_redirect_cause(
+fn in_order_pipeline_stage_records_for_redirect_cause(
     core: &RiscvCore,
     cause: InOrderPipelineRedirectCause,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -485,6 +519,22 @@ fn stage_presence_summary_from_instructions(
             .iter()
             .any(|instruction| instruction.stage() == stage)
         {
+            summary.record_stage(stage);
+        }
+    }
+    summary
+}
+
+fn stage_presence_summary_from_instruction_groups(
+    groups: &[&[InOrderPipelineInstruction]],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for stage in InOrderPipelineStage::ALL {
+        if groups.iter().any(|instructions| {
+            instructions
+                .iter()
+                .any(|instruction| instruction.stage() == stage)
+        }) {
             summary.record_stage(stage);
         }
     }

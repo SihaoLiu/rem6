@@ -20,19 +20,23 @@ use crate::pipeline_stats::{
     in_order_pipeline_fetch_wait_cycles, in_order_pipeline_run_summary,
     in_order_pipeline_stage_advanced, in_order_pipeline_stage_advanced_cycles,
     in_order_pipeline_stage_branch_prediction_flushed,
-    in_order_pipeline_stage_branch_prediction_flushed_cycles, in_order_pipeline_stage_flushed,
+    in_order_pipeline_stage_branch_prediction_flushed_cycles,
+    in_order_pipeline_stage_branch_prediction_records, in_order_pipeline_stage_flushed,
     in_order_pipeline_stage_flushed_cycles, in_order_pipeline_stage_in_flight,
     in_order_pipeline_stage_interrupt_redirect_flushed,
     in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
-    in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
-    in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_ordering_blocked_cycles,
+    in_order_pipeline_stage_interrupt_redirect_records, in_order_pipeline_stage_max_in_flight,
+    in_order_pipeline_stage_occupied_cycles, in_order_pipeline_stage_ordering_blocked,
+    in_order_pipeline_stage_ordering_blocked_cycles,
     in_order_pipeline_stage_ordering_blocked_cycles_for_stall_cause,
     in_order_pipeline_stage_ordering_blocked_for_stall_cause,
-    in_order_pipeline_stage_resource_blocked, in_order_pipeline_stage_resource_blocked_cycles,
+    in_order_pipeline_stage_records_for_stall_cause, in_order_pipeline_stage_resource_blocked,
+    in_order_pipeline_stage_resource_blocked_cycles,
     in_order_pipeline_stage_resource_blocked_cycles_for_stall_cause,
     in_order_pipeline_stage_resource_blocked_for_stall_cause, in_order_pipeline_stage_retired,
     in_order_pipeline_stage_retired_cycles, in_order_pipeline_stage_trap_redirect_flushed,
-    in_order_pipeline_stage_trap_redirect_flushed_cycles, in_order_pipeline_stage_widths,
+    in_order_pipeline_stage_trap_redirect_flushed_cycles,
+    in_order_pipeline_stage_trap_redirect_records, in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::{
@@ -172,6 +176,10 @@ pub(super) fn execution_summary(
         let pipeline_stage_resource_blocked = in_order_pipeline_stage_resource_blocked(&core);
         let pipeline_stage_resource_blocked_cycles =
             in_order_pipeline_stage_resource_blocked_cycles(&core);
+        let pipeline_fetch_wait_stage_records = in_order_pipeline_stage_records_for_stall_cause(
+            &core,
+            InOrderPipelineStallCause::FetchWait,
+        );
         let pipeline_fetch_wait_stage_resource_blocked =
             in_order_pipeline_stage_resource_blocked_for_stall_cause(
                 &core,
@@ -192,6 +200,10 @@ pub(super) fn execution_summary(
                 &core,
                 InOrderPipelineStallCause::FetchWait,
             );
+        let pipeline_data_wait_stage_records = in_order_pipeline_stage_records_for_stall_cause(
+            &core,
+            InOrderPipelineStallCause::DataWait,
+        );
         let pipeline_data_wait_stage_resource_blocked =
             in_order_pipeline_stage_resource_blocked_for_stall_cause(
                 &core,
@@ -212,6 +224,10 @@ pub(super) fn execution_summary(
                 &core,
                 InOrderPipelineStallCause::DataWait,
             );
+        let pipeline_execute_wait_stage_records = in_order_pipeline_stage_records_for_stall_cause(
+            &core,
+            InOrderPipelineStallCause::ExecuteWait,
+        );
         let pipeline_execute_wait_stage_resource_blocked =
             in_order_pipeline_stage_resource_blocked_for_stall_cause(
                 &core,
@@ -237,14 +253,20 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_ordering_blocked_cycles(&core);
         let pipeline_stage_flushed = in_order_pipeline_stage_flushed(&core);
         let pipeline_stage_flushed_cycles = in_order_pipeline_stage_flushed_cycles(&core);
+        let pipeline_stage_branch_prediction_records =
+            in_order_pipeline_stage_branch_prediction_records(&core);
         let pipeline_stage_branch_prediction_flushed =
             in_order_pipeline_stage_branch_prediction_flushed(&core);
         let pipeline_stage_branch_prediction_flushed_cycles =
             in_order_pipeline_stage_branch_prediction_flushed_cycles(&core);
+        let pipeline_stage_trap_redirect_records =
+            in_order_pipeline_stage_trap_redirect_records(&core);
         let pipeline_stage_trap_redirect_flushed =
             in_order_pipeline_stage_trap_redirect_flushed(&core);
         let pipeline_stage_trap_redirect_flushed_cycles =
             in_order_pipeline_stage_trap_redirect_flushed_cycles(&core);
+        let pipeline_stage_interrupt_redirect_records =
+            in_order_pipeline_stage_interrupt_redirect_records(&core);
         let pipeline_stage_interrupt_redirect_flushed =
             in_order_pipeline_stage_interrupt_redirect_flushed(&core);
         let pipeline_stage_interrupt_redirect_flushed_cycles =
@@ -289,6 +311,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_retired_cycles: pipeline_stage_retired_cycles,
             in_order_pipeline_stage_resource_blocked: pipeline_stage_resource_blocked,
             in_order_pipeline_stage_resource_blocked_cycles: pipeline_stage_resource_blocked_cycles,
+            in_order_pipeline_fetch_wait_stage_records: pipeline_fetch_wait_stage_records,
             in_order_pipeline_fetch_wait_stage_resource_blocked:
                 pipeline_fetch_wait_stage_resource_blocked,
             in_order_pipeline_fetch_wait_stage_resource_blocked_cycles:
@@ -297,6 +320,7 @@ pub(super) fn execution_summary(
                 pipeline_fetch_wait_stage_ordering_blocked,
             in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles:
                 pipeline_fetch_wait_stage_ordering_blocked_cycles,
+            in_order_pipeline_data_wait_stage_records: pipeline_data_wait_stage_records,
             in_order_pipeline_data_wait_stage_resource_blocked:
                 pipeline_data_wait_stage_resource_blocked,
             in_order_pipeline_data_wait_stage_resource_blocked_cycles:
@@ -305,6 +329,7 @@ pub(super) fn execution_summary(
                 pipeline_data_wait_stage_ordering_blocked,
             in_order_pipeline_data_wait_stage_ordering_blocked_cycles:
                 pipeline_data_wait_stage_ordering_blocked_cycles,
+            in_order_pipeline_execute_wait_stage_records: pipeline_execute_wait_stage_records,
             in_order_pipeline_execute_wait_stage_resource_blocked:
                 pipeline_execute_wait_stage_resource_blocked,
             in_order_pipeline_execute_wait_stage_resource_blocked_cycles:
@@ -317,13 +342,18 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_ordering_blocked_cycles: pipeline_stage_ordering_blocked_cycles,
             in_order_pipeline_stage_flushed: pipeline_stage_flushed,
             in_order_pipeline_stage_flushed_cycles: pipeline_stage_flushed_cycles,
+            in_order_pipeline_stage_branch_prediction_records:
+                pipeline_stage_branch_prediction_records,
             in_order_pipeline_stage_branch_prediction_flushed:
                 pipeline_stage_branch_prediction_flushed,
             in_order_pipeline_stage_branch_prediction_flushed_cycles:
                 pipeline_stage_branch_prediction_flushed_cycles,
+            in_order_pipeline_stage_trap_redirect_records: pipeline_stage_trap_redirect_records,
             in_order_pipeline_stage_trap_redirect_flushed: pipeline_stage_trap_redirect_flushed,
             in_order_pipeline_stage_trap_redirect_flushed_cycles:
                 pipeline_stage_trap_redirect_flushed_cycles,
+            in_order_pipeline_stage_interrupt_redirect_records:
+                pipeline_stage_interrupt_redirect_records,
             in_order_pipeline_stage_interrupt_redirect_flushed:
                 pipeline_stage_interrupt_redirect_flushed,
             in_order_pipeline_stage_interrupt_redirect_flushed_cycles:

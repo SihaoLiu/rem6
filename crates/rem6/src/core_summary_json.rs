@@ -52,13 +52,15 @@ fn in_order_pipeline_stage_summary_json(summary: Rem6InOrderPipelineStageSummary
 }
 
 fn in_order_pipeline_stall_cause_stage_summary_json(
+    records: Rem6InOrderPipelineStageSummary,
     resource_blocked: Rem6InOrderPipelineStageSummary,
     resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
     ordering_blocked: Rem6InOrderPipelineStageSummary,
     ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
     format!(
-        "{{\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{},\"stage_ordering_blocked_cycles\":{}}}",
+        "{{\"stage_records\":{},\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{},\"stage_ordering_blocked_cycles\":{}}}",
+        in_order_pipeline_stage_summary_json(records),
         in_order_pipeline_stage_summary_json(resource_blocked),
         in_order_pipeline_stage_summary_json(resource_blocked_cycles),
         in_order_pipeline_stage_summary_json(ordering_blocked),
@@ -67,11 +69,13 @@ fn in_order_pipeline_stall_cause_stage_summary_json(
 }
 
 fn in_order_pipeline_flush_redirect_cause_stage_summary_json(
+    records: Rem6InOrderPipelineStageSummary,
     flushed: Rem6InOrderPipelineStageSummary,
     flushed_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
     format!(
-        "{{\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
+        "{{\"stage_records\":{},\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
+        in_order_pipeline_stage_summary_json(records),
         in_order_pipeline_stage_summary_json(flushed),
         in_order_pipeline_stage_summary_json(flushed_cycles)
     )
@@ -628,18 +632,21 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_resource_blocked_cycles,
         );
         let stall_cause_fetch_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_fetch_wait_stage_records,
             self.in_order_pipeline_fetch_wait_stage_resource_blocked,
             self.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
             self.in_order_pipeline_fetch_wait_stage_ordering_blocked,
             self.in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_data_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_data_wait_stage_records,
             self.in_order_pipeline_data_wait_stage_resource_blocked,
             self.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
             self.in_order_pipeline_data_wait_stage_ordering_blocked,
             self.in_order_pipeline_data_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_execute_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_execute_wait_stage_records,
             self.in_order_pipeline_execute_wait_stage_resource_blocked,
             self.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
             self.in_order_pipeline_execute_wait_stage_ordering_blocked,
@@ -657,6 +664,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_branch_prediction_flushed_cycles,
         );
         let cause_branch_prediction = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_stage_branch_prediction_records,
             self.in_order_pipeline_stage_branch_prediction_flushed,
             self.in_order_pipeline_stage_branch_prediction_flushed_cycles,
         );
@@ -667,6 +675,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
         );
         let cause_trap_redirect = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_stage_trap_redirect_records,
             self.in_order_pipeline_stage_trap_redirect_flushed,
             self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
         );
@@ -677,6 +686,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
         );
         let cause_interrupt_redirect = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_stage_interrupt_redirect_records,
             self.in_order_pipeline_stage_interrupt_redirect_flushed,
             self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
         );

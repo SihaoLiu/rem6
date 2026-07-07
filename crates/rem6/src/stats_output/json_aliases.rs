@@ -359,6 +359,7 @@ fn append_gem5_in_order_pipeline_json_alias_stats(
         ] {
             for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                 for (source_name, alias_name) in [
+                    ("records", "records"),
                     ("resource_blocked", "resourceBlocked"),
                     ("resource_blocked_cycles", "resourceBlockedCycles"),
                     ("ordering_blocked", "orderingBlocked"),
@@ -388,9 +389,11 @@ fn append_gem5_in_order_pipeline_json_alias_stats(
                 ("trap_redirect", "trapRedirect"),
             ] {
                 for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
-                    for (source_name, alias_name) in
-                        [("flushed", "flushed"), ("flushed_cycles", "flushedCycles")]
-                    {
+                    for (source_name, alias_name) in [
+                        ("records", "records"),
+                        ("flushed", "flushed"),
+                        ("flushed_cycles", "flushedCycles"),
+                    ] {
                         append_gem5_json_alias_from_paths(
                             snapshot,
                             records,

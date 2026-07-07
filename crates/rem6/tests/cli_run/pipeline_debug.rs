@@ -63,6 +63,9 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked");
     let data_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "resource_blocked_cycles");
+    let data_wait_stage_records =
+        in_order_stall_cause_stage_metric_values(&json, "data_wait", "records");
+    assert_in_order_stall_cause_stage_aliases(&json, "data_wait", "dataWait", "records", "records");
     assert_in_order_stall_cause_stage_aliases(
         &json,
         "data_wait",
@@ -104,6 +107,10 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         data_wait_stage_cycles
     );
     assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "data_wait", "records"),
+        data_wait_stage_records
+    );
+    assert_eq!(
         data_wait_stage_cycles.iter().sum::<u64>(),
         data_wait_cycles,
         "data-wait stage-cycle matrix should account for all data wait cycles: {data_wait_stage_cycles:?}"
@@ -116,12 +123,32 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         data_wait_stage_cycles.iter().any(|cycles| *cycles > 0),
         "data-wait run should attribute at least one blocked stage cycle: {data_wait_stage_cycles:?}"
     );
+    assert!(
+        data_wait_stage_records.iter().any(|records| *records > 0),
+        "data-wait run should attribute active stage records: {data_wait_stage_records:?}"
+    );
+    assert!(
+        data_wait_stage_records
+            .iter()
+            .zip(data_wait_stage_cycles.iter())
+            .all(|(records, cycles)| records <= cycles),
+        "data-wait record lanes should not exceed stalled cycle lanes: records={data_wait_stage_records:?} cycles={data_wait_stage_cycles:?}"
+    );
 
     let fetch_wait_cycles = json_stat_value(&json, "sim.cpu0.pipeline.in_order.fetch_wait_cycles");
     let fetch_wait_stage_blocked =
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked");
     let fetch_wait_stage_cycles =
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "resource_blocked_cycles");
+    let fetch_wait_stage_records =
+        in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "records");
+    assert_in_order_stall_cause_stage_aliases(
+        &json,
+        "fetch_wait",
+        "fetchWait",
+        "records",
+        "records",
+    );
     assert_in_order_stall_cause_stage_aliases(
         &json,
         "fetch_wait",
@@ -162,9 +189,14 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         ),
         fetch_wait_stage_cycles
     );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "fetch_wait", "records"),
+        fetch_wait_stage_records
+    );
     if fetch_wait_cycles == 0 {
         assert_eq!(fetch_wait_stage_blocked, [0; 5]);
         assert_eq!(fetch_wait_stage_cycles, [0; 5]);
+        assert_eq!(fetch_wait_stage_records, [0; 5]);
     } else {
         assert!(
             fetch_wait_stage_blocked.iter().any(|blocked| *blocked > 0),
@@ -173,6 +205,10 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
         assert!(
             fetch_wait_stage_cycles.iter().any(|cycles| *cycles > 0),
             "fetch-wait run should attribute stage cycles when aggregate wait is nonzero: {fetch_wait_stage_cycles:?}"
+        );
+        assert!(
+            fetch_wait_stage_records.iter().any(|records| *records > 0),
+            "fetch-wait run should attribute active stage records when aggregate wait is nonzero: {fetch_wait_stage_records:?}"
         );
     }
 
@@ -229,6 +265,14 @@ fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
             "execute_wait",
             "resource_blocked_cycles"
         ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "records"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "execute_wait", "records"),
         [0; 5]
     );
 }
@@ -351,6 +395,8 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
         in_order_stall_cause_stage_metric_values(&json, "execute_wait", "ordering_blocked");
     let execute_wait_ordering_cycles =
         in_order_stall_cause_stage_metric_values(&json, "execute_wait", "ordering_blocked_cycles");
+    let execute_wait_records =
+        in_order_stall_cause_stage_metric_values(&json, "execute_wait", "records");
     assert_eq!(
         in_order_artifact_stall_cause_stage_metric_values(
             &json,
@@ -383,6 +429,10 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
         ),
         execute_wait_ordering_cycles
     );
+    assert_eq!(
+        in_order_artifact_stall_cause_stage_metric_values(&json, "execute_wait", "records"),
+        execute_wait_records
+    );
     assert!(
         execute_wait_resource_cycles.iter().any(|cycles| *cycles > 0),
         "execute-wait run should attribute resource-blocked stage cycles: {execute_wait_resource_cycles:?}"
@@ -394,6 +444,10 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
     assert!(
         execute_wait_ordering_cycles.iter().any(|cycles| *cycles > 0),
         "execute-wait run should attribute younger ordering-blocked stage cycles: {execute_wait_ordering_cycles:?}"
+    );
+    assert!(
+        execute_wait_records.iter().any(|records| *records > 0),
+        "execute-wait run should attribute active stage records: {execute_wait_records:?}"
     );
     assert_eq!(
         in_order_stall_cause_stage_metric_values(&json, "data_wait", "ordering_blocked"),
@@ -439,6 +493,20 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
                 ),
             ),
             ordering_blocked_cycles
+        );
+    }
+    for (stage, records) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(execute_wait_records)
+    {
+        assert_eq!(
+            text_stat_value(
+                &text_stdout,
+                &format!(
+                    "system.cpu.pipeline.inOrder.stallCause.executeWait.stage.{stage}.records"
+                ),
+            ),
+            records
         );
     }
 }
@@ -625,6 +693,8 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
         in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "flushed");
     let flush_cause_branch_prediction_flushed_cycles =
         in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "flushed_cycles");
+    let flush_cause_branch_prediction_records =
+        in_order_flush_cause_stage_metric_values(&json, "branch_prediction", "records");
     assert_in_order_cause_stage_alias_family(&json, "flush_cause", "flushCause");
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
@@ -643,6 +713,15 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             "flushed_cycles"
         ),
         flush_cause_branch_prediction_flushed_cycles
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "branch_prediction",
+            "records"
+        ),
+        flush_cause_branch_prediction_records
     );
     assert_eq!(
         flush_cause_branch_prediction_flushed,
@@ -674,6 +753,19 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             .sum::<u64>()
             <= branch_prediction_flushes
     );
+    assert!(
+        flush_cause_branch_prediction_records
+            .iter()
+            .any(|records| *records > 0),
+        "branch run should attribute branch-prediction active records by stage: {flush_cause_branch_prediction_records:?}"
+    );
+    assert!(
+        flush_cause_branch_prediction_records
+            .iter()
+            .zip(flush_cause_branch_prediction_flushed_cycles.iter())
+            .all(|(records, cycles)| records <= cycles),
+        "branch run record lanes should not exceed flushed cycle lanes: records={flush_cause_branch_prediction_records:?} cycles={flush_cause_branch_prediction_flushed_cycles:?}"
+    );
 
     assert_eq!(
         in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "flushed"),
@@ -698,6 +790,19 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             "flush_cause",
             "trap_redirect",
             "flushed_cycles"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "records"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &json,
+            "flush_cause",
+            "trap_redirect",
+            "records"
         ),
         [0; 5]
     );
@@ -764,6 +869,8 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
     assert_in_order_cause_stage_alias_family(&branch_json, "redirect_cause", "redirectCause");
     let branch_redirect_cause_flushed =
         in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "flushed");
+    let branch_redirect_cause_records =
+        in_order_redirect_cause_stage_metric_values(&branch_json, "branch_prediction", "records");
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
             &branch_json,
@@ -789,11 +896,26 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         branch_redirect_cause_cycles
     );
     assert_eq!(branch_redirect_cause_cycles, branch_stage_flushed_cycles);
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
+            "branch_prediction",
+            "records"
+        ),
+        branch_redirect_cause_records
+    );
     assert!(
         branch_redirect_cause_cycles
             .iter()
             .any(|cycles| *cycles > 0),
         "branch run should attribute redirect-cause flushed cycles by stage: {branch_redirect_cause_cycles:?}"
+    );
+    assert!(
+        branch_redirect_cause_records
+            .iter()
+            .any(|records| *records > 0),
+        "branch run should attribute redirect-cause active records by stage: {branch_redirect_cause_records:?}"
     );
     assert_eq!(
         in_order_redirect_cause_stage_metric_values(&branch_json, "trap_redirect", "flushed"),
@@ -805,6 +927,19 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "redirect_cause",
             "trap_redirect",
             "flushed"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&branch_json, "trap_redirect", "records"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &branch_json,
+            "redirect_cause",
+            "trap_redirect",
+            "records"
         ),
         [0; 5]
     );
@@ -891,6 +1026,8 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
     assert_in_order_cause_stage_alias_family(&trap_json, "redirect_cause", "redirectCause");
     let trap_redirect_cause_flushed =
         in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "flushed");
+    let trap_redirect_cause_records =
+        in_order_redirect_cause_stage_metric_values(&trap_json, "trap_redirect", "records");
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
             &trap_json,
@@ -913,11 +1050,24 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         trap_redirect_cause_cycles
     );
     assert_eq!(trap_redirect_cause_cycles, trap_stage_flushed_cycles);
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
+            "trap_redirect",
+            "records"
+        ),
+        trap_redirect_cause_records
+    );
     assert!(
         trap_redirect_cause_cycles
             .iter()
             .any(|cycles| *cycles > 0),
         "trap run should attribute redirect-cause flushed cycles by stage: {trap_redirect_cause_cycles:?}"
+    );
+    assert!(
+        trap_redirect_cause_records.iter().any(|records| *records > 0),
+        "trap run should attribute redirect-cause active records by stage: {trap_redirect_cause_records:?}"
     );
     assert_eq!(
         in_order_redirect_cause_stage_metric_values(&trap_json, "branch_prediction", "flushed"),
@@ -946,6 +1096,19 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "redirect_cause",
             "branch_prediction",
             "flushed_cycles"
+        ),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_redirect_cause_stage_metric_values(&trap_json, "branch_prediction", "records"),
+        [0; 5]
+    );
+    assert_eq!(
+        in_order_artifact_cause_stage_metric_values(
+            &trap_json,
+            "redirect_cause",
+            "branch_prediction",
+            "records"
         ),
         [0; 5]
     );
@@ -2031,8 +2194,11 @@ fn assert_in_order_cause_stage_alias_family(json: &Value, family: &str, alias_fa
         ("interrupt_redirect", "interruptRedirect"),
         ("trap_redirect", "trapRedirect"),
     ] {
-        for (metric, alias_metric) in [("flushed", "flushed"), ("flushed_cycles", "flushedCycles")]
-        {
+        for (metric, alias_metric) in [
+            ("records", "records"),
+            ("flushed", "flushed"),
+            ("flushed_cycles", "flushedCycles"),
+        ] {
             assert_in_order_cause_stage_aliases(
                 json,
                 family,

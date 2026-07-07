@@ -1012,6 +1012,7 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
         ] {
             for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                 for (source_name, alias_name, unit) in [
+                    ("records", "records", "Count"),
                     ("resource_blocked", "resourceBlocked", "Count"),
                     ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
                     ("ordering_blocked", "orderingBlocked", "Count"),
@@ -1042,6 +1043,7 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
             ] {
                 for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                     for (source_name, alias_name, unit) in [
+                        ("records", "records", "Count"),
                         ("flushed", "flushed", "Count"),
                         ("flushed_cycles", "flushedCycles", "Cycle"),
                     ] {

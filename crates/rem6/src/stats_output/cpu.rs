@@ -9,6 +9,10 @@ use super::o3_runtime::{
     emit_o3_branch_event_aggregate_stats, increment_count_stat, o3_fu_latency_class_inst_type_stem,
     o3_lsq_operation_alias, o3_lsq_ordering_alias, ratio_ppm,
 };
+use super::pipeline::{
+    emit_in_order_cause_stage_stats, emit_in_order_stage_stats,
+    emit_in_order_stall_cause_stage_stats,
+};
 use crate::{Rem6CliError, Rem6CoreSummary};
 
 pub(super) fn emit_cpu_run_stats(
@@ -287,23 +291,36 @@ pub(super) fn emit_cpu_run_stats(
             core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles
                 .values(),
         )?;
-        for (cause, flushed, flushed_cycles) in [
+        for (cause, records, flushed, flushed_cycles) in [
             (
                 "branch_prediction",
+                core.in_order_pipeline_stage_branch_prediction_records,
                 core.in_order_pipeline_stage_branch_prediction_flushed,
                 core.in_order_pipeline_stage_branch_prediction_flushed_cycles,
             ),
             (
                 "trap_redirect",
+                core.in_order_pipeline_stage_trap_redirect_records,
                 core.in_order_pipeline_stage_trap_redirect_flushed,
                 core.in_order_pipeline_stage_trap_redirect_flushed_cycles,
             ),
             (
                 "interrupt_redirect",
+                core.in_order_pipeline_stage_interrupt_redirect_records,
                 core.in_order_pipeline_stage_interrupt_redirect_flushed,
                 core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
             ),
         ] {
+            emit_in_order_cause_stage_stats(
+                stats,
+                core,
+                "flush_cause",
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                records.values(),
+            )?;
             emit_in_order_cause_stage_stats(
                 stats,
                 core,
@@ -323,6 +340,16 @@ pub(super) fn emit_cpu_run_stats(
                 "Cycle",
                 StatResetPolicy::Monotonic,
                 flushed_cycles.values(),
+            )?;
+            emit_in_order_cause_stage_stats(
+                stats,
+                core,
+                "redirect_cause",
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                records.values(),
             )?;
             emit_in_order_cause_stage_stats(
                 stats,
@@ -375,6 +402,7 @@ pub(super) fn emit_cpu_run_stats(
         )?;
         for (
             cause,
+            records,
             resource_blocked,
             resource_blocked_cycles,
             ordering_blocked,
@@ -382,6 +410,7 @@ pub(super) fn emit_cpu_run_stats(
         ) in [
             (
                 "fetch_wait",
+                core.in_order_pipeline_fetch_wait_stage_records,
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked,
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
                 core.in_order_pipeline_fetch_wait_stage_ordering_blocked,
@@ -389,6 +418,7 @@ pub(super) fn emit_cpu_run_stats(
             ),
             (
                 "data_wait",
+                core.in_order_pipeline_data_wait_stage_records,
                 core.in_order_pipeline_data_wait_stage_resource_blocked,
                 core.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
                 core.in_order_pipeline_data_wait_stage_ordering_blocked,
@@ -396,12 +426,22 @@ pub(super) fn emit_cpu_run_stats(
             ),
             (
                 "execute_wait",
+                core.in_order_pipeline_execute_wait_stage_records,
                 core.in_order_pipeline_execute_wait_stage_resource_blocked,
                 core.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
                 core.in_order_pipeline_execute_wait_stage_ordering_blocked,
                 core.in_order_pipeline_execute_wait_stage_ordering_blocked_cycles,
             ),
         ] {
+            emit_in_order_stall_cause_stage_stats(
+                stats,
+                core,
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                records.values(),
+            )?;
             emit_in_order_stall_cause_stage_stats(
                 stats,
                 core,
@@ -1690,84 +1730,6 @@ fn emit_branch_predictor_counter_stats<const N: usize>(
             &format!("sim.cpu{}.branch_predictor.{family}.{name}", core.cpu),
             "Count",
             StatResetPolicy::Monotonic,
-            value,
-        )?;
-    }
-    Ok(())
-}
-
-fn emit_in_order_stage_stats(
-    stats: &mut StatsRegistry,
-    core: &Rem6CoreSummary,
-    name: &str,
-    unit: &'static str,
-    reset_policy: StatResetPolicy,
-    values: [u64; 5],
-) -> Result<(), Rem6CliError> {
-    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
-        .into_iter()
-        .zip(values)
-    {
-        increment_stat(
-            stats,
-            &format!("sim.cpu{}.pipeline.in_order.stage.{stage}.{name}", core.cpu),
-            unit,
-            reset_policy,
-            value,
-        )?;
-    }
-    Ok(())
-}
-
-fn emit_in_order_stall_cause_stage_stats(
-    stats: &mut StatsRegistry,
-    core: &Rem6CoreSummary,
-    cause: &str,
-    name: &str,
-    unit: &'static str,
-    reset_policy: StatResetPolicy,
-    values: [u64; 5],
-) -> Result<(), Rem6CliError> {
-    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
-        .into_iter()
-        .zip(values)
-    {
-        increment_stat(
-            stats,
-            &format!(
-                "sim.cpu{}.pipeline.in_order.stall_cause.{cause}.stage.{stage}.{name}",
-                core.cpu
-            ),
-            unit,
-            reset_policy,
-            value,
-        )?;
-    }
-    Ok(())
-}
-
-fn emit_in_order_cause_stage_stats(
-    stats: &mut StatsRegistry,
-    core: &Rem6CoreSummary,
-    family: &str,
-    cause: &str,
-    name: &str,
-    unit: &'static str,
-    reset_policy: StatResetPolicy,
-    values: [u64; 5],
-) -> Result<(), Rem6CliError> {
-    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
-        .into_iter()
-        .zip(values)
-    {
-        increment_stat(
-            stats,
-            &format!(
-                "sim.cpu{}.pipeline.in_order.{family}.{cause}.stage.{stage}.{name}",
-                core.cpu,
-            ),
-            unit,
-            reset_policy,
             value,
         )?;
     }
