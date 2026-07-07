@@ -3574,6 +3574,13 @@ fn assert_o3_event_with_fu(
     assert_eq!(json_record_bool(event, "system_event"), system_event);
 }
 
+fn o3_event_fu_latency_class_count(events: &[Value], class: &str) -> u64 {
+    events
+        .iter()
+        .filter(|event| event.get("fu_latency_class").and_then(Value::as_str) == Some(class))
+        .count() as u64
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assert_o3_event_with_store_forwarding(
     event: &Value,
@@ -6496,6 +6503,63 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
             .iter()
             .filter(|event| event.get("lsq_operation").and_then(Value::as_str) == Some("store"))
             .count() as u64
+    );
+    let event_summary_iq = event_summary
+        .pointer("/iq")
+        .expect("O3 event summary should include a nested IQ matrix");
+    assert_eq!(
+        json_record_u64(event_summary_iq, "insts_issued"),
+        events.len() as u64
+    );
+    assert_eq!(
+        json_record_u64(event_summary_iq, "mem_insts_issued"),
+        lsq_loads + lsq_stores
+    );
+    assert_eq!(json_record_u64(event_summary_iq, "branch_insts_issued"), 0);
+    let event_summary_issued_inst_type = event_summary_iq
+        .pointer("/issued_inst_type")
+        .expect("O3 event summary IQ matrix should include issued-inst-type lanes");
+    assert_eq!(
+        json_record_u64(event_summary_issued_inst_type, "mem_read"),
+        lsq_loads
+    );
+    assert_eq!(
+        json_record_u64(event_summary_issued_inst_type, "mem_write"),
+        lsq_stores
+    );
+    assert_eq!(
+        json_record_u64(event_summary_issued_inst_type, "int_mul"),
+        0
+    );
+    assert_eq!(
+        json_record_u64(event_summary_issued_inst_type, "vector_float_misc"),
+        0
+    );
+    let event_summary_commit = event_summary
+        .pointer("/commit")
+        .expect("O3 event summary should include a nested commit matrix");
+    assert_eq!(
+        json_record_u64(event_summary_commit, "branch_mispredicts"),
+        0
+    );
+    let event_summary_committed_inst_type = event_summary_commit
+        .pointer("/committed_inst_type")
+        .expect("O3 event summary commit matrix should include committed-inst-type lanes");
+    assert_eq!(
+        json_record_u64(event_summary_committed_inst_type, "mem_read"),
+        lsq_loads
+    );
+    assert_eq!(
+        json_record_u64(event_summary_committed_inst_type, "mem_write"),
+        lsq_stores
+    );
+    assert_eq!(
+        json_record_u64(event_summary_committed_inst_type, "int_mul"),
+        0
+    );
+    assert_eq!(
+        json_record_u64(event_summary_committed_inst_type, "vector_float_misc"),
+        0
     );
     let iew_dependency_producers = events
         .iter()
@@ -11435,6 +11499,22 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     let event_summary_branch_event = event_summary
         .pointer("/branch_event")
         .expect("O3 event summary branch-event matrix");
+    let event_summary_commit = event_summary
+        .pointer("/commit")
+        .expect("O3 event summary mismatch commit matrix");
+    let event_branch_mispredictions = events
+        .iter()
+        .filter(|event| json_record_bool(event, "branch_mispredicted"))
+        .count() as u64;
+    assert!(
+        event_branch_mispredictions > 0,
+        "expected positive branch-mispredict events: {events:?}"
+    );
+    assert_eq!(
+        json_record_u64(event_summary_commit, "branch_mispredicts"),
+        event_branch_mispredictions,
+        "O3 event summary commit branch mispredicts should derive from emitted branch events"
+    );
     for (field, value) in [
         ("branches", 3),
         ("taken", 2),
@@ -11859,6 +11939,24 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
     let event_summary_fu_latency_class = event_summary
         .pointer("/fu_latency_class")
         .expect("O3 trace event summary FU latency class matrix");
+    let event_summary_iq = event_summary
+        .pointer("/iq")
+        .expect("O3 trace event summary IQ matrix");
+    let event_summary_issued_inst_type = event_summary_iq
+        .pointer("/issued_inst_type")
+        .expect("O3 trace event summary IQ issued-inst-type matrix");
+    let event_summary_commit = event_summary
+        .pointer("/commit")
+        .expect("O3 trace event summary commit matrix");
+    let event_summary_committed_inst_type = event_summary_commit
+        .pointer("/committed_inst_type")
+        .expect("O3 trace event summary commit committed-inst-type matrix");
+    assert_eq!(
+        json_record_u64(event_summary_iq, "insts_issued"),
+        events.len() as u64
+    );
+    assert_eq!(json_record_u64(event_summary_iq, "mem_insts_issued"), 0);
+    assert_eq!(json_record_u64(event_summary_iq, "branch_insts_issued"), 0);
     for (class, instructions, cycles) in [("integer_mul", 1, 2), ("integer_div", 1, 19)] {
         let class_summary = event_summary_fu_latency_class
             .pointer(&format!("/{class}"))
@@ -11891,6 +11989,30 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
             json_record_u64(class_summary, "avg_cycles"),
             cycles,
             "event summary FU latency class {class} avg cycles"
+        );
+    }
+    for (trace_class, matrix_class) in [
+        ("scalar_integer_mul", "int_mul"),
+        ("scalar_integer_div", "int_div"),
+    ] {
+        let class_events = o3_event_fu_latency_class_count(events, trace_class);
+        assert!(
+            class_events > 0,
+            "expected positive O3 event count for {trace_class}: {events:?}"
+        );
+        assert_eq!(
+            event_summary_issued_inst_type
+                .pointer(&format!("/{matrix_class}"))
+                .and_then(Value::as_u64),
+            Some(class_events),
+            "event summary IQ issued-inst-type {matrix_class} should derive from emitted {trace_class} events: {event_summary_issued_inst_type}"
+        );
+        assert_eq!(
+            event_summary_committed_inst_type
+                .pointer(&format!("/{matrix_class}"))
+                .and_then(Value::as_u64),
+            Some(class_events),
+            "event summary commit committed-inst-type {matrix_class} should derive from emitted {trace_class} events: {event_summary_committed_inst_type}"
         );
     }
     for (path, unit, value) in [

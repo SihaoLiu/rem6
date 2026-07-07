@@ -283,14 +283,16 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let lsq_ordering = event_summary_lsq_ordering_json(events);
     let branch_event = event_summary_branch_event_json(events);
     let branch_repair = o3_branch_repair_events_to_json(events);
+    let iq = event_summary_iq_json(events);
     let iew = event_summary_iew_json(events);
+    let commit = event_summary_commit_json(events);
     let rob = format!(
         "{{\"allocations\":{rob_allocations},\"commits\":{rob_commits},\"max_occupancy\":{max_rob_occupancy}}}"
     );
     let rename = format!("{{\"writes\":{rename_writes},\"map_entries\":{max_rename_map_entries}}}");
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iew\":{iew},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         last_tick.saturating_sub(first_tick),
         lsq_forwarding.candidates,
         lsq_forwarding.matches,
@@ -303,6 +305,62 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
         fu_latency.min_cycles,
         fu_latency.avg_cycles(),
     )
+}
+
+fn event_summary_iq_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let issued_inst_type = event_summary_inst_type_json(events);
+    format!(
+        "{{\"insts_issued\":{},\"mem_insts_issued\":{},\"branch_insts_issued\":{},\"issued_inst_type\":{issued_inst_type}}}",
+        events.len(),
+        events
+            .iter()
+            .map(|event| event.lsq_loads().saturating_add(event.lsq_stores()))
+            .sum::<u64>(),
+        events.iter().filter(|event| event.branch_event()).count(),
+    )
+}
+
+fn event_summary_commit_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let committed_inst_type = event_summary_inst_type_json(events);
+    let branch_mispredicts = Rem6O3EventIewTotals::from_events(events).branch_mispredicts();
+    format!(
+        "{{\"branch_mispredicts\":{branch_mispredicts},\"committed_inst_type\":{committed_inst_type}}}"
+    )
+}
+
+fn event_summary_inst_type_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let mut fu_classes = [0_u64; O3RuntimeFuLatencyClass::COUNT];
+    for event in events {
+        if let Some(class) = event.fu_latency_class() {
+            fu_classes[class.index()] = fu_classes[class.index()].saturating_add(1);
+        }
+    }
+    let mut fields = vec![
+        format!(
+            "\"mem_read\":{}",
+            events.iter().map(|event| event.lsq_loads()).sum::<u64>()
+        ),
+        format!(
+            "\"mem_write\":{}",
+            events.iter().map(|event| event.lsq_stores()).sum::<u64>()
+        ),
+    ];
+    fields.extend(O3RuntimeFuLatencyClass::ALL.into_iter().map(|class| {
+        format!(
+            "\"{}\":{}",
+            event_summary_inst_type_stem(class),
+            fu_classes[class.index()]
+        )
+    }));
+    format!("{{{}}}", fields.join(","))
+}
+
+fn event_summary_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+    match class {
+        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
+        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
+        _ => class.stat_stem(),
+    }
 }
 
 fn event_summary_lsq_latency(
