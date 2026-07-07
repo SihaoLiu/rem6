@@ -1106,6 +1106,14 @@ fn emit_o3_runtime_stats(
             o3.lsq_store_to_load_forwarding_suppressed(),
         ),
         (
+            "lsq_store_to_load_forwarding_address_mismatches",
+            o3.lsq_store_to_load_forwarding_address_mismatches(),
+        ),
+        (
+            "lsq_store_to_load_forwarding_byte_mismatches",
+            o3.lsq_store_to_load_forwarding_byte_mismatches(),
+        ),
+        (
             "branch_repair_targetless_mismatches",
             o3.branch_repair_targetless_mismatches(),
         ),
@@ -1233,6 +1241,14 @@ fn emit_o3_runtime_stats(
                 "forwarding_suppressed",
                 o3.lsq_operation_forwarding_suppressed(operation),
             ),
+            (
+                "forwarding_address_mismatches",
+                o3.lsq_operation_forwarding_address_mismatches(operation),
+            ),
+            (
+                "forwarding_byte_mismatches",
+                o3.lsq_operation_forwarding_byte_mismatches(operation),
+            ),
         ] {
             increment_count_stat(
                 stats,
@@ -1287,19 +1303,15 @@ fn emit_o3_runtime_stats(
         }
     }
     for ordering in O3RuntimeLsqOrdering::TRACKED {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!("sim.cpu{}.o3.lsq_ordering.{}", core.cpu, ordering.as_str()),
-            "Count",
-            StatResetPolicy::Monotonic,
+            format!("sim.cpu{}.o3.lsq_ordering.{}", core.cpu, ordering.as_str()),
             o3.lsq_ordering_count(ordering),
         )?;
     }
-    increment_stat(
+    increment_count_stat(
         stats,
-        &format!("sim.cpu{}.o3.lsq_store_conditional_failures", core.cpu),
-        "Count",
-        StatResetPolicy::Monotonic,
+        format!("sim.cpu{}.o3.lsq_store_conditional_failures", core.cpu),
         o3.lsq_store_conditional_failures(),
     )?;
     increment_stat(
@@ -1332,46 +1344,34 @@ fn emit_o3_runtime_stats(
         ("issued_inst_type.mem_read", o3.lsq_loads()),
         ("issued_inst_type.mem_write", o3.lsq_stores()),
     ] {
-        increment_stat(
-            stats,
-            &format!("sim.cpu{}.o3.iq.{name}", core.cpu),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
+        increment_count_stat(stats, format!("sim.cpu{}.o3.iq.{name}", core.cpu), value)?;
     }
     for class in O3RuntimeFuLatencyClass::ALL {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "sim.cpu{}.o3.iq.issued_inst_type.{}",
                 core.cpu,
                 o3_fu_latency_class_inst_type_stem(class)
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             o3.fu_latency_class_instructions(class),
         )?;
     }
     for (name, value) in [("mem_read", o3.lsq_loads()), ("mem_write", o3.lsq_stores())] {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!("sim.cpu{}.o3.commit.committed_inst_type.{name}", core.cpu),
-            "Count",
-            StatResetPolicy::Monotonic,
+            format!("sim.cpu{}.o3.commit.committed_inst_type.{name}", core.cpu),
             value,
         )?;
     }
     for class in O3RuntimeFuLatencyClass::ALL {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "sim.cpu{}.o3.commit.committed_inst_type.{}",
                 core.cpu,
                 o3_fu_latency_class_inst_type_stem(class)
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             o3.fu_latency_class_instructions(class),
         )?;
     }
@@ -1391,23 +1391,15 @@ fn emit_o3_runtime_stats(
             o3.iew_predicted_not_taken_incorrect(),
         ),
     ] {
-        increment_stat(
-            stats,
-            &format!("sim.cpu{}.o3.iew.{name}", core.cpu),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
+        increment_count_stat(stats, format!("sim.cpu{}.o3.iew.{name}", core.cpu), value)?;
     }
     let iew_branch_mispredicts = o3
         .iew_predicted_taken_incorrect()
         .saturating_add(o3.iew_predicted_not_taken_incorrect());
     for name in ["iew.branch_mispredicts", "commit.branch_mispredicts"] {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!("sim.cpu{}.o3.{name}", core.cpu),
-            "Count",
-            StatResetPolicy::Monotonic,
+            format!("sim.cpu{}.o3.{name}", core.cpu),
             iew_branch_mispredicts,
         )?;
     }
@@ -1455,6 +1447,14 @@ fn emit_o3_runtime_stats(
         (
             "lsq0.storeLoadForwardingSuppressed",
             o3.lsq_store_to_load_forwarding_suppressed(),
+        ),
+        (
+            "lsq0.storeLoadForwardingAddressMismatches",
+            o3.lsq_store_to_load_forwarding_address_mismatches(),
+        ),
+        (
+            "lsq0.storeLoadForwardingByteMismatches",
+            o3.lsq_store_to_load_forwarding_byte_mismatches(),
         ),
         ("lsq0.forwLoads", o3.lsq_store_to_load_forwarding_matches()),
         ("lsq0.maxOccupancy", o3.max_lsq_occupancy()),
@@ -1505,6 +1505,14 @@ fn emit_o3_runtime_stats(
                 "storeLoadForwardingSuppressed",
                 o3.lsq_operation_forwarding_suppressed(operation),
             ),
+            (
+                "storeLoadForwardingAddressMismatches",
+                o3.lsq_operation_forwarding_address_mismatches(operation),
+            ),
+            (
+                "storeLoadForwardingByteMismatches",
+                o3.lsq_operation_forwarding_byte_mismatches(operation),
+            ),
         ] {
             increment_count_stat(
                 stats,
@@ -1513,33 +1521,27 @@ fn emit_o3_runtime_stats(
             )?;
         }
     }
-    increment_stat(
+    increment_count_stat(
         stats,
-        &format!("{gem5_cpu_alias_prefix}.lsq0.operation.total"),
-        "Count",
-        StatResetPolicy::Monotonic,
+        format!("{gem5_cpu_alias_prefix}.lsq0.operation.total"),
         lsq_operation_total,
     )?;
     let mut lsq_ordering_total = 0_u64;
     for ordering in O3RuntimeLsqOrdering::TRACKED {
         let value = o3.lsq_ordering_count(ordering);
         lsq_ordering_total = lsq_ordering_total.saturating_add(value);
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!(
+            format!(
                 "{gem5_cpu_alias_prefix}.lsq0.ordering.{}",
                 o3_lsq_ordering_alias(ordering)
             ),
-            "Count",
-            StatResetPolicy::Monotonic,
             value,
         )?;
     }
-    increment_stat(
+    increment_count_stat(
         stats,
-        &format!("{gem5_cpu_alias_prefix}.lsq0.ordering.total"),
-        "Count",
-        StatResetPolicy::Monotonic,
+        format!("{gem5_cpu_alias_prefix}.lsq0.ordering.total"),
         lsq_ordering_total,
     )?;
     for (name, unit, value) in [
@@ -1634,20 +1636,12 @@ fn emit_o3_runtime_stats(
         ),
         ("iew.branchRepair.total", branch_mispredicts),
     ] {
-        increment_stat(
-            stats,
-            &format!("{gem5_cpu_alias_prefix}.{name}"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
+        increment_count_stat(stats, format!("{gem5_cpu_alias_prefix}.{name}"), value)?;
     }
     for name in ["iew.branchMispredicts", "commit.branchMispredicts"] {
-        increment_stat(
+        increment_count_stat(
             stats,
-            &format!("{gem5_cpu_alias_prefix}.{name}"),
-            "Count",
-            StatResetPolicy::Monotonic,
+            format!("{gem5_cpu_alias_prefix}.{name}"),
             branch_mispredicts,
         )?;
     }

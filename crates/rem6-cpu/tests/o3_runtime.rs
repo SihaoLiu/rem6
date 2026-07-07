@@ -41,6 +41,8 @@ const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES: usize =
     O3RuntimeLsqOperation::TRACKED.len() * 2 * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES: usize =
     (1 + O3RuntimeLsqOperation::TRACKED.len()) * 8;
+const O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES: usize =
+    (2 + O3RuntimeLsqOperation::TRACKED.len() * 2) * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES: usize =
     (O3RuntimeLsqOrdering::TRACKED.len() + 1) * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES: usize =
@@ -68,7 +70,11 @@ const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
         + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION
-        + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES;
+        + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
+    O3_RUNTIME_CHECKPOINT_STATS_BYTES
+        - O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -1196,9 +1202,10 @@ fn strip_current_rename_dependency_bytes(payload: &[u8]) -> Vec<u8> {
 }
 
 fn strip_current_lsq_forwarding_suppression_stats(payload: &[u8]) -> Vec<u8> {
+    let payload = strip_current_lsq_forwarding_suppression_reason_stats(payload);
     let stats_offset = payload
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON)
         .unwrap();
     let operation_suppression_offset = stats_offset
         + O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES
@@ -1215,6 +1222,26 @@ fn strip_current_lsq_forwarding_suppression_stats(payload: &[u8]) -> Vec<u8> {
     [
         &without_operation_suppression[..aggregate_suppression_offset],
         &without_operation_suppression[aggregate_suppression_offset + 8..],
+    ]
+    .concat()
+}
+
+fn strip_current_lsq_forwarding_suppression_reason_stats(payload: &[u8]) -> Vec<u8> {
+    let stats_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .unwrap();
+    let operation_suppression_bytes =
+        O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES - 8;
+    let reason_offset = stats_offset
+        + O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
+        + operation_suppression_bytes;
+    [
+        &payload[..reason_offset],
+        &payload
+            [reason_offset + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES..],
     ]
     .concat()
 }

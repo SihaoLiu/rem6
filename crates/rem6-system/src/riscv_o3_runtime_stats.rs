@@ -195,6 +195,8 @@ struct RiscvO3RuntimeStructuralAliasStats {
     lsq_store_load_forwarding_candidates: StatId,
     lsq_store_load_forwarding_matches: StatId,
     lsq_store_load_forwarding_suppressed: StatId,
+    lsq_store_load_forwarding_address_mismatches: StatId,
+    lsq_store_load_forwarding_byte_mismatches: StatId,
     lsq_forw_loads: StatId,
     lsq_max_occupancy: StatId,
     iq_insts_issued: StatId,
@@ -425,6 +427,18 @@ impl RiscvO3RuntimeStructuralAliasStats {
                 "lsq0.storeLoadForwardingSuppressed",
                 "Count",
             )?,
+            lsq_store_load_forwarding_address_mismatches: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.storeLoadForwardingAddressMismatches",
+                "Count",
+            )?,
+            lsq_store_load_forwarding_byte_mismatches: register_o3_counter(
+                registry,
+                prefix,
+                "lsq0.storeLoadForwardingByteMismatches",
+                "Count",
+            )?,
             lsq_forw_loads: register_o3_counter(registry, prefix, "lsq0.forwLoads", "Count")?,
             lsq_max_occupancy: register_o3_counter(registry, prefix, "lsq0.maxOccupancy", "Count")?,
             iq_insts_issued: register_o3_counter(registry, prefix, "iq.instsIssued", "Count")?,
@@ -506,7 +520,7 @@ impl RiscvO3RuntimeStructuralAliasStats {
         Ok(())
     }
 
-    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 24] {
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 26] {
         [
             (self.rob_writes, stats.rob_allocations()),
             (self.rob_reads, stats.rob_commits()),
@@ -535,6 +549,14 @@ impl RiscvO3RuntimeStructuralAliasStats {
             (
                 self.lsq_store_load_forwarding_suppressed,
                 stats.lsq_store_to_load_forwarding_suppressed(),
+            ),
+            (
+                self.lsq_store_load_forwarding_address_mismatches,
+                stats.lsq_store_to_load_forwarding_address_mismatches(),
+            ),
+            (
+                self.lsq_store_load_forwarding_byte_mismatches,
+                stats.lsq_store_to_load_forwarding_byte_mismatches(),
             ),
             (
                 self.lsq_forw_loads,
@@ -577,6 +599,8 @@ struct RiscvO3RuntimeCpuStats {
     lsq_store_to_load_forwarding_candidates: StatId,
     lsq_store_to_load_forwarding_matches: StatId,
     lsq_store_to_load_forwarding_suppressed: StatId,
+    lsq_store_to_load_forwarding_address_mismatches: StatId,
+    lsq_store_to_load_forwarding_byte_mismatches: StatId,
     structural_aliases: RiscvO3RuntimeStructuralAliasStats,
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
@@ -584,9 +608,13 @@ struct RiscvO3RuntimeCpuStats {
     lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_suppressed: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_address_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_byte_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_candidate_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_match_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_suppressed_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_address_mismatch_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_byte_mismatch_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
@@ -667,6 +695,18 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq_store_to_load_forwarding_suppressed",
                 "Count",
             )?,
+            lsq_store_to_load_forwarding_address_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "lsq_store_to_load_forwarding_address_mismatches",
+                "Count",
+            )?,
+            lsq_store_to_load_forwarding_byte_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "lsq_store_to_load_forwarding_byte_mismatches",
+                "Count",
+            )?,
             structural_aliases: RiscvO3RuntimeStructuralAliasStats::register(
                 registry,
                 &gem5_cpu_alias_prefix,
@@ -697,6 +737,18 @@ impl RiscvO3RuntimeCpuStats {
                 &prefix,
                 "forwarding_suppressed",
             )?,
+            lsq_operation_forwarding_address_mismatches:
+                register_o3_lsq_operation_forwarding_counters(
+                    registry,
+                    &prefix,
+                    "forwarding_address_mismatches",
+                )?,
+            lsq_operation_forwarding_byte_mismatches:
+                register_o3_lsq_operation_forwarding_counters(
+                    registry,
+                    &prefix,
+                    "forwarding_byte_mismatches",
+                )?,
             lsq_operation_forwarding_candidate_aliases:
                 register_o3_lsq_operation_forwarding_alias_counters(
                     registry,
@@ -714,6 +766,18 @@ impl RiscvO3RuntimeCpuStats {
                     registry,
                     &gem5_cpu_alias_prefix,
                     "storeLoadForwardingSuppressed",
+                )?,
+            lsq_operation_forwarding_address_mismatch_aliases:
+                register_o3_lsq_operation_forwarding_alias_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeLoadForwardingAddressMismatches",
+                )?,
+            lsq_operation_forwarding_byte_mismatch_aliases:
+                register_o3_lsq_operation_forwarding_alias_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeLoadForwardingByteMismatches",
                 )?,
             lsq_data_latency: register_o3_lsq_latency_counters(
                 registry,
@@ -969,6 +1033,16 @@ impl RiscvO3RuntimeCpuStats {
                 current.lsq_store_to_load_forwarding_suppressed(),
             ),
             (
+                self.lsq_store_to_load_forwarding_address_mismatches,
+                previous.lsq_store_to_load_forwarding_address_mismatches(),
+                current.lsq_store_to_load_forwarding_address_mismatches(),
+            ),
+            (
+                self.lsq_store_to_load_forwarding_byte_mismatches,
+                previous.lsq_store_to_load_forwarding_byte_mismatches(),
+                current.lsq_store_to_load_forwarding_byte_mismatches(),
+            ),
+            (
                 self.lsq_store_conditional_failures,
                 previous.lsq_store_conditional_failures(),
                 current.lsq_store_conditional_failures(),
@@ -1206,6 +1280,32 @@ impl RiscvO3RuntimeCpuStats {
                     suppressed_delta,
                 )?;
             }
+            let address_mismatch_delta = current
+                .lsq_operation_forwarding_address_mismatches(operation)
+                .saturating_sub(previous.lsq_operation_forwarding_address_mismatches(operation));
+            if address_mismatch_delta != 0 {
+                registry.increment(
+                    self.lsq_operation_forwarding_address_mismatches[operation.index()],
+                    address_mismatch_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_forwarding_address_mismatch_aliases[operation.index()],
+                    address_mismatch_delta,
+                )?;
+            }
+            let byte_mismatch_delta = current
+                .lsq_operation_forwarding_byte_mismatches(operation)
+                .saturating_sub(previous.lsq_operation_forwarding_byte_mismatches(operation));
+            if byte_mismatch_delta != 0 {
+                registry.increment(
+                    self.lsq_operation_forwarding_byte_mismatches[operation.index()],
+                    byte_mismatch_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_forwarding_byte_mismatch_aliases[operation.index()],
+                    byte_mismatch_delta,
+                )?;
+            }
         }
         self.set_lsq_latency_snapshot(registry, current)?;
         let mut lsq_ordering_delta_total = 0_u64;
@@ -1271,6 +1371,14 @@ impl RiscvO3RuntimeCpuStats {
             (
                 self.lsq_store_to_load_forwarding_suppressed,
                 snapshot.lsq_store_to_load_forwarding_suppressed(),
+            ),
+            (
+                self.lsq_store_to_load_forwarding_address_mismatches,
+                snapshot.lsq_store_to_load_forwarding_address_mismatches(),
+            ),
+            (
+                self.lsq_store_to_load_forwarding_byte_mismatches,
+                snapshot.lsq_store_to_load_forwarding_byte_mismatches(),
             ),
             (
                 self.lsq_store_conditional_failures,
@@ -1364,6 +1472,14 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_operation_forwarding_suppressed(operation),
             )?;
             registry.set_resettable_counter(
+                self.lsq_operation_forwarding_address_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_address_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_byte_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_byte_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
                 self.lsq_operation_forwarding_candidate_aliases[operation.index()],
                 snapshot.lsq_operation_forwarding_candidates(operation),
             )?;
@@ -1374,6 +1490,14 @@ impl RiscvO3RuntimeCpuStats {
             registry.set_resettable_counter(
                 self.lsq_operation_forwarding_suppressed_aliases[operation.index()],
                 snapshot.lsq_operation_forwarding_suppressed(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_address_mismatch_aliases[operation.index()],
+                snapshot.lsq_operation_forwarding_address_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_byte_mismatch_aliases[operation.index()],
+                snapshot.lsq_operation_forwarding_byte_mismatches(operation),
             )?;
         }
         self.set_lsq_latency_snapshot(registry, snapshot)?;

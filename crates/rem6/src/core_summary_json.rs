@@ -210,7 +210,7 @@ fn o3_runtime_lsq_operation_matrix_json(summary: &Rem6CoreSummary) -> String {
                     .lsq_operation_latency_avg_ticks(operation),
             );
             format!(
-                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
                 summary.o3_runtime.lsq_operation_count(operation),
                 summary
@@ -220,6 +220,12 @@ fn o3_runtime_lsq_operation_matrix_json(summary: &Rem6CoreSummary) -> String {
                 summary
                     .o3_runtime
                     .lsq_operation_forwarding_suppressed(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_forwarding_address_mismatches(operation),
+                summary
+                    .o3_runtime
+                    .lsq_operation_forwarding_byte_mismatches(operation),
             )
         })
         .collect::<Vec<_>>()
@@ -253,7 +259,7 @@ fn o3_runtime_lsq_json(summary: &Rem6CoreSummary) -> String {
     let operation = o3_runtime_lsq_operation_matrix_json(summary);
     let ordering = o3_runtime_lsq_ordering_matrix_json(summary);
     format!(
-        "{{\"loads\":{},\"stores\":{},\"load_bytes\":{},\"store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_conditional_failures\":{},\"max_occupancy\":{},\"data_latency\":{data_latency},\"operation\":{operation},\"ordering\":{ordering}}}",
+        "{{\"loads\":{},\"stores\":{},\"load_bytes\":{},\"store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"store_conditional_failures\":{},\"max_occupancy\":{},\"data_latency\":{data_latency},\"operation\":{operation},\"ordering\":{ordering}}}",
         summary.o3_runtime.lsq_loads(),
         summary.o3_runtime.lsq_stores(),
         summary.o3_runtime.lsq_load_bytes(),
@@ -261,6 +267,12 @@ fn o3_runtime_lsq_json(summary: &Rem6CoreSummary) -> String {
         summary.o3_runtime.lsq_store_to_load_forwarding_candidates(),
         summary.o3_runtime.lsq_store_to_load_forwarding_matches(),
         summary.o3_runtime.lsq_store_to_load_forwarding_suppressed(),
+        summary
+            .o3_runtime
+            .lsq_store_to_load_forwarding_address_mismatches(),
+        summary
+            .o3_runtime
+            .lsq_store_to_load_forwarding_byte_mismatches(),
         summary.o3_runtime.lsq_store_conditional_failures(),
         summary.o3_runtime.max_lsq_occupancy(),
     )
@@ -293,6 +305,18 @@ fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
                     summary
                         .o3_runtime
                         .lsq_operation_forwarding_suppressed(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_forwarding_address_mismatches\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_forwarding_address_mismatches(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_forwarding_byte_mismatches\":{}",
+                    summary
+                        .o3_runtime
+                        .lsq_operation_forwarding_byte_mismatches(operation)
                 ),
                 format!(
                     "\"lsq_operation_{name}_latency_ticks\":{}",
@@ -447,7 +471,7 @@ impl Rem6CoreSummary {
             let rename = o3_runtime_rename_json(self);
             let lsq = o3_runtime_lsq_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -459,6 +483,10 @@ impl Rem6CoreSummary {
                 self.o3_runtime.lsq_store_to_load_forwarding_candidates(),
                 self.o3_runtime.lsq_store_to_load_forwarding_matches(),
                 self.o3_runtime.lsq_store_to_load_forwarding_suppressed(),
+                self.o3_runtime
+                    .lsq_store_to_load_forwarding_address_mismatches(),
+                self.o3_runtime
+                    .lsq_store_to_load_forwarding_byte_mismatches(),
                 rob,
                 rename,
                 lsq,

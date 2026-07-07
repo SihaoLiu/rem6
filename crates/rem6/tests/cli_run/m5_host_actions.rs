@@ -3323,6 +3323,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
             0,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+            0,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
             1,
         ),
@@ -3332,6 +3340,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_suppressed",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
             0,
         ),
         (
@@ -3346,7 +3362,17 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_suppressed",
             0,
         ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_byte_mismatches",
+            0,
+        ),
         ("system.cpu.lsq0.storeLoadForwardingSuppressed", 0),
+        ("system.cpu.lsq0.storeLoadForwardingAddressMismatches", 0),
+        ("system.cpu.lsq0.storeLoadForwardingByteMismatches", 0),
         (
             "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
             1,
@@ -3360,6 +3386,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
             0,
         ),
         (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+            0,
+        ),
+        (
             "system.cpu.lsq0.operation.store.storeLoadForwardingCandidates",
             0,
         ),
@@ -3369,6 +3403,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
         ),
         (
             "system.cpu.lsq0.operation.store.storeLoadForwardingSuppressed",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingAddressMismatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingByteMismatches",
             0,
         ),
     ] {
@@ -3405,11 +3447,27 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
         "system.cpu.lsq0.storeLoadForwardingSuppressed",
         "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
     ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 2, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
+        "system.cpu.lsq0.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.storeLoadForwardingByteMismatches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+    ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 1, "resettable");
     }
     for path in [
         "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_suppressed",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_byte_mismatches",
         "system.cpu.lsq0.operation.store.storeLoadForwardingSuppressed",
+        "system.cpu.lsq0.operation.store.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.operation.store.storeLoadForwardingByteMismatches",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
@@ -6550,86 +6608,140 @@ fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
 
 #[test]
 fn rem6_run_o3_runtime_json_exposes_store_load_forwarding_suppression() {
-    let path = detailed_o3_lsq_store_load_mismatch_binary(
-        "m5-switch-cpu-detailed-o3-lsq-store-load-suppression-json",
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "160",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--memory-system",
-            "direct",
-        ])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
-    assert_eq!(
-        json.pointer("/simulation/status").and_then(Value::as_str),
-        Some("stopped_by_host")
-    );
-    let o3_runtime = json
-        .pointer("/cores/0/o3_runtime")
-        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
-
-    for (pointer, stat_path, value) in [
+    for (path, address_mismatches, byte_mismatches) in [
         (
-            "/store_load_forwarding_candidates",
-            "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+            detailed_o3_lsq_store_load_mismatch_binary(
+                "m5-switch-cpu-detailed-o3-lsq-store-load-address-suppression-json",
+            ),
+            1,
             0,
         ),
         (
-            "/store_load_forwarding_matches",
-            "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+            detailed_o3_lsq_store_load_byte_mismatch_binary(
+                "m5-switch-cpu-detailed-o3-lsq-store-load-byte-suppression-json",
+            ),
+            0,
+            1,
+        ),
+        (
+            detailed_o3_lsq_store_load_address_and_byte_mismatch_binary(
+                "m5-switch-cpu-detailed-o3-lsq-store-load-address-byte-suppression-json",
+            ),
+            1,
             0,
         ),
-        (
-            "/store_load_forwarding_suppressed",
-            "sim.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
-            1,
-        ),
-        (
-            "/lsq/store_load_forwarding_suppressed",
-            "system.cpu.lsq0.storeLoadForwardingSuppressed",
-            1,
-        ),
-        (
-            "/lsq/operation/load/forwarding_suppressed",
-            "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
-            1,
-        ),
     ] {
-        assert_eq!(
-            o3_runtime.pointer(pointer).and_then(Value::as_u64),
-            Some(value),
-            "structured O3 runtime JSON should expose {pointer}: {o3_runtime}"
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "160",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--memory-system",
+                "direct",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
-        assert_json_stat(&json, stat_path, "Count", value, "monotonic");
-    }
-    for pointer in [
-        "/lsq/operation/store/forwarding_suppressed",
-        "/lsq/operation/atomic/forwarding_suppressed",
-    ] {
+        let json: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
         assert_eq!(
-            o3_runtime.pointer(pointer).and_then(Value::as_u64),
-            Some(0),
-            "inactive O3 forwarding-suppression lane should stay zero at {pointer}: {o3_runtime}"
+            json.pointer("/simulation/status").and_then(Value::as_str),
+            Some("stopped_by_host")
         );
+        let o3_runtime = json
+            .pointer("/cores/0/o3_runtime")
+            .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+        for (pointer, stat_path, value) in [
+            (
+                "/store_load_forwarding_candidates",
+                "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+                0,
+            ),
+            (
+                "/store_load_forwarding_matches",
+                "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+                0,
+            ),
+            (
+                "/store_load_forwarding_suppressed",
+                "sim.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
+                1,
+            ),
+            (
+                "/store_load_forwarding_address_mismatches",
+                "sim.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
+                address_mismatches,
+            ),
+            (
+                "/store_load_forwarding_byte_mismatches",
+                "sim.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+                byte_mismatches,
+            ),
+            (
+                "/lsq/store_load_forwarding_suppressed",
+                "system.cpu.lsq0.storeLoadForwardingSuppressed",
+                1,
+            ),
+            (
+                "/lsq/store_load_forwarding_address_mismatches",
+                "system.cpu.lsq0.storeLoadForwardingAddressMismatches",
+                address_mismatches,
+            ),
+            (
+                "/lsq/store_load_forwarding_byte_mismatches",
+                "system.cpu.lsq0.storeLoadForwardingByteMismatches",
+                byte_mismatches,
+            ),
+            (
+                "/lsq/operation/load/forwarding_suppressed",
+                "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
+                1,
+            ),
+            (
+                "/lsq/operation/load/forwarding_address_mismatches",
+                "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
+                address_mismatches,
+            ),
+            (
+                "/lsq/operation/load/forwarding_byte_mismatches",
+                "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+                byte_mismatches,
+            ),
+        ] {
+            assert_eq!(
+                o3_runtime.pointer(pointer).and_then(Value::as_u64),
+                Some(value),
+                "structured O3 runtime JSON should expose {pointer}: {o3_runtime}"
+            );
+            assert_json_stat(&json, stat_path, "Count", value, "monotonic");
+        }
+        for pointer in [
+            "/lsq/operation/store/forwarding_suppressed",
+            "/lsq/operation/store/forwarding_address_mismatches",
+            "/lsq/operation/store/forwarding_byte_mismatches",
+            "/lsq/operation/atomic/forwarding_suppressed",
+            "/lsq/operation/atomic/forwarding_address_mismatches",
+            "/lsq/operation/atomic/forwarding_byte_mismatches",
+        ] {
+            assert_eq!(
+                o3_runtime.pointer(pointer).and_then(Value::as_u64),
+                Some(0),
+                "inactive O3 forwarding-suppression lane should stay zero at {pointer}: {o3_runtime}"
+            );
+        }
     }
 }
 
@@ -8410,7 +8522,11 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
         i_type(0x33, 0, 0x0, 13, 0x13), // addi x13, x0, 0x33
         s_type(4, 13, 5, 0b010),        // sw x13, 4(x5)
         i_type(8, 5, 0b010, 14, 0x03),  // lw x14, 8(x5)
-        b_type(12, 0, 14, 0x1),         // bne x14, x0, fail
+        b_type(28, 0, 14, 0x1),         // bne x14, x0, fail
+        i_type(0x44, 0, 0x0, 15, 0x13), // addi x15, x0, 0x44
+        s_type(12, 15, 5, 0b010),       // sw x15, 12(x5)
+        i_type(12, 5, 0b100, 16, 0x03), // lbu x16, 12(x5)
+        b_type(12, 15, 16, 0x1),        // bne x16, x15, fail
         m5op(M5_DUMP_STATS),
         m5op(M5_EXIT),
         m5op(M5_FAIL),
@@ -8418,7 +8534,7 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
     while words.len() * 4 < data_start as usize {
         words.push(0);
     }
-    words.extend([0, 0, 0]);
+    words.extend([0, 0, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
@@ -8505,6 +8621,48 @@ fn detailed_o3_lsq_store_load_mismatch_binary(name: &str) -> std::path::PathBuf 
         i_type(0x5a, 0, 0x0, 11, 0x13), // addi x11, x0, 0x5a
         s_type(0, 11, 5, 0b010),        // sw x11, 0(x5)
         i_type(4, 5, 0b010, 12, 0x03),  // lw x12, 4(x5)
+        b_type(8, 0, 12, 0x1),          // bne x12, x0, fail
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.extend([0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_lsq_store_load_byte_mismatch_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
+        u_type(0, 5, 0x17),             // auipc x5, 0
+        i_type(60, 5, 0x0, 5, 0x13),    // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13), // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),        // sw x11, 0(x5)
+        i_type(0, 5, 0b100, 12, 0x03),  // lbu x12, 0(x5)
+        b_type(8, 11, 12, 0x1),         // bne x12, x11, fail
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 64 {
+        words.push(0);
+    }
+    words.push(0);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_lsq_store_load_address_and_byte_mismatch_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
+        u_type(0, 5, 0x17),             // auipc x5, 0
+        i_type(60, 5, 0x0, 5, 0x13),    // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13), // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),        // sw x11, 0(x5)
+        i_type(4, 5, 0b100, 12, 0x03),  // lbu x12, 4(x5)
         b_type(8, 0, 12, 0x1),          // bne x12, x0, fail
         m5op(M5_EXIT),
         m5op(M5_FAIL),
