@@ -570,6 +570,27 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     );
     assert_json_stat(
         &json,
+        "sim.host_actions.execution_mode_switch.target.cpu0.mode.detailed",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.none",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.detailed",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.host_actions.execution_mode_switch_state_transfers",
         "Count",
         2,

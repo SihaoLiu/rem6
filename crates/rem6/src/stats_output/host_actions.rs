@@ -73,14 +73,25 @@ pub(super) fn emit_run_host_action_stats(
     }
 
     let mut switch_modes = BTreeMap::<&'static str, u64>::new();
+    let mut switch_target_modes = BTreeMap::<(String, &'static str), u64>::new();
     let mut switch_previous_modes = BTreeMap::<&'static str, u64>::new();
+    let mut switch_previous_target_modes = BTreeMap::<(String, &'static str), u64>::new();
     let mut switch_previous_mode_none = 0;
+    let mut switch_previous_target_mode_none = BTreeMap::<String, u64>::new();
     for switch in &summary.execution_mode_switches {
+        let target = stat_path_segment(&switch.target);
         *switch_modes.entry(switch.mode).or_default() += 1;
+        *switch_target_modes
+            .entry((target.clone(), switch.mode))
+            .or_default() += 1;
         if let Some(previous_mode) = switch.previous_mode {
             *switch_previous_modes.entry(previous_mode).or_default() += 1;
+            *switch_previous_target_modes
+                .entry((target, previous_mode))
+                .or_default() += 1;
         } else {
             switch_previous_mode_none += 1;
+            *switch_previous_target_mode_none.entry(target).or_default() += 1;
         }
     }
 
@@ -275,6 +286,33 @@ pub(super) fn emit_run_host_action_stats(
             &format!(
                 "sim.host_actions.checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"
             ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            count,
+        )?;
+    }
+    for ((target, mode), count) in switch_target_modes {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.target.{target}.mode.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            count,
+        )?;
+    }
+    for ((target, mode), count) in switch_previous_target_modes {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.previous_mode.target.{target}.{mode}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            count,
+        )?;
+    }
+    for (target, count) in switch_previous_target_mode_none {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.execution_mode_switch.previous_mode.target.{target}.none"),
             "Count",
             StatResetPolicy::Monotonic,
             count,
@@ -512,6 +550,20 @@ mod tests {
             "Unspecified",
             StatResetPolicy::Monotonic,
             36,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.target.cpu0.mode.timing",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.previous_mode.target.cpu0.atomic",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
         );
     }
 
