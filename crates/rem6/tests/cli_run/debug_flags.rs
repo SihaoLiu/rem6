@@ -11747,6 +11747,8 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         ("/resolved_target_kind/direct_unconditional", 2),
         ("/misprediction_kind/direct_conditional", 1),
         ("/misprediction_kind/direct_unconditional", 2),
+        ("/without_link_write_kind/direct_conditional", 1),
+        ("/without_link_write_kind/direct_unconditional", 2),
         ("/squash_kind/direct_conditional", 1),
         ("/squash_kind/direct_unconditional", 2),
     ] {

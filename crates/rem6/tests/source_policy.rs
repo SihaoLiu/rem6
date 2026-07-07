@@ -824,6 +824,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/debug/o3_trace/0/event_summary/branch_event/misprediction_kind/direct_unconditional",
         "/debug/o3_trace/0/event_summary/branch_event/link_write_kind/call_indirect",
         "/debug/o3_trace/0/event_summary/branch_event/link_write_kind/direct_unconditional",
+        "/debug/o3_trace/0/event_summary/branch_event/without_link_write_kind/direct_conditional",
         "/debug/o3_trace/0/event_summary/branch_event/squash_kind/call_indirect",
         "/debug/o3_trace/0/event_summary/branch_event/squash_kind/direct_conditional",
         "/debug/o3_trace/0/event_summary/branch_event/squash_kind/direct_unconditional",

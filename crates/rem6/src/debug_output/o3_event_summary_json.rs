@@ -486,6 +486,10 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
         event_summary_branch_kind_json(|branch_kind| summary.squash_kinds[branch_kind.index()]);
     let link_write_kind =
         event_summary_branch_kind_json(|branch_kind| summary.link_write_kinds[branch_kind.index()]);
+    let without_link_write_kind = event_summary_branch_kind_json(|branch_kind| {
+        summary.kinds[branch_kind.index()]
+            .saturating_sub(summary.link_write_kinds[branch_kind.index()])
+    });
     let squashed_target_kind = event_summary_branch_kind_json(|branch_kind| {
         summary.squashed_target_kinds[branch_kind.index()]
     });
@@ -496,7 +500,7 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
         summary.squashed_target_without_link_write_kinds[branch_kind.index()]
     });
     format!(
-        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"link_writes\":{},\"without_link_writes\":{},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"link_write_kind\":{link_write_kind},\"squash_kind\":{squash_kind},\"squashed_target_kind\":{squashed_target_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"mispredictions\":{},\"link_writes\":{},\"without_link_writes\":{},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"not_taken_kind\":{not_taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"misprediction_kind\":{misprediction_kind},\"link_write_kind\":{link_write_kind},\"without_link_write_kind\":{without_link_write_kind},\"squash_kind\":{squash_kind},\"squashed_target_kind\":{squashed_target_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
         summary.branches,
         summary.taken,
         summary.not_taken(),
