@@ -1780,6 +1780,7 @@ struct PipelineSummaryResourceTotals {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PipelineSummaryFlushTotals {
+    records: u64,
     flushed: u64,
     flushed_cycles: u64,
 }
@@ -2079,12 +2080,14 @@ impl PipelineSummaryResourceTotals {
 
 impl PipelineSummaryFlushTotals {
     fn add_record(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.records = self.records.saturating_add(1);
         self.flushed = self.flushed.saturating_add(flushed);
         self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
     }
 
-    fn fields(self) -> [(&'static str, u64); 2] {
+    fn fields(self) -> [(&'static str, u64); 3] {
         [
+            ("records", self.records),
             ("flushed", self.flushed),
             ("flushed_cycles", self.flushed_cycles),
         ]

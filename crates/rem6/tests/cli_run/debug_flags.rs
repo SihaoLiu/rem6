@@ -920,6 +920,18 @@ fn rem6_run_pipeline_debug_flag_attributes_widened_trap_redirect_flush_cause() {
             "monotonic",
         );
     }
+    assert_pipeline_summary_flush_stage_records(
+        &json,
+        "flush_cause",
+        "trap_redirect",
+        &[trap_redirect],
+    );
+    assert_pipeline_summary_flush_stage_records(
+        &json,
+        "redirect_cause",
+        "trap_redirect",
+        &[trap_redirect],
+    );
     assert!(!stdout.contains("\"x6\":\"0x9\""));
 }
 
@@ -4070,6 +4082,7 @@ fn assert_pipeline_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
 }
 
 fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
+    let json: Value = serde_json::from_str(stdout).unwrap();
     let flush_records = trace
         .iter()
         .filter(|record| record.get("flush_cause").and_then(Value::as_str) == Some(cause))
@@ -4134,6 +4147,55 @@ fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
             flushed,
             "monotonic",
         );
+    }
+    assert_pipeline_summary_flush_stage_records(&json, "flush_cause", cause, &flush_records);
+}
+
+fn assert_pipeline_summary_flush_stage_records(
+    json: &Value,
+    category: &str,
+    cause: &str,
+    records: &[&Value],
+) {
+    let mut stage_records = BTreeMap::<String, u64>::new();
+    for record in records {
+        let mut record_stages = BTreeSet::new();
+        for flushed in record_array(record, "flushed") {
+            let stage = flushed
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing flushed instruction stage: {flushed}"));
+            record_stages.insert(stat_path_segment(stage));
+        }
+        for stage in record_stages {
+            *stage_records.entry(stage).or_default() += 1;
+        }
+    }
+    assert!(
+        !stage_records.is_empty(),
+        "pipeline summary {category} {cause} should have active flushed stages"
+    );
+    for (stage, records) in &stage_records {
+        assert_eq!(
+            json_path_u64(
+                json,
+                &format!("/debug/pipeline_summary/{category}/{cause}/stage/{stage}/records")
+            ),
+            *records,
+            "pipeline summary {category} {cause} stage {stage} should count active records"
+        );
+    }
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        if !stage_records.contains_key(stage) {
+            assert_eq!(
+                json_path_u64(
+                    json,
+                    &format!("/debug/pipeline_summary/{category}/{cause}/stage/{stage}/records")
+                ),
+                0,
+                "pipeline summary {category} {cause} stage {stage} should expose a zero record lane"
+            );
+        }
     }
 }
 

@@ -107,6 +107,7 @@ struct Rem6PipelineTraceResourceTotals {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6PipelineTraceFlushTotals {
+    records: u64,
     flushed: u64,
     flushed_cycles: u64,
 }
@@ -525,14 +526,15 @@ impl Rem6PipelineTraceResourceTotals {
 
 impl Rem6PipelineTraceFlushTotals {
     fn add_record(&mut self, flushed: u64, flushed_cycles: u64) {
+        self.records = self.records.saturating_add(1);
         self.flushed = self.flushed.saturating_add(flushed);
         self.flushed_cycles = self.flushed_cycles.saturating_add(flushed_cycles);
     }
 
     fn to_json(self) -> String {
         format!(
-            "{{\"flushed\":{},\"flushed_cycles\":{}}}",
-            self.flushed, self.flushed_cycles
+            "{{\"records\":{},\"flushed\":{},\"flushed_cycles\":{}}}",
+            self.records, self.flushed, self.flushed_cycles
         )
     }
 }
