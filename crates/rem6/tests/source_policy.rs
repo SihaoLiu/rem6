@@ -662,6 +662,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/debug/host_action_trace/0/state_transfer/quiescence_gate/captured_payload_bytes",
         "/debug/host_action_trace/1/execution_mode_authority/mode/detailed",
         "/debug/host_action_trace/1/execution_mode_authority/target/cpu0/mode/detailed",
+        "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.mode.detailed",
+        "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
         "--riscv-execution-mode detailed",
         "sim.host_actions.execution_mode_authority.mode.timing",
         "sim.host_actions.execution_mode_authority.mode.detailed",

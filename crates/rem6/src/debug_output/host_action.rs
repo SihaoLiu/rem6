@@ -22,6 +22,12 @@ pub(crate) struct Rem6HostActionTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostActionTraceAuthorityStat {
+    path: String,
+    value: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6HostActionTraceField {
     name: &'static str,
     value: Rem6HostActionTraceValue,
@@ -93,6 +99,20 @@ impl Rem6HostActionTraceValue {
     }
 }
 
+impl Rem6HostActionTraceAuthorityStat {
+    fn new(path: String, value: u64) -> Self {
+        Self { path, value }
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
 pub(crate) fn host_action_trace_records(
     actions: &Rem6HostActionSummary,
 ) -> Vec<Rem6HostActionTraceRecord> {
@@ -141,6 +161,81 @@ pub(crate) fn host_action_trace_records(
         )
     });
     records
+}
+
+pub(crate) fn host_action_trace_checkpoint_restore_authority_stats(
+    checkpoint_restores: &[Rem6HostCheckpointSummary],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6HostActionTraceAuthorityStat> {
+    let mut present_manifests = 0;
+    let mut cleared_manifests = 0;
+    let mut decode_errors = 0;
+    let mut targets = 0;
+    let mut modes = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
+    let mut target_modes =
+        BTreeMap::<String, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
+
+    for restore in checkpoint_restores {
+        if restore.execution_mode_authority_present {
+            present_manifests += 1;
+        }
+        if restore.execution_mode_authority_cleared {
+            cleared_manifests += 1;
+        }
+        if restore.execution_mode_authority_decode_error {
+            decode_errors += 1;
+        }
+        targets += restore.execution_modes.len() as u64;
+        for authority in &restore.execution_modes {
+            let Some(index) = execution_mode_authority_lane_index(authority.mode) else {
+                continue;
+            };
+            modes[index] = modes[index].saturating_add(1);
+            let target = stat_path_segment(&authority.target);
+            let counts = target_modes.entry(target).or_default();
+            counts[index] = counts[index].saturating_add(1);
+        }
+    }
+
+    let mut stats = Vec::new();
+    for (path, value) in [
+        (
+            "checkpoint_restore.execution_mode_authority.manifests",
+            present_manifests,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.cleared_manifests",
+            cleared_manifests,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.decode_errors",
+            decode_errors,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.targets",
+            targets,
+        ),
+    ] {
+        stats.push(Rem6HostActionTraceAuthorityStat::new(
+            path.to_string(),
+            value,
+        ));
+    }
+    for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
+        stats.push(Rem6HostActionTraceAuthorityStat::new(
+            format!("checkpoint_restore.execution_mode_authority.mode.{mode}"),
+            modes[index],
+        ));
+    }
+    for (target, counts) in target_modes {
+        for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
+            stats.push(Rem6HostActionTraceAuthorityStat::new(
+                format!("checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"),
+                counts[index],
+            ));
+        }
+    }
+    stats
 }
 
 fn injected_command_record(action: &Rem6HostInjectedCommandSummary) -> Rem6HostActionTraceRecord {

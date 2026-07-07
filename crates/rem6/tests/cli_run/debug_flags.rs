@@ -6224,6 +6224,50 @@ fn rem6_run_host_action_debug_flag_emits_scheduled_checkpoint_restore_trace() {
         1,
         "monotonic",
     );
+    for (path, value) in [
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.manifests",
+            1,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.cleared_manifests",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.decode_errors",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.targets",
+            1,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.mode.functional",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.mode.timing",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.mode.detailed",
+            1,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.functional",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.timing",
+            0,
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+            1,
+        ),
+    ] {
+        assert_stat(&stdout, path, "Count", value, "monotonic");
+    }
 }
 
 #[test]
