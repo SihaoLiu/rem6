@@ -5595,6 +5595,43 @@ fn rem6_run_in_order_pipeline_models_vector_segment_e8_e16_e64_m1_load_store() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_segment_e16_m2_full_register_group_load_store() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-segment-e16-m2-full-register-group-load-store",
+        &unit_stride_segment_e16_m2_full_register_group_vector_memory_program(),
+        520,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        106,
+        "e16/m2 full-register-group segment load/store should scatter two 32-byte fields into vector register groups and gather them back through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&direct_stats).as_deref(),
+        Some("environment_call"),
+        "e16/m2 full-register-group segment load/store should reach the success ecall, not the invalid-instruction failure path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-segment-e16-m2-full-register-group-load-store",
+        &unit_stride_segment_e16_m2_full_register_group_vector_memory_program(),
+        1600,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        106,
+        "cache-backed e16/m2 full-register-group segment load/store should scatter two 32-byte fields into vector register groups and gather them back through the top-level run path\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&cache_stats).as_deref(),
+        Some("environment_call"),
+        "cache-backed e16/m2 full-register-group segment load/store should reach the success ecall, not the invalid-instruction failure path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_segment_e32_m1_load_store() {
     let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
         "in-order-vector-segment-masked-e32-m1-load-store",
@@ -14509,6 +14546,63 @@ fn unit_stride_segment_e64_m1_two_line_vector_memory_program() -> Vec<u8> {
             0xdddd_eeee_ffff_0001,
         ]),
     )
+}
+
+fn unit_stride_segment_e16_m2_full_register_group_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 512;
+    const LANES_PER_FIELD: usize = 16;
+    const FIELDS: usize = 2;
+    const SEGMENT_HALFWORDS: usize = LANES_PER_FIELD * FIELDS;
+    const SEGMENT_BYTES: i32 = (SEGMENT_HALFWORDS * 2) as i32;
+    const SOURCE_SEGMENT_OFFSET_BYTES: i32 = 0;
+    const STORE_RESULT_OFFSET_BYTES: i32 = SEGMENT_BYTES;
+    const EXPECTED_STORE_OFFSET_BYTES: i32 = SEGMENT_BYTES * 2;
+    const FAIL_INSTRUCTION_INDEX: i32 = 106;
+
+    let mut words = vec![
+        u_type(0, 10, 0x17),                                          // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13),               // addi x10, x10, data
+        i_type(SOURCE_SEGMENT_OFFSET_BYTES, 10, 0b000, 12, 0x13), // addi x12, x10, source segment
+        i_type(STORE_RESULT_OFFSET_BYTES, 10, 0b000, 13, 0x13),   // addi x13, x10, store result
+        i_type(EXPECTED_STORE_OFFSET_BYTES, 10, 0b000, 19, 0x13), // addi x19, x10, expected result
+        i_type(LANES_PER_FIELD as i32, 0, 0b000, 11, 0x13),       // addi x11, x0, vl
+        vsetvli_type(0xc9, 11, 5), // vsetvli x5, x11, e16, m2, ta, ma
+        vector_unit_stride_segment_load_type(true, 2, 0b101, 12, 2), // vlseg2e16.v v2, (x12)
+        vector_unit_stride_segment_store_type(true, 2, 0b101, 13, 2), // vsseg2e16.v v2, (x13)
+    ];
+
+    for halfword_index in 0..SEGMENT_HALFWORDS {
+        let offset = (halfword_index * 2) as i32;
+        words.push(i_type(offset, 13, 0b101, 17, 0x03)); // lhu x17, observed halfword
+        words.push(i_type(offset, 19, 0b101, 18, 0x03)); // lhu x18, expected halfword
+        let branch_index = words.len() as i32;
+        words.push(b_type(
+            (FAIL_INSTRUCTION_INDEX - branch_index) * 4,
+            18,
+            17,
+            0b001,
+        ));
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    assert_eq!(words.len() as i32, FAIL_INSTRUCTION_INDEX + 1);
+    assert!(words.len() * 4 <= DATA_OFFSET_BYTES as usize);
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let mut source_segment = Vec::with_capacity(SEGMENT_HALFWORDS);
+    for lane in 0..LANES_PER_FIELD {
+        source_segment.push(0xa100 + lane as u16);
+        source_segment.push(0xb200 + lane as u16);
+    }
+
+    let mut program = riscv64_program(&words);
+    program.extend_from_slice(&u16_halfwords_to_bytes(&source_segment));
+    program.extend_from_slice(&u16_halfwords_to_bytes(&[0xeeee; SEGMENT_HALFWORDS]));
+    program.extend_from_slice(&u16_halfwords_to_bytes(&source_segment));
+    program
 }
 
 fn unit_stride_segment_m1_vector_memory_program(

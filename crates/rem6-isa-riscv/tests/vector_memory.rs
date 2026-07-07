@@ -4883,6 +4883,36 @@ fn hart_builds_unmasked_e32_four_field_segment_unit_stride_accesses() {
 }
 
 #[test]
+fn hart_rejects_fractional_lmul_segment_unit_stride_slices() {
+    for (pc, raw, address_register) in [
+        (
+            0x8324,
+            vector_unit_stride_segment_load_type(true, 2, 0b101, 14, 2),
+            14,
+        ),
+        (
+            0x832c,
+            vector_unit_stride_segment_store_type(true, 2, 0b101, 16, 2),
+            16,
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(pc);
+        hart.set_vector_config(RiscvVectorConfig::new(4, 0xcf));
+        hart.write(reg(address_register), 0x9000);
+
+        let record = hart
+            .execute(RiscvInstruction::decode(raw).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+        );
+        assert_eq!(record.memory_access(), None);
+    }
+}
+
+#[test]
 fn hart_rejects_non_e64_segment_unit_stride_two_line_slices() {
     for (load_pc, store_pc, vl, vtype, width_bits) in [
         (0x8320, 0x8328, 16, 0xc0, 0b000),

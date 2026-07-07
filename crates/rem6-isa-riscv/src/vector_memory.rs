@@ -57,8 +57,8 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
     ),
 ];
 // Current segment execution evidence covers bounded single-line multi-field
-// forms plus explicit aligned e32/m1 unmasked four-field and e64/m1
-// unmasked/masked two-line slices.
+// forms plus explicit aligned e32/m1 unmasked four-field, e64/m1
+// unmasked/masked two-line, and e16/m2 full-register-group slices.
 // Broader segment transport needs its own tests.
 const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
@@ -446,8 +446,7 @@ fn segment_unit_stride_access_plan(
     let group_registers = config.register_group_registers()?;
     if config.vill()
         || !(2..=8).contains(&fields)
-        || vlmul != 0
-        || group_registers != 1
+        || !matches!(vlmul, 0 | 1)
         || config.element_width_bytes()? != width.bytes()
     {
         return None;
@@ -469,7 +468,14 @@ fn segment_unit_stride_access_plan(
         .checked_mul(element_bytes)?;
     (byte_len <= fields * group_registers * RISCV_VECTOR_REGISTER_BYTES
         && byte_len <= MAX_VECTOR_GROUP_BYTES
-        && supported_segment_unit_stride_shape(width, fields, element_count, byte_len))
+        && supported_segment_unit_stride_shape(
+            width,
+            fields,
+            element_count,
+            byte_len,
+            group_registers,
+            vlmul,
+        ))
     .then_some(SegmentUnitStrideAccessPlan {
         fields,
         element_count,
@@ -484,10 +490,23 @@ fn supported_segment_unit_stride_shape(
     fields: usize,
     element_count: usize,
     byte_len: usize,
+    group_registers: usize,
+    vlmul: u64,
 ) -> bool {
-    byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES
-        || (width == MemoryWidth::Word && fields == 4 && element_count == 2 && byte_len == 32)
-        || (width == MemoryWidth::Doubleword && fields == 2 && element_count == 2 && byte_len == 32)
+    (vlmul == 0
+        && group_registers == 1
+        && (byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES
+            || (width == MemoryWidth::Word && fields == 4 && element_count == 2 && byte_len == 32)
+            || (width == MemoryWidth::Doubleword
+                && fields == 2
+                && element_count == 2
+                && byte_len == 32)))
+        || (vlmul == 1
+            && width == MemoryWidth::Halfword
+            && fields == 2
+            && group_registers == 2
+            && element_count == 16
+            && byte_len == 64)
 }
 
 fn strided_access_plan(

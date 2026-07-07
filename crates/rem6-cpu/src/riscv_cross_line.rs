@@ -50,7 +50,7 @@ pub(crate) fn supports_cross_line_data_access(
             byte_mask,
             group_registers,
             ..
-        } => supported_two_line_segment_m1_access(
+        } => supported_cross_line_segment_unit_stride_access(
             *width,
             *fields,
             *element_count,
@@ -68,7 +68,7 @@ pub(crate) fn supports_cross_line_data_access(
             byte_mask,
             group_registers,
             ..
-        } => supported_two_line_segment_m1_access(
+        } => supported_cross_line_segment_unit_stride_access(
             *width,
             *fields,
             *element_count,
@@ -159,7 +159,7 @@ fn supported_full_register_group_vector_access(
     supported_shape && byte_len == full_group_bytes && size_bytes == byte_len
 }
 
-fn supported_two_line_segment_m1_access(
+fn supported_cross_line_segment_unit_stride_access(
     width: MemoryWidth,
     fields: usize,
     element_count: usize,
@@ -172,13 +172,23 @@ fn supported_two_line_segment_m1_access(
     let Ok(size_bytes) = usize::try_from(size.bytes()) else {
         return false;
     };
-    group_registers == 1
-        && byte_mask.is_none()
+    if byte_mask.is_some() || size_bytes != byte_len {
+        return false;
+    }
+
+    let m1_two_line = group_registers == 1
         && size.bytes() == line_bytes * 2
-        && ((width == MemoryWidth::Doubleword && fields == 2 && element_count == 2)
-            || (width == MemoryWidth::Word && fields == 4 && element_count == 2))
         && byte_len == 32
-        && size_bytes == byte_len
+        && ((width == MemoryWidth::Doubleword && fields == 2 && element_count == 2)
+            || (width == MemoryWidth::Word && fields == 4 && element_count == 2));
+    let e16_m2_full_group = group_registers == 2
+        && size.bytes() == line_bytes * 4
+        && width == MemoryWidth::Halfword
+        && fields == 2
+        && element_count == 16
+        && byte_len == 64;
+
+    m1_two_line || e16_m2_full_group
 }
 
 fn sparse_e64_strided_m1_vector_access(
@@ -383,6 +393,25 @@ mod tests {
         ));
         assert!(supports_cross_line_data_access(
             &vector_store_segment_e32_m1_four_field(0x8000),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_e16_m2_full_register_segment() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(64).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_segment_e16_m2_full_register_group(0x8000),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_segment_e16_m2_full_register_group(0x8000),
             Address::new(0x8000),
             size,
             layout
@@ -682,6 +711,19 @@ mod tests {
         vector_load_segment_e32_four_field(address, 2, 32, None, 1)
     }
 
+    fn vector_load_segment_e16_m2_full_register_group(address: u64) -> MemoryAccessKind {
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd: VectorRegister::new(2).unwrap(),
+            address,
+            width: MemoryWidth::Halfword,
+            fields: 2,
+            element_count: 16,
+            byte_len: 64,
+            byte_mask: None,
+            group_registers: 2,
+        }
+    }
+
     fn vector_load_segment_e32_four_field(
         address: u64,
         element_count: usize,
@@ -728,6 +770,18 @@ mod tests {
 
     fn vector_store_segment_e32_m1_four_field(address: u64) -> MemoryAccessKind {
         vector_store_segment_e32_four_field(address, 2, 32, None, 1)
+    }
+
+    fn vector_store_segment_e16_m2_full_register_group(address: u64) -> MemoryAccessKind {
+        MemoryAccessKind::VectorStoreSegmentUnitStride {
+            address,
+            width: MemoryWidth::Halfword,
+            fields: 2,
+            element_count: 16,
+            data: vec![0; 64],
+            byte_mask: None,
+            group_registers: 2,
+        }
     }
 
     fn vector_store_segment_e32_four_field(
