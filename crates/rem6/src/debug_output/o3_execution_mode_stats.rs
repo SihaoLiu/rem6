@@ -61,7 +61,7 @@ pub(super) fn o3_trace_execution_mode_authority_stats(
 ) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
     let mut targets = 0_u64;
     let mut modes = [0_u64; 3];
-    let mut target_modes = BTreeMap::<(String, &'static str), u64>::new();
+    let mut target_modes = BTreeMap::<String, [u64; 3]>::new();
 
     for record in records {
         let Some(mode) = record.execution_mode() else {
@@ -73,10 +73,13 @@ pub(super) fn o3_trace_execution_mode_authority_stats(
         targets = targets.saturating_add(1);
         modes[index] = modes[index].saturating_add(1);
         let target = stat_path_segment(record.target());
-        *target_modes.entry((target, mode)).or_default() += 1;
+        let counts = target_modes.entry(target).or_default();
+        counts[index] = counts[index].saturating_add(1);
     }
 
-    let mut stats = Vec::with_capacity(1 + EXECUTION_MODE_STATS.len() + target_modes.len());
+    let mut stats = Vec::with_capacity(
+        1 + EXECUTION_MODE_STATS.len() + target_modes.len() * EXECUTION_MODE_STATS.len(),
+    );
     stats.push(Rem6O3ExecutionModeAuthorityStat::new(
         "execution_mode_authority.targets".to_string(),
         targets,
@@ -87,11 +90,13 @@ pub(super) fn o3_trace_execution_mode_authority_stats(
             modes[index],
         ));
     }
-    for ((target, mode), value) in target_modes {
-        stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-            format!("execution_mode_authority.target.{target}.mode.{mode}"),
-            value,
-        ));
+    for (target, counts) in target_modes {
+        for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+            stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+                format!("execution_mode_authority.target.{target}.mode.{mode}"),
+                counts[index],
+            ));
+        }
     }
     stats
 }

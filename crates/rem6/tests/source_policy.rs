@@ -683,6 +683,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.o3_trace.execution_mode_authority.targets",
         "sim.debug.o3_trace.execution_mode_authority.mode.detailed",
         "sim.debug.o3_trace.execution_mode_authority.target.cpu1.mode.detailed",
+        "sim.debug.o3_trace.execution_mode_authority.target.cpu1.mode.functional",
+        "sim.debug.o3_trace.execution_mode_authority.target.cpu1.mode.timing",
         "sim.debug.o3_trace.cpu.cpu0.records",
         "sim.debug.o3_trace.cpu.cpu0.execution_mode.detailed",
         "sim.debug.o3_trace.cpu.cpu1.event.tick_span",
