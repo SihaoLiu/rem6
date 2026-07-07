@@ -7789,7 +7789,38 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
     let branch_repair = o3_runtime
         .get("branch_repair")
         .expect("structured O3 branch-repair runtime matrix");
+    let branch_event = o3_runtime
+        .get("branch_event")
+        .expect("structured O3 branch-event runtime matrix");
 
+    assert_eq!(json_record_u64(branch_event, "branches"), 2);
+    assert_eq!(json_record_u64(branch_event, "link_writes"), 1);
+    assert_eq!(json_record_u64(branch_event, "without_link_writes"), 1);
+    assert_eq!(
+        json_record_u64(branch_event, "squashed_targets_with_link_writes"),
+        1
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/squashed_target_link_write_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(1),
+        "call-indirect runtime matrix should expose squashed target link writes: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/squashed_target_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "direct-unconditional runtime matrix should expose zero link-write squashes: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/squashed_target_without_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-unconditional runtime matrix should expose no-link squashes: {branch_event}"
+    );
     assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 0);
     assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 1);
     assert_eq!(
@@ -7827,6 +7858,29 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
     );
 
     for (path, unit, value) in [
+        ("sim.cpu0.o3.branch_event.branches", "Count", 2),
+        ("sim.cpu0.o3.branch_event.link_writes", "Count", 1),
+        ("sim.cpu0.o3.branch_event.without_link_writes", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_event.squashed_targets_with_link_writes",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_link_write_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_link_write_kind.direct_unconditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
         (
             "sim.cpu0.o3.branch_repair_targetless_mismatches",
             "Count",

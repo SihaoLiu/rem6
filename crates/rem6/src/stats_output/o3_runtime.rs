@@ -12,10 +12,20 @@ pub(super) fn emit_o3_branch_event_aggregate_stats(
     o3: O3RuntimeStats,
 ) -> Result<(), Rem6CliError> {
     for (name, value) in [
+        ("branch_event.branches", o3.branch_events()),
+        ("branch_event.link_writes", o3.branch_event_link_writes()),
+        (
+            "branch_event.without_link_writes",
+            o3.branch_event_without_link_writes(),
+        ),
         ("branch_event.squashes", o3.branch_event_squashes()),
         (
             "branch_event.squashed_targets",
             o3.branch_event_squashed_targets(),
+        ),
+        (
+            "branch_event.squashed_targets_with_link_writes",
+            o3.branch_event_squashed_targets_with_link_writes(),
         ),
         (
             "branch_event.squashed_targets_without_link_writes",

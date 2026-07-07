@@ -405,6 +405,11 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
     let squash_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
         summary.o3_runtime.branch_event_squash_kind(branch_kind)
     });
+    let squashed_target_link_write_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_squashed_target_link_write_kind(branch_kind)
+    });
     let squashed_target_without_link_write_kind =
         o3_runtime_branch_repair_kind_json(|branch_kind| {
             summary
@@ -412,9 +417,15 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
                 .branch_event_squashed_target_without_link_write_kind(branch_kind)
         });
     format!(
-        "{{\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        "{{\"branches\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        summary.o3_runtime.branch_events(),
+        summary.o3_runtime.branch_event_link_writes(),
+        summary.o3_runtime.branch_event_without_link_writes(),
         summary.o3_runtime.branch_event_squashes(),
         summary.o3_runtime.branch_event_squashed_targets(),
+        summary
+            .o3_runtime
+            .branch_event_squashed_targets_with_link_writes(),
         summary
             .o3_runtime
             .branch_event_squashed_targets_without_link_writes(),

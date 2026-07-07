@@ -251,6 +251,12 @@ impl O3RuntimeStats {
         self.branch_event_kinds[kind.index()]
     }
 
+    pub fn branch_events(self) -> u64 {
+        self.branch_event_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
     pub fn branch_event_taken_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_event_taken_kinds[kind.index()]
     }
@@ -261,6 +267,17 @@ impl O3RuntimeStats {
 
     pub fn branch_event_link_write_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_event_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_event_link_writes(self) -> u64 {
+        self.branch_event_link_write_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_without_link_writes(self) -> u64 {
+        self.branch_events()
+            .saturating_sub(self.branch_event_link_writes())
     }
 
     pub fn branch_event_squash_kind(self, kind: BranchTargetKind) -> u64 {
@@ -281,6 +298,16 @@ impl O3RuntimeStats {
         self.branch_event_squashed_target_without_link_write_kinds
             .into_iter()
             .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_squashed_targets_with_link_writes(self) -> u64 {
+        self.branch_event_squashed_targets()
+            .saturating_sub(self.branch_event_squashed_targets_without_link_writes())
+    }
+
+    pub fn branch_event_squashed_target_link_write_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_squash_kind(kind)
+            .saturating_sub(self.branch_event_squashed_target_without_link_write_kind(kind))
     }
 
     pub fn branch_event_squashed_target_without_link_write_kind(
