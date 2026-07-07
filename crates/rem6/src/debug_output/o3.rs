@@ -18,6 +18,8 @@ mod o3_branch_stats;
 mod o3_branch_target_mismatch;
 #[path = "o3_checkpoint_restore_json.rs"]
 mod o3_checkpoint_restore_json;
+#[path = "o3_event_iew.rs"]
+mod o3_event_iew;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
 #[path = "o3_event_summary_json.rs"]
@@ -61,6 +63,7 @@ use o3_checkpoint_restore_json::{
     o3_checkpoint_restore_to_json, Rem6O3CheckpointRestoreAuthorityTotals,
     Rem6O3CheckpointRestoreScope,
 };
+use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
 use o3_event_summary_json::o3_event_summary_to_json;
 use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
@@ -187,8 +190,7 @@ struct Rem6O3TraceTotals {
     event_rob_allocations: u64,
     event_rob_commits: u64,
     event_rename_writes: u64,
-    event_iew_dependency_producers: u64,
-    event_iew_dependency_consumers: u64,
+    event_iew: Rem6O3EventIewTotals,
     event_lsq_loads: u64,
     event_lsq_stores: u64,
     event_lsq_operation_load: u64,
@@ -678,14 +680,7 @@ impl Rem6O3TraceTotals {
             add_bool_counter(&mut self.event_rob_allocations, event.rob_allocated());
             add_bool_counter(&mut self.event_rob_commits, event.rob_committed());
             add_counter(&mut self.event_rename_writes, event.rename_writes());
-            add_counter(
-                &mut self.event_iew_dependency_producers,
-                event.iew_dependency_producers(),
-            );
-            add_counter(
-                &mut self.event_iew_dependency_consumers,
-                event.iew_dependency_consumers(),
-            );
+            self.event_iew.add_event(*event);
             add_counter(&mut self.event_lsq_loads, event.lsq_loads());
             add_counter(&mut self.event_lsq_stores, event.lsq_stores());
             let lsq_data_latency_ticks = event.lsq_data_latency_ticks();
@@ -1149,14 +1144,6 @@ impl Rem6O3TraceTotals {
             ("event.rob_allocations", self.event_rob_allocations),
             ("event.rob_commits", self.event_rob_commits),
             ("event.rename_writes", self.event_rename_writes),
-            (
-                "event.iew_dependency_producers",
-                self.event_iew_dependency_producers,
-            ),
-            (
-                "event.iew_dependency_consumers",
-                self.event_iew_dependency_consumers,
-            ),
             ("event.lsq_loads", self.event_lsq_loads),
             ("event.lsq_stores", self.event_lsq_stores),
             ("event.lsq_operation.load", self.event_lsq_operation_load),
@@ -1320,6 +1307,13 @@ impl Rem6O3TraceTotals {
                 self.event_fu_latency_instructions,
             ),
         ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Count",
+                value,
+            });
+        }
+        for (suffix, value) in self.event_iew.stats() {
             stats.push(Rem6O3TraceStat {
                 suffix,
                 unit: "Count",

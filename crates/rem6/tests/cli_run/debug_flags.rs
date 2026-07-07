@@ -8909,6 +8909,20 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "O3 event summary wrong-target branch-event path {path}: {event_summary_branch_event}"
         );
     }
+    let event_summary_iew = record
+        .pointer("/event_summary/iew")
+        .expect("O3 event summary IEW matrix");
+    for (field, value) in [
+        ("predicted_taken_incorrect", 1),
+        ("predicted_not_taken_incorrect", 1),
+        ("branch_mispredicts", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_iew, field),
+            value,
+            "O3 event summary wrong-target IEW field {field}"
+        );
+    }
     let events = record
         .pointer("/events")
         .and_then(Value::as_array)
@@ -9030,6 +9044,21 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
             "sim.debug.o3_trace.event.branch_repair_direction_only_mismatches",
             "Count",
             1,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_predicted_taken_incorrect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_predicted_not_taken_incorrect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_branch_mispredicts",
+            "Count",
+            2,
         ),
         ("sim.debug.o3_trace.event.branch_mispredictions", "Count", 2),
         ("sim.debug.o3_trace.event.branch_squashes", "Count", 2),

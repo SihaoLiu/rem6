@@ -4,6 +4,7 @@ use rem6_cpu::{
 };
 
 use super::o3_branch_repair::o3_branch_repair_events_to_json;
+use super::o3_event_iew::Rem6O3EventIewTotals;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct O3EventSummaryFuLatency {
@@ -394,16 +395,14 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
 }
 
 fn event_summary_iew_json(events: &[O3RuntimeTraceRecord]) -> String {
-    let producer_inst = events
-        .iter()
-        .map(|event| event.iew_dependency_producers())
-        .sum::<u64>();
-    let consumer_inst = events
-        .iter()
-        .map(|event| event.iew_dependency_consumers())
-        .sum::<u64>();
+    let totals = Rem6O3EventIewTotals::from_events(events);
+    let producer_inst = totals.dependency_producers();
+    let consumer_inst = totals.dependency_consumers();
+    let predicted_taken_incorrect = totals.predicted_taken_incorrect();
+    let predicted_not_taken_incorrect = totals.predicted_not_taken_incorrect();
+    let branch_mispredicts = totals.branch_mispredicts();
     format!(
-        "{{\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
+        "{{\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"predicted_taken_incorrect\":{predicted_taken_incorrect},\"predicted_not_taken_incorrect\":{predicted_not_taken_incorrect},\"branch_mispredicts\":{branch_mispredicts},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
         ratio_ppm(producer_inst, consumer_inst)
     )
 }
