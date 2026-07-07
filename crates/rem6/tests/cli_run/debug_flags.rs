@@ -9240,6 +9240,22 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
     let branch_event = record
         .pointer("/branch_event")
         .unwrap_or_else(|| panic!("missing O3 trace branch-event summary: {record}"));
+    assert_eq!(
+        json_record_u64(branch_event, "mispredictions"),
+        2,
+        "O3 trace branch-event summary should expose aggregate mispredictions: {branch_event}"
+    );
+    for (path, value) in [
+        ("/misprediction_kind/call_indirect", 1),
+        ("/misprediction_kind/direct_unconditional", 1),
+        ("/misprediction_kind/direct_conditional", 0),
+    ] {
+        assert_eq!(
+            branch_event.pointer(path).and_then(Value::as_u64),
+            Some(value),
+            "O3 trace branch-event misprediction-kind path {path}: {branch_event}"
+        );
+    }
     for (path, value) in [
         ("/squashed_target_kind/call_indirect", 1),
         ("/squashed_target_kind/direct_unconditional", 1),
