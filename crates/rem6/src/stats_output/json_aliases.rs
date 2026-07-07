@@ -305,7 +305,39 @@ fn append_gem5_o3_json_alias_stats(
             );
         }
         append_gem5_o3_branch_repair_json_alias_stats(snapshot, records, next_id, &alias_prefix);
+        append_gem5_o3_ftq_json_alias_stats(snapshot, records, next_id, cpu, &alias_prefix);
     }
+}
+
+fn append_gem5_o3_ftq_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for kind in BranchTargetKind::ALL {
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &format!(
+                "sim.cpu{cpu}.o3.branch_event.squashed_target_kind.{}",
+                kind.canonical_stat_name()
+            ),
+            &format!(
+                "{alias_prefix}.ftq.squashedTargets_0::{}",
+                kind.gem5_branch_type_name()
+            ),
+        );
+    }
+    append_gem5_json_alias_from_paths(
+        snapshot,
+        records,
+        next_id,
+        &format!("sim.cpu{cpu}.o3.branch_event.squashed_targets"),
+        &format!("{alias_prefix}.ftq.squashedTargets_0::total"),
+    );
 }
 
 fn append_gem5_o3_branch_repair_json_alias_stats(

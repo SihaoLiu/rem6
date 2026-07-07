@@ -9147,6 +9147,9 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ("sim.cpu0.o3.iew.predicted_not_taken_incorrect", "Count", 1),
         ("system.cpu.iew.predictedTakenIncorrect", "Count", 1),
         ("system.cpu.iew.predictedNotTakenIncorrect", "Count", 1),
+        ("system.cpu.ftq.squashedTargets_0::CallIndirect", "Count", 1),
+        ("system.cpu.ftq.squashedTargets_0::DirectUncond", "Count", 1),
+        ("system.cpu.ftq.squashedTargets_0::total", "Count", 2),
         ("system.cpu.iew.branchMispredicts", "Count", 2),
         ("system.cpu.commit.branchMispredicts", "Count", 2),
     ] {

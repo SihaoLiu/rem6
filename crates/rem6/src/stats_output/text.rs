@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
+use super::text_o3::append_gem5_o3_ftq_alias_stats;
+
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
     let mut output = "---------- Begin Simulation Statistics ----------\n".to_string();
     append_gem5_derived_text_stats(&mut output, snapshot);
@@ -647,6 +649,7 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",
         );
+        append_gem5_o3_ftq_alias_stats(output, snapshot, cpu, &alias_prefix);
         let targetless_mismatches = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),
@@ -1088,7 +1091,7 @@ fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
     format!("{whole}.{fractional:012}")
 }
 
-fn snapshot_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
+pub(super) fn snapshot_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
     snapshot
         .samples()
         .iter()
@@ -1345,7 +1348,7 @@ fn append_derived_count_stat(output: &mut String, path: &str, value: u64) {
     append_derived_unit_stat(output, path, value, "Count");
 }
 
-fn append_derived_count_stat_if_absent(
+pub(super) fn append_derived_count_stat_if_absent(
     output: &mut String,
     snapshot: &StatSnapshot,
     path: &str,

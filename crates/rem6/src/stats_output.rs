@@ -19,6 +19,7 @@ mod pipeline;
 mod resource_acquire;
 mod riscv;
 mod text;
+mod text_o3;
 mod trace_replay;
 mod wait_for;
 
