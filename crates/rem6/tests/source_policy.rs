@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
-const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 6000;
+const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
