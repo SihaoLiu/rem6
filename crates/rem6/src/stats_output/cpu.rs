@@ -1553,6 +1553,16 @@ fn emit_o3_runtime_stats(
             "iew.predictedNotTakenIncorrect",
             o3.iew_predicted_not_taken_incorrect(),
         ),
+        ("ftq.squashes", o3.branch_event_squashes()),
+        ("ftq.squashedTargets", o3.branch_event_squashed_targets()),
+        (
+            "ftq.squashedTargetsWithLinkWrites",
+            o3.branch_event_squashed_targets_with_link_writes(),
+        ),
+        (
+            "ftq.squashedTargetsWithoutLinkWrites",
+            o3.branch_event_squashed_targets_without_link_writes(),
+        ),
         (
             "lsq0.addedLoadsAndStores",
             o3.lsq_loads().saturating_add(o3.lsq_stores()),

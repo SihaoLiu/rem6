@@ -6676,10 +6676,31 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         "system.cpu.commit.branchMispredicts",
         branch_mispredicts,
     );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.branch_event.squashes",
+        branch_mispredicts,
+    );
+    assert_text_count_stat(&stdout, "system.cpu.ftq.squashes", branch_mispredicts);
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.ftq.squashedTargets",
+        branch_mispredicts,
+    );
+    assert_text_count_stat(&stdout, "system.cpu.ftq.squashedTargetsWithLinkWrites", 0);
+    assert_text_count_stat(
+        &stdout,
+        "system.cpu.ftq.squashedTargetsWithoutLinkWrites",
+        branch_mispredicts,
+    );
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.predictedTakenIncorrect");
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.predictedNotTakenIncorrect");
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.branchMispredicts");
     assert_text_stat_occurs_once(&stdout, "system.cpu.commit.branchMispredicts");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.ftq.squashes");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.ftq.squashedTargets");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.ftq.squashedTargetsWithLinkWrites");
+    assert_text_stat_occurs_once(&stdout, "system.cpu.ftq.squashedTargetsWithoutLinkWrites");
 }
 
 #[test]
@@ -6866,6 +6887,41 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
     assert_json_stat(
         &json,
         "system.cpu.commit.branchMispredicts",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_event.squashes",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.ftq.squashes",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.ftq.squashedTargets",
+        "Count",
+        branch_mispredicts,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.ftq.squashedTargetsWithLinkWrites",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.ftq.squashedTargetsWithoutLinkWrites",
         "Count",
         branch_mispredicts,
         "monotonic",
