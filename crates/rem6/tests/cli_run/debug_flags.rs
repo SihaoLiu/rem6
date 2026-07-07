@@ -12535,6 +12535,29 @@ fn rem6_run_o3_debug_flag_labels_hart_targeted_detailed_mode_trace() {
     );
     assert!(json.pointer("/cores/0/o3_runtime").is_none());
     assert!(json.pointer("/cores/1/o3_runtime").is_some());
+    for path in ["iq", "iew", "rob", "rename"] {
+        assert_eq!(
+            record.pointer(&format!("/{path}")),
+            json.pointer(&format!("/cores/1/o3_runtime/{path}")),
+            "O3 trace should mirror the runtime {path} summary matrix"
+        );
+    }
+    assert_eq!(
+        json_record_u64(record.pointer("/iq").unwrap(), "insts_issued"),
+        json_record_u64(record, "instructions")
+    );
+    assert_eq!(
+        json_record_u64(record.pointer("/iew").unwrap(), "writeback_count"),
+        json_record_u64(record, "instructions")
+    );
+    assert_eq!(
+        json_record_u64(record.pointer("/rob").unwrap(), "commits"),
+        json_record_u64(record, "rob_commits")
+    );
+    assert_eq!(
+        json_record_u64(record.pointer("/rename").unwrap(), "writes"),
+        json_record_u64(record, "rename_writes")
+    );
     assert_eq!(
         record.pointer("/commit"),
         json.pointer("/cores/1/o3_runtime/commit"),
