@@ -1368,9 +1368,22 @@ mod tests {
         let mut targetless_kinds = [0; BranchTargetKind::COUNT];
         let mut wrong_target_kinds = [0; BranchTargetKind::COUNT];
         let mut direction_only_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_taken_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_resolved_target_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_link_write_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_squash_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_squashed_target_without_link_write_kinds =
+            [0; BranchTargetKind::COUNT];
         targetless_kinds[BranchTargetKind::DirectConditional.index()] = 2;
         wrong_target_kinds[BranchTargetKind::CallIndirect.index()] = 3;
         direction_only_kinds[BranchTargetKind::DirectUnconditional.index()] = 4;
+        branch_event_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_taken_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_resolved_target_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_link_write_kinds[BranchTargetKind::Return.index()] = 0;
+        branch_event_squash_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_squashed_target_without_link_write_kinds[BranchTargetKind::Return.index()] = 1;
         let stats = O3RuntimeStats {
             branch_repair_targetless_mismatches: 2,
             branch_repair_wrong_targets: 3,
@@ -1378,6 +1391,12 @@ mod tests {
             branch_repair_targetless_mismatch_kinds: targetless_kinds,
             branch_repair_wrong_target_kinds: wrong_target_kinds,
             branch_repair_direction_only_kinds: direction_only_kinds,
+            branch_event_kinds,
+            branch_event_taken_kinds,
+            branch_event_resolved_target_kinds,
+            branch_event_link_write_kinds,
+            branch_event_squash_kinds,
+            branch_event_squashed_target_without_link_write_kinds,
             iew_predicted_taken_incorrect: 5,
             iew_predicted_not_taken_incorrect: 6,
             iq_branch_insts_issued: 8,
@@ -1412,6 +1431,40 @@ mod tests {
                 .stats()
                 .branch_repair_direction_only_kind(BranchTargetKind::DirectUnconditional),
             4
+        );
+        assert_eq!(
+            decoded.stats().branch_event_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_taken_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_resolved_target_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_link_write_kind(BranchTargetKind::Return),
+            0
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_squash_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_squashed_target_without_link_write_kind(BranchTargetKind::Return),
+            1
         );
         assert_eq!(decoded.stats().iew_predicted_taken_incorrect(), 5);
         assert_eq!(decoded.stats().iew_predicted_not_taken_incorrect(), 6);

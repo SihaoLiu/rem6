@@ -45,6 +45,13 @@ pub struct O3RuntimeStats {
     pub(crate) branch_repair_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_direction_only_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_taken_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_link_write_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_squash_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_squashed_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
     pub(crate) iew_predicted_taken_incorrect: u64,
     pub(crate) iew_predicted_not_taken_incorrect: u64,
     pub(crate) iew_producer_insts: u64,
@@ -207,6 +214,33 @@ impl O3RuntimeStats {
         self.branch_repair_direction_only_kinds[kind.index()]
     }
 
+    pub fn branch_event_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_kinds[kind.index()]
+    }
+
+    pub fn branch_event_taken_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_taken_kinds[kind.index()]
+    }
+
+    pub fn branch_event_resolved_target_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_resolved_target_kinds[kind.index()]
+    }
+
+    pub fn branch_event_link_write_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_event_squash_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_squash_kinds[kind.index()]
+    }
+
+    pub fn branch_event_squashed_target_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_event_squashed_target_without_link_write_kinds[kind.index()]
+    }
+
     pub const fn iew_predicted_taken_incorrect(self) -> u64 {
         self.iew_predicted_taken_incorrect
     }
@@ -336,6 +370,7 @@ impl O3RuntimeStats {
         self.instructions = self.instructions.saturating_add(1);
         self.rob_allocations = self.rob_allocations.saturating_add(1);
         self.rob_commits = self.rob_commits.saturating_add(1);
+        self.record_branch_event(trace_record);
         self.record_branch_repair(trace_record);
         if trace_record.branch_event() {
             self.iq_branch_insts_issued = self.iq_branch_insts_issued.saturating_add(1);
@@ -384,6 +419,34 @@ impl O3RuntimeStats {
 
     pub(super) fn record_store_conditional_failure(&mut self) {
         self.lsq_store_conditional_failures = self.lsq_store_conditional_failures.saturating_add(1);
+    }
+
+    fn record_branch_event(&mut self, event: O3RuntimeTraceRecord) {
+        if !event.branch_event() {
+            return;
+        }
+        let index = event.branch_kind().index();
+        self.branch_event_kinds[index] = self.branch_event_kinds[index].saturating_add(1);
+        if event.branch_resolved_taken() {
+            self.branch_event_taken_kinds[index] =
+                self.branch_event_taken_kinds[index].saturating_add(1);
+        }
+        if event.branch_resolved_target().is_some() {
+            self.branch_event_resolved_target_kinds[index] =
+                self.branch_event_resolved_target_kinds[index].saturating_add(1);
+        }
+        if event.branch_link_register_write() {
+            self.branch_event_link_write_kinds[index] =
+                self.branch_event_link_write_kinds[index].saturating_add(1);
+        }
+        if event.branch_squash() {
+            self.branch_event_squash_kinds[index] =
+                self.branch_event_squash_kinds[index].saturating_add(1);
+        }
+        if event.branch_squashed_target().is_some() && !event.branch_link_register_write() {
+            self.branch_event_squashed_target_without_link_write_kinds[index] =
+                self.branch_event_squashed_target_without_link_write_kinds[index].saturating_add(1);
+        }
     }
 
     pub(super) fn record_lsq_operation_latency(

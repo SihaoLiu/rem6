@@ -5834,6 +5834,91 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
+    let path = detailed_o3_return_branch_summary_binary("m5-switch-cpu-o3-return-branch-summary");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--dump-memory",
+            "0x80000040:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("1c000080000000000000000000000000")
+    );
+
+    for (pointer, value) in [
+        ("/cores/0/o3_runtime/branch_event/kind/return", 1),
+        ("/cores/0/o3_runtime/branch_event/taken_kind/return", 1),
+        (
+            "/cores/0/o3_runtime/branch_event/resolved_target_kind/return",
+            1,
+        ),
+        ("/cores/0/o3_runtime/branch_event/link_write_kind/return", 0),
+        ("/cores/0/o3_runtime/branch_event/squash_kind/return", 1),
+        (
+            "/cores/0/o3_runtime/branch_event/squashed_target_without_link_write_kind/return",
+            1,
+        ),
+        (
+            "/cores/0/o3_runtime/branch_repair/direction_only_kind/return",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose return branch event bucket {pointer}: {json}"
+        );
+    }
+
+    for (path, value) in [
+        ("sim.cpu0.o3.branch_event.kind.return", 1),
+        ("sim.cpu0.o3.branch_event.taken_kind.return", 1),
+        ("sim.cpu0.o3.branch_event.resolved_target_kind.return", 1),
+        ("sim.cpu0.o3.branch_event.link_write_kind.return", 0),
+        ("sim.cpu0.o3.branch_event.squash_kind.return", 1),
+        (
+            "sim.cpu0.o3.branch_event.squashed_target_without_link_write_kind.return",
+            1,
+        ),
+        ("sim.cpu0.o3.branch_repair_direction_only_kind.return", 1),
+        ("sim.cpu0.o3.iew.predicted_not_taken_incorrect", 1),
+        ("sim.cpu0.o3.iew.branch_mispredicts", 1),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
+}
+
+#[test]
 fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
     let path = detailed_o3_lsq_store_load_match_binary(
         "m5-switch-cpu-detailed-o3-lsq-store-load-text-stats",
@@ -7264,6 +7349,30 @@ fn detailed_o3_branch_repair_text_stats_binary(name: &str) -> std::path::PathBuf
     let data_start = 128_i32;
     let mut words = detailed_o3_branch_repair_words(data_start);
     append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn detailed_o3_return_branch_summary_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 64_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - 4, 10, 0x0, 10, 0x13),
+        u_type(0, 1, 0x17),
+        i_type(16, 1, 0x0, 1, 0x13),
+        i_type(0, 1, 0x0, 0, 0x67),
+        i_type(9, 0, 0x0, 6, 0x13),
+        s_type(0, 1, 10, 0b011),
+        s_type(8, 6, 10, 0b011),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
     while words.len() * 4 < data_start as usize {
         words.push(0);
     }

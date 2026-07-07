@@ -189,6 +189,35 @@ where
     format!("{{{fields}}}")
 }
 
+fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
+    let kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary.o3_runtime.branch_event_kind(branch_kind)
+    });
+    let taken_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary.o3_runtime.branch_event_taken_kind(branch_kind)
+    });
+    let resolved_target_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_resolved_target_kind(branch_kind)
+    });
+    let link_write_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary.o3_runtime.branch_event_link_write_kind(branch_kind)
+    });
+    let squash_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary.o3_runtime.branch_event_squash_kind(branch_kind)
+    });
+    let squashed_target_without_link_write_kind =
+        o3_runtime_branch_repair_kind_json(|branch_kind| {
+            summary
+                .o3_runtime
+                .branch_event_squashed_target_without_link_write_kind(branch_kind)
+        });
+    format!(
+        "{{\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_write_kind\":{link_write_kind},\"squash_kind\":{squash_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}"
+    )
+}
+
 fn o3_runtime_branch_repair_json(summary: &Rem6CoreSummary) -> String {
     let targetless_mismatch_kind = o3_runtime_branch_repair_kind_json(|kind| {
         summary
@@ -235,9 +264,10 @@ impl Rem6CoreSummary {
             let lsq_data_latency = o3_runtime_lsq_data_latency_json(self);
             let lsq_operations = o3_runtime_lsq_operation_json(self);
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
+            let branch_event = o3_runtime_branch_event_json(self);
             let branch_repair = o3_runtime_branch_repair_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -248,6 +278,7 @@ impl Rem6CoreSummary {
                 self.o3_runtime.lsq_store_bytes(),
                 self.o3_runtime.lsq_store_to_load_forwarding_candidates(),
                 self.o3_runtime.lsq_store_to_load_forwarding_matches(),
+                branch_event,
                 branch_repair,
                 self.o3_runtime.iew_predicted_taken_incorrect(),
                 self.o3_runtime.iew_predicted_not_taken_incorrect(),

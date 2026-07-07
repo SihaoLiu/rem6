@@ -50,6 +50,7 @@ const O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES: usize =
 const O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 * 8;
 const O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES: usize = 2 * 8;
 const O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES: usize = 8;
+const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES: usize = BranchTargetKind::COUNT * 6 * 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
     + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
@@ -58,7 +59,8 @@ const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::
     + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
-    + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES;
+    + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES
+    + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES;
 const O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET: usize = 8 + 8;
 const O3_RUNTIME_ROB_READY_OFFSET: usize = O3_RUNTIME_ROB_DESTINATION_PRESENT_OFFSET + 1 + 4;
 
@@ -238,17 +240,22 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
         .unwrap();
     let newer_stats_offset = stats_offset + O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES;
+    let branch_event_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES)
+        .unwrap();
+    let max_occupancy_offset = newer_stats_offset
+        + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES;
     let mut encoded = [
         &encoded[..newer_stats_offset],
-        &encoded[newer_stats_offset
-            + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_FORWARDING_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES..],
+        &encoded[max_occupancy_offset..branch_event_offset],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 3;
@@ -370,14 +377,19 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
         + O3_RUNTIME_CHECKPOINT_LSQ_LATENCY_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_DATA_LATENCY_STATS_BYTES;
     let branch_repair_offset = lsq_ordering_offset + O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES;
+    let branch_event_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES)
+        .unwrap();
+    let max_occupancy_offset = branch_repair_offset
+        + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES;
     let mut encoded = [
         &encoded[..lsq_latency_offset],
         &encoded[lsq_ordering_offset..branch_repair_offset],
-        &encoded[branch_repair_offset
-            + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES..],
+        &encoded[max_occupancy_offset..branch_event_offset],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 4;
@@ -471,13 +483,18 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     let iew_split_offset = lsq_ordering_offset
         + O3_RUNTIME_CHECKPOINT_LSQ_ORDERING_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_BRANCH_REPAIR_STATS_BYTES;
+    let branch_event_offset = encoded
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES)
+        .unwrap();
+    let max_occupancy_offset = iew_split_offset
+        + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES;
     let mut encoded = [
         &encoded[..lsq_latency_offset],
         &encoded[lsq_ordering_offset..iew_split_offset],
-        &encoded[iew_split_offset
-            + O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES
-            + O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES..],
+        &encoded[max_occupancy_offset..branch_event_offset],
     ]
     .concat();
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 5;
