@@ -4097,6 +4097,160 @@ fn rem6_run_o3_runtime_json_exposes_vector_integer_fu_latency_classes() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_iq_iew_commit_matrices() {
+    let path =
+        detailed_o3_iq_iew_commit_matrix_binary("m5-switch-cpu-detailed-o3-iq-iew-commit-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x800000a0:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("78563412785634120000000000000000")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+
+    for (pointer, stat_path) in [
+        (
+            "/iq/issued_inst_type/mem_read",
+            "sim.cpu0.o3.iq.issued_inst_type.mem_read",
+        ),
+        (
+            "/iq/issued_inst_type/mem_write",
+            "sim.cpu0.o3.iq.issued_inst_type.mem_write",
+        ),
+        (
+            "/iq/issued_inst_type/int_mul",
+            "sim.cpu0.o3.iq.issued_inst_type.int_mul",
+        ),
+        (
+            "/iq/issued_inst_type/int_div",
+            "sim.cpu0.o3.iq.issued_inst_type.int_div",
+        ),
+        (
+            "/iq/issued_inst_type/float_misc",
+            "sim.cpu0.o3.iq.issued_inst_type.float_misc",
+        ),
+        (
+            "/iq/issued_inst_type/vector_float_misc",
+            "sim.cpu0.o3.iq.issued_inst_type.vector_float_misc",
+        ),
+        (
+            "/commit/committed_inst_type/mem_read",
+            "sim.cpu0.o3.commit.committed_inst_type.mem_read",
+        ),
+        (
+            "/commit/committed_inst_type/mem_write",
+            "sim.cpu0.o3.commit.committed_inst_type.mem_write",
+        ),
+        (
+            "/commit/committed_inst_type/int_mul",
+            "sim.cpu0.o3.commit.committed_inst_type.int_mul",
+        ),
+        (
+            "/commit/committed_inst_type/int_div",
+            "sim.cpu0.o3.commit.committed_inst_type.int_div",
+        ),
+        (
+            "/commit/committed_inst_type/float_misc",
+            "sim.cpu0.o3.commit.committed_inst_type.float_misc",
+        ),
+        (
+            "/commit/committed_inst_type/vector_float_misc",
+            "sim.cpu0.o3.commit.committed_inst_type.vector_float_misc",
+        ),
+    ] {
+        let structured = o3_runtime
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
+            });
+        let stat_value = json_stat_value(&json, stat_path);
+        assert_eq!(
+            structured, stat_value,
+            "structured O3 runtime {pointer} should match stat path {stat_path}"
+        );
+        assert!(
+            structured > 0,
+            "representative O3 runtime matrix lane {pointer} should be positive: {o3_runtime}"
+        );
+    }
+
+    for (pointer, stat_path) in [
+        ("/iq/insts_issued", "sim.cpu0.o3.iq.insts_issued"),
+        ("/iq/mem_insts_issued", "sim.cpu0.o3.iq.mem_insts_issued"),
+        (
+            "/iq/branch_insts_issued",
+            "sim.cpu0.o3.iq.branch_insts_issued",
+        ),
+        ("/iew/dispatched_insts", "sim.cpu0.o3.iew.dispatched_insts"),
+        ("/iew/insts_to_commit", "sim.cpu0.o3.iew.insts_to_commit"),
+        ("/iew/writeback_count", "sim.cpu0.o3.iew.writeback_count"),
+        ("/iew/producer_inst", "sim.cpu0.o3.iew.producer_inst"),
+        ("/iew/consumer_inst", "sim.cpu0.o3.iew.consumer_inst"),
+        (
+            "/iew/predicted_taken_incorrect",
+            "sim.cpu0.o3.iew.predicted_taken_incorrect",
+        ),
+        (
+            "/iew/predicted_not_taken_incorrect",
+            "sim.cpu0.o3.iew.predicted_not_taken_incorrect",
+        ),
+        (
+            "/iew/branch_mispredicts",
+            "sim.cpu0.o3.iew.branch_mispredicts",
+        ),
+        (
+            "/commit/branch_mispredicts",
+            "sim.cpu0.o3.commit.branch_mispredicts",
+        ),
+    ] {
+        let structured = o3_runtime
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
+            });
+        assert_eq!(
+            structured,
+            json_stat_value(&json, stat_path),
+            "structured O3 runtime {pointer} should match stat path {stat_path}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
     let path = detailed_o3_ordered_atomic_lsq_binary(
         "m5-switch-cpu-detailed-o3-ordered-atomic-lsq-runtime-json",
@@ -5726,6 +5880,36 @@ fn rem6_run_json_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
             .and_then(Value::as_u64),
         Some(3),
         "structured O3 runtime JSON should expose branch-issued count: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iq/branch_insts_issued")
+            .and_then(Value::as_u64),
+        Some(3),
+        "nested O3 IQ JSON should expose positive branch-issued count: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iew/predicted_taken_incorrect")
+            .and_then(Value::as_u64),
+        Some(predicted_taken_incorrect),
+        "nested O3 IEW JSON should expose positive predicted-taken split: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iew/predicted_not_taken_incorrect")
+            .and_then(Value::as_u64),
+        Some(predicted_not_taken_incorrect),
+        "nested O3 IEW JSON should expose positive predicted-not-taken split: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/iew/branch_mispredicts")
+            .and_then(Value::as_u64),
+        Some(branch_mispredicts),
+        "nested O3 IEW JSON should expose positive branch mispredicts: {json}"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/commit/branch_mispredicts")
+            .and_then(Value::as_u64),
+        Some(branch_mispredicts),
+        "nested O3 commit JSON should expose positive branch mispredicts: {json}"
     );
 
     assert_json_stat(
@@ -7488,6 +7672,27 @@ fn append_integer_mul_div_work(words: &mut Vec<u32>) {
         0x0220_81b3,                 // mul x3, x1, x2
         0x0220_c1b3,                 // div x3, x1, x2
     ]);
+}
+
+fn detailed_o3_iq_iew_commit_matrix_binary(name: &str) -> std::path::PathBuf {
+    let mut words = detailed_o3_float_misc_prefix_words();
+    append_integer_mul_div_work(&mut words);
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 160_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+        s_type(4, 12, 5, 0b010),                        // sw x12, 4(x5)
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x1234_5678, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
 }
 
 fn append_host_stop(words: &mut Vec<u32>) {

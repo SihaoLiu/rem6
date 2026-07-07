@@ -98,6 +98,71 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
         .join(",")
 }
 
+fn o3_runtime_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
+    match class {
+        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
+        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
+        _ => class.stat_stem(),
+    }
+}
+
+fn o3_runtime_inst_type_json(summary: &Rem6CoreSummary) -> String {
+    let mut fields = vec![
+        format!("\"mem_read\":{}", summary.o3_runtime.lsq_loads()),
+        format!("\"mem_write\":{}", summary.o3_runtime.lsq_stores()),
+    ];
+    fields.extend(O3RuntimeFuLatencyClass::ALL.into_iter().map(|class| {
+        format!(
+            "\"{}\":{}",
+            o3_runtime_inst_type_stem(class),
+            summary.o3_runtime.fu_latency_class_instructions(class)
+        )
+    }));
+    format!("{{{}}}", fields.join(","))
+}
+
+fn o3_runtime_branch_mispredicts(summary: &Rem6CoreSummary) -> u64 {
+    summary
+        .o3_runtime
+        .iew_predicted_taken_incorrect()
+        .saturating_add(summary.o3_runtime.iew_predicted_not_taken_incorrect())
+}
+
+fn o3_runtime_iq_json(summary: &Rem6CoreSummary) -> String {
+    let issued_inst_type = o3_runtime_inst_type_json(summary);
+    format!(
+        "{{\"insts_issued\":{},\"mem_insts_issued\":{},\"branch_insts_issued\":{},\"issued_inst_type\":{issued_inst_type}}}",
+        summary.o3_runtime.instructions(),
+        summary
+            .o3_runtime
+            .lsq_loads()
+            .saturating_add(summary.o3_runtime.lsq_stores()),
+        summary.o3_runtime.iq_branch_insts_issued(),
+    )
+}
+
+fn o3_runtime_iew_json(summary: &Rem6CoreSummary) -> String {
+    format!(
+        "{{\"dispatched_insts\":{},\"insts_to_commit\":{},\"writeback_count\":{},\"producer_inst\":{},\"consumer_inst\":{},\"predicted_taken_incorrect\":{},\"predicted_not_taken_incorrect\":{},\"branch_mispredicts\":{}}}",
+        summary.o3_runtime.instructions(),
+        summary.o3_runtime.rob_commits(),
+        summary.o3_runtime.instructions(),
+        summary.o3_runtime.iew_producer_insts(),
+        summary.o3_runtime.iew_consumer_insts(),
+        summary.o3_runtime.iew_predicted_taken_incorrect(),
+        summary.o3_runtime.iew_predicted_not_taken_incorrect(),
+        o3_runtime_branch_mispredicts(summary),
+    )
+}
+
+fn o3_runtime_commit_json(summary: &Rem6CoreSummary) -> String {
+    let committed_inst_type = o3_runtime_inst_type_json(summary);
+    format!(
+        "{{\"branch_mispredicts\":{},\"committed_inst_type\":{committed_inst_type}}}",
+        o3_runtime_branch_mispredicts(summary)
+    )
+}
+
 fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
     O3RuntimeLsqOperation::TRACKED
         .into_iter()
@@ -266,8 +331,11 @@ impl Rem6CoreSummary {
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
             let branch_event = o3_runtime_branch_event_json(self);
             let branch_repair = o3_runtime_branch_repair_json(self);
+            let iq = o3_runtime_iq_json(self);
+            let iew = o3_runtime_iew_json(self);
+            let commit = o3_runtime_commit_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -278,6 +346,9 @@ impl Rem6CoreSummary {
                 self.o3_runtime.lsq_store_bytes(),
                 self.o3_runtime.lsq_store_to_load_forwarding_candidates(),
                 self.o3_runtime.lsq_store_to_load_forwarding_matches(),
+                iq,
+                iew,
+                commit,
                 branch_event,
                 branch_repair,
                 self.o3_runtime.iew_predicted_taken_incorrect(),
