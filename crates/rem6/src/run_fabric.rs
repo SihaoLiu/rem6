@@ -5,6 +5,8 @@ use rem6_fabric::{
     FabricModel, FabricPath, FabricPathHop, FabricRouterId, FabricRouterStage,
     FabricVirtualNetworkActivity, QosQueueArbiter, VirtualNetworkId,
 };
+use rem6_kernel::{WaitForBlockedNodeWindow, WaitForEdgeKindWindow, WaitForTargetNodeWindow};
+use rem6_system::RiscvSystemRun;
 use rem6_transport::MemoryTransport;
 
 use crate::{config::RunFabricRouterStageConfig, execute_error, Rem6CliError, RunFabricConfig};
@@ -26,6 +28,10 @@ pub(crate) struct Rem6RunFabricSummary {
     lane_activities: Vec<FabricLaneActivity>,
     hop_activities: Vec<FabricHopActivity>,
     router_activities: Vec<Rem6RunFabricRouterActivity>,
+    wait_for_edge_count: u64,
+    wait_for_edge_kind_windows: Vec<WaitForEdgeKindWindow>,
+    wait_for_blocked_node_windows: Vec<WaitForBlockedNodeWindow>,
+    wait_for_target_node_windows: Vec<WaitForTargetNodeWindow>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,7 +97,20 @@ impl Rem6RunFabricSummary {
             lane_activities,
             hop_activities,
             router_activities,
+            wait_for_edge_count: 0,
+            wait_for_edge_kind_windows: Vec::new(),
+            wait_for_blocked_node_windows: Vec::new(),
+            wait_for_target_node_windows: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_wait_for_run(mut self, run: &RiscvSystemRun) -> Self {
+        let edges = run.fabric_wait_for_edges();
+        self.wait_for_edge_count = edges.len() as u64;
+        self.wait_for_edge_kind_windows = WaitForEdgeKindWindow::from_edges(edges.clone());
+        self.wait_for_blocked_node_windows = WaitForBlockedNodeWindow::from_edges(edges.clone());
+        self.wait_for_target_node_windows = WaitForTargetNodeWindow::from_edges(edges);
+        self
     }
 
     pub(crate) const fn active_lanes(&self) -> u64 {
@@ -156,6 +175,22 @@ impl Rem6RunFabricSummary {
 
     pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
         FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
+    }
+
+    pub(crate) const fn wait_for_edge_count(&self) -> u64 {
+        self.wait_for_edge_count
+    }
+
+    pub(crate) fn wait_for_edge_kind_windows(&self) -> &[WaitForEdgeKindWindow] {
+        &self.wait_for_edge_kind_windows
+    }
+
+    pub(crate) fn wait_for_blocked_node_windows(&self) -> &[WaitForBlockedNodeWindow] {
+        &self.wait_for_blocked_node_windows
+    }
+
+    pub(crate) fn wait_for_target_node_windows(&self) -> &[WaitForTargetNodeWindow] {
+        &self.wait_for_target_node_windows
     }
 }
 

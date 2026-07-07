@@ -130,10 +130,43 @@ fn rem6_run_routes_multicore_fabric_with_configured_qos_queue_policy() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"cores\":3"));
     assert!(stdout.contains("\"qos_queue_policy\":\"least-recently-granted\""));
     assert!(stdout.contains("\"x7\":\"0x7\""));
+    let fabric_wait_edges = json
+        .pointer("/fabric/wait_for_edge_count")
+        .and_then(serde_json::Value::as_u64)
+        .expect("run fabric wait-for edge count");
+    assert!(fabric_wait_edges > 0, "{stdout}");
+    let wait_kind_windows = json
+        .pointer("/fabric/wait_for_edge_kind_windows")
+        .and_then(serde_json::Value::as_array)
+        .expect("run fabric wait-for kind windows");
+    assert!(wait_kind_windows.iter().any(|window| {
+        window.get("kind").and_then(serde_json::Value::as_str) == Some("queue")
+            && window
+                .get("edge_count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                > 0
+            && window
+                .get("last_tick")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                >= window
+                    .get("first_tick")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+    }));
+    assert!(json
+        .pointer("/fabric/wait_for_target_node_windows")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|windows| windows.iter().any(|window| window
+            .get("node")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|node| node.starts_with("resource:fabric.")))));
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.transfers",
@@ -144,6 +177,27 @@ fn rem6_run_routes_multicore_fabric_with_configured_qos_queue_policy() {
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.queue_delay_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.wait_for.edges",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.wait_for.kind.queue.edges",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.wait_for.kind.queue.last_tick",
         "Tick",
         0,
         "monotonic",

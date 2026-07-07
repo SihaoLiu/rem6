@@ -7,6 +7,7 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::{Rem6CliError, Rem6RunFabricRouterActivity, Rem6RunFabricSummary};
 
+use super::wait_for::emit_kernel_wait_for_edge_kind_window_stats;
 use super::{increment_stat, stat_path_segment};
 
 pub(super) fn emit_run_fabric_stats(
@@ -95,7 +96,13 @@ pub(super) fn emit_run_fabric_stats(
     emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
     emit_fabric_hop_stats(stats, prefix, summary.hop_activities())?;
-    emit_fabric_router_stats(stats, prefix, summary.router_activities())
+    emit_fabric_router_stats(stats, prefix, summary.router_activities())?;
+    emit_kernel_wait_for_edge_kind_window_stats(
+        stats,
+        &format!("{prefix}.wait_for"),
+        summary.wait_for_edge_count(),
+        summary.wait_for_edge_kind_windows(),
+    )
 }
 
 pub(super) fn emit_fabric_virtual_network_stats<I>(

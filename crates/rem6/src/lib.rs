@@ -974,6 +974,7 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
+    let fabric_wait_for_start = transport.mark_fabric_wait_for();
     let mut gdb_outcome = if let Some(listen) = config.gdb_listen() {
         serve_riscv_gdb_with_run_control(
             gdb_xlen,
@@ -1024,6 +1025,11 @@ fn execute_riscv(
         return Err(error);
     }
     let mut run = run_result.map_err(execute_error)?;
+    if let Some(fabric_wait_for) =
+        fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
+    {
+        run = run.with_fabric_wait_for(fabric_wait_for);
+    }
     write_back_riscv_se_path_files(&driver, &riscv_se_path_file_writebacks)?;
     if let Some(data_cache) = data_cache.as_ref() {
         run = run.with_data_cache_run_records(data_cache.records());
@@ -1080,7 +1086,8 @@ fn execute_riscv(
             .with_prefetch_fills(data_cache_hierarchy.prefetch_fills(2)),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
-        fabric: Rem6RunFabricSummary::from_transport(config.fabric(), &transport),
+        fabric: Rem6RunFabricSummary::from_transport(config.fabric(), &transport)
+            .with_wait_for_run(&run),
         riscv_guest_writes,
         riscv_unknown_syscalls,
         riscv_sbi_console: riscv_sbi_output.console,

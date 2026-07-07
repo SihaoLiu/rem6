@@ -7,6 +7,7 @@ use rem6_boot::{
     BootElfSectionTypeRanges, BootElfSectionVersions, BootElfSymbolSummary,
 };
 use rem6_fabric::FabricHopActivity;
+use rem6_kernel::WaitForEdgeKind;
 use rem6_memory::Address;
 use rem6_system::RiscvDataCacheProtocol;
 
@@ -772,7 +773,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .map(|policy| format!("\"{}\"", policy.as_str()))
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"wait_for_edge_count\":{},\"wait_for_edge_kind_windows\":[{}],\"wait_for_blocked_node_windows\":[{}],\"wait_for_target_node_windows\":[{}],\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -792,6 +793,10 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         summary.credit_delay_ticks(),
         summary.max_credit_delay_ticks(),
         summary.contended_lanes(),
+        summary.wait_for_edge_count(),
+        run_fabric_wait_for_edge_kind_windows_json(summary),
+        run_fabric_wait_for_blocked_node_windows_json(summary),
+        run_fabric_wait_for_target_node_windows_json(summary),
         run_fabric_link_activities_json(summary),
         run_fabric_lane_activities_json(summary),
         run_fabric_hop_activities_json(summary),
@@ -919,6 +924,69 @@ fn run_fabric_router_activities_json(summary: &Rem6RunFabricSummary) -> String {
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn run_fabric_wait_for_edge_kind_windows_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .wait_for_edge_kind_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"kind\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                wait_for_edge_kind_json(window.kind()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_fabric_wait_for_blocked_node_windows_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .wait_for_blocked_node_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"node\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(&window.node().to_string()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_fabric_wait_for_target_node_windows_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .wait_for_target_node_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"node\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(&window.node().to_string()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn wait_for_edge_kind_json(kind: WaitForEdgeKind) -> &'static str {
+    match kind {
+        WaitForEdgeKind::Resource => "resource",
+        WaitForEdgeKind::Message => "message",
+        WaitForEdgeKind::Protocol => "protocol",
+        WaitForEdgeKind::Queue => "queue",
+        WaitForEdgeKind::Credit => "credit",
+        WaitForEdgeKind::HostAction => "host_action",
+        WaitForEdgeKind::Barrier => "barrier",
+    }
 }
 
 impl Rem6LoadBlobSummary {
