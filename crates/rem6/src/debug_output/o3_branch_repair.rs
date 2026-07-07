@@ -123,6 +123,28 @@ pub(super) fn o3_branch_repair_to_json(stats: O3RuntimeStats) -> String {
     )
 }
 
+pub(super) fn o3_branch_repair_events_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let mut totals = Rem6O3BranchRepairTotals::default();
+    for event in events {
+        totals.add_event(event, o3_branch_repair_kind(event));
+    }
+    let targetless_mismatch_kind =
+        o3_branch_repair_kind_json(|kind| totals.targetless_mismatch_kinds[kind.index()]);
+    let wrong_target_kind =
+        o3_branch_repair_kind_json(|kind| totals.wrong_target_kinds[kind.index()]);
+    let direction_only_kind =
+        o3_branch_repair_kind_json(|kind| totals.direction_only_kinds[kind.index()]);
+    format!(
+        "{{\"targetless_mismatches\":{},\"wrong_targets\":{},\"direction_only_mismatches\":{},\"targetless_mismatch_kind\":{},\"wrong_target_kind\":{},\"direction_only_kind\":{}}}",
+        totals.targetless_mismatches,
+        totals.wrong_targets,
+        totals.direction_only_mismatches,
+        targetless_mismatch_kind,
+        wrong_target_kind,
+        direction_only_kind,
+    )
+}
+
 pub(super) fn o3_branch_repair_kind(event: &O3RuntimeTraceRecord) -> Rem6O3BranchRepairKind {
     if !event.branch_event() {
         return Rem6O3BranchRepairKind::None;

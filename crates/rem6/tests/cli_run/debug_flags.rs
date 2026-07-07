@@ -8725,6 +8725,33 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         Some(0),
         "O3 trace branch-repair summary should include zero-valued branch kinds: {branch_repair}"
     );
+    let event_summary_branch_repair = record
+        .pointer("/event_summary/branch_repair")
+        .expect("O3 event summary branch-repair matrix");
+    for (field, value) in [
+        ("targetless_mismatches", 0),
+        ("wrong_targets", 1),
+        ("direction_only_mismatches", 1),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_repair, field),
+            value,
+            "O3 event summary wrong-target branch-repair field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/wrong_target_kind/call_indirect", 1),
+        ("/direction_only_kind/direct_unconditional", 1),
+        ("/targetless_mismatch_kind/direct_conditional", 0),
+    ] {
+        assert_eq!(
+            event_summary_branch_repair
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary wrong-target branch-repair path {path}: {event_summary_branch_repair}"
+        );
+    }
     let branch_target_mismatch = record
         .pointer("/branch_target_mismatch")
         .unwrap_or_else(|| panic!("missing O3 trace branch-target mismatch summary: {record}"));
@@ -10671,6 +10698,33 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         Some(0),
         "O3 trace branch-repair summary should include zero-valued wrong-target branch kinds: {branch_repair}"
     );
+    let event_summary_branch_repair = record
+        .pointer("/event_summary/branch_repair")
+        .expect("O3 event summary branch-repair matrix");
+    for (field, value) in [
+        ("targetless_mismatches", 1),
+        ("wrong_targets", 0),
+        ("direction_only_mismatches", 2),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_repair, field),
+            value,
+            "O3 event summary targetless branch-repair field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/targetless_mismatch_kind/direct_conditional", 1),
+        ("/direction_only_kind/direct_unconditional", 2),
+        ("/wrong_target_kind/direct_conditional", 0),
+    ] {
+        assert_eq!(
+            event_summary_branch_repair
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary targetless branch-repair path {path}: {event_summary_branch_repair}"
+        );
+    }
     let branch_target_mismatch = record
         .pointer("/branch_target_mismatch")
         .unwrap_or_else(|| panic!("missing O3 trace branch-target mismatch summary: {record}"));
