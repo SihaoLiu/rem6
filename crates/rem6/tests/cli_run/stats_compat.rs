@@ -16003,6 +16003,24 @@ fn rem6_run_text_stats_emit_in_order_stall_cause_stage_aliases() {
         ("data_wait", "dataWait"),
         ("execute_wait", "executeWait"),
     ] {
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stallCause.{alias_cause}.records")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stall_cause.{cause}.records")
+            )
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stallCause.{alias_cause}.records")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
         for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
             assert_eq!(
                 text_stat_value(
@@ -19993,6 +20011,17 @@ fn assert_in_order_cause_stage_aliases(
     source_cause: &str,
     alias_cause: &str,
 ) -> ([u64; 5], [u64; 5]) {
+    let records_alias = format!("system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.records");
+    let records_source =
+        format!("sim.cpu0.pipeline.in_order.{source_family}.{source_cause}.records");
+    assert_eq!(
+        text_stat_value(stdout, &records_alias),
+        text_stat_value(stdout, &records_source)
+    );
+    assert!(
+        text_stat_line(stdout, &records_alias).contains("unit=Count"),
+        "{stdout}"
+    );
     let flushed_values = ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
         let flushed_alias = format!(
             "system.cpu.pipeline.inOrder.{alias_family}.{alias_cause}.stage.{stage}.flushed"

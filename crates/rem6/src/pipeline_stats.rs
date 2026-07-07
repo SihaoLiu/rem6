@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    CpuFetchEventKind, InOrderPipelineAdvance, InOrderPipelineInstruction,
-    InOrderPipelineRedirectCause, InOrderPipelineRunSummary, InOrderPipelineSnapshot,
-    InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
+    CpuFetchEventKind, InOrderPipelineAdvance, InOrderPipelineCycleRecord,
+    InOrderPipelineInstruction, InOrderPipelineRedirectCause, InOrderPipelineRunSummary,
+    InOrderPipelineSnapshot, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -242,6 +242,16 @@ pub(super) fn in_order_pipeline_stage_records_for_stall_cause(
     )
 }
 
+pub(super) fn in_order_pipeline_records_for_stall_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineStallCause,
+) -> u64 {
+    core.in_order_pipeline_cycle_records()
+        .into_iter()
+        .filter(|record| record.stall_cause() == Some(cause))
+        .count() as u64
+}
+
 pub(super) fn in_order_pipeline_stage_ordering_blocked(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -366,10 +376,24 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_records(
     )
 }
 
+pub(super) fn in_order_pipeline_branch_prediction_flush_records(core: &RiscvCore) -> u64 {
+    core.in_order_pipeline_cycle_records()
+        .into_iter()
+        .filter(|record| {
+            in_order_pipeline_flush_cause_from_record(record)
+                == Some(InOrderPipelineRedirectCause::BranchPrediction)
+        })
+        .count() as u64
+}
+
 pub(super) fn in_order_pipeline_stage_trap_redirect_records(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
     in_order_pipeline_stage_records_for_redirect_cause(core, InOrderPipelineRedirectCause::Trap)
+}
+
+pub(super) fn in_order_pipeline_trap_redirect_flush_records(core: &RiscvCore) -> u64 {
+    in_order_pipeline_flush_records_for_redirect_cause(core, InOrderPipelineRedirectCause::Trap)
 }
 
 pub(super) fn in_order_pipeline_stage_trap_redirect_flushed(
@@ -393,6 +417,13 @@ pub(super) fn in_order_pipeline_stage_interrupt_redirect_records(
     )
 }
 
+pub(super) fn in_order_pipeline_interrupt_redirect_flush_records(core: &RiscvCore) -> u64 {
+    in_order_pipeline_flush_records_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::Interrupt,
+    )
+}
+
 pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -406,6 +437,42 @@ pub(super) fn in_order_pipeline_stage_interrupt_redirect_flushed_cycles(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
     in_order_pipeline_stage_interrupt_redirect_records(core)
+}
+
+pub(super) fn in_order_pipeline_records_for_redirect_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineRedirectCause,
+) -> u64 {
+    core.in_order_pipeline_cycle_records()
+        .into_iter()
+        .filter(|record| record.plan().redirect().map(|redirect| redirect.cause()) == Some(cause))
+        .count() as u64
+}
+
+fn in_order_pipeline_flush_records_for_redirect_cause(
+    core: &RiscvCore,
+    cause: InOrderPipelineRedirectCause,
+) -> u64 {
+    core.in_order_pipeline_cycle_records()
+        .into_iter()
+        .filter(|record| in_order_pipeline_flush_cause_from_record(record) == Some(cause))
+        .count() as u64
+}
+
+fn in_order_pipeline_flush_cause_from_record(
+    record: &InOrderPipelineCycleRecord,
+) -> Option<InOrderPipelineRedirectCause> {
+    let summary = record.summary();
+    match (
+        summary.branch_prediction_flushed_count(),
+        summary.trap_redirect_flush_cycle_count(),
+        summary.interrupt_redirect_flush_cycle_count(),
+    ) {
+        (0, 0, 0) => None,
+        (0, 0, _) => Some(InOrderPipelineRedirectCause::Interrupt),
+        (0, _, _) => Some(InOrderPipelineRedirectCause::Trap),
+        _ => Some(InOrderPipelineRedirectCause::BranchPrediction),
+    }
 }
 
 fn in_order_pipeline_stage_flushed_for_redirect_cause(

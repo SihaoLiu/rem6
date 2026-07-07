@@ -26,6 +26,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_stage_retired_cycles: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_fetch_wait_records: u64,
     pub(crate) in_order_pipeline_fetch_wait_stage_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_fetch_wait_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_fetch_wait_stage_resource_blocked_cycles:
@@ -33,6 +34,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_fetch_wait_stage_ordering_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles:
         Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_data_wait_records: u64,
     pub(crate) in_order_pipeline_data_wait_stage_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_data_wait_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_data_wait_stage_resource_blocked_cycles:
@@ -40,6 +42,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_data_wait_stage_ordering_blocked: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_data_wait_stage_ordering_blocked_cycles:
         Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_execute_wait_records: u64,
     pub(crate) in_order_pipeline_execute_wait_stage_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_execute_wait_stage_resource_blocked:
         Rem6InOrderPipelineStageSummary,
@@ -53,14 +56,20 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_stage_ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_flushed: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_flushed_cycles: Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_branch_prediction_flush_records: u64,
+    pub(crate) in_order_pipeline_branch_prediction_redirect_records: u64,
     pub(crate) in_order_pipeline_stage_branch_prediction_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_branch_prediction_flushed: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_branch_prediction_flushed_cycles:
         Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_trap_redirect_flush_records: u64,
+    pub(crate) in_order_pipeline_trap_redirect_records: u64,
     pub(crate) in_order_pipeline_stage_trap_redirect_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_trap_redirect_flushed: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_trap_redirect_flushed_cycles:
         Rem6InOrderPipelineStageSummary,
+    pub(crate) in_order_pipeline_interrupt_redirect_flush_records: u64,
+    pub(crate) in_order_pipeline_interrupt_redirect_records: u64,
     pub(crate) in_order_pipeline_stage_interrupt_redirect_records: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_interrupt_redirect_flushed: Rem6InOrderPipelineStageSummary,
     pub(crate) in_order_pipeline_stage_interrupt_redirect_flushed_cycles:

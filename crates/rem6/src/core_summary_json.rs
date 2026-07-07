@@ -52,15 +52,17 @@ fn in_order_pipeline_stage_summary_json(summary: Rem6InOrderPipelineStageSummary
 }
 
 fn in_order_pipeline_stall_cause_stage_summary_json(
-    records: Rem6InOrderPipelineStageSummary,
+    records: u64,
+    stage_records: Rem6InOrderPipelineStageSummary,
     resource_blocked: Rem6InOrderPipelineStageSummary,
     resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
     ordering_blocked: Rem6InOrderPipelineStageSummary,
     ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
     format!(
-        "{{\"stage_records\":{},\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{},\"stage_ordering_blocked_cycles\":{}}}",
-        in_order_pipeline_stage_summary_json(records),
+        "{{\"records\":{},\"stage_records\":{},\"stage_resource_blocked\":{},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{},\"stage_ordering_blocked_cycles\":{}}}",
+        records,
+        in_order_pipeline_stage_summary_json(stage_records),
         in_order_pipeline_stage_summary_json(resource_blocked),
         in_order_pipeline_stage_summary_json(resource_blocked_cycles),
         in_order_pipeline_stage_summary_json(ordering_blocked),
@@ -69,13 +71,15 @@ fn in_order_pipeline_stall_cause_stage_summary_json(
 }
 
 fn in_order_pipeline_flush_redirect_cause_stage_summary_json(
-    records: Rem6InOrderPipelineStageSummary,
+    records: u64,
+    stage_records: Rem6InOrderPipelineStageSummary,
     flushed: Rem6InOrderPipelineStageSummary,
     flushed_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
     format!(
-        "{{\"stage_records\":{},\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
-        in_order_pipeline_stage_summary_json(records),
+        "{{\"records\":{},\"stage_records\":{},\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
+        records,
+        in_order_pipeline_stage_summary_json(stage_records),
         in_order_pipeline_stage_summary_json(flushed),
         in_order_pipeline_stage_summary_json(flushed_cycles)
     )
@@ -632,6 +636,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_resource_blocked_cycles,
         );
         let stall_cause_fetch_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_fetch_wait_records,
             self.in_order_pipeline_fetch_wait_stage_records,
             self.in_order_pipeline_fetch_wait_stage_resource_blocked,
             self.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
@@ -639,6 +644,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_fetch_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_data_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_data_wait_records,
             self.in_order_pipeline_data_wait_stage_records,
             self.in_order_pipeline_data_wait_stage_resource_blocked,
             self.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
@@ -646,6 +652,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_data_wait_stage_ordering_blocked_cycles,
         );
         let stall_cause_execute_wait = in_order_pipeline_stall_cause_stage_summary_json(
+            self.in_order_pipeline_execute_wait_records,
             self.in_order_pipeline_execute_wait_stage_records,
             self.in_order_pipeline_execute_wait_stage_resource_blocked,
             self.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
@@ -664,6 +671,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_branch_prediction_flushed_cycles,
         );
         let cause_branch_prediction = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_branch_prediction_flush_records,
             self.in_order_pipeline_stage_branch_prediction_records,
             self.in_order_pipeline_stage_branch_prediction_flushed,
             self.in_order_pipeline_stage_branch_prediction_flushed_cycles,
@@ -675,6 +683,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
         );
         let cause_trap_redirect = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_trap_redirect_flush_records,
             self.in_order_pipeline_stage_trap_redirect_records,
             self.in_order_pipeline_stage_trap_redirect_flushed,
             self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
@@ -686,10 +695,32 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
         );
         let cause_interrupt_redirect = in_order_pipeline_flush_redirect_cause_stage_summary_json(
+            self.in_order_pipeline_interrupt_redirect_flush_records,
             self.in_order_pipeline_stage_interrupt_redirect_records,
             self.in_order_pipeline_stage_interrupt_redirect_flushed,
             self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
         );
+        let redirect_cause_branch_prediction =
+            in_order_pipeline_flush_redirect_cause_stage_summary_json(
+                self.in_order_pipeline_branch_prediction_redirect_records,
+                self.in_order_pipeline_stage_branch_prediction_records,
+                self.in_order_pipeline_stage_branch_prediction_flushed,
+                self.in_order_pipeline_stage_branch_prediction_flushed_cycles,
+            );
+        let redirect_cause_trap_redirect =
+            in_order_pipeline_flush_redirect_cause_stage_summary_json(
+                self.in_order_pipeline_trap_redirect_records,
+                self.in_order_pipeline_stage_trap_redirect_records,
+                self.in_order_pipeline_stage_trap_redirect_flushed,
+                self.in_order_pipeline_stage_trap_redirect_flushed_cycles,
+            );
+        let redirect_cause_interrupt_redirect =
+            in_order_pipeline_flush_redirect_cause_stage_summary_json(
+                self.in_order_pipeline_interrupt_redirect_records,
+                self.in_order_pipeline_stage_interrupt_redirect_records,
+                self.in_order_pipeline_stage_interrupt_redirect_flushed,
+                self.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
+            );
         format!(
             "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_advanced\":{},\"stage_advanced_cycles\":{},\"stage_retired\":{},\"stage_retired_cycles\":{},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked_cycles\":{},\"stall_cause\":{{\"fetch_wait\":{},\"data_wait\":{},\"execute_wait\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked_cycles\":{},\"stage_flushed\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_flushed_cycles\":{},\"stage_branch_prediction_flushed\":{},\"stage_branch_prediction_flushed_cycles\":{},\"stage_trap_redirect_flushed\":{},\"stage_trap_redirect_flushed_cycles\":{},\"stage_interrupt_redirect_flushed\":{},\"stage_interrupt_redirect_flushed_cycles\":{},\"flush_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{},\"interrupt_redirect\":{}}},\"redirect_cause\":{{\"branch_prediction\":{},\"trap_redirect\":{},\"interrupt_redirect\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"flush_cycles\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"execute_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"branch_prediction_flush_cycles\":{},\"redirects\":{},\"branch_prediction_redirects\":{},\"interrupt_redirects\":{},\"interrupt_redirect_flushes\":{},\"interrupt_redirect_flush_cycles\":{},\"trap_redirects\":{},\"trap_redirect_flushes\":{},\"trap_redirect_flush_cycles\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"squashes\":{},\"target_provider\":{},\"indirect_hits\":{},\"indirect_mispredicted\":{},\"ras\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{}{},\"registers\":{{{}}}}}",
             self.cpu,
@@ -751,9 +782,9 @@ impl Rem6CoreSummary {
             &cause_branch_prediction,
             &cause_trap_redirect,
             &cause_interrupt_redirect,
-            &cause_branch_prediction,
-            &cause_trap_redirect,
-            &cause_interrupt_redirect,
+            &redirect_cause_branch_prediction,
+            &redirect_cause_trap_redirect,
+            &redirect_cause_interrupt_redirect,
             self.in_order_pipeline_retired,
             self.in_order_pipeline_advanced,
             self.in_order_pipeline_flushed,

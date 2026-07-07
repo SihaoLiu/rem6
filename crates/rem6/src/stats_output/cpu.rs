@@ -10,8 +10,8 @@ use super::o3_runtime::{
     o3_lsq_operation_alias, o3_lsq_ordering_alias, ratio_ppm,
 };
 use super::pipeline::{
-    emit_in_order_cause_stage_stats, emit_in_order_stage_stats,
-    emit_in_order_stall_cause_stage_stats,
+    emit_in_order_cause_stage_stats, emit_in_order_cause_stat, emit_in_order_stage_stats,
+    emit_in_order_stall_cause_stage_stats, emit_in_order_stall_cause_stat,
 };
 use crate::{Rem6CliError, Rem6CoreSummary};
 
@@ -291,26 +291,42 @@ pub(super) fn emit_cpu_run_stats(
             core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles
                 .values(),
         )?;
-        for (cause, records, flushed, flushed_cycles) in [
+        for (cause, flush_records, redirect_records, stage_records, flushed, flushed_cycles) in [
             (
                 "branch_prediction",
+                core.in_order_pipeline_branch_prediction_flush_records,
+                core.in_order_pipeline_branch_prediction_redirect_records,
                 core.in_order_pipeline_stage_branch_prediction_records,
                 core.in_order_pipeline_stage_branch_prediction_flushed,
                 core.in_order_pipeline_stage_branch_prediction_flushed_cycles,
             ),
             (
                 "trap_redirect",
+                core.in_order_pipeline_trap_redirect_flush_records,
+                core.in_order_pipeline_trap_redirect_records,
                 core.in_order_pipeline_stage_trap_redirect_records,
                 core.in_order_pipeline_stage_trap_redirect_flushed,
                 core.in_order_pipeline_stage_trap_redirect_flushed_cycles,
             ),
             (
                 "interrupt_redirect",
+                core.in_order_pipeline_interrupt_redirect_flush_records,
+                core.in_order_pipeline_interrupt_redirect_records,
                 core.in_order_pipeline_stage_interrupt_redirect_records,
                 core.in_order_pipeline_stage_interrupt_redirect_flushed,
                 core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
             ),
         ] {
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "flush_cause",
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                flush_records,
+            )?;
             emit_in_order_cause_stage_stats(
                 stats,
                 core,
@@ -319,7 +335,7 @@ pub(super) fn emit_cpu_run_stats(
                 "records",
                 "Count",
                 StatResetPolicy::Monotonic,
-                records.values(),
+                stage_records.values(),
             )?;
             emit_in_order_cause_stage_stats(
                 stats,
@@ -341,6 +357,16 @@ pub(super) fn emit_cpu_run_stats(
                 StatResetPolicy::Monotonic,
                 flushed_cycles.values(),
             )?;
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "redirect_cause",
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                redirect_records,
+            )?;
             emit_in_order_cause_stage_stats(
                 stats,
                 core,
@@ -349,7 +375,7 @@ pub(super) fn emit_cpu_run_stats(
                 "records",
                 "Count",
                 StatResetPolicy::Monotonic,
-                records.values(),
+                stage_records.values(),
             )?;
             emit_in_order_cause_stage_stats(
                 stats,
@@ -402,6 +428,7 @@ pub(super) fn emit_cpu_run_stats(
         )?;
         for (
             cause,
+            record_count,
             records,
             resource_blocked,
             resource_blocked_cycles,
@@ -410,6 +437,7 @@ pub(super) fn emit_cpu_run_stats(
         ) in [
             (
                 "fetch_wait",
+                core.in_order_pipeline_fetch_wait_records,
                 core.in_order_pipeline_fetch_wait_stage_records,
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked,
                 core.in_order_pipeline_fetch_wait_stage_resource_blocked_cycles,
@@ -418,6 +446,7 @@ pub(super) fn emit_cpu_run_stats(
             ),
             (
                 "data_wait",
+                core.in_order_pipeline_data_wait_records,
                 core.in_order_pipeline_data_wait_stage_records,
                 core.in_order_pipeline_data_wait_stage_resource_blocked,
                 core.in_order_pipeline_data_wait_stage_resource_blocked_cycles,
@@ -426,6 +455,7 @@ pub(super) fn emit_cpu_run_stats(
             ),
             (
                 "execute_wait",
+                core.in_order_pipeline_execute_wait_records,
                 core.in_order_pipeline_execute_wait_stage_records,
                 core.in_order_pipeline_execute_wait_stage_resource_blocked,
                 core.in_order_pipeline_execute_wait_stage_resource_blocked_cycles,
@@ -433,6 +463,15 @@ pub(super) fn emit_cpu_run_stats(
                 core.in_order_pipeline_execute_wait_stage_ordering_blocked_cycles,
             ),
         ] {
+            emit_in_order_stall_cause_stat(
+                stats,
+                core,
+                cause,
+                "records",
+                "Count",
+                StatResetPolicy::Monotonic,
+                record_count,
+            )?;
             emit_in_order_stall_cause_stage_stats(
                 stats,
                 core,

@@ -1010,6 +1010,13 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
             ("data_wait", "dataWait"),
             ("execute_wait", "executeWait"),
         ] {
+            append_derived_stat_from_snapshot(
+                output,
+                snapshot,
+                &format!("sim.cpu{cpu}.pipeline.in_order.stall_cause.{source_cause}.records"),
+                &format!("{pipeline_alias_prefix}.stallCause.{alias_cause}.records"),
+                "Count",
+            );
             for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                 for (source_name, alias_name, unit) in [
                     ("records", "records", "Count"),
@@ -1041,6 +1048,15 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 ("interrupt_redirect", "interruptRedirect"),
                 ("trap_redirect", "trapRedirect"),
             ] {
+                append_derived_stat_from_snapshot(
+                    output,
+                    snapshot,
+                    &format!(
+                        "sim.cpu{cpu}.pipeline.in_order.{source_family}.{source_cause}.records"
+                    ),
+                    &format!("{pipeline_alias_prefix}.{alias_family}.{alias_cause}.records"),
+                    "Count",
+                );
                 for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                     for (source_name, alias_name, unit) in [
                         ("records", "records", "Count"),
