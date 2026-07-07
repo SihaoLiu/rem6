@@ -9313,6 +9313,78 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_wrong_targets() {
         Some(0),
         "O3 trace branch-target mismatch summary should include zero-valued targetless lanes: {branch_target_mismatch}"
     );
+    let event_summary_branch_target_mismatch = record
+        .pointer("/event_summary/branch_target_mismatch")
+        .expect("O3 event summary branch-target mismatch matrix");
+    for (field, value) in [
+        ("targetless_mismatches", 0),
+        ("targetless_mismatch_without_link_writes", 0),
+        ("targetless_mismatch_squashed_targets", 0),
+        ("targetless_mismatch_squashed_target_without_link_writes", 0),
+        ("wrong_targets", 1),
+        ("wrong_target_squashed_targets", 1),
+        ("wrong_target_squashed_target_without_link_writes", 0),
+        ("wrong_target_squashed_target_link_writes", 1),
+        ("wrong_target_link_writes", 1),
+        ("wrong_target_without_link_writes", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_target_mismatch, field),
+            value,
+            "O3 event summary wrong-target branch-target mismatch field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/wrong_target_kind/call_indirect", 1),
+        (
+            "/wrong_target_squashed_target_link_write_kind/call_indirect",
+            1,
+        ),
+        ("/wrong_target_without_link_write_kind/call_indirect", 0),
+        ("/targetless_mismatch_kind/direct_conditional", 0),
+    ] {
+        assert_eq!(
+            event_summary_branch_target_mismatch
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary wrong-target branch-target mismatch path {path}: {event_summary_branch_target_mismatch}"
+        );
+    }
+    let event_summary_branch_direction_mismatch = record
+        .pointer("/event_summary/branch_direction_mismatch")
+        .expect("O3 event summary branch-direction mismatch matrix");
+    for (field, value) in [
+        ("mismatches", 1),
+        ("without_link_writes", 1),
+        ("squashed_targets", 1),
+        ("squashed_target_without_link_writes", 1),
+        ("squashed_target_link_writes", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(event_summary_branch_direction_mismatch, field),
+            value,
+            "O3 event summary wrong-target branch-direction mismatch field {field}"
+        );
+    }
+    for (path, value) in [
+        ("/kind/direct_unconditional", 1),
+        ("/kind/call_indirect", 0),
+        ("/without_link_write_kind/direct_unconditional", 1),
+        (
+            "/squashed_target_without_link_write_kind/direct_unconditional",
+            1,
+        ),
+        ("/link_write_kind/call_indirect", 0),
+    ] {
+        assert_eq!(
+            event_summary_branch_direction_mismatch
+                .pointer(path)
+                .and_then(Value::as_u64),
+            Some(value),
+            "O3 event summary wrong-target branch-direction mismatch path {path}: {event_summary_branch_direction_mismatch}"
+        );
+    }
     let event_summary_branch_event = record
         .pointer("/event_summary/branch_event")
         .expect("O3 event summary branch-event matrix");
