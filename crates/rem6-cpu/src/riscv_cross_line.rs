@@ -38,7 +38,7 @@ pub(crate) fn supports_cross_line_data_access(
             byte_mask,
             group_registers,
             ..
-        } => e64_segment_m1_two_line_access(
+        } => supported_two_line_segment_m1_access(
             *width,
             *fields,
             *element_count,
@@ -56,7 +56,7 @@ pub(crate) fn supports_cross_line_data_access(
             byte_mask,
             group_registers,
             ..
-        } => e64_segment_m1_two_line_access(
+        } => supported_two_line_segment_m1_access(
             *width,
             *fields,
             *element_count,
@@ -145,7 +145,7 @@ fn supported_full_register_group_vector_access(
     supported_shape && byte_len == full_group_bytes && size_bytes == byte_len
 }
 
-fn e64_segment_m1_two_line_access(
+fn supported_two_line_segment_m1_access(
     width: MemoryWidth,
     fields: usize,
     element_count: usize,
@@ -161,9 +161,8 @@ fn e64_segment_m1_two_line_access(
     group_registers == 1
         && byte_mask.is_none()
         && size.bytes() == line_bytes * 2
-        && width == MemoryWidth::Doubleword
-        && fields == 2
-        && element_count == 2
+        && ((width == MemoryWidth::Doubleword && fields == 2 && element_count == 2)
+            || (width == MemoryWidth::Word && fields == 4 && element_count == 2))
         && byte_len == 32
         && size_bytes == byte_len
 }
@@ -301,6 +300,81 @@ mod tests {
             &vector_store_segment_e64_m1(0x8000),
             Address::new(0x8000),
             size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_e32_m1_four_field_segment() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_segment_e32_m1_four_field(0x8000),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+        assert!(supports_cross_line_data_access(
+            &vector_store_segment_e32_m1_four_field(0x8000),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_rejects_e32_four_field_segment_outside_exact_shape() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size_32 = AccessSize::new(32).unwrap();
+        let size_48 = AccessSize::new(48).unwrap();
+
+        assert!(!supports_cross_line_data_access(
+            &vector_load_segment_e32_four_field(0x8000, 2, 32, Some(vec![true; 32]), 1),
+            Address::new(0x8000),
+            size_32,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_store_segment_e32_four_field(0x8000, 2, 32, Some(vec![true; 32]), 1),
+            Address::new(0x8000),
+            size_32,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_load_segment_e32_four_field(0x8000, 3, 48, None, 1),
+            Address::new(0x8000),
+            size_48,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_store_segment_e32_four_field(0x8000, 3, 48, None, 1),
+            Address::new(0x8000),
+            size_48,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_load_segment_e32_m1_four_field(0x8004),
+            Address::new(0x8004),
+            size_32,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_store_segment_e32_m1_four_field(0x8004),
+            Address::new(0x8004),
+            size_32,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_load_segment_e32_four_field(0x8000, 2, 32, None, 2),
+            Address::new(0x8000),
+            size_32,
+            layout
+        ));
+        assert!(!supports_cross_line_data_access(
+            &vector_store_segment_e32_four_field(0x8000, 2, 32, None, 2),
+            Address::new(0x8000),
+            size_32,
             layout
         ));
     }
@@ -538,6 +612,29 @@ mod tests {
         }
     }
 
+    fn vector_load_segment_e32_m1_four_field(address: u64) -> MemoryAccessKind {
+        vector_load_segment_e32_four_field(address, 2, 32, None, 1)
+    }
+
+    fn vector_load_segment_e32_four_field(
+        address: u64,
+        element_count: usize,
+        byte_len: usize,
+        byte_mask: Option<Vec<bool>>,
+        group_registers: usize,
+    ) -> MemoryAccessKind {
+        MemoryAccessKind::VectorLoadSegmentUnitStride {
+            vd: VectorRegister::new(2).unwrap(),
+            address,
+            width: MemoryWidth::Word,
+            fields: 4,
+            element_count,
+            byte_len,
+            byte_mask,
+            group_registers,
+        }
+    }
+
     fn vector_load_segment_e64_m1_with_mask(address: u64) -> MemoryAccessKind {
         MemoryAccessKind::VectorLoadSegmentUnitStride {
             vd: VectorRegister::new(2).unwrap(),
@@ -560,6 +657,28 @@ mod tests {
             data: vec![0; 32],
             byte_mask: None,
             group_registers: 1,
+        }
+    }
+
+    fn vector_store_segment_e32_m1_four_field(address: u64) -> MemoryAccessKind {
+        vector_store_segment_e32_four_field(address, 2, 32, None, 1)
+    }
+
+    fn vector_store_segment_e32_four_field(
+        address: u64,
+        element_count: usize,
+        byte_len: usize,
+        byte_mask: Option<Vec<bool>>,
+        group_registers: usize,
+    ) -> MemoryAccessKind {
+        MemoryAccessKind::VectorStoreSegmentUnitStride {
+            address,
+            width: MemoryWidth::Word,
+            fields: 4,
+            element_count,
+            data: vec![0; byte_len],
+            byte_mask,
+            group_registers,
         }
     }
 

@@ -57,7 +57,8 @@ const SUPPORTED_INDEXED_M1_SHAPES: &[(MemoryWidth, MemoryWidth, &[usize], usize)
     ),
 ];
 // Current segment execution evidence covers bounded single-line multi-field
-// forms plus the explicit aligned e64/m1 unmasked/masked two-line slices.
+// forms plus explicit aligned e32/m1 unmasked four-field and e64/m1
+// unmasked/masked two-line slices.
 // Broader segment transport needs its own tests.
 const MAX_SEGMENT_UNIT_STRIDE_BYTES: usize = 16;
 
@@ -476,6 +477,7 @@ fn supported_segment_unit_stride_shape(
     byte_len: usize,
 ) -> bool {
     byte_len <= MAX_SEGMENT_UNIT_STRIDE_BYTES
+        || (width == MemoryWidth::Word && fields == 4 && element_count == 2 && byte_len == 32)
         || (width == MemoryWidth::Doubleword && fields == 2 && element_count == 2 && byte_len == 32)
 }
 
@@ -834,7 +836,10 @@ fn unsupported_masked_segment_shape(
             && plan.fields == 2
             && plan.element_count == 2
             && plan.byte_len == 8)
-            || width == MemoryWidth::Word
+            || (width == MemoryWidth::Word
+                && plan.fields == 2
+                && plan.element_count == 2
+                && plan.byte_len == 16)
             || (width == MemoryWidth::Doubleword
                 && plan.fields == 2
                 && plan.element_count == 2

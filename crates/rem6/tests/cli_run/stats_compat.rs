@@ -5389,6 +5389,43 @@ fn rem6_run_in_order_pipeline_models_vector_segment_e32_m1_three_field_load_stor
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_segment_e32_m1_four_field_load_store() {
+    let direct_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-segment-e32-m1-four-field-load-store",
+        &unit_stride_segment_e32_m1_four_field_vector_memory_program(),
+        180,
+    );
+
+    assert_eq!(
+        stat_value(&direct_stats, "sim.cpu0.instructions.committed"),
+        34,
+        "four-field e32/m1 segment load/store should scatter four fields into vector registers and gather them back through the direct-memory top-level run path\nstats:\n{direct_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&direct_stats).as_deref(),
+        Some("environment_call"),
+        "four-field e32/m1 segment load/store should reach the success ecall, not the invalid-instruction failure path\nstats:\n{direct_stats}"
+    );
+
+    let cache_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-segment-e32-m1-four-field-load-store",
+        &unit_stride_segment_e32_m1_four_field_vector_memory_program(),
+        500,
+    );
+
+    assert_eq!(
+        stat_value(&cache_stats, "sim.cpu0.instructions.committed"),
+        34,
+        "cache-backed four-field e32/m1 segment load/store should scatter four fields into vector registers and gather them back through the top-level run path\nstats:\n{cache_stats}"
+    );
+    assert_eq!(
+        simulation_trap(&cache_stats).as_deref(),
+        Some("environment_call"),
+        "cache-backed four-field e32/m1 segment load/store should reach the success ecall, not the invalid-instruction failure path\nstats:\n{cache_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_vector_segment_e8_e16_e64_m1_load_store() {
     for (name, program, committed, direct_tick, cache_tick) in [
         (
@@ -14150,6 +14187,28 @@ fn unit_stride_segment_e32_m1_three_field_vector_memory_program() -> Vec<u8> {
     )
 }
 
+fn unit_stride_segment_e32_m1_four_field_vector_memory_program() -> Vec<u8> {
+    unit_stride_segment_m1_vector_memory_program(
+        0xd0,
+        2,
+        4,
+        0b110,
+        32,
+        4,
+        0b010,
+        &u32_words_to_bytes(&[
+            0x1111_1111,
+            0x2222_2222,
+            0x3333_3333,
+            0x4444_4444,
+            0x5555_5555,
+            0x6666_6666,
+            0x7777_7777,
+            0x8888_8888,
+        ]),
+    )
+}
+
 fn unit_stride_segment_e8_m1_vector_memory_program() -> Vec<u8> {
     unit_stride_segment_m1_vector_memory_program(
         0xc0,
@@ -14222,7 +14281,7 @@ fn unit_stride_segment_m1_vector_memory_program(
     compare_funct3: u32,
     segment_bytes_payload: &[u8],
 ) -> Vec<u8> {
-    const DATA_OFFSET_BYTES: i32 = 128;
+    const DATA_OFFSET_BYTES: i32 = 192;
     let block_bytes = ((segment_bytes + 15) / 16) * 16;
     let compare_count = segment_bytes / compare_step;
     let fail_instruction_index = 9 + compare_count * 3 + 1;
