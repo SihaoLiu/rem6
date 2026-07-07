@@ -769,6 +769,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/cores/0/o3_runtime/branch_event/squashed_targets_without_link_writes",
         "/cores/0/o3_runtime/branch_event/squashed_target_link_write_kind/call_indirect",
         "/cores/0/o3_runtime/branch_event/squashed_target_without_link_write_kind/return",
+        "/debug/o3_trace/0/branch_event/branches",
+        "/debug/o3_trace/0/branch_event/squashed_target_link_write_kind/call_indirect",
         "sim.cpu0.o3.branch_event.branches",
         "sim.cpu0.o3.branch_event.taken",
         "sim.cpu0.o3.branch_event.not_taken",

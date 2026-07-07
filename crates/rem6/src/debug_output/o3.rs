@@ -329,6 +329,7 @@ impl Rem6O3TraceRecord {
     }
 
     pub(super) fn to_json(&self) -> String {
+        let branch_event = o3_branch_event_json(self.stats);
         let events = self
             .events
             .iter()
@@ -374,7 +375,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"branch_event\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -408,9 +409,74 @@ impl Rem6O3TraceRecord {
             self.stats.max_rob_occupancy(),
             self.stats.max_lsq_occupancy(),
             self.stats.rename_map_entries(),
+            branch_event,
             events,
         )
     }
+}
+
+fn o3_branch_event_kind_json<F>(count: F) -> String
+where
+    F: Fn(BranchTargetKind) -> u64,
+{
+    let fields = BranchTargetKind::ALL
+        .into_iter()
+        .map(|kind| format!("\"{}\":{}", kind.canonical_stat_name(), count(kind)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn o3_branch_event_json(stats: O3RuntimeStats) -> String {
+    let kind = o3_branch_event_kind_json(|branch_kind| stats.branch_event_kind(branch_kind));
+    let taken_kind =
+        o3_branch_event_kind_json(|branch_kind| stats.branch_event_taken_kind(branch_kind));
+    let predicted_taken_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_predicted_taken_kind(branch_kind)
+    });
+    let predicted_not_taken_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_predicted_not_taken_kind(branch_kind)
+    });
+    let predicted_target_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_predicted_target_kind(branch_kind)
+    });
+    let predicted_target_match_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_predicted_target_match_kind(branch_kind)
+    });
+    let predicted_target_mismatch_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_predicted_target_mismatch_kind(branch_kind)
+    });
+    let resolved_target_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_resolved_target_kind(branch_kind)
+    });
+    let link_write_kind =
+        o3_branch_event_kind_json(|branch_kind| stats.branch_event_link_write_kind(branch_kind));
+    let squash_kind =
+        o3_branch_event_kind_json(|branch_kind| stats.branch_event_squash_kind(branch_kind));
+    let squashed_target_link_write_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_squashed_target_link_write_kind(branch_kind)
+    });
+    let squashed_target_without_link_write_kind = o3_branch_event_kind_json(|branch_kind| {
+        stats.branch_event_squashed_target_without_link_write_kind(branch_kind)
+    });
+    format!(
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        stats.branch_events(),
+        stats.branch_event_taken(),
+        stats.branch_event_not_taken(),
+        stats.branch_event_predicted_taken(),
+        stats.branch_event_predicted_not_taken(),
+        stats.branch_event_predicted_targets(),
+        stats.branch_event_predicted_target_matches(),
+        stats.branch_event_predicted_target_mismatches(),
+        stats.branch_event_resolved_targets(),
+        stats.branch_event_link_writes(),
+        stats.branch_event_without_link_writes(),
+        stats.branch_event_squashes(),
+        stats.branch_event_squashed_targets(),
+        stats.branch_event_squashed_targets_with_link_writes(),
+        stats.branch_event_squashed_targets_without_link_writes(),
+    )
 }
 
 impl Rem6O3TraceStat {

@@ -7579,6 +7579,53 @@ fn rem6_run_o3_debug_flag_classifies_indirect_call_branch_links() {
             "O3 indirect call trace field {field}"
         );
     }
+    let branch_event = record
+        .pointer("/branch_event")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-event summary: {record}"));
+    for (field, value) in [
+        ("branches", 1),
+        ("taken", 1),
+        ("not_taken", 0),
+        ("predicted_taken", 0),
+        ("predicted_not_taken", 1),
+        ("predicted_targets", 0),
+        ("predicted_target_matches", 0),
+        ("predicted_target_mismatches", 0),
+        ("resolved_targets", 1),
+        ("link_writes", 1),
+        ("without_link_writes", 0),
+        ("squashes", 1),
+        ("squashed_targets", 1),
+        ("squashed_targets_with_link_writes", 1),
+        ("squashed_targets_without_link_writes", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(branch_event, field),
+            value,
+            "O3 indirect call branch-event summary field {field}"
+        );
+    }
+    for path in [
+        "/kind/call_indirect",
+        "/taken_kind/call_indirect",
+        "/predicted_not_taken_kind/call_indirect",
+        "/resolved_target_kind/call_indirect",
+        "/link_write_kind/call_indirect",
+        "/squash_kind/call_indirect",
+        "/squashed_target_link_write_kind/call_indirect",
+    ] {
+        assert_eq!(
+            branch_event.pointer(path).and_then(Value::as_u64),
+            Some(1),
+            "O3 indirect call branch-event summary path {path}"
+        );
+    }
+    assert_eq!(
+        branch_event
+            .pointer("/squashed_target_without_link_write_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
 
     let events = record
         .pointer("/events")
