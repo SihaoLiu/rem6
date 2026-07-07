@@ -168,6 +168,31 @@ fn rem6_run_o3_debug_trace_stats_include_initial_detailed_mode_authority() {
         Some("detailed")
     );
     assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode_authority/targets")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode_authority/mode/functional")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode_authority/mode/timing")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode_authority/mode/detailed")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/debug/o3_trace/0/execution_mode_authority/target/cpu0/mode/detailed")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
         json_stat_value(&json, "sim.debug.o3_trace.execution_mode.functional"),
         0
     );

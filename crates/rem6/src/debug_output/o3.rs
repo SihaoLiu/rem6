@@ -68,8 +68,10 @@ use o3_checkpoint_restore_json::{
 use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
 use o3_event_summary_json::o3_event_summary_to_json;
-use o3_execution_mode_stats::Rem6O3ExecutionModeTraceTotals;
-use o3_fu_latency_stats::REM6_O3_FU_LATENCY_CLASS_STATS;
+use o3_execution_mode_stats::{
+    o3_trace_execution_mode_authority_to_json, Rem6O3ExecutionModeTraceTotals,
+};
+use o3_fu_latency_stats::{Rem6O3FuLatencyClassTotals, REM6_O3_FU_LATENCY_CLASS_STATS};
 use o3_lsq_json::o3_lsq_to_json;
 use o3_summary_json::{
     o3_commit_to_json, o3_fu_latency_class_to_json, o3_iew_to_json, o3_iq_to_json,
@@ -122,31 +124,6 @@ fn add_counter(counter: &mut u64, value: u64) {
 
 fn add_bool_counter(counter: &mut u64, value: bool) {
     add_counter(counter, u64::from(value));
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct Rem6O3FuLatencyClassTotals {
-    instructions: u64,
-    cycles: u64,
-    max_cycles: u64,
-    min_cycles: Option<u64>,
-}
-
-impl Rem6O3FuLatencyClassTotals {
-    fn add(&mut self, latency: u64) {
-        self.instructions = self.instructions.saturating_add(1);
-        self.cycles = self.cycles.saturating_add(latency);
-        self.max_cycles = self.max_cycles.max(latency);
-        self.min_cycles = min_latency_ticks(self.min_cycles, latency);
-    }
-
-    fn min_cycles_value(self) -> u64 {
-        self.min_cycles.unwrap_or(0)
-    }
-
-    fn avg_cycles(self) -> u64 {
-        average_ticks(self.cycles, self.instructions)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -378,6 +355,8 @@ impl Rem6O3TraceRecord {
             || "null".to_string(),
             |mode| format!("\"{}\"", json_escape(mode)),
         );
+        let execution_mode_authority =
+            o3_trace_execution_mode_authority_to_json(&self.target, self.execution_mode);
         let checkpoint_restore_label = self.checkpoint_restore.as_ref().map_or_else(
             || "null".to_string(),
             |restore| format!("\"{}\"", json_escape(&restore.label)),
@@ -413,10 +392,11 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"event_summary\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"execution_mode_authority\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"event_summary\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
+            execution_mode_authority,
             self.stats_epoch,
             self.stats_reset_tick,
             checkpoint_restore_count,

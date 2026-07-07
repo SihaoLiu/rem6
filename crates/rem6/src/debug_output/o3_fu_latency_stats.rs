@@ -1,5 +1,51 @@
 use rem6_cpu::O3RuntimeFuLatencyClass;
 
+const fn average_ticks(total: u64, samples: u64) -> u64 {
+    if samples == 0 {
+        0
+    } else {
+        total / samples
+    }
+}
+
+const fn min_latency_ticks(current: Option<u64>, latency: u64) -> Option<u64> {
+    Some(match current {
+        Some(current) => {
+            if current < latency {
+                current
+            } else {
+                latency
+            }
+        }
+        None => latency,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct Rem6O3FuLatencyClassTotals {
+    pub(super) instructions: u64,
+    pub(super) cycles: u64,
+    pub(super) max_cycles: u64,
+    min_cycles: Option<u64>,
+}
+
+impl Rem6O3FuLatencyClassTotals {
+    pub(super) fn add(&mut self, latency: u64) {
+        self.instructions = self.instructions.saturating_add(1);
+        self.cycles = self.cycles.saturating_add(latency);
+        self.max_cycles = self.max_cycles.max(latency);
+        self.min_cycles = min_latency_ticks(self.min_cycles, latency);
+    }
+
+    pub(super) fn min_cycles_value(self) -> u64 {
+        self.min_cycles.unwrap_or(0)
+    }
+
+    pub(super) fn avg_cycles(self) -> u64 {
+        average_ticks(self.cycles, self.instructions)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Rem6O3FuLatencyClassStatNames {
     pub(super) class: O3RuntimeFuLatencyClass,
