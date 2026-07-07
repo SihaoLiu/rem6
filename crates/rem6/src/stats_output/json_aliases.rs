@@ -317,6 +317,7 @@ fn append_gem5_o3_ftq_json_alias_stats(
     alias_prefix: &str,
 ) {
     for (source_family, source_total, alias_family) in [
+        ("squash_kind", "squashes", "squashes"),
         (
             "squashed_target_kind",
             "squashed_targets",

@@ -772,6 +772,16 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         "sim.cpu0.o3.branch_event.squashes",
         branch_mispredicts,
     );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.branch_event.squash_kind.direct_conditional",
+        1,
+    );
+    assert_text_count_stat(
+        &stdout,
+        "sim.cpu0.o3.branch_event.squash_kind.direct_unconditional",
+        2,
+    );
     assert_text_count_stat(&stdout, "system.cpu.ftq.squashes", branch_mispredicts);
     assert_text_count_stat(
         &stdout,
@@ -785,6 +795,10 @@ fn rem6_run_text_stats_alias_o3_branch_mispredicts_after_detailed_switch() {
         branch_mispredicts,
     );
     for (path, value) in [
+        ("system.cpu.ftq.squashes_0::CallIndirect", 0),
+        ("system.cpu.ftq.squashes_0::DirectCond", 1),
+        ("system.cpu.ftq.squashes_0::DirectUncond", 2),
+        ("system.cpu.ftq.squashes_0::total", branch_mispredicts),
         ("system.cpu.ftq.squashedTargets_0::DirectCond", 1),
         ("system.cpu.ftq.squashedTargets_0::DirectUncond", 2),
         (

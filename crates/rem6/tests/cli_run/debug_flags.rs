@@ -9093,6 +9093,21 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
             1,
         ),
         (
+            "sim.cpu0.o3.branch_event.squash_kind.call_indirect",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squash_kind.direct_conditional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.squash_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
+        (
             "sim.cpu0.o3.branch_event.squashed_targets_with_link_writes",
             "Count",
             1,
@@ -9147,6 +9162,10 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ("sim.cpu0.o3.iew.predicted_not_taken_incorrect", "Count", 1),
         ("system.cpu.iew.predictedTakenIncorrect", "Count", 1),
         ("system.cpu.iew.predictedNotTakenIncorrect", "Count", 1),
+        ("system.cpu.ftq.squashes_0::CallIndirect", "Count", 1),
+        ("system.cpu.ftq.squashes_0::DirectCond", "Count", 0),
+        ("system.cpu.ftq.squashes_0::DirectUncond", "Count", 1),
+        ("system.cpu.ftq.squashes_0::total", "Count", 2),
         ("system.cpu.ftq.squashedTargets_0::CallIndirect", "Count", 1),
         ("system.cpu.ftq.squashedTargets_0::DirectUncond", "Count", 1),
         ("system.cpu.ftq.squashedTargets_0::total", "Count", 2),
