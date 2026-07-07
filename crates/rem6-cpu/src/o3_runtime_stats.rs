@@ -257,6 +257,10 @@ impl O3RuntimeStats {
             .saturating_add(self.branch_repair_direction_only_kind(kind))
     }
 
+    pub const fn branch_event_mispredictions(self) -> u64 {
+        self.branch_repair_mispredicts()
+    }
+
     pub fn branch_event_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_event_kinds[kind.index()]
     }

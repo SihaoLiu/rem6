@@ -39,6 +39,10 @@ pub(super) fn emit_o3_branch_event_aggregate_stats(
             "branch_event.resolved_targets",
             o3.branch_event_resolved_targets(),
         ),
+        (
+            "branch_event.mispredictions",
+            o3.branch_event_mispredictions(),
+        ),
         ("branch_event.link_writes", o3.branch_event_link_writes()),
         (
             "branch_event.without_link_writes",

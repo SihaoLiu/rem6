@@ -55,6 +55,7 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     branch_event_predicted_target_matches: StatId,
     branch_event_predicted_target_mismatches: StatId,
     branch_event_resolved_targets: StatId,
+    branch_event_mispredictions: StatId,
     branch_event_link_writes: StatId,
     branch_event_without_link_writes: StatId,
     branch_event_squashes: StatId,
@@ -310,6 +311,12 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "branch_event.resolved_targets",
+                "Count",
+            )?,
+            branch_event_mispredictions: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.mispredictions",
                 "Count",
             )?,
             branch_event_link_writes: register_o3_counter(
@@ -634,6 +641,11 @@ impl RiscvO3RuntimeCpuStats {
                 self.branch_event_resolved_targets,
                 previous.branch_event_resolved_targets(),
                 current.branch_event_resolved_targets(),
+            ),
+            (
+                self.branch_event_mispredictions,
+                previous.branch_event_mispredictions(),
+                current.branch_event_mispredictions(),
             ),
             (
                 self.branch_event_link_writes,
@@ -1113,6 +1125,10 @@ impl RiscvO3RuntimeCpuStats {
             (
                 self.branch_event_resolved_targets,
                 snapshot.branch_event_resolved_targets(),
+            ),
+            (
+                self.branch_event_mispredictions,
+                snapshot.branch_event_mispredictions(),
             ),
             (
                 self.branch_event_link_writes,

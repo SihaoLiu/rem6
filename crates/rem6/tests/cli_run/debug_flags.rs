@@ -8871,6 +8871,7 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
     assert_eq!(json_record_u64(branch_event, "taken"), 2);
     assert_eq!(json_record_u64(branch_event, "not_taken"), 0);
     assert_eq!(json_record_u64(branch_event, "resolved_targets"), 2);
+    assert_eq!(json_record_u64(branch_event, "mispredictions"), 2);
     assert_eq!(json_record_u64(branch_event, "link_writes"), 1);
     assert_eq!(json_record_u64(branch_event, "without_link_writes"), 1);
     assert_eq!(
@@ -8967,6 +8968,7 @@ fn rem6_run_json_stats_exposes_o3_call_indirect_wrong_target_runtime_matrix() {
         ("sim.cpu0.o3.branch_event.taken", "Count", 2),
         ("sim.cpu0.o3.branch_event.not_taken", "Count", 0),
         ("sim.cpu0.o3.branch_event.resolved_targets", "Count", 2),
+        ("sim.cpu0.o3.branch_event.mispredictions", "Count", 2),
         ("sim.cpu0.o3.branch_event.link_writes", "Count", 1),
         ("sim.cpu0.o3.branch_event.without_link_writes", "Count", 1),
         (

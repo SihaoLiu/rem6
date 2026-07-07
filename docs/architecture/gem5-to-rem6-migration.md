@@ -224,7 +224,7 @@ KVM equivalents.
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `RiscvCheckerCpu`,
 `InOrderPipelineState`, `O3DistributedIssueScheduler`, `O3SourceRenamePlan`,
-CPU frontend, checker, and O3 tests.
+CPU frontend, checker, and O3 tests, including O3 branch-event aggregate misprediction evidence at `/cores/0/o3_runtime/branch_event/mispredictions`, `sim.cpu0.o3.branch_event.mispredictions`, and `sim.host_actions.stats_dump.cpu0.o3.branch_event.mispredictions`.
 CLI run stats include per-core in-order pipeline cycle, retired, and
 fetch-response wait counters from executed RISC-V instructions, and CLI data
 stats show load/store response wait changing the in-order pipeline cycle

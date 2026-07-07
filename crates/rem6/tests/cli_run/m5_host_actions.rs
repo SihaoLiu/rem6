@@ -2994,6 +2994,10 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
             2,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.mispredictions",
+            3,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashes",
             3,
         ),
@@ -3097,6 +3101,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_target_matches",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_target_mismatches",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.resolved_targets",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.mispredictions",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashes",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_targets",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_targets_without_link_writes",
@@ -3208,6 +3213,10 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
             1,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.mispredictions",
+            2,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
             1,
         ),
@@ -3246,6 +3255,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.branches",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_writes",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_writes",
+        "sim.host_actions.stats_dump.cpu0.o3.branch_event.mispredictions",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_write_kind.call_indirect",
@@ -3257,6 +3267,13 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_link_kind_snapshot() {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
 
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_event.mispredictions",
+        "Count",
+        0,
+        "monotonic",
+    );
     assert_json_stat(
         &json,
         "sim.cpu0.o3.branch_event.without_link_write_kind.call_indirect",
