@@ -4562,35 +4562,66 @@ fn rem6_run_o3_runtime_json_exposes_float_vector_lsq_matrix() {
         "m5-switch-cpu-detailed-o3-float-vector-lsq-runtime-json",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "220",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--memory-system",
-            "direct",
-            "--dump-memory",
-            "0x80000080:16",
-            "--dump-memory",
-            "0x80000090:16",
-        ])
-        .output()
-        .unwrap();
+    let direct_json = float_vector_lsq_runtime_json(&path, Some("direct"), "220");
+    let cache_json = float_vector_lsq_runtime_json(&path, None, "320");
+
+    assert_eq!(
+        direct_json
+            .pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("direct")
+    );
+    assert_eq!(
+        cache_json
+            .pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    let direct_latency = assert_float_vector_lsq_runtime_json(&direct_json);
+    let cache_latency = assert_float_vector_lsq_runtime_json(&cache_json);
+    assert!(
+        cache_latency >= direct_latency,
+        "cache-backed float/vector LSQ latency should include at least the direct latency: direct={direct_latency}, cache={cache_latency}"
+    );
+}
+
+fn float_vector_lsq_runtime_json(
+    path: &Path,
+    memory_system: Option<&str>,
+    max_tick: &str,
+) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        max_tick,
+        "--stats-format",
+        "json",
+        "--execute",
+        "--dump-memory",
+        "0x80000080:16",
+        "--dump-memory",
+        "0x80000090:16",
+    ]);
+    if let Some(memory_system) = memory_system {
+        command.args(["--memory-system", memory_system]);
+    }
+    let output = command.output().unwrap();
 
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn assert_float_vector_lsq_runtime_json(json: &Value) -> u64 {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host")
@@ -4608,12 +4639,15 @@ fn rem6_run_o3_runtime_json_exposes_float_vector_lsq_matrix() {
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
 
     for (field, value) in [
+        ("lsq_operation_load", 0),
+        ("lsq_operation_store", 0),
+        ("lsq_operation_load_reserved", 0),
+        ("lsq_operation_store_conditional", 0),
+        ("lsq_operation_atomic", 0),
         ("lsq_operation_float_load", 1),
         ("lsq_operation_float_store", 1),
         ("lsq_operation_vector_load", 1),
         ("lsq_operation_vector_store", 1),
-        ("lsq_operation_atomic", 0),
-        ("lsq_operation_store_conditional", 0),
         ("lsq_ordering_acquire", 0),
         ("lsq_ordering_release", 0),
         ("lsq_ordering_acquire_release", 0),
@@ -4642,6 +4676,209 @@ fn rem6_run_o3_runtime_json_exposes_float_vector_lsq_matrix() {
         assert_o3_lsq_count_alias(&json, field, value);
     }
     assert_o3_lsq_count_alias_totals(&json, 4, 0);
+
+    let mut aggregate_latency_samples = 0;
+    let mut aggregate_latency_ticks = 0;
+    let mut aggregate_latency_max_ticks = 0;
+    let mut aggregate_latency_min_ticks = u64::MAX;
+    for (operation, alias_operation) in [
+        ("float_load", "floatLoad"),
+        ("float_store", "floatStore"),
+        ("vector_load", "vectorLoad"),
+        ("vector_store", "vectorStore"),
+    ] {
+        let samples_field = format!("lsq_operation_{operation}_latency_samples");
+        let total_field = format!("lsq_operation_{operation}_latency_ticks");
+        let max_field = format!("lsq_operation_{operation}_latency_max_ticks");
+        let min_field = format!("lsq_operation_{operation}_latency_min_ticks");
+        let avg_field = format!("lsq_operation_{operation}_latency_avg_ticks");
+        let samples = o3_runtime
+            .pointer(&format!("/{samples_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {samples_field}: {o3_runtime}")
+            });
+        let total = o3_runtime
+            .pointer(&format!("/{total_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {total_field}: {o3_runtime}")
+            });
+        let max = o3_runtime
+            .pointer(&format!("/{max_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {max_field}: {o3_runtime}")
+            });
+        let min = o3_runtime
+            .pointer(&format!("/{min_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {min_field}: {o3_runtime}")
+            });
+        let avg = o3_runtime
+            .pointer(&format!("/{avg_field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("structured O3 runtime JSON should expose {avg_field}: {o3_runtime}")
+            });
+        assert!(
+            samples > 0,
+            "{samples_field} should be positive: {o3_runtime}"
+        );
+        assert!(total > 0, "{total_field} should be positive: {o3_runtime}");
+        assert!(
+            max >= min && min > 0,
+            "invalid latency bounds for {operation}: {o3_runtime}"
+        );
+        assert!(
+            avg >= min && avg <= max,
+            "average latency should stay within bounds for {operation}: {o3_runtime}"
+        );
+        assert_eq!(
+            avg,
+            total / samples,
+            "average latency should use the structured sample count for {operation}: {o3_runtime}"
+        );
+        aggregate_latency_samples += samples;
+        aggregate_latency_ticks += total;
+        aggregate_latency_max_ticks = aggregate_latency_max_ticks.max(max);
+        aggregate_latency_min_ticks = aggregate_latency_min_ticks.min(min);
+        for (suffix, value) in [
+            ("latency_samples", samples),
+            ("latency_ticks", total),
+            ("latency_max_ticks", max),
+            ("latency_min_ticks", min),
+            ("latency_avg_ticks", avg),
+        ] {
+            assert_eq!(
+                json_stat_value(
+                    &json,
+                    &format!("sim.cpu0.o3.lsq_operation.{operation}_{suffix}")
+                ),
+                value,
+                "stat registry should match structured runtime {operation}_{suffix}"
+            );
+        }
+        for (suffix, unit, value) in [
+            ("samples", "Count", samples),
+            ("totalLatency", "Tick", total),
+            ("maxLatency", "Tick", max),
+            ("minLatency", "Tick", min),
+            ("avgLatency", "Tick", avg),
+        ] {
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.dataResponse.{alias_operation}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
+    }
+    let aggregate_latency_avg_ticks = aggregate_latency_ticks / aggregate_latency_samples;
+    for (field, alias, unit, value) in [
+        (
+            "lsq_data_latency_samples",
+            "samples",
+            "Count",
+            aggregate_latency_samples,
+        ),
+        (
+            "lsq_data_latency_ticks",
+            "totalLatency",
+            "Tick",
+            aggregate_latency_ticks,
+        ),
+        (
+            "lsq_data_latency_max_ticks",
+            "maxLatency",
+            "Tick",
+            aggregate_latency_max_ticks,
+        ),
+        (
+            "lsq_data_latency_min_ticks",
+            "minLatency",
+            "Tick",
+            aggregate_latency_min_ticks,
+        ),
+        (
+            "lsq_data_latency_avg_ticks",
+            "avgLatency",
+            "Tick",
+            aggregate_latency_avg_ticks,
+        ),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose aggregate {field}: {o3_runtime}"
+        );
+        assert_json_stat(
+            &json,
+            &format!("sim.cpu0.o3.{field}"),
+            unit,
+            value,
+            "monotonic",
+        );
+        assert_json_stat(
+            json,
+            &format!("system.cpu.lsq0.dataResponse.{alias}"),
+            unit,
+            value,
+            "monotonic",
+        );
+    }
+    for (operation, alias_operation) in [
+        ("load", "load"),
+        ("store", "store"),
+        ("load_reserved", "loadReserved"),
+        ("store_conditional", "storeConditional"),
+        ("atomic", "atomic"),
+    ] {
+        for (field, alias, unit) in [
+            ("latency_samples", "samples", "Count"),
+            ("latency_ticks", "totalLatency", "Tick"),
+            ("latency_max_ticks", "maxLatency", "Tick"),
+            ("latency_min_ticks", "minLatency", "Tick"),
+            ("latency_avg_ticks", "avgLatency", "Tick"),
+        ] {
+            let runtime_field = format!("lsq_operation_{operation}_{field}");
+            assert_eq!(
+                o3_runtime
+                    .pointer(&format!("/{runtime_field}"))
+                    .and_then(Value::as_u64),
+                Some(0),
+                "structured O3 runtime JSON should expose inactive {runtime_field}: {o3_runtime}"
+            );
+            assert_eq!(
+                json_stat_value(
+                    &json,
+                    &format!("sim.cpu0.o3.lsq_operation.{operation}_{field}")
+                ),
+                0,
+                "stat registry should expose inactive {operation}_{field}"
+            );
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.dataResponse.{alias_operation}.{alias}"),
+                unit,
+                0,
+                "monotonic",
+            );
+        }
+    }
+    ["float_load", "float_store", "vector_load", "vector_store"]
+        .into_iter()
+        .map(|operation| {
+            o3_runtime
+                .pointer(&format!("/lsq_operation_{operation}_latency_ticks"))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing latency total for {operation}: {o3_runtime}"))
+        })
+        .sum()
 }
 
 #[test]
