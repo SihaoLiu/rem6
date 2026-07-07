@@ -53,6 +53,10 @@ pub struct O3RuntimeStats {
     pub(crate) branch_repair_direction_only_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_taken_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_predicted_taken_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_predicted_target_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_predicted_target_match_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_event_predicted_target_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_resolved_target_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_link_write_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_squash_kinds: [u64; BranchTargetKind::COUNT],
@@ -270,6 +274,56 @@ impl O3RuntimeStats {
 
     pub fn branch_event_taken_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_event_taken_kinds[kind.index()]
+    }
+
+    pub fn branch_event_predicted_taken(self) -> u64 {
+        self.branch_event_predicted_taken_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_predicted_not_taken(self) -> u64 {
+        self.branch_events()
+            .saturating_sub(self.branch_event_predicted_taken())
+    }
+
+    pub fn branch_event_predicted_taken_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_predicted_taken_kinds[kind.index()]
+    }
+
+    pub fn branch_event_predicted_not_taken_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_kind(kind)
+            .saturating_sub(self.branch_event_predicted_taken_kind(kind))
+    }
+
+    pub fn branch_event_predicted_targets(self) -> u64 {
+        self.branch_event_predicted_target_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_predicted_target_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_predicted_target_kinds[kind.index()]
+    }
+
+    pub fn branch_event_predicted_target_matches(self) -> u64 {
+        self.branch_event_predicted_target_match_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_predicted_target_match_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_predicted_target_match_kinds[kind.index()]
+    }
+
+    pub fn branch_event_predicted_target_mismatches(self) -> u64 {
+        self.branch_event_predicted_target_mismatch_kinds
+            .into_iter()
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    pub fn branch_event_predicted_target_mismatch_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_event_predicted_target_mismatch_kinds[kind.index()]
     }
 
     pub fn branch_event_resolved_targets(self) -> u64 {
@@ -523,6 +577,28 @@ impl O3RuntimeStats {
         }
         let index = event.branch_kind().index();
         self.branch_event_kinds[index] = self.branch_event_kinds[index].saturating_add(1);
+        if event.branch_predicted_taken() {
+            self.branch_event_predicted_taken_kinds[index] =
+                self.branch_event_predicted_taken_kinds[index].saturating_add(1);
+        }
+        if event.branch_predicted_target().is_some() {
+            self.branch_event_predicted_target_kinds[index] =
+                self.branch_event_predicted_target_kinds[index].saturating_add(1);
+        }
+        if event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) == event.branch_resolved_target())
+        {
+            self.branch_event_predicted_target_match_kinds[index] =
+                self.branch_event_predicted_target_match_kinds[index].saturating_add(1);
+        }
+        if event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) != event.branch_resolved_target())
+        {
+            self.branch_event_predicted_target_mismatch_kinds[index] =
+                self.branch_event_predicted_target_mismatch_kinds[index].saturating_add(1);
+        }
         if event.branch_resolved_taken() {
             self.branch_event_taken_kinds[index] =
                 self.branch_event_taken_kinds[index].saturating_add(1);

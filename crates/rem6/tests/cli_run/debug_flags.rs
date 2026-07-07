@@ -9432,6 +9432,47 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
         .count() as u64;
     assert_eq!(branch_predicted_targets, 1);
 
+    let branch_event = json
+        .pointer("/cores/0/o3_runtime/branch_event")
+        .expect("structured O3 branch-event runtime matrix");
+    assert_eq!(json_record_u64(branch_event, "branches"), 3);
+    assert_eq!(json_record_u64(branch_event, "predicted_taken"), 1);
+    assert_eq!(json_record_u64(branch_event, "predicted_not_taken"), 2);
+    assert_eq!(json_record_u64(branch_event, "predicted_targets"), 1);
+    assert_eq!(json_record_u64(branch_event, "predicted_target_matches"), 1);
+    assert_eq!(
+        json_record_u64(branch_event, "predicted_target_mismatches"),
+        0
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/predicted_taken_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose predicted-taken branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/predicted_not_taken_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose predicted-not-taken branches: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/predicted_target_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose predicted targets: {branch_event}"
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/predicted_target_match_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose predicted target matches: {branch_event}"
+    );
+
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 3),
@@ -9484,6 +9525,39 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_target_
         ),
         (
             "sim.debug.o3_trace.event.branch_squash_kind.direct_unconditional",
+            "Count",
+            1,
+        ),
+        ("sim.cpu0.o3.branch_event.predicted_taken", "Count", 1),
+        ("sim.cpu0.o3.branch_event.predicted_not_taken", "Count", 2),
+        ("sim.cpu0.o3.branch_event.predicted_targets", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_matches",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_mismatches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_taken_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_not_taken_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_kind.direct_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_match_kind.direct_conditional",
             "Count",
             1,
         ),
@@ -9607,6 +9681,26 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
     direction_only_branch_pcs.sort_unstable();
     assert_eq!(direction_only_branch_pcs, ["0x80000010", "0x8000001c"]);
 
+    let branch_event = json
+        .pointer("/cores/0/o3_runtime/branch_event")
+        .expect("structured O3 branch-event runtime matrix");
+    assert_eq!(json_record_u64(branch_event, "branches"), 3);
+    assert_eq!(json_record_u64(branch_event, "predicted_taken"), 1);
+    assert_eq!(json_record_u64(branch_event, "predicted_not_taken"), 2);
+    assert_eq!(json_record_u64(branch_event, "predicted_targets"), 1);
+    assert_eq!(json_record_u64(branch_event, "predicted_target_matches"), 0);
+    assert_eq!(
+        json_record_u64(branch_event, "predicted_target_mismatches"),
+        1
+    );
+    assert_eq!(
+        branch_event
+            .pointer("/predicted_target_mismatch_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "direct-conditional runtime matrix should expose predicted target mismatches: {branch_event}"
+    );
+
     for (path, unit, value) in [
         ("sim.debug.o3_trace.event.branches", "Count", 3),
         ("sim.debug.o3_trace.event.branch_taken", "Count", 2),
@@ -9623,6 +9717,28 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         ),
         (
             "sim.debug.o3_trace.event.branch_predicted_target_mismatches",
+            "Count",
+            1,
+        ),
+        ("sim.cpu0.o3.branch_event.predicted_taken", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_event.predicted_not_taken",
+            "Count",
+            2,
+        ),
+        ("sim.cpu0.o3.branch_event.predicted_targets", "Count", 1),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_matches",
+            "Count",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_mismatches",
+            "Count",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.branch_event.predicted_target_mismatch_kind.direct_conditional",
             "Count",
             1,
         ),

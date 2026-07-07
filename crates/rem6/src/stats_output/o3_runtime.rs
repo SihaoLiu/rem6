@@ -16,6 +16,26 @@ pub(super) fn emit_o3_branch_event_aggregate_stats(
         ("branch_event.taken", o3.branch_event_taken()),
         ("branch_event.not_taken", o3.branch_event_not_taken()),
         (
+            "branch_event.predicted_taken",
+            o3.branch_event_predicted_taken(),
+        ),
+        (
+            "branch_event.predicted_not_taken",
+            o3.branch_event_predicted_not_taken(),
+        ),
+        (
+            "branch_event.predicted_targets",
+            o3.branch_event_predicted_targets(),
+        ),
+        (
+            "branch_event.predicted_target_matches",
+            o3.branch_event_predicted_target_matches(),
+        ),
+        (
+            "branch_event.predicted_target_mismatches",
+            o3.branch_event_predicted_target_mismatches(),
+        ),
+        (
             "branch_event.resolved_targets",
             o3.branch_event_resolved_targets(),
         ),

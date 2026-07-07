@@ -15,10 +15,11 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
 const O3_RUNTIME_CHECKPOINT_VERSION: u8 =
-    O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS;
+    O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -100,6 +101,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -177,7 +179,27 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 true,
                 true,
+                true,
             )?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS => {
+                read_o3_runtime_stats(
+                    payload,
+                    &mut offset,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    false,
+                    true,
+                    true,
+                )?
+            }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS => {
                 read_o3_runtime_stats(
                     payload,
@@ -192,6 +214,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     true,
                     false,
                 )?
@@ -211,6 +234,7 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS => {
                 read_o3_runtime_stats(
@@ -225,6 +249,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -245,6 +270,7 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS => read_o3_runtime_stats(
                 payload,
@@ -261,6 +287,7 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS => {
                 read_o3_runtime_stats(
@@ -272,6 +299,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -295,6 +323,7 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => {
                 read_o3_runtime_stats(
@@ -304,6 +333,7 @@ impl O3RuntimeCheckpointPayload {
                     true,
                     true,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -329,12 +359,14 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
                 true,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -361,10 +393,12 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
+                false,
                 false,
                 false,
                 false,
@@ -687,6 +721,26 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
                 .to_le_bytes(),
         );
     }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(&stats.branch_event_predicted_taken_kind(kind).to_le_bytes());
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(&stats.branch_event_predicted_target_kind(kind).to_le_bytes());
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(
+            &stats
+                .branch_event_predicted_target_match_kind(kind)
+                .to_le_bytes(),
+        );
+    }
+    for kind in crate::BranchTargetKind::ALL {
+        payload.extend_from_slice(
+            &stats
+                .branch_event_predicted_target_mismatch_kind(kind)
+                .to_le_bytes(),
+        );
+    }
 }
 
 fn read_rob_entry(
@@ -757,6 +811,7 @@ fn read_o3_runtime_stats(
     has_iq_branch_issued_stats: bool,
     has_lsq_forwarding_matrix_stats: bool,
     has_branch_event_stats: bool,
+    has_branch_event_prediction_stats: bool,
     has_lsq_forwarding_suppression_stats: bool,
     has_lsq_forwarding_suppression_reason_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
@@ -782,6 +837,10 @@ fn read_o3_runtime_stats(
     let mut branch_repair_direction_only_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_event_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_event_taken_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_event_predicted_taken_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_event_predicted_target_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_event_predicted_target_match_kinds = [0; crate::BranchTargetKind::COUNT];
+    let mut branch_event_predicted_target_mismatch_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_event_resolved_target_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_event_link_write_kinds = [0; crate::BranchTargetKind::COUNT];
     let mut branch_event_squash_kinds = [0; crate::BranchTargetKind::COUNT];
@@ -941,6 +1000,20 @@ fn read_o3_runtime_stats(
                 read_u64(payload, offset)?;
         }
     }
+    if has_branch_event_prediction_stats {
+        for kind in crate::BranchTargetKind::ALL {
+            branch_event_predicted_taken_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        for kind in crate::BranchTargetKind::ALL {
+            branch_event_predicted_target_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        for kind in crate::BranchTargetKind::ALL {
+            branch_event_predicted_target_match_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+        for kind in crate::BranchTargetKind::ALL {
+            branch_event_predicted_target_mismatch_kinds[kind.index()] = read_u64(payload, offset)?;
+        }
+    }
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -979,6 +1052,10 @@ fn read_o3_runtime_stats(
         branch_repair_direction_only_kinds,
         branch_event_kinds,
         branch_event_taken_kinds,
+        branch_event_predicted_taken_kinds,
+        branch_event_predicted_target_kinds,
+        branch_event_predicted_target_match_kinds,
+        branch_event_predicted_target_mismatch_kinds,
         branch_event_resolved_target_kinds,
         branch_event_link_write_kinds,
         branch_event_squash_kinds,
@@ -1088,6 +1165,8 @@ mod tests {
     const IQ_BRANCH_ISSUED_STATS_BYTES: usize = U64_BYTES;
     const MAX_OCCUPANCY_STATS_BYTES: usize = 3 * U64_BYTES;
     const BRANCH_EVENT_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 6 * U64_BYTES;
+    const BRANCH_EVENT_PREDICTION_STATS_BYTES: usize =
+        crate::BranchTargetKind::COUNT * 4 * U64_BYTES;
     const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
         + LSQ_OPERATION_STATS_BYTES
         + LSQ_OPERATION_FORWARDING_STATS_BYTES
@@ -1100,13 +1179,25 @@ mod tests {
         + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES
         + IEW_DEPENDENCY_STATS_BYTES
         + IQ_BRANCH_ISSUED_STATS_BYTES
-        + BRANCH_EVENT_STATS_BYTES;
+        + BRANCH_EVENT_STATS_BYTES
+        + BRANCH_EVENT_PREDICTION_STATS_BYTES;
+    const STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION: usize =
+        CURRENT_STATS_BYTES - BRANCH_EVENT_PREDICTION_STATS_BYTES;
     const STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
-        CURRENT_STATS_BYTES - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+        STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
     const PRE_BRANCH_EVENT_STATS_BYTES: usize = CURRENT_STATS_BYTES
+        - BRANCH_EVENT_PREDICTION_STATS_BYTES
         - BRANCH_EVENT_STATS_BYTES
         - LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+
+    fn encoded_without_branch_event_prediction_stats(encoded: &[u8]) -> Vec<u8> {
+        let prediction_offset = encoded
+            .len()
+            .checked_sub(BRANCH_EVENT_PREDICTION_STATS_BYTES)
+            .unwrap();
+        encoded[..prediction_offset].to_vec()
+    }
 
     fn encoded_without_branch_event_stats(encoded: &[u8]) -> Vec<u8> {
         let branch_event_offset = encoded.len().checked_sub(BRANCH_EVENT_STATS_BYTES).unwrap();
@@ -1138,7 +1229,11 @@ mod tests {
     }
 
     fn encoded_without_lsq_forwarding_suppression_reason_stats(encoded: &[u8]) -> Vec<u8> {
-        let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+        let encoded = encoded_without_branch_event_prediction_stats(encoded);
+        let stats_offset = encoded
+            .len()
+            .checked_sub(STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION)
+            .unwrap();
         let operation_suppression_bytes = LSQ_FORWARDING_SUPPRESSION_STATS_BYTES - U64_BYTES;
         let reason_offset = stats_offset
             + CURRENT_BASE_AND_FU_STATS_BYTES
@@ -1516,5 +1611,67 @@ mod tests {
             0
         );
         assert_eq!(stats.lsq_operation_forwarding_byte_mismatches(operation), 0);
+    }
+
+    #[test]
+    fn checkpoint_v14_payloads_decode_without_branch_event_prediction_stats() {
+        let mut branch_event_kinds = [0; crate::BranchTargetKind::COUNT];
+        let mut branch_event_predicted_taken_kinds = [0; crate::BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_kinds = [0; crate::BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_match_kinds = [0; crate::BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_mismatch_kinds = [0; crate::BranchTargetKind::COUNT];
+        branch_event_kinds[crate::BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_taken_kinds[crate::BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_kinds[crate::BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_match_kinds[crate::BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_mismatch_kinds
+            [crate::BranchTargetKind::CallIndirect.index()] = 2;
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            super::super::default_o3_runtime_snapshot(),
+            O3RuntimeStats {
+                branch_event_kinds,
+                branch_event_predicted_taken_kinds,
+                branch_event_predicted_target_kinds,
+                branch_event_predicted_target_match_kinds,
+                branch_event_predicted_target_mismatch_kinds,
+                lsq_store_to_load_forwarding_address_mismatches: 1,
+                lsq_store_to_load_forwarding_byte_mismatches: 2,
+                iq_branch_insts_issued: 3,
+                ..O3RuntimeStats::default()
+            },
+        )
+        .unwrap();
+        let mut v14_encoded = encoded_without_branch_event_prediction_stats(&payload.encode());
+        v14_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS;
+
+        let decoded = O3RuntimeCheckpointPayload::decode(&v14_encoded).unwrap();
+        let stats = decoded.stats();
+
+        assert_eq!(stats.iq_branch_insts_issued(), 3);
+        assert_eq!(stats.branch_event_kind(crate::BranchTargetKind::Return), 1);
+        assert_eq!(
+            stats.branch_event_predicted_taken_kind(crate::BranchTargetKind::Return),
+            0
+        );
+        assert_eq!(
+            stats.branch_event_predicted_not_taken_kind(crate::BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            stats.branch_event_predicted_target_kind(crate::BranchTargetKind::Return),
+            0
+        );
+        assert_eq!(
+            stats.branch_event_predicted_target_match_kind(crate::BranchTargetKind::Return),
+            0
+        );
+        assert_eq!(
+            stats
+                .branch_event_predicted_target_mismatch_kind(crate::BranchTargetKind::CallIndirect),
+            0
+        );
+        assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_byte_mismatches(), 2);
     }
 }

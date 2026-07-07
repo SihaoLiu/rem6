@@ -394,6 +394,31 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
     let taken_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
         summary.o3_runtime.branch_event_taken_kind(branch_kind)
     });
+    let predicted_taken_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_predicted_taken_kind(branch_kind)
+    });
+    let predicted_not_taken_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_predicted_not_taken_kind(branch_kind)
+    });
+    let predicted_target_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_predicted_target_kind(branch_kind)
+    });
+    let predicted_target_match_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_predicted_target_match_kind(branch_kind)
+    });
+    let predicted_target_mismatch_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
+        summary
+            .o3_runtime
+            .branch_event_predicted_target_mismatch_kind(branch_kind)
+    });
     let resolved_target_kind = o3_runtime_branch_repair_kind_json(|branch_kind| {
         summary
             .o3_runtime
@@ -417,10 +442,17 @@ fn o3_runtime_branch_event_json(summary: &Rem6CoreSummary) -> String {
                 .branch_event_squashed_target_without_link_write_kind(branch_kind)
         });
     format!(
-        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"resolved_targets\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
+        "{{\"branches\":{},\"taken\":{},\"not_taken\":{},\"predicted_taken\":{},\"predicted_not_taken\":{},\"predicted_targets\":{},\"predicted_target_matches\":{},\"predicted_target_mismatches\":{},\"resolved_targets\":{},\"kind\":{kind},\"taken_kind\":{taken_kind},\"predicted_taken_kind\":{predicted_taken_kind},\"predicted_not_taken_kind\":{predicted_not_taken_kind},\"predicted_target_kind\":{predicted_target_kind},\"predicted_target_match_kind\":{predicted_target_match_kind},\"predicted_target_mismatch_kind\":{predicted_target_mismatch_kind},\"resolved_target_kind\":{resolved_target_kind},\"link_writes\":{},\"without_link_writes\":{},\"link_write_kind\":{link_write_kind},\"squashes\":{},\"squashed_targets\":{},\"squashed_targets_with_link_writes\":{},\"squashed_targets_without_link_writes\":{},\"squash_kind\":{squash_kind},\"squashed_target_link_write_kind\":{squashed_target_link_write_kind},\"squashed_target_without_link_write_kind\":{squashed_target_without_link_write_kind}}}",
         summary.o3_runtime.branch_events(),
         summary.o3_runtime.branch_event_taken(),
         summary.o3_runtime.branch_event_not_taken(),
+        summary.o3_runtime.branch_event_predicted_taken(),
+        summary.o3_runtime.branch_event_predicted_not_taken(),
+        summary.o3_runtime.branch_event_predicted_targets(),
+        summary.o3_runtime.branch_event_predicted_target_matches(),
+        summary
+            .o3_runtime
+            .branch_event_predicted_target_mismatches(),
         summary.o3_runtime.branch_event_resolved_targets(),
         summary.o3_runtime.branch_event_link_writes(),
         summary.o3_runtime.branch_event_without_link_writes(),

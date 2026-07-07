@@ -1147,6 +1147,26 @@ fn emit_o3_runtime_stats(
         for (name, value) in [
             ("branch_event.kind", o3.branch_event_kind(kind)),
             ("branch_event.taken_kind", o3.branch_event_taken_kind(kind)),
+            (
+                "branch_event.predicted_taken_kind",
+                o3.branch_event_predicted_taken_kind(kind),
+            ),
+            (
+                "branch_event.predicted_not_taken_kind",
+                o3.branch_event_predicted_not_taken_kind(kind),
+            ),
+            (
+                "branch_event.predicted_target_kind",
+                o3.branch_event_predicted_target_kind(kind),
+            ),
+            (
+                "branch_event.predicted_target_match_kind",
+                o3.branch_event_predicted_target_match_kind(kind),
+            ),
+            (
+                "branch_event.predicted_target_mismatch_kind",
+                o3.branch_event_predicted_target_mismatch_kind(kind),
+            ),
             ("branch_event.resolved_target_kind", branch_event_resolved),
             ("branch_event.link_write_kind", branch_event_link),
             ("branch_event.squash_kind", branch_event_squash),

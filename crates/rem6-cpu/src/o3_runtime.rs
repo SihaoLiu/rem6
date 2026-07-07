@@ -1379,6 +1379,10 @@ mod tests {
         let mut direction_only_kinds = [0; BranchTargetKind::COUNT];
         let mut branch_event_kinds = [0; BranchTargetKind::COUNT];
         let mut branch_event_taken_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_predicted_taken_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_match_kinds = [0; BranchTargetKind::COUNT];
+        let mut branch_event_predicted_target_mismatch_kinds = [0; BranchTargetKind::COUNT];
         let mut branch_event_resolved_target_kinds = [0; BranchTargetKind::COUNT];
         let mut branch_event_link_write_kinds = [0; BranchTargetKind::COUNT];
         let mut branch_event_squash_kinds = [0; BranchTargetKind::COUNT];
@@ -1389,6 +1393,10 @@ mod tests {
         direction_only_kinds[BranchTargetKind::DirectUnconditional.index()] = 4;
         branch_event_kinds[BranchTargetKind::Return.index()] = 1;
         branch_event_taken_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_taken_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_match_kinds[BranchTargetKind::Return.index()] = 1;
+        branch_event_predicted_target_mismatch_kinds[BranchTargetKind::CallIndirect.index()] = 2;
         branch_event_resolved_target_kinds[BranchTargetKind::Return.index()] = 1;
         branch_event_link_write_kinds[BranchTargetKind::Return.index()] = 0;
         branch_event_squash_kinds[BranchTargetKind::Return.index()] = 1;
@@ -1402,6 +1410,10 @@ mod tests {
             branch_repair_direction_only_kinds: direction_only_kinds,
             branch_event_kinds,
             branch_event_taken_kinds,
+            branch_event_predicted_taken_kinds,
+            branch_event_predicted_target_kinds,
+            branch_event_predicted_target_match_kinds,
+            branch_event_predicted_target_mismatch_kinds,
             branch_event_resolved_target_kinds,
             branch_event_link_write_kinds,
             branch_event_squash_kinds,
@@ -1450,6 +1462,36 @@ mod tests {
                 .stats()
                 .branch_event_taken_kind(BranchTargetKind::Return),
             1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_predicted_taken_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_predicted_not_taken_kind(BranchTargetKind::Return),
+            0
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_predicted_target_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_predicted_target_match_kind(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            decoded
+                .stats()
+                .branch_event_predicted_target_mismatch_kind(BranchTargetKind::CallIndirect),
+            2
         );
         assert_eq!(
             decoded
