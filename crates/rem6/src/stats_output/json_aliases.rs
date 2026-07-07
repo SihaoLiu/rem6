@@ -704,14 +704,14 @@ fn append_gem5_o3_json_alias_from_sample(
     let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
     let alias_path = format!("{alias_prefix}.{alias_suffix}");
     append_gem5_json_alias_from_paths(snapshot, records, next_id, &source_path, &alias_path);
-    let Some(bucket_alias_suffix) = gem5_o3_op_class_bucket_alias_suffix(alias_suffix) else {
+    let Some(bucket_alias_suffix) = gem5_o3_bucket_alias_suffix(alias_suffix) else {
         return;
     };
     let bucket_alias_path = format!("{alias_prefix}.{bucket_alias_suffix}");
     append_gem5_json_alias_from_paths(snapshot, records, next_id, &source_path, &bucket_alias_path);
 }
 
-fn gem5_o3_op_class_bucket_alias_suffix(alias_suffix: &str) -> Option<String> {
+fn gem5_o3_bucket_alias_suffix(alias_suffix: &str) -> Option<String> {
     alias_suffix
         .strip_prefix("iq.issuedInstType.")
         .map(|op_class| format!("iq.issuedInstType_0::{op_class}"))
@@ -719,6 +719,20 @@ fn gem5_o3_op_class_bucket_alias_suffix(alias_suffix: &str) -> Option<String> {
             alias_suffix
                 .strip_prefix("commit.committedInstType.")
                 .map(|op_class| format!("commit.committedInstType_0::{op_class}"))
+        })
+        .or_else(|| {
+            alias_suffix
+                .strip_suffix(".total")
+                .filter(|base| {
+                    matches!(
+                        *base,
+                        "iew.instsToCommit"
+                            | "iew.writebackCount"
+                            | "iew.producerInst"
+                            | "iew.consumerInst"
+                    )
+                })
+                .map(|base| format!("{base}::total"))
         })
 }
 
