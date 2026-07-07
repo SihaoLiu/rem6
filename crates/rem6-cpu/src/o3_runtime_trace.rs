@@ -29,6 +29,8 @@ pub struct O3RuntimeTraceRecord {
     store_load_forwarding_suppressed: bool,
     store_load_forwarding_address_mismatch: bool,
     store_load_forwarding_byte_mismatch: bool,
+    iew_dependency_producers: u64,
+    iew_dependency_consumers: u64,
     branch_kind: BranchTargetKind,
     branch_predicted_taken: bool,
     branch_resolved_taken: bool,
@@ -283,6 +285,8 @@ impl O3RuntimeTraceRecord {
         lsq_data_response_tick: u64,
         lsq_data_latency_ticks: u64,
         rename_map_entries: usize,
+        iew_dependency_producers: u64,
+        iew_dependency_consumers: u64,
         branch_kind: BranchTargetKind,
         branch_predicted_taken: bool,
         branch_resolved_taken: bool,
@@ -320,6 +324,8 @@ impl O3RuntimeTraceRecord {
             store_load_forwarding_suppressed: false,
             store_load_forwarding_address_mismatch: false,
             store_load_forwarding_byte_mismatch: false,
+            iew_dependency_producers,
+            iew_dependency_consumers,
             branch_kind,
             branch_predicted_taken,
             branch_resolved_taken,
@@ -447,6 +453,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn store_load_forwarding_byte_mismatch(self) -> bool {
         self.store_load_forwarding_byte_mismatch
+    }
+
+    pub const fn iew_dependency_producers(self) -> u64 {
+        self.iew_dependency_producers
+    }
+
+    pub const fn iew_dependency_consumers(self) -> u64 {
+        self.iew_dependency_consumers
     }
 
     pub const fn branch_event(self) -> bool {

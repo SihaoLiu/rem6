@@ -382,7 +382,8 @@ impl O3RuntimeState {
     fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) -> O3RuntimeTraceRecord {
         let sequence = self.allocate_sequence();
         let record = execution.execution();
-        self.record_scalar_integer_dependencies(&record.instruction());
+        let (iew_dependency_producers, iew_dependency_consumers) =
+            self.record_scalar_integer_dependencies(&record.instruction());
         let destination = self.record_rename_map_entries(record);
         let (lsq_loads, lsq_stores) = record
             .memory_access()
@@ -460,6 +461,8 @@ impl O3RuntimeState {
             0,
             0,
             rename_map_entries,
+            iew_dependency_producers,
+            iew_dependency_consumers,
             branch_kind,
             branch_predicted_taken,
             branch_resolved_taken,
@@ -517,7 +520,9 @@ impl O3RuntimeState {
     fn record_scalar_integer_dependencies(
         &mut self,
         instruction: &rem6_isa_riscv::RiscvInstruction,
-    ) {
+    ) -> (u64, u64) {
+        let mut producers = 0_u64;
+        let mut consumers = 0_u64;
         for register in o3_scalar_integer_source_registers(instruction) {
             if register.is_zero() {
                 continue;
@@ -532,10 +537,13 @@ impl O3RuntimeState {
                 .dependency_producers_with_consumers
                 .insert(source.physical())
             {
+                producers = producers.saturating_add(1);
                 self.stats.record_iew_dependency_producer();
             }
+            consumers = consumers.saturating_add(1);
             self.stats.record_iew_dependency_consumer();
         }
+        (producers, consumers)
     }
 
     fn install_rename_map_entry(

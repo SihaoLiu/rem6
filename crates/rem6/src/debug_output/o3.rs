@@ -187,6 +187,8 @@ struct Rem6O3TraceTotals {
     event_rob_allocations: u64,
     event_rob_commits: u64,
     event_rename_writes: u64,
+    event_iew_dependency_producers: u64,
+    event_iew_dependency_consumers: u64,
     event_lsq_loads: u64,
     event_lsq_stores: u64,
     event_lsq_operation_load: u64,
@@ -676,6 +678,14 @@ impl Rem6O3TraceTotals {
             add_bool_counter(&mut self.event_rob_allocations, event.rob_allocated());
             add_bool_counter(&mut self.event_rob_commits, event.rob_committed());
             add_counter(&mut self.event_rename_writes, event.rename_writes());
+            add_counter(
+                &mut self.event_iew_dependency_producers,
+                event.iew_dependency_producers(),
+            );
+            add_counter(
+                &mut self.event_iew_dependency_consumers,
+                event.iew_dependency_consumers(),
+            );
             add_counter(&mut self.event_lsq_loads, event.lsq_loads());
             add_counter(&mut self.event_lsq_stores, event.lsq_stores());
             let lsq_data_latency_ticks = event.lsq_data_latency_ticks();
@@ -1139,6 +1149,14 @@ impl Rem6O3TraceTotals {
             ("event.rob_allocations", self.event_rob_allocations),
             ("event.rob_commits", self.event_rob_commits),
             ("event.rename_writes", self.event_rename_writes),
+            (
+                "event.iew_dependency_producers",
+                self.event_iew_dependency_producers,
+            ),
+            (
+                "event.iew_dependency_consumers",
+                self.event_iew_dependency_consumers,
+            ),
             ("event.lsq_loads", self.event_lsq_loads),
             ("event.lsq_stores", self.event_lsq_stores),
             ("event.lsq_operation.load", self.event_lsq_operation_load),

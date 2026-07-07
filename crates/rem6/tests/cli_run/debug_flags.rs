@@ -6184,6 +6184,20 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         o3_event_u64s(events, "rename_map_entries"),
         vec![1, 1, 2, 3, 3, 3]
     );
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| json_record_u64(event, "iew_dependency_producers"))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 0, 1, 1, 0]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| json_record_u64(event, "iew_dependency_consumers"))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 0, 1, 2, 0]
+    );
     assert_o3_event(&events[0], 0, "0x80000004", 1, 0, 0, false);
     assert_o3_event(&events[1], 1, "0x80000008", 1, 0, 0, false);
     assert_o3_event(&events[2], 2, "0x8000000c", 1, 0, 0, false);
@@ -6283,6 +6297,43 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
             .filter(|event| event.get("lsq_operation").and_then(Value::as_str) == Some("store"))
             .count() as u64
     );
+    let iew_dependency_producers = events
+        .iter()
+        .map(|event| json_record_u64(event, "iew_dependency_producers"))
+        .sum::<u64>();
+    let iew_dependency_consumers = events
+        .iter()
+        .map(|event| json_record_u64(event, "iew_dependency_consumers"))
+        .sum::<u64>();
+    let event_summary_iew = event_summary
+        .pointer("/iew")
+        .expect("O3 event summary IEW dependency matrix");
+    assert_eq!(
+        json_record_u64(event_summary_iew, "producer_inst"),
+        iew_dependency_producers
+    );
+    assert_eq!(
+        json_record_u64(event_summary_iew, "consumer_inst"),
+        iew_dependency_consumers
+    );
+    assert_eq!(
+        json_record_u64(event_summary_iew, "producer_consumer_fanout_ppm"),
+        750_000
+    );
+    assert_eq!(
+        event_summary_iew
+            .pointer("/dependency/producer")
+            .and_then(Value::as_u64),
+        Some(iew_dependency_producers),
+        "O3 event summary IEW dependency producer lane: {event_summary_iew}"
+    );
+    assert_eq!(
+        event_summary_iew
+            .pointer("/dependency/consumer")
+            .and_then(Value::as_u64),
+        Some(iew_dependency_consumers),
+        "O3 event summary IEW dependency consumer lane: {event_summary_iew}"
+    );
     let event_summary_branch_event = event_summary
         .pointer("/branch_event")
         .expect("O3 straight-line event summary should include a branch-event zero object");
@@ -6372,6 +6423,16 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 6),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 6),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 4),
+        (
+            "sim.debug.o3_trace.event.iew_dependency_producers",
+            "Count",
+            3,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_dependency_consumers",
+            "Count",
+            4,
+        ),
         ("sim.debug.o3_trace.event.lsq_loads", "Count", 1),
         ("sim.debug.o3_trace.event.lsq_stores", "Count", 1),
         ("sim.debug.o3_trace.event.lsq_operation.load", "Count", 1),

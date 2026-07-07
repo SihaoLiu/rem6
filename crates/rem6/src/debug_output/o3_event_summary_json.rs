@@ -246,9 +246,10 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let lsq_ordering = event_summary_lsq_ordering_json(events);
     let branch_event = event_summary_branch_event_json(events);
     let branch_repair = o3_branch_repair_events_to_json(events);
+    let iew = event_summary_iew_json(events);
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iew\":{iew},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         last_tick.saturating_sub(first_tick),
         lsq_forwarding.candidates,
         lsq_forwarding.matches,
@@ -392,6 +393,21 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
     )
 }
 
+fn event_summary_iew_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let producer_inst = events
+        .iter()
+        .map(|event| event.iew_dependency_producers())
+        .sum::<u64>();
+    let consumer_inst = events
+        .iter()
+        .map(|event| event.iew_dependency_consumers())
+        .sum::<u64>();
+    format!(
+        "{{\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
+        ratio_ppm(producer_inst, consumer_inst)
+    )
+}
+
 fn event_summary_branch_kind_json<F>(count: F) -> String
 where
     F: Fn(BranchTargetKind) -> u64,
@@ -469,5 +485,30 @@ const fn min_latency_cycles(current: u64, sample: u64) -> u64 {
         sample
     } else {
         current
+    }
+}
+
+const fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        0
+    } else {
+        let ppm = (numerator as u128).saturating_mul(1_000_000) / (denominator as u128);
+        if ppm > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            ppm as u64
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ratio_ppm;
+
+    #[test]
+    fn ratio_ppm_widens_before_clamping() {
+        assert_eq!(ratio_ppm(3, 4), 750_000);
+        assert_eq!(ratio_ppm(1, 0), 0);
+        assert_eq!(ratio_ppm(u64::MAX, 2), u64::MAX);
     }
 }

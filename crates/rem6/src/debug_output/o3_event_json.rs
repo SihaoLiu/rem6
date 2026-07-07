@@ -23,7 +23,7 @@ pub(super) fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
     let branch_wrong_target = o3_branch_wrong_target(event);
     let branch_repair = o3_branch_repair_kind(event);
     format!(
-        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"lsq_store_conditional_failed\":{},\"lsq_data_response_tick\":{},\"lsq_data_latency_ticks\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatch\":{},\"store_load_forwarding_byte_mismatch\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_targetless_mismatch\":{},\"branch_wrong_target\":{},\"branch_repair\":\"{}\",\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
+        "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_allocated\":{},\"rob_committed\":{},\"rob_occupancy\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"lsq_acquire\":{},\"lsq_release\":{},\"lsq_load_address\":{},\"lsq_store_address\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"lsq_store_conditional_failed\":{},\"lsq_data_response_tick\":{},\"lsq_data_latency_ticks\":{},\"rename_map_entries\":{},\"store_load_forwarding_candidate\":{},\"store_load_forwarding_match\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatch\":{},\"store_load_forwarding_byte_mismatch\":{},\"iew_dependency_producers\":{},\"iew_dependency_consumers\":{},\"branch_event\":{},\"branch_kind\":\"{}\",\"branch_predicted_taken\":{},\"branch_resolved_taken\":{},\"branch_mispredicted\":{},\"branch_targetless_mismatch\":{},\"branch_wrong_target\":{},\"branch_repair\":\"{}\",\"branch_link_register_write\":{},\"branch_predicted_target\":{},\"branch_resolved_target\":{},\"branch_squash\":{},\"branch_squashed_target\":{},\"fu_latency_class\":{},\"fu_latency_cycles\":{},\"system_event\":{}}}",
         event.sequence(),
         event.tick(),
         event.pc().get(),
@@ -51,6 +51,8 @@ pub(super) fn o3_event_to_json(event: &O3RuntimeTraceRecord) -> String {
         event.store_load_forwarding_suppressed(),
         event.store_load_forwarding_address_mismatch(),
         event.store_load_forwarding_byte_mismatch(),
+        event.iew_dependency_producers(),
+        event.iew_dependency_consumers(),
         event.branch_event(),
         event.branch_kind().canonical_stat_name(),
         event.branch_predicted_taken(),
