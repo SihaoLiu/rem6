@@ -8639,75 +8639,75 @@ fn rem6_run_o3_debug_flag_classifies_indirect_unconditional_branch_wrong_targets
     let branch_repair = record
         .pointer("/branch_repair")
         .unwrap_or_else(|| panic!("missing O3 trace branch-repair summary: {record}"));
-    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 1);
-    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 0);
+    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 0);
+    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 1);
     assert_eq!(
         json_record_u64(branch_repair, "direction_only_mismatches"),
-        2
+        1
     );
     assert_eq!(
         branch_repair
-            .pointer("/targetless_mismatch_kind/direct_conditional")
+            .pointer("/wrong_target_kind/indirect_unconditional")
             .and_then(Value::as_u64),
         Some(1),
-        "O3 trace branch-repair summary should expose direct-conditional targetless repairs: {branch_repair}"
+        "O3 trace branch-repair summary should expose indirect-unconditional wrong targets: {branch_repair}"
     );
     assert_eq!(
         branch_repair
             .pointer("/direction_only_kind/direct_unconditional")
             .and_then(Value::as_u64),
-        Some(2),
+        Some(1),
         "O3 trace branch-repair summary should expose direct-unconditional direction-only repairs: {branch_repair}"
     );
     assert_eq!(
         branch_repair
-            .pointer("/wrong_target_kind/direct_conditional")
+            .pointer("/targetless_mismatch_kind/direct_conditional")
             .and_then(Value::as_u64),
         Some(0),
-        "O3 trace branch-repair summary should include zero-valued wrong-target branch kinds: {branch_repair}"
+        "O3 trace branch-repair summary should include zero-valued targetless branch kinds: {branch_repair}"
     );
     let branch_direction_mismatch = record
         .pointer("/branch_direction_mismatch")
         .unwrap_or_else(|| panic!("missing O3 trace branch-direction-mismatch summary: {record}"));
     for (field, value) in [
-        ("mismatches", 3),
-        ("without_link_writes", 3),
-        ("squashed_targets", 3),
-        ("squashed_target_without_link_writes", 3),
+        ("mismatches", 1),
+        ("without_link_writes", 1),
+        ("squashed_targets", 1),
+        ("squashed_target_without_link_writes", 1),
         ("squashed_target_link_writes", 0),
     ] {
         assert_eq!(
             json_record_u64(branch_direction_mismatch, field),
             value,
-            "O3 direct branch-direction-mismatch summary field {field}"
+            "O3 indirect-unconditional branch-direction-mismatch summary field {field}"
         );
     }
     assert_eq!(
         branch_direction_mismatch
-            .pointer("/kind/direct_conditional")
-            .and_then(Value::as_u64),
-        Some(1),
-        "O3 trace branch-direction-mismatch summary should expose direct-conditional mismatches: {branch_direction_mismatch}"
-    );
-    assert_eq!(
-        branch_direction_mismatch
             .pointer("/kind/direct_unconditional")
             .and_then(Value::as_u64),
-        Some(2),
+        Some(1),
         "O3 trace branch-direction-mismatch summary should expose direct-unconditional mismatches: {branch_direction_mismatch}"
     );
     assert_eq!(
         branch_direction_mismatch
-            .pointer("/without_link_write_kind/direct_conditional")
+            .pointer("/kind/indirect_unconditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 trace branch-direction-mismatch summary should include zero-valued indirect-unconditional lanes: {branch_direction_mismatch}"
+    );
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/without_link_write_kind/direct_unconditional")
             .and_then(Value::as_u64),
         Some(1),
-        "O3 trace branch-direction-mismatch summary should expose no-link direct-conditional lanes: {branch_direction_mismatch}"
+        "O3 trace branch-direction-mismatch summary should expose no-link direct-unconditional lanes: {branch_direction_mismatch}"
     );
     assert_eq!(
         branch_direction_mismatch
             .pointer("/squashed_target_without_link_write_kind/direct_unconditional")
             .and_then(Value::as_u64),
-        Some(2),
+        Some(1),
         "O3 trace branch-direction-mismatch summary should expose squashed no-link direct-unconditional lanes: {branch_direction_mismatch}"
     );
     assert_eq!(
@@ -9895,7 +9895,89 @@ fn rem6_run_o3_debug_flag_classifies_direct_conditional_branch_predicted_taken_n
         .and_then(Value::as_array)
         .expect("debug O3 trace array");
     assert_eq!(trace.len(), 1);
-    let events = trace[0]
+    let record = &trace[0];
+    let branch_repair = record
+        .pointer("/branch_repair")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-repair summary: {record}"));
+    assert_eq!(json_record_u64(branch_repair, "targetless_mismatches"), 1);
+    assert_eq!(json_record_u64(branch_repair, "wrong_targets"), 0);
+    assert_eq!(
+        json_record_u64(branch_repair, "direction_only_mismatches"),
+        2
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/targetless_mismatch_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-repair summary should expose direct-conditional targetless repairs: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/direction_only_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "O3 trace branch-repair summary should expose direct-unconditional direction-only repairs: {branch_repair}"
+    );
+    assert_eq!(
+        branch_repair
+            .pointer("/wrong_target_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 trace branch-repair summary should include zero-valued wrong-target branch kinds: {branch_repair}"
+    );
+    let branch_direction_mismatch = record
+        .pointer("/branch_direction_mismatch")
+        .unwrap_or_else(|| panic!("missing O3 trace branch-direction-mismatch summary: {record}"));
+    for (field, value) in [
+        ("mismatches", 3),
+        ("without_link_writes", 3),
+        ("squashed_targets", 3),
+        ("squashed_target_without_link_writes", 3),
+        ("squashed_target_link_writes", 0),
+    ] {
+        assert_eq!(
+            json_record_u64(branch_direction_mismatch, field),
+            value,
+            "O3 direct branch-direction-mismatch summary field {field}"
+        );
+    }
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-direction-mismatch summary should expose direct-conditional mismatches: {branch_direction_mismatch}"
+    );
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "O3 trace branch-direction-mismatch summary should expose direct-unconditional mismatches: {branch_direction_mismatch}"
+    );
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/without_link_write_kind/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 trace branch-direction-mismatch summary should expose no-link direct-conditional lanes: {branch_direction_mismatch}"
+    );
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/squashed_target_without_link_write_kind/direct_unconditional")
+            .and_then(Value::as_u64),
+        Some(2),
+        "O3 trace branch-direction-mismatch summary should expose squashed no-link direct-unconditional lanes: {branch_direction_mismatch}"
+    );
+    assert_eq!(
+        branch_direction_mismatch
+            .pointer("/link_write_kind/call_indirect")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 trace branch-direction-mismatch summary should include zero-valued link-write branch kinds: {branch_direction_mismatch}"
+    );
+    let events = record
         .pointer("/events")
         .and_then(Value::as_array)
         .expect("O3 trace events array");
