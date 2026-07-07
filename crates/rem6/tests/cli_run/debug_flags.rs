@@ -13806,6 +13806,31 @@ fn rem6_run_o3_debug_flag_labels_hart_targeted_detailed_mode_trace() {
         ("sim.debug.o3_trace.fu_integer_div_instructions", "Count", 1),
         ("sim.debug.o3_trace.lsq_load_bytes", "Byte", 4),
         ("sim.debug.o3_trace.lsq_store_bytes", "Byte", 4),
+        (
+            "sim.debug.o3_trace.execution_mode_authority.targets",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.execution_mode_authority.mode.functional",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.execution_mode_authority.mode.timing",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.execution_mode_authority.mode.detailed",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.execution_mode_authority.target.cpu1.mode.detailed",
+            "Count",
+            1,
+        ),
         ("sim.debug.o3_trace.event.records", "Count", 9),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");

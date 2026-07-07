@@ -68,8 +68,10 @@ use o3_checkpoint_restore_json::{
 use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
 use o3_event_summary_json::o3_event_summary_to_json;
+pub(crate) use o3_execution_mode_stats::Rem6O3ExecutionModeAuthorityStat;
 use o3_execution_mode_stats::{
-    o3_trace_execution_mode_authority_to_json, Rem6O3ExecutionModeTraceTotals,
+    o3_trace_execution_mode_authority_stats, o3_trace_execution_mode_authority_to_json,
+    Rem6O3ExecutionModeTraceTotals,
 };
 use o3_fu_latency_stats::{Rem6O3FuLatencyClassTotals, REM6_O3_FU_LATENCY_CLASS_STATS};
 use o3_lsq_json::o3_lsq_to_json;
@@ -305,6 +307,10 @@ impl Rem6O3TraceRecord {
 
     pub(super) const fn cpu(&self) -> u32 {
         self.cpu
+    }
+
+    pub(super) fn target(&self) -> &str {
+        &self.target
     }
 
     pub(super) fn stats(&self) -> O3RuntimeStats {
@@ -570,6 +576,14 @@ pub(super) fn o3_trace_stats(records: &[Rem6O3TraceRecord]) -> Vec<Rem6O3TraceSt
     }
     totals.stats()
 }
+
+pub(super) fn o3_trace_authority_stats(
+    records: &[Rem6O3TraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
+    o3_trace_execution_mode_authority_stats(records, stat_path_segment)
+}
+
 pub(super) fn o3_trace_cpu_stats(records: &[Rem6O3TraceRecord]) -> Vec<(u32, Rem6O3TraceStat)> {
     let mut cpu_totals = std::collections::BTreeMap::<u32, Rem6O3TraceTotals>::new();
     for record in records {
