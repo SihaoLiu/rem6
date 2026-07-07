@@ -352,6 +352,7 @@ impl Rem6O3TraceRecord {
         let branch_repair = o3_branch_repair_to_json(self.stats);
         let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(&self.events);
         let branch_target_mismatch = o3_branch_target_mismatch_to_json(&self.events);
+        let event_summary = o3_event_summary_to_json(&self.events);
         let events = self
             .events
             .iter()
@@ -397,7 +398,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"event_summary\":{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -443,9 +444,36 @@ impl Rem6O3TraceRecord {
             branch_repair,
             branch_direction_mismatch,
             branch_target_mismatch,
+            event_summary,
             events,
         )
     }
+}
+
+fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+    let records = events.len() as u64;
+    let first_tick = events.first().map_or(0, |event| event.tick());
+    let last_tick = events.last().map_or(0, |event| event.tick());
+    let max_rob_occupancy = events
+        .iter()
+        .map(|event| event.rob_occupancy())
+        .max()
+        .unwrap_or(0);
+    let max_lsq_occupancy = events
+        .iter()
+        .map(|event| event.lsq_occupancy())
+        .max()
+        .unwrap_or(0);
+    let max_rename_map_entries = events
+        .iter()
+        .map(|event| event.rename_map_entries())
+        .max()
+        .unwrap_or(0);
+    let system_events = events.iter().filter(|event| event.system_event()).count() as u64;
+    format!(
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events}}}",
+        last_tick.saturating_sub(first_tick),
+    )
 }
 
 fn o3_branch_event_kind_json<F>(count: F) -> String

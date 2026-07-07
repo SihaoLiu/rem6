@@ -6190,6 +6190,54 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
     assert_o3_event(&events[3], 3, "0x80000010", 1, 1, 0, false);
     assert_o3_event(&events[4], 4, "0x80000014", 0, 0, 1, false);
     assert_o3_event(&events[5], 5, "0x80000018", 0, 0, 0, true);
+    let event_summary = record
+        .pointer("/event_summary")
+        .expect("O3 trace event summary should be embedded with the trace record");
+    assert_eq!(
+        json_record_u64(event_summary, "records"),
+        events.len() as u64
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "first_tick"),
+        json_record_u64(&events[0], "tick")
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "last_tick"),
+        json_record_u64(&events[events.len() - 1], "tick")
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "span_ticks"),
+        json_record_u64(&events[events.len() - 1], "tick") - json_record_u64(&events[0], "tick")
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "max_rob_occupancy"),
+        o3_event_u64s(events, "rob_occupancy")
+            .into_iter()
+            .max()
+            .unwrap()
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "max_lsq_occupancy"),
+        o3_event_u64s(events, "lsq_occupancy")
+            .into_iter()
+            .max()
+            .unwrap()
+    );
+    assert_eq!(
+        json_record_u64(event_summary, "max_rename_map_entries"),
+        o3_event_u64s(events, "rename_map_entries")
+            .into_iter()
+            .max()
+            .unwrap()
+    );
+    let system_events = events
+        .iter()
+        .filter(|event| event.get("system_event").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    assert_eq!(
+        json_record_u64(event_summary, "system_events"),
+        system_events
+    );
     assert_eq!(json_record_str(&events[3], "lsq_operation"), "load");
     assert_eq!(json_record_str(&events[4], "lsq_operation"), "store");
 
