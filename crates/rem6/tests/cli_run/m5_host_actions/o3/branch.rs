@@ -1412,6 +1412,66 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("1c000080000000000000000000000000")
     );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "return-branch fixture should deliver m5_dump_stats before stop: {host_actions}"
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing return-branch O3 stats dump: {host_actions}"));
+    for (path, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.taken_kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.without_link_write_kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.link_write_kind.return",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squash_kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_link_write_kind.return",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.squashed_target_without_link_write_kind.return",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_repair_direction_only_kind.return",
+            1,
+        ),
+        ("system.cpu.ftq.squashes_0::Return", 1),
+        ("system.cpu.ftq.squashedTargets_0::Return", 1),
+        ("system.cpu.ftq.squashedTargetsWithLinkWrites_0::Return", 0),
+        (
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::Return",
+            1,
+        ),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
 
     for (pointer, value) in [
         ("/cores/0/o3_runtime/branch_event/branches", 1),
@@ -1491,6 +1551,13 @@ fn rem6_run_o3_runtime_json_exposes_return_branch_event_matrix() {
         ("sim.cpu0.o3.branch_repair_direction_only_kind.return", 1),
         ("sim.cpu0.o3.iew.predicted_not_taken_incorrect", 1),
         ("sim.cpu0.o3.iew.branch_mispredicts", 1),
+        ("system.cpu.ftq.squashes_0::Return", 1),
+        ("system.cpu.ftq.squashedTargets_0::Return", 1),
+        ("system.cpu.ftq.squashedTargetsWithLinkWrites_0::Return", 0),
+        (
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::Return",
+            1,
+        ),
     ] {
         assert_json_stat(&json, path, "Count", value, "monotonic");
     }

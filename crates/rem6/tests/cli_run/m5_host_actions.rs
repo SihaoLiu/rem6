@@ -2235,6 +2235,9 @@ fn detailed_o3_return_branch_summary_binary(name: &str) -> std::path::PathBuf {
         i_type(9, 0, 0x0, 6, 0x13),
         s_type(0, 1, 10, 0b011),
         s_type(8, 6, 10, 0b011),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_DUMP_STATS),
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
