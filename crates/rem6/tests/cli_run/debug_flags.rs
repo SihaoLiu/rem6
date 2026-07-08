@@ -4980,6 +4980,45 @@ fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
         .unwrap_or_else(|| panic!("missing JSON array field {field}: {record:?}"))
 }
 
+fn assert_o3_restore_scope_components_match_latest(restore_scope: &Value, latest_restore: &Value) {
+    assert_eq!(
+        restore_scope.pointer("/components"),
+        latest_restore.pointer("/components"),
+        "O3 restore scope should expose the latest restored component payload metadata: scope {restore_scope}; latest {latest_restore}"
+    );
+    let components = restore_scope
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 restore components: {restore_scope}"));
+    let cpu0 = components
+        .iter()
+        .find(|component| component.pointer("/component").and_then(Value::as_str) == Some("cpu0"))
+        .unwrap_or_else(|| panic!("missing CPU0 restore component: {restore_scope}"));
+    let o3_runtime = cpu0
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing CPU0 O3 runtime restore chunk: {cpu0}"));
+    assert!(
+        o3_runtime
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "O3 runtime restore chunk should expose payload bytes: {o3_runtime}"
+    );
+    assert!(
+        o3_runtime
+            .pointer("/payload_checksum")
+            .and_then(Value::as_str)
+            .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
+        "O3 runtime restore chunk should expose payload checksum: {o3_runtime}"
+    );
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MemoryTraceStats {
     records: u64,
@@ -7396,6 +7435,10 @@ fn rem6_run_o3_debug_flag_counts_multiple_checkpoint_restore_scopes() {
         json_record_u64(record, "checkpoint_restore_payload_bytes"),
         latest_payload_bytes
     );
+    let restore_scope = record
+        .pointer("/checkpoint_restore")
+        .unwrap_or_else(|| panic!("O3 restore scope should be structured: {record}"));
+    assert_o3_restore_scope_components_match_latest(restore_scope, latest_restore);
 
     let events = record
         .pointer("/events")
@@ -7438,6 +7481,16 @@ fn rem6_run_o3_debug_flag_counts_multiple_checkpoint_restore_scopes() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             latest_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.components",
+            "Count",
+            2,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -7558,6 +7611,10 @@ fn rem6_run_o3_debug_flag_tracks_distinct_checkpoint_restore_labels() {
         json_record_u64(record, "checkpoint_restore_payload_bytes"),
         latest_payload_bytes
     );
+    let restore_scope = record
+        .pointer("/checkpoint_restore")
+        .unwrap_or_else(|| panic!("O3 restore scope should be structured: {record}"));
+    assert_o3_restore_scope_components_match_latest(restore_scope, latest_restore);
 
     let events = record
         .pointer("/events")
@@ -7600,6 +7657,16 @@ fn rem6_run_o3_debug_flag_tracks_distinct_checkpoint_restore_labels() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             latest_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
+            "Count",
+            2,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.components",
+            "Count",
+            2,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");

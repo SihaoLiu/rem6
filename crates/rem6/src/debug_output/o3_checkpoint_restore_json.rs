@@ -35,6 +35,7 @@ pub(super) struct Rem6O3CheckpointRestoreScope {
     pub(super) execution_mode_authority_decode_errors: u64,
     pub(super) execution_modes: Vec<Rem6HostExecutionModeSummary>,
     pub(super) components: Vec<Rem6HostCheckpointComponentSummary>,
+    component_stat_components: Vec<Rem6HostCheckpointComponentSummary>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -99,7 +100,8 @@ impl Rem6O3CheckpointRestoreScope {
                 .filter(|summary| summary.execution_mode_authority_decode_error)
                 .count() as u64,
             execution_modes,
-            components: summaries
+            components: summary.components.clone(),
+            component_stat_components: summaries
                 .iter()
                 .flat_map(|summary| summary.components.iter().cloned())
                 .collect(),
@@ -165,7 +167,7 @@ impl Rem6O3CheckpointRestoreComponentStatTotals {
             .map(|authority| stat_path_segment(&authority.target))
             .collect::<BTreeSet<_>>();
         let mut totals = Self::default();
-        for component in &restore.components {
+        for component in &restore.component_stat_components {
             let component_path = stat_path_segment(&component.component);
             totals
                 .components
