@@ -288,6 +288,9 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
         .unwrap_or_else(|| {
             panic!("O3 runtime JSON should expose target mismatch partitions: {o3_runtime}")
         });
+    let runtime_summary = o3_runtime
+        .pointer("/event_summary")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {o3_runtime}"));
     let debug_direction = json
         .pointer("/debug/o3_trace/0/branch_direction_mismatch")
         .unwrap_or_else(|| {
@@ -298,6 +301,33 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
         .unwrap_or_else(|| {
             panic!("O3 debug trace should expose target mismatch partitions: {json}")
         });
+    let debug_summary = json
+        .pointer("/debug/o3_trace/0/event_summary")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
+
+    for pointer in [
+        "/branch_event/squashes",
+        "/branch_event/squashed_targets",
+        "/branch_event/squashed_target_kind/direct_unconditional",
+        "/branch_event/squashed_target_without_link_write_kind/direct_unconditional",
+        "/branch_repair/targetless_mismatches",
+        "/branch_repair/direction_only_mismatches",
+        "/branch_repair/targetless_mismatch_kind/direct_conditional",
+        "/branch_repair/direction_only_kind/direct_unconditional",
+    ] {
+        assert_eq!(
+            runtime_summary.pointer(pointer),
+            debug_summary.pointer(pointer),
+            "runtime event-summary branch lane {pointer} should mirror debug trace event summary"
+        );
+        assert!(
+            runtime_summary
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "representative runtime event-summary branch lane {pointer} should be positive: {runtime_summary}"
+        );
+    }
 
     for pointer in [
         "/mismatches",
@@ -419,6 +449,49 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
             });
         assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
     }
+
+    for (pointer, stat_path) in [
+        (
+            "/branch_event/squashes",
+            "sim.cpu0.o3.event_summary.branch_event.squashes",
+        ),
+        (
+            "/branch_event/squashed_targets",
+            "sim.cpu0.o3.event_summary.branch_event.squashed_targets",
+        ),
+        (
+            "/branch_event/squashed_target_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.squashed_target_kind.direct_unconditional",
+        ),
+        (
+            "/branch_event/squashed_target_without_link_write_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
+        ),
+        (
+            "/branch_repair/targetless_mismatches",
+            "sim.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
+        ),
+        (
+            "/branch_repair/direction_only_mismatches",
+            "sim.cpu0.o3.event_summary.branch_repair.direction_only_mismatches",
+        ),
+        (
+            "/branch_repair/targetless_mismatch_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_repair.targetless_mismatch_kind.direct_conditional",
+        ),
+        (
+            "/branch_repair/direction_only_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_repair.direction_only_kind.direct_unconditional",
+        ),
+    ] {
+        let expected = runtime_summary
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime event summary should expose u64 lane {pointer}: {runtime_summary}")
+            });
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
 }
 
 #[test]
@@ -492,6 +565,10 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.branch_direction_mismatch.kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatches",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
+        "sim.cpu0.o3.event_summary.branch_event.squashes",
+        "sim.cpu0.o3.event_summary.branch_event.squashed_target_kind.direct_unconditional",
+        "sim.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
+        "sim.cpu0.o3.event_summary.branch_repair.direction_only_kind.direct_unconditional",
     ] {
         assert_json_stat_absent(&json, path);
     }

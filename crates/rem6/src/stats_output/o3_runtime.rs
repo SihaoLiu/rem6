@@ -101,6 +101,13 @@ fn o3_event_branch_wrong_target(event: &O3RuntimeTraceRecord) -> bool {
             .is_some_and(|(predicted, resolved)| predicted != resolved)
 }
 
+fn o3_event_branch_repair_direction_only(event: &O3RuntimeTraceRecord) -> bool {
+    event.branch_event()
+        && !o3_event_branch_targetless_mismatch(event)
+        && !o3_event_branch_wrong_target(event)
+        && event.branch_predicted_taken() != event.branch_resolved_taken()
+}
+
 fn emit_o3_runtime_event_summary_branch_kind_stats<F>(
     stats: &mut StatsRegistry,
     cpu: u32,
@@ -124,6 +131,146 @@ where
             value,
         )?;
     }
+    Ok(())
+}
+
+fn emit_o3_runtime_event_summary_branch_event_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    events: &[O3RuntimeTraceRecord],
+) -> Result<(), Rem6CliError> {
+    for (name, value) in [
+        (
+            "branch_event.branches",
+            count_o3_event_summary_records(events, |event| event.branch_event()),
+        ),
+        (
+            "branch_event.squashes",
+            count_o3_event_summary_records(events, |event| {
+                event.branch_event() && event.branch_squash()
+            }),
+        ),
+        (
+            "branch_event.squashed_targets",
+            count_o3_event_summary_records(events, |event| {
+                event.branch_event() && event.branch_squashed_target().is_some()
+            }),
+        ),
+        (
+            "branch_event.squashed_targets_with_link_writes",
+            count_o3_event_summary_records(events, |event| {
+                event.branch_event()
+                    && event.branch_squashed_target().is_some()
+                    && event.branch_link_register_write()
+            }),
+        ),
+        (
+            "branch_event.squashed_targets_without_link_writes",
+            count_o3_event_summary_records(events, |event| {
+                event.branch_event()
+                    && event.branch_squashed_target().is_some()
+                    && !event.branch_link_register_write()
+            }),
+        ),
+    ] {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_event.kind",
+        |event| event.branch_event(),
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_event.squash_kind",
+        |event| event.branch_event() && event.branch_squash(),
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_event.squashed_target_kind",
+        |event| event.branch_event() && event.branch_squashed_target().is_some(),
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_event.squashed_target_link_write_kind",
+        |event| {
+            event.branch_event()
+                && event.branch_squashed_target().is_some()
+                && event.branch_link_register_write()
+        },
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_event.squashed_target_without_link_write_kind",
+        |event| {
+            event.branch_event()
+                && event.branch_squashed_target().is_some()
+                && !event.branch_link_register_write()
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_o3_runtime_event_summary_branch_repair_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    events: &[O3RuntimeTraceRecord],
+) -> Result<(), Rem6CliError> {
+    for (name, value) in [
+        (
+            "branch_repair.targetless_mismatches",
+            count_o3_event_summary_records(events, o3_event_branch_targetless_mismatch),
+        ),
+        (
+            "branch_repair.wrong_targets",
+            count_o3_event_summary_records(events, o3_event_branch_wrong_target),
+        ),
+        (
+            "branch_repair.direction_only_mismatches",
+            count_o3_event_summary_records(events, o3_event_branch_repair_direction_only),
+        ),
+    ] {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_repair.targetless_mismatch_kind",
+        o3_event_branch_targetless_mismatch,
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_repair.wrong_target_kind",
+        o3_event_branch_wrong_target,
+    )?;
+    emit_o3_runtime_event_summary_branch_kind_stats(
+        stats,
+        cpu,
+        events,
+        "branch_repair.direction_only_kind",
+        o3_event_branch_repair_direction_only,
+    )?;
     Ok(())
 }
 
@@ -577,6 +724,7 @@ fn emit_o3_runtime_event_summary_stats(
         )?;
     }
     emit_o3_runtime_event_summary_window_stats(stats, cpu, events)?;
+    emit_o3_runtime_event_summary_branch_event_stats(stats, cpu, events)?;
     for operation in O3RuntimeLsqOperation::TRACKED {
         let count = events
             .iter()
@@ -670,6 +818,7 @@ fn emit_o3_runtime_event_summary_stats(
             value,
         )?;
     }
+    emit_o3_runtime_event_summary_branch_repair_stats(stats, cpu, events)?;
     emit_o3_runtime_event_summary_branch_mismatch_stats(stats, cpu, events)?;
 
     Ok(())
