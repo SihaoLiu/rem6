@@ -82,7 +82,9 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/event_window/max_lsq_occupancy/sequence",
         "/rob/allocations",
         "/rob/commits",
+        "/rob/max_occupancy",
         "/rename/writes",
+        "/rename/map_entries",
         "/lsq_operation/load/count",
         "/lsq_operation/store/count",
         "/lsq_data_latency/samples",
@@ -236,8 +238,18 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "Count",
         ),
         (
+            "/rob/max_occupancy",
+            "sim.cpu0.o3.event_summary.rob.max_occupancy",
+            "Count",
+        ),
+        (
             "/rename/writes",
             "sim.cpu0.o3.event_summary.rename.writes",
+            "Count",
+        ),
+        (
+            "/rename/map_entries",
+            "sim.cpu0.o3.event_summary.rename.map_entries",
             "Count",
         ),
         (
@@ -897,6 +909,8 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.lsq_operation_load",
         "sim.cpu0.o3.event_summary.lsq_operation_store",
         "sim.cpu0.o3.event_summary.rob.allocations",
+        "sim.cpu0.o3.event_summary.rob.max_occupancy",
+        "sim.cpu0.o3.event_summary.rename.map_entries",
         "sim.cpu0.o3.event_summary.lsq_operation.load",
         "sim.cpu0.o3.event_summary.fu_latency.instructions",
         "sim.cpu0.o3.event_summary.fu_latency.cycles",
