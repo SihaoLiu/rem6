@@ -1,10 +1,10 @@
-pub(super) struct O3BranchMismatchScalarAlias {
-    pub(super) source_suffix: &'static str,
-    pub(super) alias_suffix: &'static str,
-    pub(super) bucket_alias: &'static str,
+pub(crate) struct O3BranchMismatchScalarAlias {
+    pub(crate) source_suffix: &'static str,
+    pub(crate) alias_suffix: &'static str,
+    pub(crate) bucket_alias: &'static str,
 }
 
-pub(super) const O3_BRANCH_MISMATCH_SCALAR_ALIASES: &[O3BranchMismatchScalarAlias] = &[
+pub(crate) const O3_BRANCH_MISMATCH_SCALAR_ALIASES: &[O3BranchMismatchScalarAlias] = &[
     O3BranchMismatchScalarAlias {
         source_suffix: "branch_direction_mismatch.mismatches",
         alias_suffix: "branchDirectionMismatches",
@@ -83,12 +83,12 @@ pub(super) const O3_BRANCH_MISMATCH_SCALAR_ALIASES: &[O3BranchMismatchScalarAlia
     },
 ];
 
-pub(super) struct O3BranchMismatchKindAlias {
-    pub(super) source_family: &'static str,
-    pub(super) alias_family: &'static str,
+pub(crate) struct O3BranchMismatchKindAlias {
+    pub(crate) source_family: &'static str,
+    pub(crate) alias_family: &'static str,
 }
 
-pub(super) const O3_BRANCH_MISMATCH_KIND_ALIASES: &[O3BranchMismatchKindAlias] = &[
+pub(crate) const O3_BRANCH_MISMATCH_KIND_ALIASES: &[O3BranchMismatchKindAlias] = &[
     O3BranchMismatchKindAlias {
         source_family: "branch_direction_mismatch.kind",
         alias_family: "branchDirectionMismatch",

@@ -173,6 +173,38 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
             "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
             1,
         ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_targets",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_without_link_writes",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_targets",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_target_link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_link_write_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_target_link_write_kind.call_indirect",
+            1,
+        ),
         ("system.cpu1.ftq.squashes_0::CallIndirect", 1),
         ("system.cpu1.ftq.squashes_0::DirectUncond", 1),
         ("system.cpu1.ftq.squashes_0::total", 2),
@@ -201,6 +233,32 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
         ),
         (
             "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::total",
+            1,
+        ),
+        ("system.cpu1.iew.branchWrongTargets", 1),
+        ("system.cpu1.iew.branchWrongTargetLinkWrites", 1),
+        ("system.cpu1.iew.branchWrongTargetWithoutLinkWrites", 0),
+        ("system.cpu1.iew.branchWrongTargetSquashedTargets", 1),
+        (
+            "system.cpu1.iew.branchWrongTargetSquashedTargetLinkWrites",
+            1,
+        ),
+        ("system.cpu1.iew.branchWrongTarget_0::total", 1),
+        ("system.cpu1.iew.branchWrongTarget_0::CallIndirect", 1),
+        (
+            "system.cpu1.iew.branchWrongTargetLinkWrites_0::CallIndirect",
+            1,
+        ),
+        (
+            "system.cpu1.iew.branchWrongTargetWithoutLinkWrites_0::CallIndirect",
+            0,
+        ),
+        (
+            "system.cpu1.iew.branchWrongTargetSquashedTargets_0::CallIndirect",
+            1,
+        ),
+        (
+            "system.cpu1.iew.branchWrongTargetSquashedTargetLinkWrites_0::CallIndirect",
             1,
         ),
     ] {
@@ -253,6 +311,14 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
         "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_link_write_kind.direct_unconditional",
         "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_without_link_write_kind.call_indirect",
         "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_targets",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_link_writes",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_without_link_writes",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_targets",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_target_link_writes",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_link_write_kind.call_indirect",
+        "sim.host_actions.stats_dump.cpu1.o3.branch_target_mismatch.wrong_target_squashed_target_link_write_kind.call_indirect",
         "system.cpu1.ftq.squashes_0::CallIndirect",
         "system.cpu1.ftq.squashes_0::DirectUncond",
         "system.cpu1.ftq.squashes_0::total",
@@ -265,6 +331,17 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
         "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::CallIndirect",
         "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
         "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::total",
+        "system.cpu1.iew.branchWrongTargets",
+        "system.cpu1.iew.branchWrongTargetLinkWrites",
+        "system.cpu1.iew.branchWrongTargetWithoutLinkWrites",
+        "system.cpu1.iew.branchWrongTargetSquashedTargets",
+        "system.cpu1.iew.branchWrongTargetSquashedTargetLinkWrites",
+        "system.cpu1.iew.branchWrongTarget_0::total",
+        "system.cpu1.iew.branchWrongTarget_0::CallIndirect",
+        "system.cpu1.iew.branchWrongTargetLinkWrites_0::CallIndirect",
+        "system.cpu1.iew.branchWrongTargetWithoutLinkWrites_0::CallIndirect",
+        "system.cpu1.iew.branchWrongTargetSquashedTargets_0::CallIndirect",
+        "system.cpu1.iew.branchWrongTargetSquashedTargetLinkWrites_0::CallIndirect",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
@@ -280,6 +357,12 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
             "system.cpu0.ftq.squashedTargetsWithLinkWrites_0::CallIndirect",
             "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
             "system.cpu0.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+            "system.cpu.iew.branchWrongTargets",
+            "system.cpu0.iew.branchWrongTargets",
+            "system.cpu.iew.branchWrongTarget_0::total",
+            "system.cpu0.iew.branchWrongTarget_0::total",
+            "system.cpu.iew.branchWrongTarget_0::CallIndirect",
+            "system.cpu0.iew.branchWrongTarget_0::CallIndirect",
         ] {
             assert_stats_dump_sample_absent(dump, path);
         }

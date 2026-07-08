@@ -6,6 +6,10 @@ use rem6_system::{
     SystemActionOutcome, SystemHostController,
 };
 
+use crate::o3_branch_mismatch_aliases::{
+    O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
+};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
     pub(crate) total_action_count: u64,
@@ -477,6 +481,11 @@ impl Rem6HostStatsDumpSummary {
             active_o3_cpus,
             &mut samples,
         );
+        append_o3_stats_dump_branch_mismatch_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         append_o3_stats_dump_ftq_bucket_alias_samples(
             snapshot.samples(),
             active_o3_cpus,
@@ -656,6 +665,76 @@ fn branch_repair_bucket_alias_suffix(suffix: &str) -> Option<&'static str> {
         "total" => Some("total"),
         _ => None,
     }
+}
+
+fn append_o3_stats_dump_branch_mismatch_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some((cpu, suffixes)) = o3_stats_dump_branch_mismatch_alias_suffixes(sample.path())
+        else {
+            continue;
+        };
+        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
+        for suffix in suffixes {
+            let alias_path = format!("{alias_prefix}.iew.{suffix}");
+            if samples.iter().any(|sample| sample.path == alias_path) {
+                continue;
+            }
+            samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+                sample, alias_path,
+            ));
+        }
+    }
+}
+
+fn o3_stats_dump_branch_mismatch_alias_suffixes(path: &str) -> Option<(u32, Vec<String>)> {
+    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
+    let (cpu, suffix) = rest.split_once(".o3.")?;
+    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let cpu = cpu.parse().ok()?;
+
+    for alias in O3_BRANCH_MISMATCH_SCALAR_ALIASES {
+        if suffix == alias.source_suffix {
+            return Some((
+                cpu,
+                vec![
+                    alias.alias_suffix.to_string(),
+                    format!("{}_0::total", alias.bucket_alias),
+                ],
+            ));
+        }
+    }
+
+    for alias in O3_BRANCH_MISMATCH_KIND_ALIASES {
+        let Some(kind_name) = suffix.strip_prefix(alias.source_family) else {
+            continue;
+        };
+        let Some(kind_name) = kind_name.strip_prefix('.') else {
+            continue;
+        };
+        for kind in BranchTargetKind::ALL {
+            if kind.canonical_stat_name() == kind_name {
+                return Some((
+                    cpu,
+                    vec![format!(
+                        "{}_0::{}",
+                        alias.alias_family,
+                        kind.gem5_branch_type_name()
+                    )],
+                ));
+            }
+        }
+    }
+    None
 }
 
 fn append_o3_stats_dump_ftq_bucket_alias_samples(

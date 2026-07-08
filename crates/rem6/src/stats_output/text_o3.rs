@@ -1,13 +1,13 @@
 use rem6_cpu::{BranchTargetKind, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
-use super::o3_branch_mismatch_aliases::{
-    O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
-};
 use super::text::{
     append_derived_count_per_count_stat, append_derived_count_per_cycle_stat,
     append_derived_count_stat, append_derived_count_stat_if_absent,
     append_derived_stat_from_snapshot_if_absent, gem5_cpu_alias_prefix, snapshot_value,
+};
+use crate::o3_branch_mismatch_aliases::{
+    O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
 };
 
 pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {

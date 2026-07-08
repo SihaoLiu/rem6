@@ -1,10 +1,10 @@
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::{StatResetPolicy, StatSnapshot};
 
-use super::o3_branch_mismatch_aliases::{
+use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
+use crate::o3_branch_mismatch_aliases::{
     O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
 };
-use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
 
 pub(super) fn append_gem5_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
     let mut next_id = snapshot
