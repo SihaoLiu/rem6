@@ -1,6 +1,271 @@
 use super::*;
 
 #[test]
+fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
+    let path = sparse_three_core_detailed_o3_restore_trace_binary(
+        "m5-switch-cpu-sparse-three-core-o3-restore-trace",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "700",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "3",
+            "--parallel-workers",
+            "3",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "O3",
+            "--host-checkpoint",
+            "18:sparse-o3",
+            "--host-restore-checkpoint",
+            "70:sparse-o3",
+            "--dump-memory",
+            "0x80000400:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a000000000000005c00000000000000"),
+        "sparse restore should replay detailed CPU0/CPU2 store/load work into distinct per-hart slots without CPU1 O3 activity"
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoints/0/label")
+            .and_then(Value::as_str),
+        Some("sparse-o3")
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let restore = host_actions
+        .pointer("/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing checkpoint restore detail: {host_actions}"));
+    assert_eq!(
+        restore.pointer("/label").and_then(Value::as_str),
+        Some("sparse-o3")
+    );
+    let restore_tick = restore
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing restore tick: {restore}"));
+    let restored_modes = restore
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restored execution modes: {restore}"));
+    let mut restored_targets = restored_modes
+        .iter()
+        .map(|mode| {
+            (
+                mode.pointer("/target")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                mode.pointer("/mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    restored_targets.sort_unstable();
+    assert_eq!(
+        restored_targets,
+        [("cpu0", "detailed"), ("cpu2", "detailed")],
+        "restore authority should preserve the sparse detailed CPU set: {restored_modes:?}"
+    );
+
+    let o3_trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 trace records: {json}"));
+    let mut traced_cpus = o3_trace
+        .iter()
+        .map(|record| record.pointer("/cpu").and_then(Value::as_u64).unwrap_or(99))
+        .collect::<Vec<_>>();
+    traced_cpus.sort_unstable();
+    assert_eq!(
+        traced_cpus,
+        [0, 2],
+        "only sparse detailed CPUs should emit O3 restore traces: {o3_trace:?}"
+    );
+    for cpu in [0, 2] {
+        let expected_address = match cpu {
+            0 => "0x80000400",
+            2 => "0x80000408",
+            _ => unreachable!(),
+        };
+        let record = o3_trace
+            .iter()
+            .find(|record| record.pointer("/cpu").and_then(Value::as_u64) == Some(cpu))
+            .unwrap_or_else(|| panic!("missing CPU{cpu} O3 trace record: {o3_trace:?}"));
+        assert_eq!(
+            record.pointer("/target").and_then(Value::as_str),
+            Some(format!("cpu{cpu}").as_str())
+        );
+        assert_eq!(
+            record
+                .pointer("/checkpoint_restore_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            record
+                .pointer("/checkpoint_restore_label")
+                .and_then(Value::as_str),
+            Some("sparse-o3")
+        );
+        assert_eq!(
+            record
+                .pointer("/checkpoint_restore/latest_tick")
+                .and_then(Value::as_u64),
+            Some(restore_tick)
+        );
+        for target in ["cpu0", "cpu2"] {
+            assert_eq!(
+                record
+                    .pointer(&format!(
+                        "/checkpoint_restore/execution_mode_authority/target/{target}/mode/detailed"
+                    ))
+                    .and_then(Value::as_u64),
+                Some(1),
+                "CPU{cpu} restore trace should carry sparse authority for {target}: {record}"
+            );
+        }
+        assert_eq!(
+            record
+                .pointer("/checkpoint_restore/execution_mode_authority/target/cpu1/mode/detailed")
+                .and_then(Value::as_u64),
+            None,
+            "CPU1 should not appear in sparse detailed authority: {record}"
+        );
+        let events = record
+            .pointer("/events")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("CPU{cpu} O3 trace should include replay events: {record}"));
+        assert!(
+            !events.is_empty()
+                && events.iter().all(
+                    |event| event.pointer("/tick").and_then(Value::as_u64) > Some(restore_tick)
+                ),
+            "CPU{cpu} O3 trace should contain only post-restore replay events: {events:?}"
+        );
+        for event in events {
+            if event.pointer("/lsq_operation").and_then(Value::as_str) == Some("store") {
+                assert_eq!(
+                    event.pointer("/lsq_store_address").and_then(Value::as_str),
+                    Some(expected_address),
+                    "CPU{cpu} store replay should use only its per-hart slot: {events:?}"
+                );
+            }
+            if event.pointer("/lsq_operation").and_then(Value::as_str) == Some("load") {
+                assert_eq!(
+                    event.pointer("/lsq_load_address").and_then(Value::as_str),
+                    Some(expected_address),
+                    "CPU{cpu} load replay should use only its per-hart slot: {events:?}"
+                );
+            }
+        }
+        assert!(
+            events.iter().any(|event| {
+                event.pointer("/lsq_operation").and_then(Value::as_str) == Some("store")
+                    && event.pointer("/lsq_store_address").and_then(Value::as_str)
+                        == Some(expected_address)
+            }),
+            "CPU{cpu} restored replay should include the store event: {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event.pointer("/lsq_operation").and_then(Value::as_str) == Some("load")
+                    && event.pointer("/lsq_load_address").and_then(Value::as_str)
+                        == Some(expected_address)
+            }),
+            "CPU{cpu} restored replay should include the load event: {events:?}"
+        );
+    }
+
+    assert_json_stat(&json, "sim.debug.o3_trace.records", "Count", 2, "monotonic");
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.checkpoint_restore_records",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.targets",
+        "Count",
+        2,
+        "monotonic",
+    );
+    for target in ["cpu0", "cpu2"] {
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.{target}.mode.detailed"
+            ),
+            "Count",
+            1,
+            "monotonic",
+        );
+        for cpu in ["cpu0", "cpu2"] {
+            assert_json_stat(
+                &json,
+                &format!(
+                    "sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore.execution_mode_authority.target.{target}.mode.detailed"
+                ),
+                "Count",
+                1,
+                "monotonic",
+            );
+        }
+    }
+    assert_json_stat_absent(&json, "sim.debug.o3_trace.cpu.cpu1.records");
+}
+
+#[test]
 fn rem6_run_m5_dump_stats_restores_multicore_o3_lsq_forwarding_snapshot_by_active_hart() {
     let path = multicore_hart1_detailed_o3_restore_lsq_forwarding_dump_stats_binary(
         "m5-switch-cpu-hart1-o3-restore-lsq-forwarding-dump-stats",

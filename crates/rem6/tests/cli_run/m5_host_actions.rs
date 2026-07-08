@@ -1834,6 +1834,15 @@ fn vector_arith_type(funct6: u32, funct3: u32, vs2: u8, vs1_or_rs1: u8, vd: u8) 
         | 0x57
 }
 
+fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
 fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
     (funct7 << 25)
         | (u32::from(rs2) << 20)
@@ -2968,6 +2977,46 @@ fn multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(name: &str) -> std::
         words.push(i_type(0, 0, 0x0, 0, 0x13));
     }
     append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn sparse_three_core_detailed_o3_restore_trace_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 1024_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),         // csrr x5, mhartid
+        i_type(1, 0, 0x0, 6, 0x13), // addi x6, x0, 1
+        b_type(8, 6, 5, 0x1),       // harts 0/2: branch to detailed path
+        b_type(0, 0, 0, 0x0),       // hart 1: spin without detailed O3 authority
+        m5op(M5_SWITCH_CPU),        // harts 0/2: switch to detailed
+    ];
+    for _ in 0..20 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 7, 0x17),                             // auipc x7, 0
+        i_type(data_start - auipc_pc, 7, 0x0, 7, 0x13), // addi x7, x7, data
+        i_type(2, 5, 0b001, 8, 0x13),                   // slli x8, x5, 2
+        r_type(0, 8, 7, 0x0, 7, 0x33),                  // add x7, x7, x8
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        r_type(0, 5, 11, 0x0, 11, 0x33),                // add x11, x11, x5
+        s_type(0, 11, 7, 0b010),                        // sw x11, 0(x7)
+        i_type(0, 7, 0b010, 12, 0x03),                  // lw x12, 0(x7)
+    ]);
+    let check_branch_index = words.len();
+    words.push(0);
+    while words.len() < 220 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    append_host_stop(&mut words);
+    let fail_index = words.len() - 1;
+    words[check_branch_index] = b_type(((fail_index - check_branch_index) * 4) as i32, 11, 12, 0x1);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
