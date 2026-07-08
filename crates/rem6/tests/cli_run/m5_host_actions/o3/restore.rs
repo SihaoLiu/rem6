@@ -1224,6 +1224,17 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
         assert_json_stat(&json, stat_path, unit, expected, "monotonic");
     }
     assert_json_stat_absent(&json, "sim.cpu0.o3.checkpoint_restore.tick");
+    assert_restore_component_chunk_stat(
+        &json,
+        runtime_restore,
+        "sim.cpu1.o3.checkpoint_restore",
+        "cpu1",
+        "o3-runtime-state",
+        "cpu1",
+        "o3_runtime_state",
+        "cpu1",
+    );
+    assert_json_stat_prefix_absent(&json, "sim.cpu0.o3.checkpoint_restore.component.");
 
     let o3_restore = o3_trace_checkpoint_restore_scope(&json, 1);
     assert_eq!(
