@@ -192,6 +192,121 @@ fn rem6_run_o3_debug_trace_stats_include_initial_detailed_mode_authority() {
             .and_then(Value::as_u64),
         Some(1)
     );
+    let o3_trace = json
+        .pointer("/debug/o3_trace/0")
+        .unwrap_or_else(|| panic!("missing CPU0 O3 trace record: {json}"));
+    let event_summary = o3_trace
+        .pointer("/event_summary")
+        .unwrap_or_else(|| panic!("missing O3 event summary: {o3_trace}"));
+    let event_window = event_summary
+        .pointer("/event_window")
+        .unwrap_or_else(|| panic!("missing O3 event-window summary: {event_summary}"));
+    let events = o3_trace
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 trace event records: {o3_trace}"));
+    let first_event = events
+        .first()
+        .unwrap_or_else(|| panic!("expected at least one O3 trace event: {o3_trace}"));
+    let last_event = events
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one O3 trace event: {o3_trace}"));
+    let max_rob_event = events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .pointer("/rob_occupancy")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .unwrap();
+    let max_lsq_event = events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .pointer("/lsq_occupancy")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .unwrap();
+    let max_rename_map_event = events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .pointer("/rename_map_entries")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .unwrap();
+    assert_eq!(
+        event_window.pointer("/records").and_then(Value::as_u64),
+        Some(events.len() as u64),
+        "event-window record count should match emitted O3 events: {event_window}"
+    );
+    assert_eq!(
+        event_window.pointer("/span_ticks").and_then(Value::as_u64),
+        event_summary.pointer("/span_ticks").and_then(Value::as_u64),
+        "event-window span should match the event-summary span: {event_window}"
+    );
+    for (window_pointer, event) in [
+        ("/first", first_event),
+        ("/last", last_event),
+        ("/max_rob_occupancy", max_rob_event),
+        ("/max_lsq_occupancy", max_lsq_event),
+        ("/max_rename_map_entries", max_rename_map_event),
+    ] {
+        let window_event = event_window.pointer(window_pointer).unwrap_or_else(|| {
+            panic!("missing {window_pointer} O3 event window row: {event_window}")
+        });
+        assert_eq!(
+            window_event.pointer("/sequence").and_then(Value::as_u64),
+            event.pointer("/sequence").and_then(Value::as_u64),
+            "event-window {window_pointer} sequence should identify the source O3 event"
+        );
+        assert_eq!(
+            window_event.pointer("/tick").and_then(Value::as_u64),
+            event.pointer("/tick").and_then(Value::as_u64),
+            "event-window {window_pointer} tick should identify the source O3 event"
+        );
+        assert_eq!(
+            window_event.pointer("/pc").and_then(Value::as_str),
+            event.pointer("/pc").and_then(Value::as_str),
+            "event-window {window_pointer} PC should identify the source O3 event"
+        );
+        for field in ["rob_occupancy", "lsq_occupancy", "rename_map_entries"] {
+            assert_eq!(
+                window_event
+                    .pointer(&format!("/{field}"))
+                    .and_then(Value::as_u64),
+                event.pointer(&format!("/{field}")).and_then(Value::as_u64),
+                "event-window {window_pointer} {field} should match the source O3 event"
+            );
+        }
+    }
+    assert_eq!(
+        event_window
+            .pointer("/max_rob_occupancy/rob_occupancy")
+            .and_then(Value::as_u64),
+        event_summary
+            .pointer("/max_rob_occupancy")
+            .and_then(Value::as_u64)
+    );
+    assert_eq!(
+        event_window
+            .pointer("/max_lsq_occupancy/lsq_occupancy")
+            .and_then(Value::as_u64),
+        event_summary
+            .pointer("/max_lsq_occupancy")
+            .and_then(Value::as_u64)
+    );
+    assert_eq!(
+        event_window
+            .pointer("/max_rename_map_entries/rename_map_entries")
+            .and_then(Value::as_u64),
+        event_summary
+            .pointer("/max_rename_map_entries")
+            .and_then(Value::as_u64)
+    );
     assert_eq!(
         json_stat_value(&json, "sim.debug.o3_trace.execution_mode.functional"),
         0
