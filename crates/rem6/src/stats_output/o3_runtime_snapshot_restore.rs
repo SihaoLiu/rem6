@@ -106,6 +106,7 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
         return Ok(());
     };
     for (name, unit, value) in [
+        ("count", "Count", 1),
         ("tick", "Tick", restore.tick),
         ("manifest_tick", "Tick", restore.manifest_tick),
         ("component_count", "Count", restore.component_count),

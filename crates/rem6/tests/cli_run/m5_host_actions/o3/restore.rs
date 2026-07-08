@@ -1240,6 +1240,21 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
     let runtime_restore = runtime_o3
         .pointer("/checkpoint_restore")
         .unwrap_or_else(|| panic!("missing CPU1 O3 runtime restore metadata: {json}"));
+    let runtime_restore_count = runtime_o3
+        .pointer("/checkpoint_restore_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing CPU1 O3 runtime restore count: {runtime_o3}"));
+    assert_eq!(
+        runtime_restore_count, 1,
+        "CPU1 O3 runtime should report one restored checkpoint scope: {runtime_o3}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.checkpoint_restore.count",
+        "Count",
+        runtime_restore_count,
+        "monotonic",
+    );
     for (pointer, stat_path, unit) in [
         ("/tick", "sim.cpu1.o3.checkpoint_restore.tick", "Tick"),
         (
@@ -1314,6 +1329,7 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
     ] {
         assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
     }
+    assert_json_stat_absent(&json, "sim.cpu0.o3.checkpoint_restore.count");
     assert_json_stat_absent(&json, "sim.cpu0.o3.checkpoint_restore.tick");
     assert_restore_component_chunk_stat(
         &json,
