@@ -674,6 +674,31 @@ fn emit_o3_runtime_snapshot_stats(
     Ok(())
 }
 
+fn emit_o3_runtime_checkpoint_restore_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+) -> Result<(), Rem6CliError> {
+    let Some(restore) = &core.o3_runtime_checkpoint_restore else {
+        return Ok(());
+    };
+    for (name, unit, value) in [
+        ("tick", "Tick", restore.tick),
+        ("manifest_tick", "Tick", restore.manifest_tick),
+        ("component_count", "Count", restore.component_count),
+        ("chunk_count", "Count", restore.chunk_count),
+        ("payload_bytes", "Byte", restore.payload_bytes),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.o3.checkpoint_restore.{name}", core.cpu),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn emit_o3_runtime_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
@@ -731,6 +756,7 @@ pub(super) fn emit_o3_runtime_stats(
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
     emit_o3_runtime_snapshot_stats(stats, core)?;
+    emit_o3_runtime_checkpoint_restore_stats(stats, core)?;
     emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {
