@@ -580,6 +580,144 @@ fn emit_o3_runtime_event_summary_window_stats(
     Ok(())
 }
 
+fn emit_o3_runtime_event_summary_lsq_matrix_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    events: &[O3RuntimeTraceRecord],
+) -> Result<(), Rem6CliError> {
+    for (name, value) in [
+        (
+            "store_load_forwarding_candidates",
+            count_o3_event_summary_records(events, |event| event.store_load_forwarding_candidate()),
+        ),
+        (
+            "store_load_forwarding_matches",
+            count_o3_event_summary_records(events, |event| event.store_load_forwarding_match()),
+        ),
+        (
+            "store_load_forwarding_suppressed",
+            count_o3_event_summary_records(events, |event| {
+                event.store_load_forwarding_suppressed()
+            }),
+        ),
+        (
+            "store_load_forwarding_address_mismatches",
+            count_o3_event_summary_records(events, |event| {
+                event.store_load_forwarding_address_mismatch()
+            }),
+        ),
+        (
+            "store_load_forwarding_byte_mismatches",
+            count_o3_event_summary_records(events, |event| {
+                event.store_load_forwarding_byte_mismatch()
+            }),
+        ),
+    ] {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        let mut latency_samples = 0_u64;
+        let mut latency_ticks = 0_u64;
+        let mut latency_max_ticks = 0_u64;
+        let mut latency_min_ticks: Option<u64> = None;
+        for event in events
+            .iter()
+            .filter(|event| event.lsq_operation() == operation)
+        {
+            let ticks = event.lsq_data_latency_ticks();
+            latency_samples = latency_samples.saturating_add(1);
+            latency_ticks = latency_ticks.saturating_add(ticks);
+            latency_max_ticks = latency_max_ticks.max(ticks);
+            latency_min_ticks = Some(latency_min_ticks.map_or(ticks, |min| min.min(ticks)));
+        }
+        let latency_avg_ticks = if latency_samples == 0 {
+            0
+        } else {
+            latency_ticks / latency_samples
+        };
+        for (name, value) in [
+            (
+                "forwarding_candidates",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation && event.store_load_forwarding_candidate()
+                }),
+            ),
+            (
+                "forwarding_matches",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation && event.store_load_forwarding_match()
+                }),
+            ),
+            (
+                "forwarding_suppressed",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation && event.store_load_forwarding_suppressed()
+                }),
+            ),
+            (
+                "forwarding_address_mismatches",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation
+                        && event.store_load_forwarding_address_mismatch()
+                }),
+            ),
+            (
+                "forwarding_byte_mismatches",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation
+                        && event.store_load_forwarding_byte_mismatch()
+                }),
+            ),
+        ] {
+            increment_count_stat(
+                stats,
+                format!(
+                    "sim.cpu{cpu}.o3.event_summary.lsq_operation.{}.{name}",
+                    operation.as_str()
+                ),
+                value,
+            )?;
+        }
+        for (name, unit, value) in [
+            ("samples", "Count", latency_samples),
+            ("ticks", "Tick", latency_ticks),
+            ("max_ticks", "Tick", latency_max_ticks),
+            ("min_ticks", "Tick", latency_min_ticks.unwrap_or(0)),
+            ("avg_ticks", "Tick", latency_avg_ticks),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{cpu}.o3.event_summary.lsq_operation.{}.latency.{name}",
+                    operation.as_str()
+                ),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
+
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        let value =
+            count_o3_event_summary_records(events, |event| event.lsq_ordering() == ordering);
+        increment_count_stat(
+            stats,
+            format!(
+                "sim.cpu{cpu}.o3.event_summary.lsq_ordering.{}",
+                ordering.as_str()
+            ),
+            value,
+        )?;
+    }
+    Ok(())
+}
+
 fn emit_o3_runtime_event_summary_stats(
     stats: &mut StatsRegistry,
     cpu: u32,
@@ -754,6 +892,7 @@ fn emit_o3_runtime_event_summary_stats(
             value,
         )?;
     }
+    emit_o3_runtime_event_summary_lsq_matrix_stats(stats, cpu, events)?;
     for class in O3RuntimeFuLatencyClass::ALL {
         let instructions = events
             .iter()

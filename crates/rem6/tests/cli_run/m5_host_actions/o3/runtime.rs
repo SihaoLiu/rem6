@@ -569,6 +569,10 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.branch_event.squashed_target_kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
         "sim.cpu0.o3.event_summary.branch_repair.direction_only_kind.direct_unconditional",
+        "sim.cpu0.o3.event_summary.store_load_forwarding_matches",
+        "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_matches",
+        "sim.cpu0.o3.event_summary.lsq_operation.load.latency.ticks",
+        "sim.cpu0.o3.event_summary.lsq_ordering.acquire_release",
     ] {
         assert_json_stat_absent(&json, path);
     }

@@ -313,6 +313,185 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
     }
 }
 
+#[test]
+fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
+    let ordered_path = detailed_o3_ordered_atomic_lsq_binary(
+        "m5-switch-cpu-detailed-o3-event-summary-lsq-matrix-stats",
+    );
+    let ordered_json = o3_lsq_debug_runtime_json(&ordered_path, "220");
+    let ordered_o3 = ordered_json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {ordered_json}"));
+    let ordered_summary = ordered_o3
+        .pointer("/event_summary")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {ordered_o3}"));
+    let ordered_debug_summary = ordered_json
+        .pointer("/debug/o3_trace/0/event_summary")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {ordered_json}"));
+
+    for pointer in [
+        "/lsq_operation/load/latency/ticks",
+        "/lsq_operation/store/latency/ticks",
+        "/lsq_operation/load_reserved/latency/samples",
+        "/lsq_operation/store_conditional/latency/ticks",
+        "/lsq_operation/atomic/latency/avg_ticks",
+        "/lsq_ordering/acquire",
+        "/lsq_ordering/release",
+        "/lsq_ordering/acquire_release",
+    ] {
+        assert_eq!(
+            ordered_summary.pointer(pointer),
+            ordered_debug_summary.pointer(pointer),
+            "runtime event-summary LSQ lane {pointer} should mirror debug trace event summary"
+        );
+        assert!(
+            ordered_summary
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "representative runtime event-summary LSQ lane {pointer} should be positive: {ordered_summary}"
+        );
+    }
+    for (pointer, stat_path, unit) in [
+        (
+            "/lsq_operation/load/latency/ticks",
+            "sim.cpu0.o3.event_summary.lsq_operation.load.latency.ticks",
+            "Tick",
+        ),
+        (
+            "/lsq_operation/store/latency/ticks",
+            "sim.cpu0.o3.event_summary.lsq_operation.store.latency.ticks",
+            "Tick",
+        ),
+        (
+            "/lsq_operation/load_reserved/latency/samples",
+            "sim.cpu0.o3.event_summary.lsq_operation.load_reserved.latency.samples",
+            "Count",
+        ),
+        (
+            "/lsq_operation/store_conditional/latency/ticks",
+            "sim.cpu0.o3.event_summary.lsq_operation.store_conditional.latency.ticks",
+            "Tick",
+        ),
+        (
+            "/lsq_operation/atomic/latency/avg_ticks",
+            "sim.cpu0.o3.event_summary.lsq_operation.atomic.latency.avg_ticks",
+            "Tick",
+        ),
+        (
+            "/lsq_ordering/acquire",
+            "sim.cpu0.o3.event_summary.lsq_ordering.acquire",
+            "Count",
+        ),
+        (
+            "/lsq_ordering/release",
+            "sim.cpu0.o3.event_summary.lsq_ordering.release",
+            "Count",
+        ),
+        (
+            "/lsq_ordering/acquire_release",
+            "sim.cpu0.o3.event_summary.lsq_ordering.acquire_release",
+            "Count",
+        ),
+    ] {
+        let expected = ordered_summary
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime event summary should expose u64 lane {pointer}: {ordered_summary}")
+            });
+        assert_json_stat(&ordered_json, stat_path, unit, expected, "monotonic");
+    }
+
+    let forwarding_path = detailed_o3_lsq_store_load_match_binary(
+        "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-stats",
+    );
+    let forwarding_json = o3_lsq_debug_runtime_json(&forwarding_path, "140");
+    let forwarding_summary = forwarding_json
+        .pointer("/cores/0/o3_runtime/event_summary")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime JSON should expose forwarding event summary: {forwarding_json}")
+        });
+    for (pointer, stat_path) in [
+        (
+            "/store_load_forwarding_candidates",
+            "sim.cpu0.o3.event_summary.store_load_forwarding_candidates",
+        ),
+        (
+            "/store_load_forwarding_matches",
+            "sim.cpu0.o3.event_summary.store_load_forwarding_matches",
+        ),
+        (
+            "/lsq_operation/load/forwarding_candidates",
+            "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_candidates",
+        ),
+        (
+            "/lsq_operation/load/forwarding_matches",
+            "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_matches",
+        ),
+    ] {
+        assert_eq!(
+            forwarding_summary.pointer(pointer).and_then(Value::as_u64),
+            Some(1),
+            "runtime event-summary forwarding lane {pointer} should be positive: {forwarding_summary}"
+        );
+        assert_json_stat(&forwarding_json, stat_path, "Count", 1, "monotonic");
+    }
+
+    for (
+        suppressed_path,
+        mismatch_pointer,
+        mismatch_stat_path,
+        operation_mismatch_pointer,
+        operation_mismatch_stat_path,
+    ) in [
+        (
+            detailed_o3_lsq_store_load_mismatch_binary(
+                "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-address-stats",
+            ),
+            "/store_load_forwarding_address_mismatches",
+            "sim.cpu0.o3.event_summary.store_load_forwarding_address_mismatches",
+            "/lsq_operation/load/forwarding_address_mismatches",
+            "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_address_mismatches",
+        ),
+        (
+            detailed_o3_lsq_store_load_byte_mismatch_binary(
+                "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-byte-stats",
+            ),
+            "/store_load_forwarding_byte_mismatches",
+            "sim.cpu0.o3.event_summary.store_load_forwarding_byte_mismatches",
+            "/lsq_operation/load/forwarding_byte_mismatches",
+            "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_byte_mismatches",
+        ),
+    ] {
+        let suppressed_json = o3_lsq_debug_runtime_json(&suppressed_path, "140");
+        let suppressed_summary = suppressed_json
+            .pointer("/cores/0/o3_runtime/event_summary")
+            .unwrap_or_else(|| {
+                panic!("O3 runtime JSON should expose suppressed event summary: {suppressed_json}")
+            });
+        for (pointer, stat_path) in [
+            (
+                "/store_load_forwarding_suppressed",
+                "sim.cpu0.o3.event_summary.store_load_forwarding_suppressed",
+            ),
+            (
+                "/lsq_operation/load/forwarding_suppressed",
+                "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_suppressed",
+            ),
+            (mismatch_pointer, mismatch_stat_path),
+            (operation_mismatch_pointer, operation_mismatch_stat_path),
+        ] {
+            assert_eq!(
+                suppressed_summary.pointer(pointer).and_then(Value::as_u64),
+                Some(1),
+                "runtime event-summary forwarding-suppression lane {pointer} should be positive: {suppressed_summary}"
+            );
+            assert_json_stat(&suppressed_json, stat_path, "Count", 1, "monotonic");
+        }
+    }
+}
+
 fn ordered_atomic_lsq_runtime_json(
     path: &Path,
     memory_system: Option<&str>,
@@ -339,6 +518,36 @@ fn ordered_atomic_lsq_runtime_json(
         command.args(["--memory-system", memory_system]);
     }
     let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn o3_lsq_debug_runtime_json(path: &Path, max_tick: &str) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            max_tick,
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
 
     assert!(
         output.status.success(),
