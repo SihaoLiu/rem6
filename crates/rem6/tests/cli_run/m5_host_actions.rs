@@ -1996,6 +1996,32 @@ fn multicore_hart1_detailed_o3_dump_stats_binary(name: &str) -> std::path::PathB
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_float_misc_binary(name: &str) -> std::path::PathBuf {
+    let words = vec![
+        csr_read(0xf14, 5),                             // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1),                           // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0),                           // hart 0: spin until hart 1 exits
+        u_type(0x3f80_0000, 8, 0x37),                   // lui x8, 1.0f bits
+        fp_r_type(0x78, 0, 8, 0x0, 1),                  // fmv.w.x f1, x8
+        fp_r_type(0x78, 0, 8, 0x0, 2),                  // fmv.w.x f2, x8
+        i_type(3, 0, 0x0, 9, 0x13),                     // addi x9, x0, 3
+        i_type(2, 0, 0x0, 10, 0x13),                    // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),                      // e32, m1, vl=2
+        vector_arith_type(0b010111, 0b100, 0, 1, 1),    // vfmv.v.f v1, f1
+        vector_arith_type(0b010111, 0b100, 0, 2, 2),    // vfmv.v.f v2, f2
+        m5op(M5_SWITCH_CPU),                            // hart 1: switch cpu1 to detailed
+        fp_r_type(0x68, 0, 9, 0x0, 3),                  // fcvt.s.w f3, x9
+        fp_r_type(0x10, 2, 1, 0x0, 4),                  // fsgnj.s f4, f1, f2
+        vector_arith_type(0b010010, 0b001, 1, 0x02, 3), // vfsgnj.vv v3, v2, v1
+        vector_arith_type(0b001000, 0b001, 2, 1, 4),    // vfsgnj.vv v4, v1, v2
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn multicore_hart1_detailed_o3_direct_call_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = vec![

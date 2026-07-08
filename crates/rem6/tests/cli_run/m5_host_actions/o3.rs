@@ -745,6 +745,134 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
 }
 
 #[test]
+fn rem6_run_exposes_multicore_o3_float_misc_op_class_aliases_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_float_misc_binary(
+        "m5-switch-cpu-hart1-detailed-o3-float-misc-aliases",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    assert_json_stat_absent(&json, "sim.cpu0.o3.instructions");
+    assert_json_stat_at_least(&json, "sim.cpu1.o3.instructions", "Count", 4, "monotonic");
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.fu_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.fu_vector_float_misc_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+
+    let iq_float_misc = json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.float_misc");
+    let iq_vector_float_misc =
+        json_stat_u64(&json, "sim.cpu1.o3.iq.issued_inst_type.vector_float_misc");
+    let commit_float_misc =
+        json_stat_u64(&json, "sim.cpu1.o3.commit.committed_inst_type.float_misc");
+    let commit_vector_float_misc = json_stat_u64(
+        &json,
+        "sim.cpu1.o3.commit.committed_inst_type.vector_float_misc",
+    );
+    for path in [
+        "sim.cpu1.o3.iq.issued_inst_type.float_misc",
+        "sim.cpu1.o3.iq.issued_inst_type.vector_float_misc",
+        "sim.cpu1.o3.commit.committed_inst_type.float_misc",
+        "sim.cpu1.o3.commit.committed_inst_type.vector_float_misc",
+    ] {
+        assert_json_stat(&json, path, "Count", 2, "monotonic");
+    }
+
+    for (path, value) in [
+        ("system.cpu1.iq.issuedInstType.FloatMisc", iq_float_misc),
+        ("system.cpu1.iq.issuedInstType_0::FloatMisc", iq_float_misc),
+        (
+            "system.cpu1.iq.issuedInstType.SimdFloatMisc",
+            iq_vector_float_misc,
+        ),
+        (
+            "system.cpu1.iq.issuedInstType_0::SimdFloatMisc",
+            iq_vector_float_misc,
+        ),
+        (
+            "system.cpu1.commit.committedInstType.FloatMisc",
+            commit_float_misc,
+        ),
+        (
+            "system.cpu1.commit.committedInstType_0::FloatMisc",
+            commit_float_misc,
+        ),
+        (
+            "system.cpu1.commit.committedInstType.SimdFloatMisc",
+            commit_vector_float_misc,
+        ),
+        (
+            "system.cpu1.commit.committedInstType_0::SimdFloatMisc",
+            commit_vector_float_misc,
+        ),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
+
+    for path in [
+        "system.cpu0.iq.issuedInstType.FloatMisc",
+        "system.cpu0.iq.issuedInstType_0::FloatMisc",
+        "system.cpu0.iq.issuedInstType.SimdFloatMisc",
+        "system.cpu0.iq.issuedInstType_0::SimdFloatMisc",
+        "system.cpu0.commit.committedInstType.FloatMisc",
+        "system.cpu0.commit.committedInstType_0::FloatMisc",
+        "system.cpu0.commit.committedInstType.SimdFloatMisc",
+        "system.cpu0.commit.committedInstType_0::SimdFloatMisc",
+        "system.cpu.iq.issuedInstType.FloatMisc",
+        "system.cpu.iq.issuedInstType_0::FloatMisc",
+        "system.cpu.iq.issuedInstType.SimdFloatMisc",
+        "system.cpu.iq.issuedInstType_0::SimdFloatMisc",
+        "system.cpu.commit.committedInstType.FloatMisc",
+        "system.cpu.commit.committedInstType_0::FloatMisc",
+        "system.cpu.commit.committedInstType.SimdFloatMisc",
+        "system.cpu.commit.committedInstType_0::SimdFloatMisc",
+    ] {
+        assert_json_stat_absent(&json, path);
+    }
+}
+
+#[test]
 fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart() {
     let path = multicore_hart1_detailed_o3_dump_stats_binary(
         "m5-switch-cpu-hart1-detailed-o3-dump-structural-aliases",

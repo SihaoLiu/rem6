@@ -271,8 +271,8 @@ fn append_gem5_o3_json_alias_stats(
             records,
             next_id,
             cpu,
-            core_count,
             &alias_prefix,
+            core_count == 1,
         );
         for (source_suffix, alias_suffix) in [
             ("iew.insts_to_commit", "iew.instsToCommit.total"),
@@ -579,8 +579,8 @@ fn append_gem5_o3_op_class_json_alias_stats(
     records: &mut Vec<String>,
     next_id: &mut u64,
     cpu: u64,
-    core_count: u64,
     alias_prefix: &str,
+    include_zero_extended_aliases: bool,
 ) {
     for (source_suffix, alias_suffix) in [
         ("iq.issued_inst_type.mem_read", "iq.issuedInstType.MemRead"),
@@ -616,9 +616,6 @@ fn append_gem5_o3_op_class_json_alias_stats(
             alias_prefix,
             alias_suffix,
         );
-    }
-    if core_count != 1 {
-        return;
     }
     for (source_suffix, alias_suffix) in [
         (
@@ -750,7 +747,7 @@ fn append_gem5_o3_op_class_json_alias_stats(
             "commit.committedInstType.SimdFloatSqrt",
         ),
     ] {
-        append_gem5_o3_json_alias_from_sample(
+        append_gem5_o3_json_alias_from_sample_with_policy(
             snapshot,
             records,
             next_id,
@@ -758,6 +755,7 @@ fn append_gem5_o3_op_class_json_alias_stats(
             source_suffix,
             alias_prefix,
             alias_suffix,
+            include_zero_extended_aliases,
         );
     }
 }
@@ -771,7 +769,34 @@ fn append_gem5_o3_json_alias_from_sample(
     alias_prefix: &str,
     alias_suffix: &str,
 ) {
+    append_gem5_o3_json_alias_from_sample_with_policy(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        source_suffix,
+        alias_prefix,
+        alias_suffix,
+        true,
+    );
+}
+
+fn append_gem5_o3_json_alias_from_sample_with_policy(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    source_suffix: &str,
+    alias_prefix: &str,
+    alias_suffix: &str,
+    include_zero_values: bool,
+) {
     let source_path = format!("sim.cpu{cpu}.o3.{source_suffix}");
+    if !include_zero_values
+        && snapshot_sample(snapshot, &source_path).is_some_and(|source| source.value() == 0)
+    {
+        return;
+    }
     let alias_path = format!("{alias_prefix}.{alias_suffix}");
     append_gem5_json_alias_from_paths(snapshot, records, next_id, &source_path, &alias_path);
     let Some(bucket_alias_suffix) = gem5_o3_bucket_alias_suffix(alias_suffix) else {
