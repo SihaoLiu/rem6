@@ -452,6 +452,14 @@ fn emit_o3_runtime_event_summary_stats(
         .iter()
         .map(|event| event.rename_writes())
         .sum::<u64>();
+    let iew_dependency_producers = events
+        .iter()
+        .map(|event| event.iew_dependency_producers())
+        .sum::<u64>();
+    let iew_dependency_consumers = events
+        .iter()
+        .map(|event| event.iew_dependency_consumers())
+        .sum::<u64>();
     let max_rob_occupancy = events
         .iter()
         .map(|event| event.rob_occupancy())
@@ -514,20 +522,10 @@ fn emit_o3_runtime_event_summary_stats(
         ("iew.dispatched_insts", records),
         ("iew.insts_to_commit", rob_commits),
         ("iew.writeback_count", records),
-        (
-            "iew.producer_inst",
-            events
-                .iter()
-                .map(|event| event.iew_dependency_producers())
-                .sum::<u64>(),
-        ),
-        (
-            "iew.consumer_inst",
-            events
-                .iter()
-                .map(|event| event.iew_dependency_consumers())
-                .sum::<u64>(),
-        ),
+        ("iew.producer_inst", iew_dependency_producers),
+        ("iew.consumer_inst", iew_dependency_consumers),
+        ("iew.dependency.producer", iew_dependency_producers),
+        ("iew.dependency.consumer", iew_dependency_consumers),
         (
             "iew.branch_mispredicts",
             events
@@ -547,6 +545,22 @@ fn emit_o3_runtime_event_summary_stats(
             stats,
             format!("sim.cpu{cpu}.o3.event_summary.{name}"),
             value,
+        )?;
+    }
+    for (name, numerator, denominator) in [
+        ("iew.writeback_rate_ppm", records, span_ticks),
+        (
+            "iew.producer_consumer_fanout_ppm",
+            iew_dependency_producers,
+            iew_dependency_consumers,
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            ratio_ppm(numerator, denominator),
         )?;
     }
     for (name, value) in [
