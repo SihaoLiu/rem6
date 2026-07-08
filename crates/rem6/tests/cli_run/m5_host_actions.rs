@@ -2480,7 +2480,7 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
         i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
         s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
         i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
-        b_type(32, 11, 12, 0x1),                        // bne x12, x11, fail
+        b_type(48, 11, 12, 0x1),                        // bne x12, x11, fail
         m5op(M5_DUMP_RESET_STATS),
         i_type(0x33, 0, 0x0, 13, 0x13), // addi x13, x0, 0x33
         s_type(4, 13, 5, 0b010),        // sw x13, 4(x5)
@@ -2494,6 +2494,45 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn multicore_hart1_detailed_o3_lsq_forwarding_dump_reset_stats_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+        b_type(48, 11, 12, 0x1),                        // bne x12, x11, fail
+        m5op(M5_DUMP_RESET_STATS),
+        i_type(0x33, 0, 0x0, 13, 0x13), // addi x13, x0, 0x33
+        s_type(4, 13, 5, 0b010),        // sw x13, 4(x5)
+        i_type(8, 5, 0b010, 14, 0x03),  // lw x14, 8(x5)
+        b_type(28, 0, 14, 0x1),         // bne x14, x0, fail
+        i_type(0x44, 0, 0x0, 15, 0x13), // addi x15, x0, 0x44
+        s_type(12, 15, 5, 0b010),       // sw x15, 12(x5)
+        i_type(12, 5, 0b100, 16, 0x03), // lbu x16, 12(x5)
+        b_type(12, 15, 16, 0x1),        // bne x16, x15, fail
+        m5op(M5_DUMP_STATS),
+    ]);
+    append_host_stop(&mut words);
     while words.len() * 4 < data_start as usize {
         words.push(0);
     }
