@@ -400,6 +400,23 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
+    if let Some(restore) = summary.checkpoint_restores.last() {
+        for (name, unit, value) in [
+            ("latest_tick", "Tick", restore.tick),
+            ("latest_manifest_tick", "Tick", restore.manifest_tick),
+            ("latest_component_count", "Count", restore.component_count),
+            ("latest_chunk_count", "Count", restore.chunk_count),
+            ("latest_payload_bytes", "Byte", restore.payload_bytes),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.checkpoint_restore.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
             stats,

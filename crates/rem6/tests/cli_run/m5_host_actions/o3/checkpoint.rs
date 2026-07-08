@@ -254,6 +254,48 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             .unwrap(),
         "restored manifest payload bytes should match the restored baseline checkpoint"
     );
+    for (stat_path, unit, artifact_pointer) in [
+        (
+            "sim.host_actions.checkpoint_restore.latest_tick",
+            "Tick",
+            "/tick",
+        ),
+        (
+            "sim.host_actions.checkpoint_restore.latest_manifest_tick",
+            "Tick",
+            "/manifest_tick",
+        ),
+        (
+            "sim.host_actions.checkpoint_restore.latest_component_count",
+            "Count",
+            "/component_count",
+        ),
+        (
+            "sim.host_actions.checkpoint_restore.latest_chunk_count",
+            "Count",
+            "/chunk_count",
+        ),
+        (
+            "sim.host_actions.checkpoint_restore.latest_payload_bytes",
+            "Byte",
+            "/payload_bytes",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            unit,
+            restored_checkpoint
+                .pointer(artifact_pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "latest checkpoint restore should expose {artifact_pointer}: {restored_checkpoint}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
 
     let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
     let mutated = checkpoint_chunk_checksum(host_actions, 1, "cpu0", "o3-runtime-state");
