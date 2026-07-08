@@ -958,3 +958,76 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         assert_json_stat_absent(&json, path);
     }
 }
+
+#[test]
+fn rem6_run_o3_runtime_json_exposes_lsq_operation_byte_aliases() {
+    let path = detailed_o3_float_vector_lsq_binary(
+        "m5-switch-cpu-detailed-o3-runtime-lsq-operation-byte-aliases",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let operations = json
+        .pointer("/cores/0/o3_runtime/lsq/operation")
+        .unwrap_or_else(|| panic!("run JSON should include O3 LSQ operations: {json}"));
+
+    for (operation, alias, active_lane, inactive_lane) in [
+        ("float_load", "floatLoad", "load_bytes", "store_bytes"),
+        ("float_store", "floatStore", "store_bytes", "load_bytes"),
+        ("vector_load", "vectorLoad", "load_bytes", "store_bytes"),
+        ("vector_store", "vectorStore", "store_bytes", "load_bytes"),
+    ] {
+        for (lane, alias_lane) in [("load_bytes", "loadBytes"), ("store_bytes", "storeBytes")] {
+            let expected = operations
+                .pointer(&format!("/{operation}/{lane}"))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!("runtime LSQ operation byte lane missing for {operation}/{lane}: {operations}")
+                });
+            assert_json_stat(
+                &json,
+                &format!("system.cpu.lsq0.operation.{alias}.{alias_lane}"),
+                "Byte",
+                expected,
+                "monotonic",
+            );
+        }
+        assert!(
+            operations
+                .pointer(&format!("/{operation}/{active_lane}"))
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "active runtime LSQ byte lane should be positive for {operation}: {operations}"
+        );
+        assert_eq!(
+            operations
+                .pointer(&format!("/{operation}/{inactive_lane}"))
+                .and_then(Value::as_u64),
+            Some(0),
+            "inactive runtime LSQ byte lane should stay zero for {operation}: {operations}"
+        );
+    }
+}

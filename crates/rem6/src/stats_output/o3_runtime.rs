@@ -1576,6 +1576,18 @@ pub(super) fn emit_o3_runtime_stats(
         )?;
         let operation_alias = o3_lsq_operation_alias(operation);
         for (name, value) in [
+            ("loadBytes", o3.lsq_operation_load_bytes(operation)),
+            ("storeBytes", o3.lsq_operation_store_bytes(operation)),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{gem5_cpu_alias_prefix}.lsq0.operation.{operation_alias}.{name}"),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+        for (name, value) in [
             (
                 "storeLoadForwardingCandidates",
                 o3.lsq_operation_forwarding_candidates(operation),
