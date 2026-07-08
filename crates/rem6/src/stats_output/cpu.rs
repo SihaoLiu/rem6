@@ -311,6 +311,8 @@ pub(super) fn emit_cpu_run_stats(
                 core.in_order_pipeline_stage_interrupt_redirect_flushed_cycles,
             ),
         ] {
+            let flushed_total = in_order_pipeline_stage_total(flushed);
+            let flushed_cycle_total = in_order_pipeline_stage_total(flushed_cycles);
             emit_in_order_cause_stat(
                 stats,
                 core,
@@ -320,6 +322,26 @@ pub(super) fn emit_cpu_run_stats(
                 "Count",
                 StatResetPolicy::Monotonic,
                 flush_records,
+            )?;
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "flush_cause",
+                cause,
+                "flushed",
+                "Count",
+                StatResetPolicy::Monotonic,
+                flushed_total,
+            )?;
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "flush_cause",
+                cause,
+                "flushed_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                flushed_cycle_total,
             )?;
             emit_in_order_cause_stage_stats(
                 stats,
@@ -360,6 +382,26 @@ pub(super) fn emit_cpu_run_stats(
                 "Count",
                 StatResetPolicy::Monotonic,
                 redirect_records,
+            )?;
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "redirect_cause",
+                cause,
+                "flushed",
+                "Count",
+                StatResetPolicy::Monotonic,
+                flushed_total,
+            )?;
+            emit_in_order_cause_stat(
+                stats,
+                core,
+                "redirect_cause",
+                cause,
+                "flushed_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                flushed_cycle_total,
             )?;
             emit_in_order_cause_stage_stats(
                 stats,
@@ -1151,6 +1193,12 @@ pub(super) fn emit_cpu_run_stats(
         )?;
     }
     Ok(())
+}
+
+fn in_order_pipeline_stage_total(
+    summary: crate::pipeline_stats::Rem6InOrderPipelineStageSummary,
+) -> u64 {
+    summary.values().into_iter().sum()
 }
 
 fn emit_branch_predictor_counter_stats<const N: usize>(

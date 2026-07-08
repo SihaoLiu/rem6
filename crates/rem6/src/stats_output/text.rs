@@ -1054,15 +1054,23 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
                 ("interrupt_redirect", "interruptRedirect"),
                 ("trap_redirect", "trapRedirect"),
             ] {
-                append_derived_stat_from_snapshot(
-                    output,
-                    snapshot,
-                    &format!(
-                        "sim.cpu{cpu}.pipeline.in_order.{source_family}.{source_cause}.records"
-                    ),
-                    &format!("{pipeline_alias_prefix}.{alias_family}.{alias_cause}.records"),
-                    "Count",
-                );
+                for (source_name, alias_name, unit) in [
+                    ("records", "records", "Count"),
+                    ("flushed", "flushed", "Count"),
+                    ("flushed_cycles", "flushedCycles", "Cycle"),
+                ] {
+                    append_derived_stat_from_snapshot(
+                        output,
+                        snapshot,
+                        &format!(
+                            "sim.cpu{cpu}.pipeline.in_order.{source_family}.{source_cause}.{source_name}"
+                        ),
+                        &format!(
+                            "{pipeline_alias_prefix}.{alias_family}.{alias_cause}.{alias_name}"
+                        ),
+                        unit,
+                    );
+                }
                 for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
                     for (source_name, alias_name, unit) in [
                         ("records", "records", "Count"),

@@ -81,13 +81,21 @@ fn in_order_pipeline_flush_redirect_cause_stage_summary_json(
     flushed: Rem6InOrderPipelineStageSummary,
     flushed_cycles: Rem6InOrderPipelineStageSummary,
 ) -> String {
+    let flushed_total = in_order_pipeline_stage_total(flushed);
+    let flushed_cycle_total = in_order_pipeline_stage_total(flushed_cycles);
     format!(
-        "{{\"records\":{},\"stage_records\":{},\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
+        "{{\"records\":{},\"flushed\":{},\"flushed_cycles\":{},\"stage_records\":{},\"stage_flushed\":{},\"stage_flushed_cycles\":{}}}",
         records,
+        flushed_total,
+        flushed_cycle_total,
         in_order_pipeline_stage_summary_json(stage_records),
         in_order_pipeline_stage_summary_json(flushed),
         in_order_pipeline_stage_summary_json(flushed_cycles)
     )
+}
+
+fn in_order_pipeline_stage_total(summary: Rem6InOrderPipelineStageSummary) -> u64 {
+    summary.values().into_iter().sum()
 }
 
 fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {

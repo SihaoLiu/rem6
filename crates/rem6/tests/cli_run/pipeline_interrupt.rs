@@ -362,6 +362,92 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger
     assert!(interrupt_redirect_flush_cycles > 0, "{stdout}");
     let stage_sum = stage_flushed.values().sum::<u64>();
     assert_eq!(stage_sum, flushed);
+    assert_eq!(
+        json_path_object_u64_sum(
+            &json,
+            "/cores/0/in_order_pipeline/flush_cause/interrupt_redirect/stage_flushed_cycles",
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    assert_eq!(
+        json_path_object_u64_sum(
+            &json,
+            "/cores/0/in_order_pipeline/redirect_cause/interrupt_redirect/stage_flushed_cycles",
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/flush_cause/interrupt_redirect/flushed"
+        ),
+        flushed
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/flush_cause/interrupt_redirect/flushed_cycles"
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/redirect_cause/interrupt_redirect/flushed"
+        ),
+        flushed
+    );
+    assert_eq!(
+        json_path_u64(
+            &json,
+            "/cores/0/in_order_pipeline/redirect_cause/interrupt_redirect/flushed_cycles"
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    for (path, unit, value) in [
+        (
+            "sim.cpu0.pipeline.in_order.flush_cause.interrupt_redirect.flushed",
+            "Count",
+            flushed,
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.flush_cause.interrupt_redirect.flushed_cycles",
+            "Cycle",
+            interrupt_redirect_flush_cycles,
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.redirect_cause.interrupt_redirect.flushed",
+            "Count",
+            flushed,
+        ),
+        (
+            "sim.cpu0.pipeline.in_order.redirect_cause.interrupt_redirect.flushed_cycles",
+            "Cycle",
+            interrupt_redirect_flush_cycles,
+        ),
+        (
+            "system.cpu.pipeline.inOrder.flushCause.interruptRedirect.flushed",
+            "Count",
+            flushed,
+        ),
+        (
+            "system.cpu.pipeline.inOrder.flushCause.interruptRedirect.flushedCycles",
+            "Cycle",
+            interrupt_redirect_flush_cycles,
+        ),
+        (
+            "system.cpu.pipeline.inOrder.redirectCause.interruptRedirect.flushed",
+            "Count",
+            flushed,
+        ),
+        (
+            "system.cpu.pipeline.inOrder.redirectCause.interruptRedirect.flushedCycles",
+            "Cycle",
+            interrupt_redirect_flush_cycles,
+        ),
+    ] {
+        assert_stat(&stdout, path, unit, value, "monotonic");
+    }
 
     let text_stdout = run_interrupt_timer_program(&program.path, "text", None);
     assert_eq!(
@@ -382,6 +468,34 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger
         text_stat_value(
             &text_stdout,
             "system.cpu.pipeline.inOrder.interruptRedirectFlushCycles"
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    assert_eq!(
+        text_stat_value(
+            &text_stdout,
+            "system.cpu.pipeline.inOrder.flushCause.interruptRedirect.flushed"
+        ),
+        flushed
+    );
+    assert_eq!(
+        text_stat_value(
+            &text_stdout,
+            "system.cpu.pipeline.inOrder.flushCause.interruptRedirect.flushedCycles"
+        ),
+        interrupt_redirect_flush_cycles
+    );
+    assert_eq!(
+        text_stat_value(
+            &text_stdout,
+            "system.cpu.pipeline.inOrder.redirectCause.interruptRedirect.flushed"
+        ),
+        flushed
+    );
+    assert_eq!(
+        text_stat_value(
+            &text_stdout,
+            "system.cpu.pipeline.inOrder.redirectCause.interruptRedirect.flushedCycles"
         ),
         interrupt_redirect_flush_cycles
     );
@@ -564,6 +678,19 @@ fn json_path_u64(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing u64 at {pointer}: {json}"))
+}
+
+fn json_path_object_u64_sum(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("missing object at {pointer}: {json}"))
+        .values()
+        .map(|value| {
+            value
+                .as_u64()
+                .unwrap_or_else(|| panic!("missing u64 value in {pointer}: {value}"))
+        })
+        .sum()
 }
 
 fn text_stat_value(stdout: &str, path: &str) -> u64 {
