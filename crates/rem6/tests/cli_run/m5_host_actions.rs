@@ -857,6 +857,14 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
         &json,
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
     );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.checker.checked_instructions",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.checker.mismatches",
+    );
     assert!(transfer_label.ends_with(&format!("-{switch_tick}")));
     assert!(
         host_actions
@@ -1354,6 +1362,20 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
     assert_json_stat(
         &json,
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.checker.checked_instructions",
+        "Count",
+        second_checked_at_switch,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.checker.mismatches",
         "Count",
         0,
         "monotonic",

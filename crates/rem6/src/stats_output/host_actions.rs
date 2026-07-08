@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
-use crate::Rem6HostActionSummary;
+use crate::{host_actions::Rem6ExecutionModeSwitchCheckerSummary, Rem6HostActionSummary};
 
 const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
@@ -115,6 +115,8 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_quiescence_target_validated = BTreeMap::<String, u64>::new();
     let mut switch_quiescence_target_captured_stats =
         BTreeMap::<String, SwitchTransferComponentStats>::new();
+    let mut switch_quiescence_target_checkers =
+        BTreeMap::<String, Rem6ExecutionModeSwitchCheckerSummary>::new();
     let mut switch_state_transfer_component_stats =
         BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
@@ -155,7 +157,7 @@ pub(super) fn emit_run_host_action_stats(
             || transfer.quiescence_gate.captured_payload_bytes > 0
         {
             let quiescence_target_stats = switch_quiescence_target_captured_stats
-                .entry(quiescence_target_path)
+                .entry(quiescence_target_path.clone())
                 .or_default();
             quiescence_target_stats.components += transfer.quiescence_gate.captured_component_count;
             quiescence_target_stats.chunks += transfer.quiescence_gate.captured_chunk_count;
@@ -164,6 +166,7 @@ pub(super) fn emit_run_host_action_stats(
         }
         if let Some(checker) = transfer.quiescence_gate.checker {
             switch_quiescence_checker = Some(checker);
+            switch_quiescence_target_checkers.insert(quiescence_target_path, checker);
         }
         for component in &transfer.components {
             let component_path = stat_path_segment(&component.component);
@@ -451,6 +454,26 @@ pub(super) fn emit_run_host_action_stats(
             "Byte",
             StatResetPolicy::Monotonic,
             captured_stats.payload_bytes,
+        )?;
+    }
+    for (target, checker) in switch_quiescence_target_checkers {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.quiescence.target.{target}.checker.checked_instructions"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.checked_instructions,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.quiescence.target.{target}.checker.mismatches"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.mismatches,
         )?;
     }
     if let Some(checker) = switch_quiescence_checker {
