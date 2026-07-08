@@ -887,13 +887,22 @@ fn o3_stats_dump_lsq_data_response_alias_paths(core_count: u64, path: &str) -> O
     }
 
     let suffix = suffix.strip_prefix("lsq_operation.")?;
-    let (operation, metric_suffix) = suffix.split_once("_latency_")?;
+    let (operation, metric_suffix) =
+        o3_stats_dump_lsq_data_response_operation_metric_suffix(suffix)?;
     let operation_alias = o3_stats_dump_lsq_operation_alias(operation)?;
     let metric = o3_stats_dump_lsq_data_response_metric_alias(metric_suffix)?;
     Some(vec![
         format!("{alias_prefix}.lsq0.dataResponse.{operation_alias}.{metric}"),
         format!("{alias_prefix}.lsq0.operation.{operation_alias}.dataResponse.{metric}"),
     ])
+}
+
+fn o3_stats_dump_lsq_data_response_operation_metric_suffix(suffix: &str) -> Option<(&str, &str)> {
+    if let Some((operation, metric_suffix)) = suffix.split_once("_latency_") {
+        return Some((operation, metric_suffix));
+    }
+    let (operation, metric_suffix) = suffix.split_once(".latency.")?;
+    Some((operation, metric_suffix))
 }
 
 fn o3_stats_dump_lsq_data_response_metric_alias(suffix: &str) -> Option<&'static str> {
@@ -919,6 +928,28 @@ fn o3_stats_dump_lsq_operation_alias(operation: &str) -> Option<&'static str> {
         "vector_load" => Some("vectorLoad"),
         "vector_store" => Some("vectorStore"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsq_data_response_dump_aliases_accept_nested_operation_latency_sources() {
+        let aliases = o3_stats_dump_lsq_data_response_alias_paths(
+            2,
+            "sim.host_actions.stats_dump.cpu1.o3.lsq_operation.vector_store.latency.avg_ticks",
+        )
+        .expect("nested vector-store latency source should produce gem5 aliases");
+
+        assert_eq!(
+            aliases,
+            [
+                "system.cpu1.lsq0.dataResponse.vectorStore.avgLatency",
+                "system.cpu1.lsq0.operation.vectorStore.dataResponse.avgLatency",
+            ]
+        );
     }
 }
 
