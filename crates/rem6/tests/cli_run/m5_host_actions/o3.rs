@@ -415,6 +415,67 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
             .and_then(Value::as_u64),
         Some(4)
     );
+    let snapshot = o3_runtime.pointer("/snapshot").unwrap_or_else(|| {
+        panic!("O3 runtime JSON should expose final snapshot state: {o3_runtime}")
+    });
+    assert_eq!(
+        snapshot.pointer("/rob/count").and_then(Value::as_u64),
+        Some(0),
+        "final retired O3 runtime snapshot should have a drained ROB: {snapshot}"
+    );
+    let rob_entries = snapshot
+        .pointer("/rob/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("drained ROB snapshot should expose entries array: {snapshot}"));
+    assert!(
+        rob_entries.is_empty(),
+        "drained ROB snapshot should expose no entries: {snapshot}"
+    );
+    assert_eq!(
+        snapshot.pointer("/lsq/count").and_then(Value::as_u64),
+        Some(0),
+        "final retired O3 runtime snapshot should have a drained LSQ: {snapshot}"
+    );
+    let lsq_entries = snapshot
+        .pointer("/lsq/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("drained LSQ snapshot should expose entries array: {snapshot}"));
+    assert!(
+        lsq_entries.is_empty(),
+        "drained LSQ snapshot should expose no entries: {snapshot}"
+    );
+    assert_eq!(
+        snapshot
+            .pointer("/rename_map/count")
+            .and_then(Value::as_u64),
+        Some(3),
+        "final O3 runtime snapshot should retain three live integer rename mappings: {snapshot}"
+    );
+    let rename_map = snapshot
+        .pointer("/rename_map/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("snapshot should expose rename-map entries: {snapshot}"));
+    let architectural_registers = rename_map
+        .iter()
+        .map(|entry| {
+            assert_eq!(
+                entry.pointer("/register_class").and_then(Value::as_str),
+                Some("integer"),
+                "detailed O3 run should only create integer mappings: {entry}"
+            );
+            assert!(
+                entry.pointer("/physical").and_then(Value::as_u64).is_some(),
+                "rename-map entry should expose physical register: {entry}"
+            );
+            entry
+                .pointer("/architectural")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!("rename-map entry should expose architectural register: {entry}")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(architectural_registers, [5, 11, 12]);
 }
 
 #[test]

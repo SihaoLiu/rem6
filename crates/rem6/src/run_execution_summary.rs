@@ -452,6 +452,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
                 .max_pending(),
             o3_runtime: core.o3_runtime_stats(),
+            o3_runtime_snapshot: core.o3_runtime_checkpoint_payload().snapshot().clone(),
             branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
             branch_target_buffer_hits: branch_target_buffer.hit_count(),
             branch_target_buffer_misses: branch_target_buffer.miss_count(),

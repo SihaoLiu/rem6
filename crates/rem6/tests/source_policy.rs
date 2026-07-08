@@ -1010,6 +1010,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/cores/0/o3_runtime/commit/committed_inst_type/vector_float_misc",
         "/cores/0/o3_runtime/rob/allocations",
         "/cores/0/o3_runtime/rename/writes",
+        "/cores/0/o3_runtime/snapshot/rob/count",
+        "/cores/0/o3_runtime/snapshot/rename_map/entries",
         "/cores/0/o3_runtime/lsq/operation/load/latency/ticks",
         "/cores/0/o3_runtime/lsq/operation/load/forwarding_matches",
         "/cores/0/o3_runtime/lsq/ordering/acquire_release",

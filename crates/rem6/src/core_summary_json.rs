@@ -1,7 +1,9 @@
 use rem6_cpu::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetProvider, BranchTargetProviderCounts,
-    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3LoadStoreQueueKind, O3PhysicalRegisterId, O3RegisterClass, O3RuntimeFuLatencyClass,
+    O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
 };
+use rem6_memory::Address;
 
 use crate::{pipeline_stats::Rem6InOrderPipelineStageSummary, Rem6CoreSummary};
 
@@ -185,6 +187,90 @@ fn o3_runtime_rename_json(summary: &Rem6CoreSummary) -> String {
         "{{\"writes\":{},\"map_entries\":{}}}",
         summary.o3_runtime.rename_writes(),
         summary.o3_runtime.rename_map_entries()
+    )
+}
+
+fn o3_runtime_register_class_name(register_class: O3RegisterClass) -> &'static str {
+    match register_class {
+        O3RegisterClass::Integer => "integer",
+        O3RegisterClass::FloatingPoint => "floating_point",
+        O3RegisterClass::Vector => "vector",
+        O3RegisterClass::ConditionCode => "condition_code",
+        O3RegisterClass::Misc => "misc",
+    }
+}
+
+fn o3_runtime_lsq_kind_name(kind: O3LoadStoreQueueKind) -> &'static str {
+    match kind {
+        O3LoadStoreQueueKind::Load => "load",
+        O3LoadStoreQueueKind::Store => "store",
+    }
+}
+
+fn o3_runtime_address_json(address: Option<Address>) -> String {
+    address
+        .map(|address| format!("\"0x{:x}\"", address.get()))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn o3_runtime_physical_json(physical: Option<O3PhysicalRegisterId>) -> String {
+    physical
+        .map(|physical| physical.get().to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn o3_runtime_snapshot_json(summary: &Rem6CoreSummary) -> String {
+    let snapshot = &summary.o3_runtime_snapshot;
+    let rob_entries = snapshot
+        .reorder_buffer()
+        .iter()
+        .map(|entry| {
+            format!(
+                "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"destination\":{},\"ready\":{}}}",
+                entry.sequence(),
+                entry.pc().get(),
+                o3_runtime_physical_json(entry.destination()),
+                entry.is_ready()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let lsq_entries = snapshot
+        .load_store_queue()
+        .iter()
+        .map(|entry| {
+            format!(
+                "{{\"sequence\":{},\"kind\":\"{}\",\"address\":{},\"bytes\":{},\"completed\":{}}}",
+                entry.sequence(),
+                o3_runtime_lsq_kind_name(entry.kind()),
+                o3_runtime_address_json(entry.address()),
+                entry.bytes(),
+                entry.is_completed()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let rename_entries = snapshot
+        .rename_map()
+        .iter()
+        .map(|entry| {
+            format!(
+                "{{\"register_class\":\"{}\",\"architectural\":{},\"physical\":{}}}",
+                o3_runtime_register_class_name(entry.register_class()),
+                entry.architectural(),
+                entry.physical().get()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"rob\":{{\"count\":{},\"entries\":[{}]}},\"lsq\":{{\"count\":{},\"entries\":[{}]}},\"rename_map\":{{\"count\":{},\"entries\":[{}]}}}}",
+        snapshot.reorder_buffer().len(),
+        rob_entries,
+        snapshot.load_store_queue().len(),
+        lsq_entries,
+        snapshot.rename_map().len(),
+        rename_entries
     )
 }
 
@@ -548,8 +634,9 @@ impl Rem6CoreSummary {
             let rob = o3_runtime_rob_json(self);
             let rename = o3_runtime_rename_json(self);
             let lsq = o3_runtime_lsq_json(self);
+            let snapshot = o3_runtime_snapshot_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),
@@ -573,6 +660,7 @@ impl Rem6CoreSummary {
                 commit,
                 branch_event,
                 branch_repair,
+                snapshot,
                 self.o3_runtime.iew_predicted_taken_incorrect(),
                 self.o3_runtime.iew_predicted_not_taken_incorrect(),
                 self.o3_runtime.iew_producer_insts(),
