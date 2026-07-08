@@ -1275,6 +1275,18 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.write_reg(as0_base + AS_LOCKADDR_LO, 0x0000_6000);
     pio.write_reg(as0_base + AS_LOCKADDR_HI, 0x0000_0000);
     pio.record_address_space_snapshot("after_mmu_as0_register_writes", 0);
+    let as1_base = mmu_address_space_base(1);
+    for (offset, value) in [
+        (AS_TRANSTAB_LO, 0x0000_7007),
+        (AS_TRANSTAB_HI, 0x0000_0002),
+        (AS_MEMATTR_LO, 0xaa55_aa55),
+        (AS_MEMATTR_HI, 0x55aa_55aa),
+        (AS_LOCKADDR_LO, 0x0000_8000),
+        (AS_LOCKADDR_HI, 0x0000_0000),
+    ] {
+        pio.write_reg(as1_base + offset, value);
+    }
+    pio.record_address_space_snapshot("after_mmu_as1_register_writes", 1);
     let as0_command = MMU_AS0_BASE + AS_COMMAND;
     for command in [
         AS_COMMAND_NOP,
@@ -1286,6 +1298,9 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         AS_COMMAND_UNSUPPORTED_PROBE,
     ] {
         pio.write_reg(as0_command, command);
+    }
+    for command in [AS_COMMAND_UPDATE, AS_COMMAND_FLUSH_MEM] {
+        pio.write_reg(as1_base + AS_COMMAND, command);
     }
     pio.probe_register_faults();
     let contents = format!(
