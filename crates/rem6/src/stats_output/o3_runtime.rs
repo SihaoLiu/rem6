@@ -677,6 +677,20 @@ fn emit_o3_runtime_event_summary_stats(
         .iter()
         .map(|event| event.rename_writes())
         .sum::<u64>();
+    let lsq_loads = events.iter().map(|event| event.lsq_loads()).sum::<u64>();
+    let lsq_stores = events.iter().map(|event| event.lsq_stores()).sum::<u64>();
+    let mem_insts_issued = events
+        .iter()
+        .map(|event| event.lsq_loads().saturating_add(event.lsq_stores()))
+        .sum::<u64>();
+    let lsq_operation_load = events
+        .iter()
+        .filter(|event| event.lsq_operation() == O3RuntimeLsqOperation::Load)
+        .count() as u64;
+    let lsq_operation_store = events
+        .iter()
+        .filter(|event| event.lsq_operation() == O3RuntimeLsqOperation::Store)
+        .count() as u64;
     let iew_dependency_producers = events
         .iter()
         .map(|event| event.iew_dependency_producers())
@@ -733,14 +747,15 @@ fn emit_o3_runtime_event_summary_stats(
         ("rob.allocations", rob_allocations),
         ("rob.commits", rob_commits),
         ("rename.writes", rename_writes),
+        ("rob_allocations", rob_allocations),
+        ("rob_commits", rob_commits),
+        ("rename_writes", rename_writes),
+        ("lsq_loads", lsq_loads),
+        ("lsq_stores", lsq_stores),
+        ("lsq_operation_load", lsq_operation_load),
+        ("lsq_operation_store", lsq_operation_store),
         ("iq.insts_issued", records),
-        (
-            "iq.mem_insts_issued",
-            events
-                .iter()
-                .map(|event| event.lsq_loads().saturating_add(event.lsq_stores()))
-                .sum::<u64>(),
-        ),
+        ("iq.mem_insts_issued", mem_insts_issued),
         (
             "iq.branch_insts_issued",
             events.iter().filter(|event| event.branch_event()).count() as u64,
@@ -893,22 +908,10 @@ fn emit_o3_runtime_event_summary_stats(
         }
     }
     for (name, value) in [
-        (
-            "iq.issued_inst_type.mem_read",
-            events.iter().map(|event| event.lsq_loads()).sum::<u64>(),
-        ),
-        (
-            "iq.issued_inst_type.mem_write",
-            events.iter().map(|event| event.lsq_stores()).sum::<u64>(),
-        ),
-        (
-            "commit.committed_inst_type.mem_read",
-            events.iter().map(|event| event.lsq_loads()).sum::<u64>(),
-        ),
-        (
-            "commit.committed_inst_type.mem_write",
-            events.iter().map(|event| event.lsq_stores()).sum::<u64>(),
-        ),
+        ("iq.issued_inst_type.mem_read", lsq_loads),
+        ("iq.issued_inst_type.mem_write", lsq_stores),
+        ("commit.committed_inst_type.mem_read", lsq_loads),
+        ("commit.committed_inst_type.mem_write", lsq_stores),
     ] {
         increment_count_stat(
             stats,
