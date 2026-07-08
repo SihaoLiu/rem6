@@ -104,6 +104,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_branch_speculation_removed_youngers: u64,
     pub(crate) in_order_pipeline_branch_speculation_max_pending: u64,
     pub(crate) o3_runtime: O3RuntimeStats,
+    pub(crate) o3_runtime_execution_mode: Option<&'static str>,
     pub(crate) o3_runtime_snapshot: O3RuntimeSnapshot,
     pub(crate) branch_target_buffer_lookups: u64,
     pub(crate) branch_target_buffer_hits: u64,

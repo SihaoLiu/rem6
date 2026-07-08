@@ -6,7 +6,10 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::Register;
 use rem6_memory::CacheLineLayout;
-use rem6_system::{RiscvSyscallTraceRecord, RiscvSystemRun, RiscvSystemRunStopReason};
+use rem6_system::{
+    riscv_execution_mode_target_for_cpu, RiscvSyscallTraceRecord, RiscvSystemRun,
+    RiscvSystemRunStopReason,
+};
 use rem6_transport::MemoryTrace;
 
 use crate::data_access_counts::core_data_access_counts;
@@ -452,6 +455,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
                 .max_pending(),
             o3_runtime: core.o3_runtime_stats(),
+            o3_runtime_execution_mode: execution_mode_for_cpu(&inputs.host_actions, cpu),
             o3_runtime_snapshot: core.o3_runtime_checkpoint_payload().snapshot().clone(),
             branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
             branch_target_buffer_hits: branch_target_buffer.hit_count(),
@@ -662,6 +666,18 @@ fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
         }
     }
     committed
+}
+
+fn execution_mode_for_cpu(
+    host_actions: &Rem6HostActionSummary,
+    cpu: CpuId,
+) -> Option<&'static str> {
+    let target = riscv_execution_mode_target_for_cpu(cpu);
+    host_actions
+        .execution_modes
+        .iter()
+        .find(|mode| mode.target.as_str() == target.as_str())
+        .map(|mode| mode.mode)
 }
 
 fn data_access_probe_summary(

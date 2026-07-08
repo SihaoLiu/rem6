@@ -5,7 +5,9 @@ use rem6_cpu::{
 };
 use rem6_memory::Address;
 
-use crate::{pipeline_stats::Rem6InOrderPipelineStageSummary, Rem6CoreSummary};
+use crate::{
+    formatting::json_escape, pipeline_stats::Rem6InOrderPipelineStageSummary, Rem6CoreSummary,
+};
 
 fn branch_target_kind_counts_json(counts: BranchTargetKindCounts) -> String {
     branch_target_kind_counts_json_with_total(counts, counts.total())
@@ -622,6 +624,10 @@ impl Rem6CoreSummary {
             })
             .unwrap_or_default();
         let o3_runtime = if self.o3_runtime.has_activity() {
+            let execution_mode = self
+                .o3_runtime_execution_mode
+                .map(|mode| format!("\"{}\"", json_escape(mode)))
+                .unwrap_or_else(|| "null".to_string());
             let fu_latency_classes = o3_runtime_fu_latency_class_json(self);
             let lsq_data_latency = o3_runtime_lsq_data_latency_json(self);
             let lsq_operations = o3_runtime_lsq_operation_json(self);
@@ -636,7 +642,8 @@ impl Rem6CoreSummary {
             let lsq = o3_runtime_lsq_json(self);
             let snapshot = o3_runtime_snapshot_json(self);
             format!(
-                ",\"o3_runtime\":{{\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                execution_mode,
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),

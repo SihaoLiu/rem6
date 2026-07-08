@@ -809,6 +809,11 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
             .is_some_and(|instructions| instructions >= 8),
         "hart 1 O3 runtime should record detailed instructions: {core1_o3}"
     );
+    assert_eq!(
+        core1_o3.pointer("/execution_mode").and_then(Value::as_str),
+        Some("detailed"),
+        "hart 1 O3 runtime summary should expose detailed execution-mode authority: {core1_o3}"
+    );
 }
 
 #[test]
