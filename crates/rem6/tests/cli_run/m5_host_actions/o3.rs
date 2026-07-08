@@ -560,6 +560,23 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         Some("detailed"),
         "final execution-mode authority should keep hart 1 detailed: {execution_modes:?}"
     );
+    let execution_mode_switch = host_actions
+        .pointer("/execution_mode_switches/0")
+        .unwrap_or_else(|| panic!("missing detailed execution-mode switch: {host_actions}"));
+    assert_eq!(
+        execution_mode_switch
+            .pointer("/target")
+            .and_then(Value::as_str),
+        Some("cpu1"),
+        "execution-mode switch should target hart 1: {execution_mode_switch}"
+    );
+    assert_eq!(
+        execution_mode_switch
+            .pointer("/mode")
+            .and_then(Value::as_str),
+        Some("detailed"),
+        "execution-mode switch should enter detailed mode: {execution_mode_switch}"
+    );
 
     assert_eq!(
         host_actions
@@ -813,6 +830,16 @@ fn rem6_run_records_per_core_detailed_o3_mode_switch_authority() {
         core1_o3.pointer("/execution_mode").and_then(Value::as_str),
         Some("detailed"),
         "hart 1 O3 runtime summary should expose detailed execution-mode authority: {core1_o3}"
+    );
+    assert_eq!(
+        core1_o3.pointer("/stats_epoch"),
+        execution_mode_switch.pointer("/stats_epoch"),
+        "hart 1 O3 runtime summary should expose switch stats epoch authority: {core1_o3}"
+    );
+    assert_eq!(
+        core1_o3.pointer("/stats_reset_tick"),
+        execution_mode_switch.pointer("/stats_reset_tick"),
+        "hart 1 O3 runtime summary should expose switch stats reset tick authority: {core1_o3}"
     );
 }
 
@@ -1614,6 +1641,22 @@ fn rem6_run_m5_reset_stats_clears_detailed_o3_runtime_stats() {
         json.pointer("/host_actions/stats_reset_count")
             .and_then(Value::as_u64),
         Some(1)
+    );
+    let stats_reset = json
+        .pointer("/host_actions/stats_resets/0")
+        .unwrap_or_else(|| panic!("missing stats reset action: {json}"));
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("missing post-reset O3 runtime summary: {json}"));
+    assert_eq!(
+        o3_runtime.pointer("/stats_epoch"),
+        stats_reset.pointer("/epoch"),
+        "O3 runtime summary should expose the current stats reset epoch: {o3_runtime}"
+    );
+    assert_eq!(
+        o3_runtime.pointer("/stats_reset_tick"),
+        stats_reset.pointer("/tick"),
+        "O3 runtime summary should expose the current stats reset tick: {o3_runtime}"
     );
     assert_json_stat(&json, "sim.cpu0.o3.instructions", "Count", 2, "monotonic");
     assert_json_stat(

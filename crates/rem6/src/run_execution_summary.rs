@@ -150,6 +150,7 @@ pub(super) fn execution_summary(
     let mut data_load_bytes = 0;
     let mut data_store_bytes = 0;
     let mut data_atomic_bytes = 0;
+    let o3_runtime_stats_reset = o3_runtime_stats_reset_for_run(&inputs.host_actions);
     for cpu_index in 0..inputs.core_count {
         let cpu = CpuId::new(cpu_index);
         let core = cluster.core(cpu).map_err(execute_error)?;
@@ -456,6 +457,8 @@ pub(super) fn execution_summary(
                 .max_pending(),
             o3_runtime: core.o3_runtime_stats(),
             o3_runtime_execution_mode: execution_mode_for_cpu(&inputs.host_actions, cpu),
+            o3_runtime_stats_epoch: o3_runtime_stats_reset.0,
+            o3_runtime_stats_reset_tick: o3_runtime_stats_reset.1,
             o3_runtime_checkpoint_restore: o3_runtime_checkpoint_restore_for_cpu(
                 &inputs.host_actions,
                 cpu,
@@ -682,6 +685,14 @@ fn execution_mode_for_cpu(
         .iter()
         .find(|mode| mode.target.as_str() == target.as_str())
         .map(|mode| mode.mode)
+}
+
+fn o3_runtime_stats_reset_for_run(host_actions: &Rem6HostActionSummary) -> (u64, u64) {
+    host_actions
+        .stats_resets
+        .last()
+        .map(|reset| (reset.epoch, reset.tick))
+        .unwrap_or((0, 0))
 }
 
 fn o3_runtime_checkpoint_restore_for_cpu(
