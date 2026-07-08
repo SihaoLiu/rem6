@@ -697,6 +697,14 @@ fn emit_o3_runtime_event_summary_stats(
         .sum::<u64>();
     let lsq_loads = events.iter().map(|event| event.lsq_loads()).sum::<u64>();
     let lsq_stores = events.iter().map(|event| event.lsq_stores()).sum::<u64>();
+    let lsq_load_bytes = events
+        .iter()
+        .map(|event| event.lsq_load_bytes())
+        .sum::<u64>();
+    let lsq_store_bytes = events
+        .iter()
+        .map(|event| event.lsq_store_bytes())
+        .sum::<u64>();
     let lsq_store_conditional_failures = events
         .iter()
         .filter(|event| event.lsq_store_conditional_failed())
@@ -819,6 +827,18 @@ fn emit_o3_runtime_event_summary_stats(
         increment_count_stat(
             stats,
             format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+    for (name, value) in [
+        ("lsq_load_bytes", lsq_load_bytes),
+        ("lsq_store_bytes", lsq_store_bytes),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            "Byte",
+            StatResetPolicy::Monotonic,
             value,
         )?;
     }
