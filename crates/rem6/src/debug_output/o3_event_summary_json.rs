@@ -239,7 +239,7 @@ impl O3EventSummaryBranchEvent {
     }
 }
 
-pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> String {
     let records = events.len() as u64;
     let first_tick = events.first().map_or(0, |event| event.tick());
     let last_tick = events.last().map_or(0, |event| event.tick());

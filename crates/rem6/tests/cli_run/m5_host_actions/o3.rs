@@ -8,6 +8,8 @@ mod branch_multicore;
 mod lsq;
 #[path = "o3/restore.rs"]
 mod restore;
+#[path = "o3/runtime.rs"]
+mod runtime;
 #[path = "o3/switch.rs"]
 mod switch;
 
