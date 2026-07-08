@@ -170,20 +170,22 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
         if let Some(insts_to_commit) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.insts_to_commit"))
         {
-            append_derived_count_stat_if_absent(
+            append_gem5_o3_iew_total_alias_stats(
                 output,
                 snapshot,
-                &format!("{alias_prefix}.iew.instsToCommit::total"),
+                &alias_prefix,
+                "instsToCommit",
                 insts_to_commit,
             );
         }
         if let Some(writeback_count) =
             snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.writeback_count"))
         {
-            append_derived_count_stat_if_absent(
+            append_gem5_o3_iew_total_alias_stats(
                 output,
                 snapshot,
-                &format!("{alias_prefix}.iew.writebackCount::total"),
+                &alias_prefix,
+                "writebackCount",
                 writeback_count,
             );
             if let Some(cycles) = snapshot_value(snapshot, &format!("{alias_prefix}.numCycles")) {
@@ -198,18 +200,20 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
         let producer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.producer_inst"));
         let consumer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.consumer_inst"));
         if let Some(producer_inst) = producer_inst {
-            append_derived_count_stat_if_absent(
+            append_gem5_o3_iew_total_alias_stats(
                 output,
                 snapshot,
-                &format!("{alias_prefix}.iew.producerInst::total"),
+                &alias_prefix,
+                "producerInst",
                 producer_inst,
             );
         }
         if let Some(consumer_inst) = consumer_inst {
-            append_derived_count_stat_if_absent(
+            append_gem5_o3_iew_total_alias_stats(
                 output,
                 snapshot,
-                &format!("{alias_prefix}.iew.consumerInst::total"),
+                &alias_prefix,
+                "consumerInst",
                 consumer_inst,
             );
         }
@@ -221,6 +225,23 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 consumer_inst,
             );
         }
+    }
+}
+
+fn append_gem5_o3_iew_total_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_prefix: &str,
+    alias_name: &str,
+    value: u64,
+) {
+    for suffix in [".total", "::total"] {
+        append_derived_count_stat_if_absent(
+            output,
+            snapshot,
+            &format!("{alias_prefix}.iew.{alias_name}{suffix}"),
+            value,
+        );
     }
 }
 

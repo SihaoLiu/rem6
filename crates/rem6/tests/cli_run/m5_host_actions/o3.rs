@@ -3932,9 +3932,13 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.dispatchedInsts", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispLoadInsts", 1);
     assert_text_count_stat(&stdout, "system.cpu.iew.dispStoreInsts", 1);
+    assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit.total", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.instsToCommit::total", 6);
+    assert_text_count_stat(&stdout, "system.cpu.iew.writebackCount.total", 6);
     assert_text_count_stat(&stdout, "system.cpu.iew.writebackCount::total", 6);
+    assert_text_count_stat(&stdout, "system.cpu.iew.producerInst.total", 3);
     assert_text_count_stat(&stdout, "system.cpu.iew.producerInst::total", 3);
+    assert_text_count_stat(&stdout, "system.cpu.iew.consumerInst.total", 4);
     assert_text_count_stat(&stdout, "system.cpu.iew.consumerInst::total", 4);
     let writeback_count = text_stat_u64(&stdout, "system.cpu.iew.writebackCount::total");
     let cycles = text_stat_u64(&stdout, "system.cpu.numCycles");
@@ -4345,12 +4349,16 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "system.cpu.iew.dispatchedInsts",
         "system.cpu.iew.dispLoadInsts",
         "system.cpu.iew.dispStoreInsts",
+        "system.cpu.iew.instsToCommit.total",
         "system.cpu.iew.instsToCommit::total",
         "sim.cpu0.o3.iew.writeback_count",
         "sim.cpu0.o3.iew.producer_inst",
         "sim.cpu0.o3.iew.consumer_inst",
+        "system.cpu.iew.writebackCount.total",
         "system.cpu.iew.writebackCount::total",
+        "system.cpu.iew.producerInst.total",
         "system.cpu.iew.producerInst::total",
+        "system.cpu.iew.consumerInst.total",
         "system.cpu.iew.consumerInst::total",
         "system.cpu.iew.wbRate",
         "system.cpu.iew.wbFanout",
