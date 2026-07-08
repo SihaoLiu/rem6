@@ -267,6 +267,10 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
         .sum::<u64>();
     let lsq_loads = events.iter().map(|event| event.lsq_loads()).sum::<u64>();
     let lsq_stores = events.iter().map(|event| event.lsq_stores()).sum::<u64>();
+    let lsq_store_conditional_failures = events
+        .iter()
+        .filter(|event| event.lsq_store_conditional_failed())
+        .count() as u64;
     let lsq_operation_load = events
         .iter()
         .filter(|event| event.lsq_operation() == O3RuntimeLsqOperation::Load)
@@ -302,7 +306,7 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let rename = format!("{{\"writes\":{rename_writes},\"map_entries\":{max_rename_map_entries}}}");
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"event_window\":{event_window},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"branch_direction_mismatch\":{branch_direction_mismatch},\"branch_target_mismatch\":{branch_target_mismatch},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"event_window\":{event_window},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_store_conditional_failures\":{lsq_store_conditional_failures},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"branch_direction_mismatch\":{branch_direction_mismatch},\"branch_target_mismatch\":{branch_target_mismatch},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         span_ticks,
         lsq_forwarding.candidates,
         lsq_forwarding.matches,

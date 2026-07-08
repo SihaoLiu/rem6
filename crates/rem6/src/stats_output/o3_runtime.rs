@@ -697,6 +697,10 @@ fn emit_o3_runtime_event_summary_stats(
         .sum::<u64>();
     let lsq_loads = events.iter().map(|event| event.lsq_loads()).sum::<u64>();
     let lsq_stores = events.iter().map(|event| event.lsq_stores()).sum::<u64>();
+    let lsq_store_conditional_failures = events
+        .iter()
+        .filter(|event| event.lsq_store_conditional_failed())
+        .count() as u64;
     let mem_insts_issued = events
         .iter()
         .map(|event| event.lsq_loads().saturating_add(event.lsq_stores()))
@@ -782,6 +786,10 @@ fn emit_o3_runtime_event_summary_stats(
         ("rename_writes", rename_writes),
         ("lsq_loads", lsq_loads),
         ("lsq_stores", lsq_stores),
+        (
+            "lsq_store_conditional_failures",
+            lsq_store_conditional_failures,
+        ),
         ("lsq_operation_load", lsq_operation_load),
         ("lsq_operation_store", lsq_operation_store),
         ("iq.insts_issued", records),

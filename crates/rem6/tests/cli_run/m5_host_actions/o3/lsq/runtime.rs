@@ -492,6 +492,66 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
     }
 }
 
+#[test]
+fn rem6_run_o3_runtime_json_exposes_event_summary_store_conditional_failures() {
+    let path = detailed_o3_store_conditional_failure_binary(
+        "m5-switch-cpu-detailed-o3-event-summary-store-conditional-failures",
+    );
+    let json = o3_lsq_debug_runtime_json(&path, "180");
+    let runtime_summary = json
+        .pointer("/cores/0/o3_runtime/event_summary")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {json}"));
+    let debug_summary = json
+        .pointer("/debug/o3_trace/0/event_summary")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
+    let debug_events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("O3 debug trace should expose events: {json}"));
+    let failed_store_conditional_events = debug_events
+        .iter()
+        .filter(|event| {
+            event.pointer("/lsq_operation").and_then(Value::as_str) == Some("store_conditional")
+                && event
+                    .pointer("/lsq_store_conditional_failed")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })
+        .count() as u64;
+
+    for summary in [runtime_summary, debug_summary] {
+        assert_eq!(
+            summary
+                .pointer("/lsq_store_conditional_failures")
+                .and_then(Value::as_u64),
+            Some(failed_store_conditional_events),
+            "event summary should count failed store-conditionals: {summary}"
+        );
+    }
+    assert_eq!(
+        failed_store_conditional_events, 1,
+        "debug events should expose exactly one failed store-conditional: {debug_events:?}"
+    );
+    assert!(
+        debug_events.iter().all(|event| {
+            event
+                .pointer("/lsq_store_conditional_failed")
+                .and_then(Value::as_bool)
+                != Some(true)
+                || event.pointer("/lsq_operation").and_then(Value::as_str)
+                    == Some("store_conditional")
+        }),
+        "only store-conditional events should be flagged as failed: {debug_events:?}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.event_summary.lsq_store_conditional_failures",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
 fn ordered_atomic_lsq_runtime_json(
     path: &Path,
     memory_system: Option<&str>,
