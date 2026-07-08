@@ -1191,8 +1191,39 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
     );
     assert_json_stat_prefix_absent(&json, "sim.host_actions.checkpoint_restore.target.cpu0.");
 
-    let runtime_restore = json
-        .pointer("/cores/1/o3_runtime/checkpoint_restore")
+    let runtime_o3 = json
+        .pointer("/cores/1/o3_runtime")
+        .unwrap_or_else(|| panic!("missing CPU1 O3 runtime metadata: {json}"));
+    assert_eq!(
+        runtime_o3
+            .pointer("/execution_mode")
+            .and_then(Value::as_str),
+        Some("detailed"),
+        "CPU1 O3 runtime should preserve restored detailed execution mode: {runtime_o3}"
+    );
+    for (pointer, stat_path, unit) in [
+        ("/stats_epoch", "sim.cpu1.o3.stats_epoch", "Count"),
+        ("/stats_reset_tick", "sim.cpu1.o3.stats_reset_tick", "Tick"),
+    ] {
+        let expected = runtime_o3
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing O3 runtime metadata lane {pointer}: {runtime_o3}"));
+        assert_json_stat(&json, stat_path, unit, expected, "monotonic");
+    }
+    for (stat_path, expected) in [
+        ("sim.cpu1.o3.execution_mode.functional", 0),
+        ("sim.cpu1.o3.execution_mode.timing", 0),
+        ("sim.cpu1.o3.execution_mode.detailed", 1),
+    ] {
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
+    assert_json_stat_absent(&json, "sim.cpu0.o3.stats_reset_tick");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.stats_epoch");
+    assert_json_stat_prefix_absent(&json, "sim.cpu0.o3.execution_mode.");
+
+    let runtime_restore = runtime_o3
+        .pointer("/checkpoint_restore")
         .unwrap_or_else(|| panic!("missing CPU1 O3 runtime restore metadata: {json}"));
     for (pointer, stat_path, unit) in [
         ("/tick", "sim.cpu1.o3.checkpoint_restore.tick", "Tick"),

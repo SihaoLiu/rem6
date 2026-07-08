@@ -964,6 +964,43 @@ pub(super) fn emit_o3_runtime_stats(
         return Ok(());
     }
 
+    increment_count_stat(
+        stats,
+        format!("sim.cpu{}.o3.stats_epoch", core.cpu),
+        core.o3_runtime_stats_epoch,
+    )?;
+    increment_stat(
+        stats,
+        &format!("sim.cpu{}.o3.stats_reset_tick", core.cpu),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        core.o3_runtime_stats_reset_tick,
+    )?;
+    for mode in EXECUTION_MODE_STAT_LANES {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{}.o3.execution_mode.{mode}", core.cpu),
+            if core.o3_runtime_execution_mode == Some(mode) {
+                1
+            } else {
+                0
+            },
+        )?;
+    }
+    if let Some(mode) = core.o3_runtime_execution_mode {
+        if !EXECUTION_MODE_STAT_LANES.contains(&mode) {
+            increment_count_stat(
+                stats,
+                format!(
+                    "sim.cpu{}.o3.execution_mode.{}",
+                    core.cpu,
+                    stat_path_segment(mode)
+                ),
+                1,
+            )?;
+        }
+    }
+
     for (name, value) in [
         ("instructions", o3.instructions()),
         ("rob_allocations", o3.rob_allocations()),
