@@ -379,6 +379,27 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
+    if let Some(checkpoint) = summary.checkpoints.last() {
+        for (name, unit, value) in [
+            ("latest_tick", "Tick", checkpoint.tick),
+            ("latest_manifest_tick", "Tick", checkpoint.manifest_tick),
+            (
+                "latest_component_count",
+                "Count",
+                checkpoint.component_count,
+            ),
+            ("latest_chunk_count", "Count", checkpoint.chunk_count),
+            ("latest_payload_bytes", "Byte", checkpoint.payload_bytes),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.checkpoint.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
             stats,

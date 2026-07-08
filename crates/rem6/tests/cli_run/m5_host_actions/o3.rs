@@ -3502,6 +3502,47 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
         replayed, mutated,
         "restoring the earlier O3 checkpoint should replay deterministic detailed work"
     );
+    let latest_checkpoint = host_actions
+        .pointer("/checkpoints/2")
+        .unwrap_or_else(|| panic!("missing replayed O3 checkpoint detail: {host_actions}"));
+    for (stat_path, unit, artifact_pointer) in [
+        ("sim.host_actions.checkpoint.latest_tick", "Tick", "/tick"),
+        (
+            "sim.host_actions.checkpoint.latest_manifest_tick",
+            "Tick",
+            "/manifest_tick",
+        ),
+        (
+            "sim.host_actions.checkpoint.latest_component_count",
+            "Count",
+            "/component_count",
+        ),
+        (
+            "sim.host_actions.checkpoint.latest_chunk_count",
+            "Count",
+            "/chunk_count",
+        ),
+        (
+            "sim.host_actions.checkpoint.latest_payload_bytes",
+            "Byte",
+            "/payload_bytes",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            unit,
+            latest_checkpoint
+                .pointer(artifact_pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "latest checkpoint should expose {artifact_pointer}: {latest_checkpoint}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
     assert_json_stat(
         &json,
         "sim.host_actions.checkpoints",
