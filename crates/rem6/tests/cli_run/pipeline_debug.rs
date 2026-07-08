@@ -364,6 +364,325 @@ fn rem6_run_stats_emit_multicore_in_order_pipeline_aliases_after_existing_stage_
 }
 
 #[test]
+fn rem6_run_pipeline_debug_stats_emit_multicore_cpu_scoped_stall_cause_matrices() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    program.extend_from_slice(&[0; 16]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-debug-multicore-cpu-stall-cause-matrix", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
+
+    let mut records_by_cpu = BTreeMap::<u64, u64>::new();
+    let mut cycles_by_cpu_stage = BTreeMap::<(u64, String), u64>::new();
+    let mut stage_resource_cycles_by_cpu_stage = BTreeMap::<(u64, String), u64>::new();
+    let mut cycles_by_stage = BTreeMap::<String, u64>::new();
+    for record in trace {
+        let cpu = record
+            .get("cpu")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing pipeline trace CPU: {record}"));
+        let mut stage_present = BTreeSet::<String>::new();
+        for blocked in record_array(record, "resource_blocked") {
+            let stage = blocked
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing blocked instruction stage: {blocked}"));
+            stage_present.insert(stat_path_segment(stage));
+        }
+        for stage in &stage_present {
+            *stage_resource_cycles_by_cpu_stage
+                .entry((cpu, stage.clone()))
+                .or_default() += 1;
+        }
+        if record.get("stall_cause").and_then(Value::as_str) != Some("data_wait") {
+            continue;
+        }
+        *records_by_cpu.entry(cpu).or_default() += 1;
+        let stall_cycles = json_record_u64(record, "stall_cycles");
+        for stage in stage_present {
+            *cycles_by_cpu_stage.entry((cpu, stage.clone())).or_default() += stall_cycles;
+            *cycles_by_stage.entry(stage).or_default() += stall_cycles;
+        }
+    }
+
+    for cpu in [0, 1] {
+        let records = records_by_cpu
+            .get(&cpu)
+            .copied()
+            .unwrap_or_else(|| panic!("missing CPU{cpu} data_wait records: {trace:?}"));
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.cpu.cpu{cpu}.stall_cause.data_wait.records"),
+            "Count",
+            records,
+            "monotonic",
+        );
+        assert!(
+            cycles_by_cpu_stage
+                .keys()
+                .any(|(sample_cpu, _)| *sample_cpu == cpu),
+            "CPU{cpu} should expose data_wait stage-cycle debug stats: {cycles_by_cpu_stage:?}"
+        );
+    }
+
+    for ((cpu, stage), cycles) in cycles_by_cpu_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.cpu.cpu{cpu}.stall_cause.data_wait.stage.{stage}.resource_blocked_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.cpu.cpu{cpu}.stage.{stage}.resource_blocked_cycles"),
+            "Cycle",
+            *stage_resource_cycles_by_cpu_stage
+                .get(&(cpu, stage.clone()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing CPU{cpu} generic stage resource cycles for {stage}: {stage_resource_cycles_by_cpu_stage:?}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
+    for (stage, cycles) in cycles_by_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.stall_cause.data_wait.stage.{stage}.resource_blocked_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
+fn rem6_run_pipeline_debug_stats_emit_multicore_cpu_scoped_flush_redirect_matrices() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        b_type(8, 5, 5, 0x0),       // beq x5, x5, target
+        i_type(9, 0, 0x0, 6, 0x13), // addi x6, x0, 9
+        i_type(7, 0, 0x0, 7, 0x13), // target: addi x7, x0, 7
+        0x0000_0073,                // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-debug-multicore-cpu-flush-redirect-matrix", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--cores",
+            "2",
+            "--riscv-branch-lookahead",
+            "2",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    assert_pipeline_summary_matches_trace(&json);
+
+    let mut flush_records_by_cpu = BTreeMap::<u64, u64>::new();
+    let mut redirect_records_by_cpu = BTreeMap::<u64, u64>::new();
+    let mut flush_cycles_by_cpu_stage = BTreeMap::<(u64, String), u64>::new();
+    let mut redirect_cycles_by_cpu_stage = BTreeMap::<(u64, String), u64>::new();
+    let mut stage_branch_cycles_by_cpu_stage = BTreeMap::<(u64, String), u64>::new();
+    let mut flush_cycles_by_stage = BTreeMap::<String, u64>::new();
+    let mut redirect_cycles_by_stage = BTreeMap::<String, u64>::new();
+    for record in trace {
+        let cpu = record
+            .get("cpu")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing pipeline trace CPU: {record}"));
+        let mut stage_present = BTreeSet::<String>::new();
+        for flushed in record_array(record, "flushed") {
+            let stage = flushed
+                .get("stage")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing flushed instruction stage: {flushed}"));
+            stage_present.insert(stat_path_segment(stage));
+        }
+        if record.get("flush_cause").and_then(Value::as_str) == Some("branch_prediction") {
+            *flush_records_by_cpu.entry(cpu).or_default() += 1;
+            for stage in &stage_present {
+                *flush_cycles_by_cpu_stage
+                    .entry((cpu, stage.clone()))
+                    .or_default() += 1;
+                *stage_branch_cycles_by_cpu_stage
+                    .entry((cpu, stage.clone()))
+                    .or_default() += 1;
+                *flush_cycles_by_stage.entry(stage.clone()).or_default() += 1;
+            }
+        }
+        if record.get("redirect_cause").and_then(Value::as_str) == Some("branch_prediction") {
+            *redirect_records_by_cpu.entry(cpu).or_default() += 1;
+            for stage in stage_present {
+                *redirect_cycles_by_cpu_stage
+                    .entry((cpu, stage.clone()))
+                    .or_default() += 1;
+                *redirect_cycles_by_stage.entry(stage).or_default() += 1;
+            }
+        }
+    }
+
+    for cpu in [0, 1] {
+        let flush_records = flush_records_by_cpu
+            .get(&cpu)
+            .copied()
+            .unwrap_or_else(|| panic!("missing CPU{cpu} branch flush records: {trace:?}"));
+        let redirect_records = redirect_records_by_cpu
+            .get(&cpu)
+            .copied()
+            .unwrap_or_else(|| panic!("missing CPU{cpu} branch redirect records: {trace:?}"));
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.cpu.cpu{cpu}.flush_cause.branch_prediction.records"),
+            "Count",
+            flush_records,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.cpu.cpu{cpu}.redirect_cause.branch_prediction.records"
+            ),
+            "Count",
+            redirect_records,
+            "monotonic",
+        );
+    }
+
+    for ((cpu, stage), cycles) in flush_cycles_by_cpu_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.cpu.cpu{cpu}.flush_cause.branch_prediction.stage.{stage}.flushed_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.cpu.cpu{cpu}.stage.{stage}.branch_prediction_flushed_cycles"
+            ),
+            "Cycle",
+            *stage_branch_cycles_by_cpu_stage
+                .get(&(cpu, stage.clone()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing CPU{cpu} generic branch-flush stage cycles for {stage}: {stage_branch_cycles_by_cpu_stage:?}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
+    for ((cpu, stage), cycles) in redirect_cycles_by_cpu_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.cpu.cpu{cpu}.redirect_cause.branch_prediction.stage.{stage}.flushed_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
+    for (stage, cycles) in flush_cycles_by_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.flush_cause.branch_prediction.stage.{stage}.flushed_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
+    for (stage, cycles) in redirect_cycles_by_stage {
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.debug.pipeline_trace.redirect_cause.branch_prediction.stage.{stage}.flushed_cycles"
+            ),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug_flag() {
     let program = riscv64_program(&[
         i_type(97, 0, 0x0, 11, 0x13),        // addi x11, x0, 97

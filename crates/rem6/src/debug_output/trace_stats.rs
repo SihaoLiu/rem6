@@ -716,6 +716,16 @@ pub(super) fn pipeline_trace_stats(
     let mut redirect_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     let mut redirect_cause_stages =
         BTreeMap::<(&str, String), PipelineStageFlushTraceStatSummary>::new();
+    let mut cpu_stages = BTreeMap::<(u32, String), PipelineStageTraceStatSummary>::new();
+    let mut cpu_stall_causes = BTreeMap::<(u32, &str), PipelineTraceStatSummary>::new();
+    let mut cpu_stall_cause_stages =
+        BTreeMap::<(u32, &str, String), PipelineStageResourceTraceStatSummary>::new();
+    let mut cpu_flush_causes = BTreeMap::<(u32, &str), PipelineTraceStatSummary>::new();
+    let mut cpu_flush_cause_stages =
+        BTreeMap::<(u32, &str, String), PipelineStageFlushTraceStatSummary>::new();
+    let mut cpu_redirect_causes = BTreeMap::<(u32, &str), PipelineTraceStatSummary>::new();
+    let mut cpu_redirect_cause_stages =
+        BTreeMap::<(u32, &str, String), PipelineStageFlushTraceStatSummary>::new();
     for record in records {
         cpus.entry(record.cpu).or_default().add_record(record);
         states
@@ -733,6 +743,10 @@ pub(super) fn pipeline_trace_stats(
                 .entry(stage.clone())
                 .or_default()
                 .add_before_in_flight(*before_in_flight, 1);
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
+                .or_default()
+                .add_before_in_flight(*before_in_flight, 1);
         }
         let mut stage_after_in_flight = BTreeMap::<String, u64>::new();
         for instruction in &record.after_in_flight {
@@ -743,6 +757,10 @@ pub(super) fn pipeline_trace_stats(
         for (stage, after_in_flight) in &stage_after_in_flight {
             stages
                 .entry(stage.clone())
+                .or_default()
+                .add_after_in_flight(*after_in_flight, 1);
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
                 .or_default()
                 .add_after_in_flight(*after_in_flight, 1);
         }
@@ -763,6 +781,10 @@ pub(super) fn pipeline_trace_stats(
                 *retired,
                 u64::from(*retired > 0),
             );
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
+                .or_default()
+                .add_advanced(*advanced, 1, *retired, u64::from(*retired > 0));
         }
         let mut stage_resource_blocked = BTreeMap::<String, u64>::new();
         for instruction in &record.resource_blocked {
@@ -773,6 +795,10 @@ pub(super) fn pipeline_trace_stats(
         for (stage, resource_blocked) in &stage_resource_blocked {
             stages
                 .entry(stage.clone())
+                .or_default()
+                .add_resource_blocked(*resource_blocked, 1);
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
                 .or_default()
                 .add_resource_blocked(*resource_blocked, 1);
         }
@@ -787,6 +813,10 @@ pub(super) fn pipeline_trace_stats(
                 .entry(stage.clone())
                 .or_default()
                 .add_ordering_blocked(*ordering_blocked, 1);
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
+                .or_default()
+                .add_ordering_blocked(*ordering_blocked, 1);
         }
         let mut stage_flushed = BTreeMap::<String, u64>::new();
         for instruction in &record.flushed {
@@ -799,12 +829,20 @@ pub(super) fn pipeline_trace_stats(
                 .entry(stage.clone())
                 .or_default()
                 .add_flushed(*flushed, 1);
+            cpu_stages
+                .entry((record.cpu, stage.clone()))
+                .or_default()
+                .add_flushed(*flushed, 1);
         }
         match record.flush_cause {
             Some("branch_prediction") => {
                 for (stage, flushed) in &stage_flushed {
                     stages
                         .entry(stage.clone())
+                        .or_default()
+                        .add_branch_prediction_flushed(*flushed, 1);
+                    cpu_stages
+                        .entry((record.cpu, stage.clone()))
                         .or_default()
                         .add_branch_prediction_flushed(*flushed, 1);
                 }
@@ -815,6 +853,10 @@ pub(super) fn pipeline_trace_stats(
                         .entry(stage.clone())
                         .or_default()
                         .add_trap_redirect_flushed(*flushed, 1);
+                    cpu_stages
+                        .entry((record.cpu, stage.clone()))
+                        .or_default()
+                        .add_trap_redirect_flushed(*flushed, 1);
                 }
             }
             Some("interrupt_redirect") => {
@@ -823,12 +865,20 @@ pub(super) fn pipeline_trace_stats(
                         .entry(stage.clone())
                         .or_default()
                         .add_interrupt_redirect_flushed(*flushed, 1);
+                    cpu_stages
+                        .entry((record.cpu, stage.clone()))
+                        .or_default()
+                        .add_interrupt_redirect_flushed(*flushed, 1);
                 }
             }
             Some(_) | None => {}
         }
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
+            cpu_stall_causes
+                .entry((record.cpu, cause))
+                .or_default()
+                .add_record(record);
             let stall_stages = stage_resource_blocked
                 .keys()
                 .chain(stage_ordering_blocked.keys())
@@ -852,22 +902,55 @@ pub(super) fn pipeline_trace_stats(
                         u64::from(stage_ordering_blocked.contains_key(&stage))
                             .saturating_mul(record.stall_cycles),
                     );
+                cpu_stall_cause_stages
+                    .entry((record.cpu, cause, stage.clone()))
+                    .or_default()
+                    .add_record(
+                        stage_resource_blocked
+                            .get(&stage)
+                            .copied()
+                            .unwrap_or_default(),
+                        u64::from(stage_resource_blocked.contains_key(&stage))
+                            .saturating_mul(record.stall_cycles),
+                        stage_ordering_blocked
+                            .get(&stage)
+                            .copied()
+                            .unwrap_or_default(),
+                        u64::from(stage_ordering_blocked.contains_key(&stage))
+                            .saturating_mul(record.stall_cycles),
+                    );
             }
         }
         if let Some(cause) = record.flush_cause {
             flush_causes.entry(cause).or_default().add_record(record);
+            cpu_flush_causes
+                .entry((record.cpu, cause))
+                .or_default()
+                .add_record(record);
             for (stage, flushed) in &stage_flushed {
                 flush_cause_stages
                     .entry((cause, stage.clone()))
+                    .or_default()
+                    .add_record(*flushed, 1);
+                cpu_flush_cause_stages
+                    .entry((record.cpu, cause, stage.clone()))
                     .or_default()
                     .add_record(*flushed, 1);
             }
         }
         if let Some(cause) = record.redirect_cause {
             redirect_causes.entry(cause).or_default().add_record(record);
+            cpu_redirect_causes
+                .entry((record.cpu, cause))
+                .or_default()
+                .add_record(record);
             for (stage, flushed) in &stage_flushed {
                 redirect_cause_stages
                     .entry((cause, stage.clone()))
+                    .or_default()
+                    .add_record(*flushed, 1);
+                cpu_redirect_cause_stages
+                    .entry((record.cpu, cause, stage.clone()))
                     .or_default()
                     .add_record(*flushed, 1);
             }
@@ -918,6 +1001,54 @@ pub(super) fn pipeline_trace_stats(
         summary.push_stats(
             &mut stats,
             &format!("redirect_cause.{}.stage.{stage}", stat_path_segment(cause)),
+        );
+    }
+    for ((cpu, stage), summary) in cpu_stages {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}.stage.{stage}"));
+    }
+    for ((cpu, cause), summary) in cpu_stall_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("cpu.cpu{cpu}.stall_cause.{}", stat_path_segment(cause)),
+        );
+    }
+    for ((cpu, cause, stage), summary) in cpu_stall_cause_stages {
+        summary.push_stats(
+            &mut stats,
+            &format!(
+                "cpu.cpu{cpu}.stall_cause.{}.stage.{stage}",
+                stat_path_segment(cause)
+            ),
+        );
+    }
+    for ((cpu, cause), summary) in cpu_flush_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("cpu.cpu{cpu}.flush_cause.{}", stat_path_segment(cause)),
+        );
+    }
+    for ((cpu, cause, stage), summary) in cpu_flush_cause_stages {
+        summary.push_stats(
+            &mut stats,
+            &format!(
+                "cpu.cpu{cpu}.flush_cause.{}.stage.{stage}",
+                stat_path_segment(cause)
+            ),
+        );
+    }
+    for ((cpu, cause), summary) in cpu_redirect_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("cpu.cpu{cpu}.redirect_cause.{}", stat_path_segment(cause)),
+        );
+    }
+    for ((cpu, cause, stage), summary) in cpu_redirect_cause_stages {
+        summary.push_stats(
+            &mut stats,
+            &format!(
+                "cpu.cpu{cpu}.redirect_cause.{}.stage.{stage}",
+                stat_path_segment(cause)
+            ),
         );
     }
     stats
