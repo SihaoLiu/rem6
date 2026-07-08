@@ -417,6 +417,149 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
+    if let Some(switch) = summary.execution_mode_switches.last() {
+        for (name, unit, value) in [
+            ("latest_tick", "Tick", switch.tick),
+            ("latest_event", "Count", switch.event),
+            ("latest_source", "Count", u64::from(switch.source)),
+            ("latest_stats_epoch", "Count", switch.stats_epoch),
+            ("latest_stats_reset_tick", "Tick", switch.stats_reset_tick),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_switch.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_switch.latest_mode.{mode}"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                if switch.mode == mode { 1 } else { 0 },
+            )?;
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_switch.latest_previous_mode.{mode}"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                if switch.previous_mode == Some(mode) {
+                    1
+                } else {
+                    0
+                },
+            )?;
+        }
+        if !EXECUTION_MODE_STAT_LANES.contains(&switch.mode) {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch.latest_mode.{}",
+                    switch.mode
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                1,
+            )?;
+        }
+        match switch.previous_mode {
+            Some(previous_mode) => {
+                if !EXECUTION_MODE_STAT_LANES.contains(&previous_mode) {
+                    increment_stat(
+                        stats,
+                        &format!(
+                            "sim.host_actions.execution_mode_switch.latest_previous_mode.{previous_mode}"
+                        ),
+                        "Count",
+                        StatResetPolicy::Monotonic,
+                        1,
+                    )?;
+                }
+                increment_stat(
+                    stats,
+                    "sim.host_actions.execution_mode_switch.latest_previous_mode.none",
+                    "Count",
+                    StatResetPolicy::Monotonic,
+                    0,
+                )?;
+            }
+            None => {
+                increment_stat(
+                    stats,
+                    "sim.host_actions.execution_mode_switch.latest_previous_mode.none",
+                    "Count",
+                    StatResetPolicy::Monotonic,
+                    1,
+                )?;
+            }
+        }
+        let target = stat_path_segment(&switch.target);
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.latest_target.{target}.mode.{}",
+                switch.mode
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            1,
+        )?;
+    }
+    if let Some((_, transfer)) = summary
+        .execution_mode_switches
+        .iter()
+        .rev()
+        .find_map(|switch| {
+            switch
+                .state_transfer
+                .as_ref()
+                .map(|transfer| (switch, transfer))
+        })
+    {
+        for (name, unit, value) in [
+            ("latest_manifest_tick", "Tick", transfer.manifest_tick),
+            ("latest_component_count", "Count", transfer.component_count),
+            ("latest_chunk_count", "Count", transfer.chunk_count),
+            ("latest_payload_bytes", "Byte", transfer.payload_bytes),
+            (
+                "latest_quiescence_captured_components",
+                "Count",
+                transfer.quiescence_gate.captured_component_count,
+            ),
+            (
+                "latest_quiescence_captured_chunks",
+                "Count",
+                transfer.quiescence_gate.captured_chunk_count,
+            ),
+            (
+                "latest_quiescence_captured_payload_bytes",
+                "Byte",
+                transfer.quiescence_gate.captured_payload_bytes,
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.execution_mode_switch_state_transfer.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+        increment_stat(
+            stats,
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_quiescence_validated",
+            "Count",
+            StatResetPolicy::Monotonic,
+            if transfer.quiescence_gate.validated {
+                1
+            } else {
+                0
+            },
+        )?;
+    }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
             stats,

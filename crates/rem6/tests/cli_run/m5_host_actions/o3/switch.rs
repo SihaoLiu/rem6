@@ -52,6 +52,145 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
         "detailed",
         "execution-mode-switch-cpu1",
     );
+    let latest_switch = host_actions
+        .pointer("/execution_mode_switches/0")
+        .unwrap_or_else(|| panic!("missing execution-mode switch: {host_actions}"));
+    for (stat_path, unit, artifact_pointer) in [
+        (
+            "sim.host_actions.execution_mode_switch.latest_tick",
+            "Tick",
+            "/tick",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch.latest_event",
+            "Count",
+            "/event",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch.latest_source",
+            "Count",
+            "/source",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch.latest_stats_epoch",
+            "Count",
+            "/stats_epoch",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch.latest_stats_reset_tick",
+            "Tick",
+            "/stats_reset_tick",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            unit,
+            latest_switch
+                .pointer(artifact_pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "latest execution-mode switch should expose {artifact_pointer}: {latest_switch}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
+    for (mode, expected) in [("functional", 0), ("timing", 0), ("detailed", 1)] {
+        assert_json_stat(
+            &json,
+            &format!("sim.host_actions.execution_mode_switch.latest_mode.{mode}"),
+            "Count",
+            expected,
+            "monotonic",
+        );
+    }
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.latest_previous_mode.none",
+        "Count",
+        1,
+        "monotonic",
+    );
+    for mode in ["functional", "timing", "detailed"] {
+        assert_json_stat(
+            &json,
+            &format!("sim.host_actions.execution_mode_switch.latest_previous_mode.{mode}"),
+            "Count",
+            0,
+            "monotonic",
+        );
+    }
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.latest_target.cpu1.mode.detailed",
+        "Count",
+        1,
+        "monotonic",
+    );
+    let latest_transfer = latest_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing switch state transfer: {latest_switch}"));
+    for (stat_path, unit, artifact_pointer) in [
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_manifest_tick",
+            "Tick",
+            "/manifest_tick",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_component_count",
+            "Count",
+            "/component_count",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_chunk_count",
+            "Count",
+            "/chunk_count",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_payload_bytes",
+            "Byte",
+            "/payload_bytes",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_quiescence_captured_components",
+            "Count",
+            "/quiescence_gate/captured_component_count",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_quiescence_captured_chunks",
+            "Count",
+            "/quiescence_gate/captured_chunk_count",
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_quiescence_captured_payload_bytes",
+            "Byte",
+            "/quiescence_gate/captured_payload_bytes",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            unit,
+            latest_transfer
+                .pointer(artifact_pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "latest execution-mode switch transfer should expose {artifact_pointer}: {latest_transfer}"
+                    )
+                }),
+            "monotonic",
+        );
+    }
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_quiescence_validated",
+        "Count",
+        1,
+        "monotonic",
+    );
 
     assert_json_stat(
         &json,
