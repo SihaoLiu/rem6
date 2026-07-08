@@ -132,6 +132,14 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_branch_ftq_snapshot_by_active_ha
                 2,
             ),
             (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.predicted_taken",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.predicted_target_mismatches",
+                1,
+            ),
+            (
                 "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashes",
                 2,
             ),
@@ -193,11 +201,14 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_branch_ftq_snapshot_by_active_ha
                 "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
                 1,
             ),
+            ("system.cpu1.fetch.predictedBranches", 1),
+            ("system.cpu1.bac.branchMisspredict", 2),
         ] {
             assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
         }
         for path in [
             "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.predicted_taken",
             "system.cpu.ftq.squashes_0::CallIndirect",
             "system.cpu0.ftq.squashes_0::CallIndirect",
             "system.cpu.ftq.squashedTargets_0::CallIndirect",
@@ -206,6 +217,10 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_branch_ftq_snapshot_by_active_ha
             "system.cpu0.ftq.squashedTargetsWithLinkWrites_0::CallIndirect",
             "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
             "system.cpu0.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+            "system.cpu.fetch.predictedBranches",
+            "system.cpu0.fetch.predictedBranches",
+            "system.cpu.bac.branchMisspredict",
+            "system.cpu0.bac.branchMisspredict",
         ] {
             assert_stats_dump_sample_absent(dump, path);
             assert_json_stat_absent(&json, path);

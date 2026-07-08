@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
-use super::text_o3::append_gem5_o3_ftq_alias_stats;
+use super::text_o3::append_gem5_o3_branch_event_alias_stats;
 
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
     let mut output = "---------- Begin Simulation Statistics ----------\n".to_string();
@@ -649,7 +649,7 @@ fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",
         );
-        append_gem5_o3_ftq_alias_stats(output, snapshot, cpu, &alias_prefix);
+        append_gem5_o3_branch_event_alias_stats(output, snapshot, cpu, &alias_prefix);
         let targetless_mismatches = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),

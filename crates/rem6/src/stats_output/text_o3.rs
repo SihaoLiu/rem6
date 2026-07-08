@@ -3,7 +3,35 @@ use rem6_stats::StatSnapshot;
 
 use super::text::{append_derived_count_stat_if_absent, snapshot_value};
 
-pub(super) fn append_gem5_o3_ftq_alias_stats(
+pub(super) fn append_gem5_o3_branch_event_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    append_gem5_o3_branch_prediction_alias_stats(output, snapshot, cpu, alias_prefix);
+    append_gem5_o3_ftq_alias_stats(output, snapshot, cpu, alias_prefix);
+}
+
+fn append_gem5_o3_branch_prediction_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for (source_suffix, alias_suffix) in [
+        ("predicted_taken", "fetch.predictedBranches"),
+        ("mispredictions", "bac.branchMisspredict"),
+    ] {
+        let source_path = format!("sim.cpu{cpu}.o3.branch_event.{source_suffix}");
+        let alias_path = format!("{alias_prefix}.{alias_suffix}");
+        if let Some(value) = snapshot_value(snapshot, &source_path) {
+            append_derived_count_stat_if_absent(output, snapshot, &alias_path, value);
+        }
+    }
+}
+
+fn append_gem5_o3_ftq_alias_stats(
     output: &mut String,
     snapshot: &StatSnapshot,
     cpu: u64,
