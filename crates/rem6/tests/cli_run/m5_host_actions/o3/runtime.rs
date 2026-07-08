@@ -1031,3 +1031,61 @@ fn rem6_run_o3_runtime_json_exposes_lsq_operation_byte_aliases() {
         );
     }
 }
+
+#[test]
+fn rem6_run_o3_runtime_json_exposes_lsq_operation_store_conditional_failure_aliases() {
+    let path = detailed_o3_store_conditional_failure_binary(
+        "m5-switch-cpu-detailed-o3-runtime-lsq-store-conditional-failure-aliases",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let operations = json
+        .pointer("/cores/0/o3_runtime/lsq/operation")
+        .unwrap_or_else(|| panic!("run JSON should include O3 LSQ operations: {json}"));
+
+    for (operation, alias, expected) in [
+        ("store_conditional", "storeConditional", 1),
+        ("store", "store", 0),
+        ("load", "load", 0),
+        ("atomic", "atomic", 0),
+    ] {
+        assert_eq!(
+            operations
+                .pointer(&format!("/{operation}/store_conditional_failures"))
+                .and_then(Value::as_u64),
+            Some(expected),
+            "runtime LSQ operation failed-SC lane should match {operation}: {operations}"
+        );
+        assert_json_stat(
+            &json,
+            &format!("system.cpu.lsq0.operation.{alias}.storeConditionalFailures"),
+            "Count",
+            expected,
+            "monotonic",
+        );
+    }
+}

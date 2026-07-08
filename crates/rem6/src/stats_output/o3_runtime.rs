@@ -1589,6 +1589,10 @@ pub(super) fn emit_o3_runtime_stats(
         }
         for (name, value) in [
             (
+                "storeConditionalFailures",
+                o3.lsq_operation_store_conditional_failures(operation),
+            ),
+            (
                 "storeLoadForwardingCandidates",
                 o3.lsq_operation_forwarding_candidates(operation),
             ),
