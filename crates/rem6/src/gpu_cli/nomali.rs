@@ -1218,6 +1218,19 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     ] {
         pio.write_reg(JOB_SLOT0_BASE + JS_COMMAND, command);
     }
+    let job_slot1_base = job_slot_base(1);
+    for (offset, value) in [
+        (JS_HEAD_NEXT_LO, 0x0000_4400),
+        (JS_HEAD_NEXT_HI, 0x0000_0000),
+        (JS_AFFINITY_NEXT_LO, 0x0000_00f0),
+        (JS_AFFINITY_NEXT_HI, 0x0000_0000),
+        (JS_CONFIG_NEXT, JS_CONFIG_START_MMU),
+    ] {
+        pio.write_reg(job_slot1_base + offset, value);
+    }
+    pio.record_job_slot_snapshot("after_job_slot1_next_register_writes", 1);
+    pio.write_reg(job_slot1_base + JS_COMMAND_NEXT, JS_COMMAND_START);
+    pio.record_job_slot_snapshot("after_job_slot1_start_next", 1);
     pio.write_reg(MMU_IRQ_RAWSTAT, MMU_PAGE_FAULT_AS0 | MMU_BUS_ERROR_AS0);
     pio.write_reg(MMU_IRQ_MASK, MMU_BUS_ERROR_AS0);
     pio.record_interrupt_block_snapshot(
