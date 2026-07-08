@@ -20,7 +20,8 @@ mod trace_stats;
 use crate::formatting::{bytes_to_hex, json_escape};
 use crate::{
     CliDebugFlag, Rem6DramSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
-    Rem6MemoryResourceSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6MemoryResourceSummary, Rem6RunConfig,
+    Rem6RunFabricSummary,
 };
 use branch::{branch_trace_records, Rem6BranchTraceRecord};
 use cache::{cache_trace_records, cache_trace_stats, Rem6CacheTraceRecord, Rem6CacheTraceStat};
@@ -33,8 +34,9 @@ use fabric::{
     Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
 use host_action::{
-    host_action_trace_checkpoint_restore_authority_stats, host_action_trace_records,
-    Rem6HostActionTraceAuthorityStat, Rem6HostActionTraceRecord,
+    host_action_trace_checkpoint_restore_authority_stats,
+    host_action_trace_execution_mode_switch_quiescence_stats, host_action_trace_records,
+    Rem6HostActionTraceCountStat, Rem6HostActionTraceRecord,
 };
 use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
@@ -66,6 +68,7 @@ pub(crate) struct Rem6DebugSummary {
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     host_action_trace: Vec<Rem6HostActionTraceRecord>,
     host_action_checkpoint_restores: Vec<Rem6HostCheckpointSummary>,
+    host_action_execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
     data_trace: Vec<Rem6DataTraceRecord>,
     cache_trace: Vec<Rem6CacheTraceRecord>,
     dram_trace: Vec<Rem6DramTraceRecord>,
@@ -218,6 +221,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let host_action_execution_mode_switches = if config.debug_host_action_enabled() {
+            host_actions.execution_mode_switches.clone()
+        } else {
+            Vec::new()
+        };
         let data_trace = if config.debug_data_enabled() {
             data_trace_records(cluster, config.cores() as u32)
         } else {
@@ -267,6 +275,7 @@ impl Rem6DebugSummary {
             fetch_trace,
             host_action_trace,
             host_action_checkpoint_restores,
+            host_action_execution_mode_switches,
             data_trace,
             cache_trace,
             dram_trace,
@@ -591,14 +600,19 @@ impl Rem6DebugSummary {
         self.host_action_kind_trace_count("stop")
     }
 
-    pub(crate) fn host_action_trace_authority_stats(
+    pub(crate) fn host_action_trace_count_stats(
         &self,
         stat_path_segment: impl Fn(&str) -> String,
-    ) -> Vec<Rem6HostActionTraceAuthorityStat> {
-        host_action_trace_checkpoint_restore_authority_stats(
+    ) -> Vec<Rem6HostActionTraceCountStat> {
+        let mut stats = host_action_trace_checkpoint_restore_authority_stats(
             &self.host_action_checkpoint_restores,
+            &stat_path_segment,
+        );
+        stats.extend(host_action_trace_execution_mode_switch_quiescence_stats(
+            &self.host_action_execution_mode_switches,
             stat_path_segment,
-        )
+        ));
+        stats
     }
 
     pub(crate) fn data_trace_count(&self) -> u64 {

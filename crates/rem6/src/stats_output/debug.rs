@@ -388,7 +388,7 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
-    for stat in debug.host_action_trace_authority_stats(stat_path_segment) {
+    for stat in debug.host_action_trace_count_stats(stat_path_segment) {
         increment_stat(
             stats,
             &format!("sim.debug.host_action_trace.{}", stat.path()),

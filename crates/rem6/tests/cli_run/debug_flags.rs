@@ -5904,6 +5904,22 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
         Some(0)
     );
 
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("stats array");
+    for path in [
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.target.cpu0.checker.checked_instructions",
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.target.cpu0.checker.mismatches",
+    ] {
+        assert!(
+            stats
+                .iter()
+                .all(|sample| sample.pointer("/path").and_then(Value::as_str) != Some(path)),
+            "unexpected checker-only HostAction debug stat {path}: {stats:?}"
+        );
+    }
+
     assert_stat(
         &stdout,
         "sim.debug.host_action_trace.records",
@@ -6100,6 +6116,20 @@ fn rem6_run_host_action_debug_flag_emits_checker_quiescence_switch_scope() {
     assert_stat(
         &stdout,
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.target.cpu0.checker.checked_instructions",
+        "Count",
+        previous_checked,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.target.cpu0.checker.mismatches",
         "Count",
         0,
         "monotonic",

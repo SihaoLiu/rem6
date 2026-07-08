@@ -22,7 +22,7 @@ pub(crate) struct Rem6HostActionTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Rem6HostActionTraceAuthorityStat {
+pub(crate) struct Rem6HostActionTraceCountStat {
     path: String,
     value: u64,
 }
@@ -99,7 +99,7 @@ impl Rem6HostActionTraceValue {
     }
 }
 
-impl Rem6HostActionTraceAuthorityStat {
+impl Rem6HostActionTraceCountStat {
     fn new(path: String, value: u64) -> Self {
         Self { path, value }
     }
@@ -166,7 +166,7 @@ pub(crate) fn host_action_trace_records(
 pub(crate) fn host_action_trace_checkpoint_restore_authority_stats(
     checkpoint_restores: &[Rem6HostCheckpointSummary],
     stat_path_segment: impl Fn(&str) -> String,
-) -> Vec<Rem6HostActionTraceAuthorityStat> {
+) -> Vec<Rem6HostActionTraceCountStat> {
     let mut present_manifests = 0;
     let mut cleared_manifests = 0;
     let mut decode_errors = 0;
@@ -216,24 +216,52 @@ pub(crate) fn host_action_trace_checkpoint_restore_authority_stats(
             targets,
         ),
     ] {
-        stats.push(Rem6HostActionTraceAuthorityStat::new(
-            path.to_string(),
-            value,
-        ));
+        stats.push(Rem6HostActionTraceCountStat::new(path.to_string(), value));
     }
     for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
-        stats.push(Rem6HostActionTraceAuthorityStat::new(
+        stats.push(Rem6HostActionTraceCountStat::new(
             format!("checkpoint_restore.execution_mode_authority.mode.{mode}"),
             modes[index],
         ));
     }
     for (target, counts) in target_modes {
         for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
-            stats.push(Rem6HostActionTraceAuthorityStat::new(
+            stats.push(Rem6HostActionTraceCountStat::new(
                 format!("checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"),
                 counts[index],
             ));
         }
+    }
+    stats
+}
+
+pub(crate) fn host_action_trace_execution_mode_switch_quiescence_stats(
+    execution_mode_switches: &[Rem6HostExecutionModeSwitchSummary],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6HostActionTraceCountStat> {
+    let mut target_checkers = BTreeMap::new();
+    for switch in execution_mode_switches {
+        let Some(transfer) = switch.state_transfer.as_ref() else {
+            continue;
+        };
+        let Some(checker) = transfer.quiescence_gate.checker else {
+            continue;
+        };
+        target_checkers.insert(stat_path_segment(&transfer.quiescence_gate.target), checker);
+    }
+
+    let mut stats = Vec::new();
+    for (target, checker) in target_checkers {
+        stats.push(Rem6HostActionTraceCountStat::new(
+            format!(
+                "execution_mode_switch.quiescence.target.{target}.checker.checked_instructions"
+            ),
+            checker.checked_instructions,
+        ));
+        stats.push(Rem6HostActionTraceCountStat::new(
+            format!("execution_mode_switch.quiescence.target.{target}.checker.mismatches"),
+            checker.mismatches,
+        ));
     }
     stats
 }
