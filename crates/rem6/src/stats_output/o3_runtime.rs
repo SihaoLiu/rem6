@@ -672,6 +672,18 @@ fn emit_o3_runtime_snapshot_stats(
             "snapshot.rename_map.count",
             snapshot.rename_map().len() as u64,
         ),
+        (
+            "snapshot.rob.entries",
+            snapshot.reorder_buffer().len() as u64,
+        ),
+        (
+            "snapshot.lsq.entries",
+            snapshot.load_store_queue().len() as u64,
+        ),
+        (
+            "snapshot.rename_map.entries",
+            snapshot.rename_map().len() as u64,
+        ),
     ] {
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
