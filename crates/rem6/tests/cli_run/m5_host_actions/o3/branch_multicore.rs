@@ -320,6 +320,38 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
             .is_some_and(|tick| tick > 0),
         "post-reset dump should record the reset tick: {post_reset_dump}"
     );
+    for (stat_path, unit, artifact_pointer) in [
+        ("sim.host_actions.stats_dump.latest_id", "Count", "/id"),
+        ("sim.host_actions.stats_dump.latest_tick", "Tick", "/tick"),
+        (
+            "sim.host_actions.stats_dump.latest_epoch",
+            "Count",
+            "/epoch",
+        ),
+        (
+            "sim.host_actions.stats_dump.latest_reset_tick",
+            "Tick",
+            "/reset_tick",
+        ),
+        (
+            "sim.host_actions.stats_dump.latest_sample_count",
+            "Count",
+            "/sample_count",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            unit,
+            post_reset_dump
+                .pointer(artifact_pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!("latest stats dump should expose {artifact_pointer}: {post_reset_dump}")
+                }),
+            "monotonic",
+        );
+    }
     for path in [
         "sim.host_actions.stats_dump.cpu1.o3.branch_event.branches",
         "sim.host_actions.stats_dump.cpu1.o3.branch_event.link_writes",

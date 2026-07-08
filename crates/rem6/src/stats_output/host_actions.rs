@@ -362,6 +362,23 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
+    if let Some(dump) = summary.stats_dumps.last() {
+        for (name, unit, value) in [
+            ("latest_id", "Count", dump.id),
+            ("latest_tick", "Tick", dump.tick),
+            ("latest_epoch", "Count", dump.epoch),
+            ("latest_reset_tick", "Tick", dump.reset_tick),
+            ("latest_sample_count", "Count", dump.samples.len() as u64),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.stats_dump.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
             stats,
