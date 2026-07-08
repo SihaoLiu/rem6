@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use crate::formatting::json_escape;
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
-    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
-    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
+    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
@@ -651,14 +651,46 @@ fn execution_mode_switch_record(
 }
 
 fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> String {
+    let components = transfer
+        .components
+        .iter()
+        .map(component_json)
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{}}}",
+        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
         json_escape(&transfer.manifest_label),
         transfer.manifest_tick,
         transfer.component_count,
         transfer.chunk_count,
         transfer.payload_bytes,
         quiescence_gate_json(&transfer.quiescence_gate),
+        components,
+    )
+}
+
+fn component_json(component: &Rem6HostCheckpointComponentSummary) -> String {
+    let chunks = component
+        .chunks
+        .iter()
+        .map(chunk_json)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
+        json_escape(&component.component),
+        component.chunk_count,
+        component.payload_bytes,
+        chunks,
+    )
+}
+
+fn chunk_json(chunk: &Rem6HostCheckpointChunkSummary) -> String {
+    format!(
+        "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"}}",
+        json_escape(&chunk.name),
+        chunk.payload_bytes,
+        chunk.payload_checksum,
     )
 }
 
