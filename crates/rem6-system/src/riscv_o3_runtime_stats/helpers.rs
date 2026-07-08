@@ -103,7 +103,7 @@ pub(super) fn register_o3_lsq_operation_nested_counters(
     Ok(stats)
 }
 
-pub(super) fn register_o3_lsq_operation_forwarding_counters(
+pub(super) fn register_o3_lsq_operation_suffix_counters(
     registry: &mut StatsRegistry,
     prefix: &str,
     suffix: &str,

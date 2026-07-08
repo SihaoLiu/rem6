@@ -604,6 +604,12 @@ fn emit_o3_runtime_event_summary_lsq_matrix_stats(
         };
         for (name, value) in [
             (
+                "store_conditional_failures",
+                count_o3_event_summary_records(events, |event| {
+                    event.lsq_operation() == operation && event.lsq_store_conditional_failed()
+                }),
+            ),
+            (
                 "forwarding_candidates",
                 count_o3_event_summary_records(events, |event| {
                     event.lsq_operation() == operation && event.store_load_forwarding_candidate()
@@ -1269,6 +1275,10 @@ pub(super) fn emit_o3_runtime_stats(
             )?;
         }
         for (suffix, value) in [
+            (
+                "store_conditional_failures",
+                o3.lsq_operation_store_conditional_failures(operation),
+            ),
             (
                 "forwarding_candidates",
                 o3.lsq_operation_forwarding_candidates(operation),

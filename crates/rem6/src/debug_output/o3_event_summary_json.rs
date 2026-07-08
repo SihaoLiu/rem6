@@ -295,14 +295,20 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
         .count() as u64;
     let (fu_latency, fu_latency_classes) = event_summary_fu_latency(events);
     let fu_latency_class = event_summary_fu_latency_class_json(&fu_latency_classes);
-    let (lsq_data_latency, lsq_operation_counts, lsq_operation_latencies, lsq_operation_bytes) =
-        event_summary_lsq_latency(events);
+    let (
+        lsq_data_latency,
+        lsq_operation_counts,
+        lsq_operation_latencies,
+        lsq_operation_bytes,
+        lsq_operation_store_conditional_failures,
+    ) = event_summary_lsq_latency(events);
     let lsq_data_latency = event_summary_lsq_latency_json(lsq_data_latency);
     let (lsq_forwarding, lsq_operation_forwarding) = event_summary_lsq_forwarding(events);
     let lsq_operation = event_summary_lsq_operation_json(
         &lsq_operation_counts,
         &lsq_operation_latencies,
         &lsq_operation_bytes,
+        &lsq_operation_store_conditional_failures,
         &lsq_operation_forwarding,
     );
     let lsq_ordering = event_summary_lsq_ordering_json(events);
@@ -434,12 +440,14 @@ fn event_summary_lsq_latency(
     [u64; O3RuntimeLsqOperation::COUNT],
     [O3EventSummaryLsqLatency; O3RuntimeLsqOperation::COUNT],
     [O3EventSummaryLsqBytes; O3RuntimeLsqOperation::COUNT],
+    [u64; O3RuntimeLsqOperation::COUNT],
 ) {
     let mut summary = O3EventSummaryLsqLatency::default();
     let mut operation_counts = [0_u64; O3RuntimeLsqOperation::COUNT];
     let mut operation_latencies =
         [O3EventSummaryLsqLatency::default(); O3RuntimeLsqOperation::COUNT];
     let mut operation_bytes = [O3EventSummaryLsqBytes::default(); O3RuntimeLsqOperation::COUNT];
+    let mut operation_store_conditional_failures = [0_u64; O3RuntimeLsqOperation::COUNT];
     for event in events {
         let operation = event.lsq_operation();
         if operation == O3RuntimeLsqOperation::None {
@@ -456,12 +464,17 @@ fn event_summary_lsq_latency(
         operation_bytes[index].store_bytes = operation_bytes[index]
             .store_bytes
             .saturating_add(event.lsq_store_bytes());
+        if event.lsq_store_conditional_failed() {
+            operation_store_conditional_failures[index] =
+                operation_store_conditional_failures[index].saturating_add(1);
+        }
     }
     (
         summary,
         operation_counts,
         operation_latencies,
         operation_bytes,
+        operation_store_conditional_failures,
     )
 }
 
@@ -499,6 +512,7 @@ fn event_summary_lsq_operation_json(
     counts: &[u64; O3RuntimeLsqOperation::COUNT],
     latencies: &[O3EventSummaryLsqLatency; O3RuntimeLsqOperation::COUNT],
     bytes: &[O3EventSummaryLsqBytes; O3RuntimeLsqOperation::COUNT],
+    store_conditional_failures: &[u64; O3RuntimeLsqOperation::COUNT],
     forwarding: &[O3EventSummaryLsqForwarding; O3RuntimeLsqOperation::COUNT],
 ) -> String {
     let fields = O3RuntimeLsqOperation::TRACKED
@@ -508,11 +522,12 @@ fn event_summary_lsq_operation_json(
             let forwarding = forwarding[operation.index()];
             let bytes = bytes[operation.index()];
             format!(
-                "\"{}\":{{\"count\":{},\"load_bytes\":{},\"store_bytes\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"load_bytes\":{},\"store_bytes\":{},\"store_conditional_failures\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
                 counts[operation.index()],
                 bytes.load_bytes,
                 bytes.store_bytes,
+                store_conditional_failures[operation.index()],
                 forwarding.candidates,
                 forwarding.matches,
                 forwarding.suppressed,

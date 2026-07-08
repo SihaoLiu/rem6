@@ -231,6 +231,14 @@ impl O3RuntimeStats {
         self.lsq_store_conditional_failures
     }
 
+    pub fn lsq_operation_store_conditional_failures(self, operation: O3RuntimeLsqOperation) -> u64 {
+        if operation == O3RuntimeLsqOperation::StoreConditional {
+            self.lsq_store_conditional_failures()
+        } else {
+            0
+        }
+    }
+
     pub const fn branch_repair_targetless_mismatches(self) -> u64 {
         self.branch_repair_targetless_mismatches
     }

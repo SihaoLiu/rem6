@@ -24,9 +24,10 @@ fn o3_lsq_operation_matrix_json(stats: O3RuntimeStats) -> String {
                 stats.lsq_operation_latency_avg_ticks(operation),
             );
             format!(
-                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"store_conditional_failures\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
                 stats.lsq_operation_count(operation),
+                stats.lsq_operation_store_conditional_failures(operation),
                 stats.lsq_operation_forwarding_candidates(operation),
                 stats.lsq_operation_forwarding_matches(operation),
                 stats.lsq_operation_forwarding_suppressed(operation),

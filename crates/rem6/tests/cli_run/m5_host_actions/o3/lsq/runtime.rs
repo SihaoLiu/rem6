@@ -39,6 +39,12 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
     for (dump, path, unit, value) in [
         (
             pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.store_conditional_failures",
+            "Count",
+            0,
+        ),
+        (
+            pre_reset_dump,
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.latency.samples",
             "Count",
             1,
@@ -90,6 +96,12 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.latency.ticks",
             "Tick",
             0,
+        ),
+        (
+            post_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.store_conditional_failures",
+            "Count",
+            1,
         ),
     ] {
         assert_stats_dump_sample(dump, path, "counter", unit, value, "resettable");
@@ -849,6 +861,154 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_store_conditional_failures() {
         1,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_run_o3_runtime_json_exposes_store_conditional_failure_operation_lane() {
+    let path = detailed_o3_store_conditional_failure_binary(
+        "m5-switch-cpu-detailed-o3-store-conditional-failure-operation-lane",
+    );
+    let json = o3_lsq_debug_runtime_json(&path, "180");
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    let debug_lsq = json
+        .pointer("/debug/o3_trace/0/lsq")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose LSQ matrix: {json}"));
+
+    for (pointer, value) in [
+        (
+            "/lsq/operation/store_conditional/store_conditional_failures",
+            1,
+        ),
+        ("/lsq/operation/store/store_conditional_failures", 0),
+        (
+            "/lsq_operation_store_conditional_store_conditional_failures",
+            1,
+        ),
+        ("/lsq_operation_store_store_conditional_failures", 0),
+        (
+            "/event_summary/lsq_operation/store_conditional/store_conditional_failures",
+            1,
+        ),
+        (
+            "/event_summary/lsq_operation/store/store_conditional_failures",
+            0,
+        ),
+    ] {
+        assert_eq!(
+            o3_runtime.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "O3 runtime JSON should expose failed-SC operation lane {pointer}: {o3_runtime}"
+        );
+    }
+    assert_eq!(
+        debug_lsq
+            .pointer("/operation/store_conditional/store_conditional_failures")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 debug LSQ JSON should expose the failed-SC operation lane: {debug_lsq}"
+    );
+
+    let debug_summary = json
+        .pointer("/debug/o3_trace/0/event_summary")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
+    for (pointer, value) in [
+        (
+            "/lsq_operation/store_conditional/store_conditional_failures",
+            1,
+        ),
+        ("/lsq_operation/store/store_conditional_failures", 0),
+    ] {
+        assert_eq!(
+            debug_summary.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "O3 debug event summary should expose failed-SC operation lane {pointer}: {debug_summary}"
+        );
+    }
+    for operation in [
+        "load",
+        "store",
+        "load_reserved",
+        "atomic",
+        "float_load",
+        "float_store",
+        "vector_load",
+        "vector_store",
+    ] {
+        for (scope, pointer) in [
+            (
+                "runtime LSQ",
+                format!("/lsq/operation/{operation}/store_conditional_failures"),
+            ),
+            (
+                "runtime flat",
+                format!("/lsq_operation_{operation}_store_conditional_failures"),
+            ),
+            (
+                "runtime event summary",
+                format!("/event_summary/lsq_operation/{operation}/store_conditional_failures"),
+            ),
+        ] {
+            assert_eq!(
+                o3_runtime.pointer(&pointer).and_then(Value::as_u64),
+                Some(0),
+                "{scope} failed-SC operation lane should stay zero for {operation}: {o3_runtime}"
+            );
+        }
+        assert_eq!(
+            debug_lsq
+                .pointer(&format!(
+                    "/operation/{operation}/store_conditional_failures"
+                ))
+                .and_then(Value::as_u64),
+            Some(0),
+            "O3 debug LSQ failed-SC operation lane should stay zero for {operation}: {debug_lsq}"
+        );
+        assert_eq!(
+            debug_summary
+                .pointer(&format!(
+                    "/lsq_operation/{operation}/store_conditional_failures"
+                ))
+                .and_then(Value::as_u64),
+            Some(0),
+            "O3 debug event-summary failed-SC operation lane should stay zero for {operation}: {debug_summary}"
+        );
+        for path in [
+            format!("sim.cpu0.o3.lsq_operation.{operation}_store_conditional_failures"),
+            format!("sim.cpu0.o3.lsq_operation.{operation}.store_conditional_failures"),
+            format!(
+                "sim.cpu0.o3.event_summary.lsq_operation.{operation}.store_conditional_failures"
+            ),
+        ] {
+            assert_json_stat(&json, &path, "Count", 0, "monotonic");
+        }
+    }
+
+    for (path, value) in [
+        (
+            "sim.cpu0.o3.lsq_operation.store_conditional_store_conditional_failures",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.lsq_operation.store_conditional.store_conditional_failures",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.lsq_operation.store_store_conditional_failures",
+            0,
+        ),
+        (
+            "sim.cpu0.o3.event_summary.lsq_operation.store_conditional.store_conditional_failures",
+            1,
+        ),
+        (
+            "sim.cpu0.o3.event_summary.lsq_operation.store.store_conditional_failures",
+            0,
+        ),
+    ] {
+        assert_json_stat(&json, path, "Count", value, "monotonic");
+    }
 }
 
 fn ordered_atomic_lsq_runtime_json(
