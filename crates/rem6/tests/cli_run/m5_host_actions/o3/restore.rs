@@ -928,7 +928,6 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_fu_snapshot_by_active_hart() {
             assert_stats_dump_sample_absent(dump, path);
         }
     }
-
     assert_json_stat(
         &json,
         "sim.cpu1.o3.fu_latency_instructions",
@@ -959,4 +958,121 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_fu_snapshot_by_active_hart() {
     );
     assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_instructions");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType_0::IntMult");
+}
+
+#[test]
+fn rem6_run_host_action_trace_restores_multicore_o3_checkpoint_components_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(
+        "m5-switch-cpu-hart1-o3-restore-host-action-components",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "HostAction",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_restore = json
+        .pointer("/host_actions/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing host checkpoint restore: {json}"));
+    assert_eq!(
+        host_restore.pointer("/label").and_then(Value::as_str),
+        Some("gem5-m5-checkpoint")
+    );
+    let trace_restore = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing HostAction trace: {json}"))
+        .iter()
+        .find(|record| {
+            record.pointer("/kind").and_then(Value::as_str) == Some("checkpoint_restore")
+        })
+        .unwrap_or_else(|| panic!("missing checkpoint restore trace: {json}"));
+    assert_eq!(
+        trace_restore.pointer("/components"),
+        host_restore.pointer("/components"),
+        "HostAction restore trace should preserve restored component/chunk payload metadata: trace {trace_restore}; host {host_restore}"
+    );
+    assert_trace_restore_component_chunk(trace_restore, "cpu1", "xregs");
+    assert_trace_restore_component_chunk(trace_restore, "cpu1", "in-order-pipeline");
+    assert_trace_restore_component_chunk(trace_restore, "cpu1", "o3-runtime-state");
+    assert_eq!(
+        trace_restore
+            .pointer("/execution_mode_authority/target/cpu0/mode/detailed")
+            .and_then(Value::as_u64),
+        None,
+        "CPU0 should not regain detailed authority from a CPU1 restore trace: {trace_restore}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk: &str) {
+    let components = restore
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore trace components: {restore}"));
+    let component = components
+        .iter()
+        .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing restore trace component {component}: {restore}"));
+    let chunks = component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore trace chunks for {component}: {restore}"));
+    let chunk = chunks
+        .iter()
+        .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        .unwrap_or_else(|| panic!("missing restore trace chunk {chunk}: {component}"));
+    assert!(
+        chunk
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "restore trace chunk should expose payload bytes: {chunk}"
+    );
+    assert!(
+        chunk
+            .pointer("/payload_checksum")
+            .and_then(Value::as_str)
+            .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
+        "restore trace chunk should expose payload checksum: {chunk}"
+    );
 }
