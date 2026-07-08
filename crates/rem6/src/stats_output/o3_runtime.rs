@@ -1441,6 +1441,10 @@ pub(super) fn emit_o3_runtime_stats(
             o3.lsq_store_to_load_forwarding_byte_mismatches(),
         ),
         ("lsq0.forwLoads", o3.lsq_store_to_load_forwarding_matches()),
+        (
+            "lsq0.storeConditionalFailures",
+            o3.lsq_store_conditional_failures(),
+        ),
         ("lsq0.maxOccupancy", o3.max_lsq_occupancy()),
         ("iq.instsIssued", o3.instructions()),
         (

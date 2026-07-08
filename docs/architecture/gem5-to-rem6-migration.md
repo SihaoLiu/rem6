@@ -177,7 +177,7 @@ but broad stalls/squashes remain incomplete and O3 state is not yet an
 executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
-- [x] Data access issue/response and store-conditional progress diagnostics have tests.
+- [x] Data access issue/response and `system.cpu.lsq0.storeConditionalFailures` diagnostics have tests.
 - [x] Basic, GShare, BiMode, Tournament, TAGE-SC-L, and multiperspective perceptron branch predictors are trained from retired control flow.
 - [x] Checker CPU support exists as a RISC-V retire-path reference hart with CLI-visible counts.
 - [ ] Minor-like fetch/decode/execute/commit timing is wired into normal CPU execution.

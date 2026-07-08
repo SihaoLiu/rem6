@@ -427,6 +427,94 @@ fn rem6_run_text_stats_emit_gem5_o3_branch_prediction_aliases() {
     assert!(!has_text_stat(&stdout, "system.cpu0.bac.branchMisspredict"));
 }
 
+#[test]
+fn rem6_run_json_stats_emit_gem5_o3_lsq_store_conditional_failure_alias() {
+    let path = o3_store_conditional_failure_binary("gem5-o3-lsq-sc-failure-json-alias");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(
+        json_stat_value(&json, "sim.cpu0.o3.lsq_store_conditional_failures"),
+        1,
+        "{stdout}"
+    );
+    assert_json_stat_alias(
+        &json,
+        "sim.cpu0.o3.lsq_store_conditional_failures",
+        "system.cpu.lsq0.storeConditionalFailures",
+    );
+    assert_json_stat_absent(&json, "system.cpu0.lsq0.storeConditionalFailures");
+}
+
+#[test]
+fn rem6_run_text_stats_emit_gem5_o3_lsq_store_conditional_failure_alias() {
+    let path = o3_store_conditional_failure_binary("gem5-o3-lsq-sc-failure-text-alias");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let failures = text_stat_value(&stdout, "sim.cpu0.o3.lsq_store_conditional_failures");
+    assert_eq!(failures, 1, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.lsq0.storeConditionalFailures"),
+        failures
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.lsq0.storeConditionalFailures").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu0.lsq0.storeConditionalFailures"
+    ));
+}
+
 fn assert_gem5_branch_predictor_json_aliases(
     json: &Value,
     source_prefix: &str,
@@ -20410,6 +20498,28 @@ fn o3_branch_prediction_alias_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn o3_store_conditional_failure_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 64_i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x2a, 0, 0x0, 6, 0x13),                  // addi x6, x0, 0x2a
+        atomic_type(0x03, false, false, 6, 5, 0x3, 7),  // sc.d x7, x6, (x5)
+        s_type(8, 7, 5, 0b011),                         // sd x7, 8(x5)
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x5566_7788, 0x1122_3344, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

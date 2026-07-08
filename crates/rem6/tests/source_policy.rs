@@ -1292,6 +1292,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.lsq0.dataResponse.avgLatency",
         "system.cpu.lsq0.operation.load",
         "system.cpu.lsq0.operation.storeConditional",
+        "system.cpu.lsq0.storeConditionalFailures",
         "system.cpu.lsq0.operation.total",
         "system.cpu.lsq0.ordering.acquireRelease",
         "system.cpu.lsq0.ordering.total",
