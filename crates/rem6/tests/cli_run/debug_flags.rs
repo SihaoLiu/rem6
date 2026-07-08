@@ -12350,12 +12350,14 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
     let event_summary_committed_inst_type = event_summary_commit
         .pointer("/committed_inst_type")
         .expect("O3 trace event summary commit committed-inst-type matrix");
-    assert_eq!(
-        json_record_u64(event_summary_iq, "insts_issued"),
-        events.len() as u64
-    );
-    assert_eq!(json_record_u64(event_summary_iq, "mem_insts_issued"), 0);
-    assert_eq!(json_record_u64(event_summary_iq, "branch_insts_issued"), 0);
+    let event_iq_insts_issued = json_record_u64(event_summary_iq, "insts_issued");
+    let event_iq_mem_insts_issued = json_record_u64(event_summary_iq, "mem_insts_issued");
+    let event_iq_branch_insts_issued = json_record_u64(event_summary_iq, "branch_insts_issued");
+    let event_commit_branch_mispredicts =
+        json_record_u64(event_summary_commit, "branch_mispredicts");
+    assert_eq!(event_iq_insts_issued, events.len() as u64);
+    assert_eq!(event_iq_mem_insts_issued, 0);
+    assert_eq!(event_iq_branch_insts_issued, 0);
     for (class, instructions, cycles) in [("integer_mul", 1, 2), ("integer_div", 1, 19)] {
         let class_summary = event_summary_fu_latency_class
             .pointer(&format!("/{class}"))
@@ -12435,6 +12437,66 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", first_tick),
         ("sim.debug.o3_trace.event.last_tick", "Tick", last_tick),
         ("sim.debug.o3_trace.event.tick_span", "Tick", tick_span),
+        (
+            "sim.debug.o3_trace.event.iq_insts_issued",
+            "Count",
+            event_iq_insts_issued,
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_mem_insts_issued",
+            "Count",
+            event_iq_mem_insts_issued,
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_branch_insts_issued",
+            "Count",
+            event_iq_branch_insts_issued,
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_issued_inst_type.mem_read",
+            "Count",
+            json_record_u64(event_summary_issued_inst_type, "mem_read"),
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_issued_inst_type.mem_write",
+            "Count",
+            json_record_u64(event_summary_issued_inst_type, "mem_write"),
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_issued_inst_type.int_mul",
+            "Count",
+            json_record_u64(event_summary_issued_inst_type, "int_mul"),
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_issued_inst_type.int_div",
+            "Count",
+            json_record_u64(event_summary_issued_inst_type, "int_div"),
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_branch_mispredicts",
+            "Count",
+            event_commit_branch_mispredicts,
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_committed_inst_type.mem_read",
+            "Count",
+            json_record_u64(event_summary_committed_inst_type, "mem_read"),
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_committed_inst_type.mem_write",
+            "Count",
+            json_record_u64(event_summary_committed_inst_type, "mem_write"),
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_committed_inst_type.int_mul",
+            "Count",
+            json_record_u64(event_summary_committed_inst_type, "int_mul"),
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_committed_inst_type.int_div",
+            "Count",
+            json_record_u64(event_summary_committed_inst_type, "int_div"),
+        ),
         (
             "sim.debug.o3_trace.event.fu_latency_instructions",
             "Count",
@@ -14780,6 +14842,28 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         .and_then(Value::as_array)
         .expect("debug O3 trace array");
     assert!(trace.is_empty(), "timing-mode O3 trace: {trace:?}");
+    const O3_EVENT_INST_TYPE_STAT_STEMS: &[&str] = &[
+        "mem_read",
+        "mem_write",
+        "int_mul",
+        "int_div",
+        "float_add",
+        "float_compare",
+        "float_misc",
+        "float_mul",
+        "float_fma",
+        "float_div",
+        "float_sqrt",
+        "vector_integer_mul",
+        "vector_integer_div",
+        "vector_float_add",
+        "vector_float_compare",
+        "vector_float_misc",
+        "vector_float_mul",
+        "vector_float_fma",
+        "vector_float_div",
+        "vector_float_sqrt",
+    ];
 
     assert_stat(&stdout, "sim.debug.flags", "Count", 1, "constant");
     for (path, unit, value) in [
@@ -14839,6 +14923,22 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
+        ("sim.debug.o3_trace.event.iq_insts_issued", "Count", 0),
+        (
+            "sim.debug.o3_trace.event.iq_mem_insts_issued",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.iq_branch_insts_issued",
+            "Count",
+            0,
+        ),
+        (
+            "sim.debug.o3_trace.event.commit_branch_mispredicts",
+            "Count",
+            0,
+        ),
         (
             "sim.debug.o3_trace.event.iew_writeback_rate_ppm",
             "Ppm",
@@ -15398,6 +15498,22 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
+    }
+    for stem in O3_EVENT_INST_TYPE_STAT_STEMS {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.o3_trace.event.iq_issued_inst_type.{stem}"),
+            "Count",
+            0,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.o3_trace.event.commit_committed_inst_type.{stem}"),
+            "Count",
+            0,
+            "monotonic",
+        );
     }
 }
 
