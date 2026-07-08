@@ -244,32 +244,33 @@ impl RiscvCore {
         let line_offset = line_layout.line_offset(address);
         let mut data_access_validated = false;
         if line_offset + size.bytes() > line_layout.bytes() {
-            let full_access_error =
-                if supports_cross_line_data_access(&access, address, size, line_layout) {
-                    match self.check_pmp_data_access(fetch_request, &access, size, address) {
-                        Ok(()) => match self.check_pma_data_access(
-                            fetch_request,
-                            &access,
-                            size,
-                            address,
-                            request_byte_offset,
-                        ) {
-                            Ok(()) => {
+            let access_error =
+                match self.check_pmp_data_access(fetch_request, &access, size, address) {
+                    Ok(()) => match self.check_pma_data_access(
+                        fetch_request,
+                        &access,
+                        size,
+                        address,
+                        request_byte_offset,
+                    ) {
+                        Ok(()) => {
+                            if supports_cross_line_data_access(&access, address, size, line_layout)
+                            {
                                 data_access_validated = true;
                                 None
+                            } else {
+                                Some(RiscvCpuError::DataAccessCrossesLine {
+                                    address,
+                                    size,
+                                    line_size: line_layout.bytes(),
+                                })
                             }
-                            Err(error) => Some(error),
-                        },
+                        }
                         Err(error) => Some(error),
-                    }
-                } else {
-                    Some(RiscvCpuError::DataAccessCrossesLine {
-                        address,
-                        size,
-                        line_size: line_layout.bytes(),
-                    })
+                    },
+                    Err(error) => Some(error),
                 };
-            if let Some(error) = full_access_error {
+            if let Some(error) = access_error {
                 if let Some(prefix) = fault_only_first_line_prefix(
                     &access,
                     address,
