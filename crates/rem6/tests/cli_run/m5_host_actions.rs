@@ -2022,6 +2022,22 @@ fn multicore_hart1_detailed_o3_float_misc_binary(name: &str) -> std::path::PathB
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_reset_fu_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+    ];
+    words.extend(detailed_o3_float_misc_prefix_words());
+    words.push(m5op(M5_RESET_STATS));
+    append_integer_mul_div_work(&mut words);
+    words.push(m5op(M5_DUMP_STATS));
+    append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn multicore_hart1_detailed_o3_direct_call_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = vec![

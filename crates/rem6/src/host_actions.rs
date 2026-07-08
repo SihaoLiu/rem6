@@ -467,6 +467,11 @@ impl Rem6HostStatsDumpSummary {
             .map(Rem6HostStatsDumpSampleSummary::from_sample)
             .collect();
         append_o3_stats_dump_rate_alias_samples(snapshot.samples(), active_o3_cpus, &mut samples);
+        append_o3_stats_dump_inst_type_bucket_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         append_o3_stats_dump_branch_repair_bucket_alias_samples(
             snapshot.samples(),
             active_o3_cpus,
@@ -546,6 +551,51 @@ fn o3_stats_dump_rate_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
         _ => return None,
     };
     Some((cpu, suffix))
+}
+
+fn append_o3_stats_dump_inst_type_bucket_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some(alias_path) = o3_stats_dump_inst_type_bucket_alias_path(sample.path()) else {
+            continue;
+        };
+        if samples.iter().any(|sample| sample.path == alias_path) {
+            continue;
+        }
+        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+            sample, alias_path,
+        ));
+    }
+}
+
+fn o3_stats_dump_inst_type_bucket_alias_path(path: &str) -> Option<String> {
+    if let Some((prefix, op_class)) = path.split_once(".iq.issuedInstType.") {
+        if is_o3_stats_dump_cpu_alias_prefix(prefix) {
+            return Some(format!("{prefix}.iq.issuedInstType_0::{op_class}"));
+        }
+    }
+    if let Some((prefix, op_class)) = path.split_once(".commit.committedInstType.") {
+        if is_o3_stats_dump_cpu_alias_prefix(prefix) {
+            return Some(format!("{prefix}.commit.committedInstType_0::{op_class}"));
+        }
+    }
+    None
+}
+
+fn is_o3_stats_dump_cpu_alias_prefix(prefix: &str) -> bool {
+    if prefix == "system.cpu" {
+        return true;
+    }
+    let Some(cpu) = prefix.strip_prefix("system.cpu") else {
+        return false;
+    };
+    !cpu.is_empty() && cpu.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn append_o3_stats_dump_branch_repair_bucket_alias_samples(

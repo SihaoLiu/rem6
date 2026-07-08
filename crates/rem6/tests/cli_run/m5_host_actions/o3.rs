@@ -1826,6 +1826,261 @@ fn rem6_run_m5_reset_stats_scopes_o3_fu_class_dump_stats() {
 }
 
 #[test]
+fn rem6_run_m5_reset_stats_scopes_multicore_o3_fu_class_dump_aliases_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_reset_fu_dump_stats_binary(
+        "m5-switch-cpu-hart1-detailed-o3-reset-fu-dump-aliases",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    assert_eq!(
+        dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1),
+        "post-reset dump should belong to the reset epoch: {dump}"
+    );
+    assert!(
+        dump.pointer("/reset_tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|tick| tick > 0),
+        "post-reset dump should record the reset tick: {dump}"
+    );
+
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_latency_instructions",
+            "Count",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_latency_cycles",
+            "Cycle",
+            21,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_integer_mul_instructions",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_integer_div_latency_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_float_misc_instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.fu_vector_float_misc_instructions",
+            "Count",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", unit, value, "resettable");
+    }
+
+    for (path, value) in [
+        ("sim.host_actions.stats_dump.cpu1.o3.iq.insts_issued", 5),
+        ("sim.host_actions.stats_dump.cpu1.o3.iq.mem_insts_issued", 0),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.iq.issued_inst_type.int_mul",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.iq.issued_inst_type.int_div",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.iq.issued_inst_type.float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.iq.issued_inst_type.vector_float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.commit.committed_inst_type.int_mul",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.commit.committed_inst_type.int_div",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.commit.committed_inst_type.float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.commit.committed_inst_type.vector_float_misc",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu1.o3.iew.dispatched_insts",
+            5,
+        ),
+        ("sim.host_actions.stats_dump.cpu1.o3.iew.insts_to_commit", 5),
+        ("sim.host_actions.stats_dump.cpu1.o3.iew.writeback_count", 5),
+        ("sim.host_actions.stats_dump.cpu1.o3.iew.producer_inst", 2),
+        ("sim.host_actions.stats_dump.cpu1.o3.iew.consumer_inst", 4),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
+    assert_stats_dump_sample_at_least(
+        dump,
+        "sim.host_actions.stats_dump.cpu1.o3.iew.writeback_rate_ppm",
+        "counter",
+        "Ppm",
+        1,
+        "resettable",
+    );
+    let writeback_rate_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu1.o3.iew.writeback_rate_ppm",
+    );
+    let producer_consumer_fanout_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu1.o3.iew.producer_consumer_fanout_ppm",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu1.iew.wbRate",
+        "counter",
+        "Ppm",
+        writeback_rate_ppm,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu1.iew.wbFanout",
+        "counter",
+        "Ppm",
+        producer_consumer_fanout_ppm,
+        "resettable",
+    );
+
+    for (path, value) in [
+        ("system.cpu1.iq.issuedInstType.IntMult", 1),
+        ("system.cpu1.iq.issuedInstType_0::IntMult", 1),
+        ("system.cpu1.iq.issuedInstType.IntDiv", 1),
+        ("system.cpu1.iq.issuedInstType_0::IntDiv", 1),
+        ("system.cpu1.iq.issuedInstType.FloatMisc", 0),
+        ("system.cpu1.iq.issuedInstType_0::FloatMisc", 0),
+        ("system.cpu1.iq.issuedInstType.SimdFloatMisc", 0),
+        ("system.cpu1.iq.issuedInstType_0::SimdFloatMisc", 0),
+        ("system.cpu1.commit.committedInstType.IntMult", 1),
+        ("system.cpu1.commit.committedInstType_0::IntMult", 1),
+        ("system.cpu1.commit.committedInstType.IntDiv", 1),
+        ("system.cpu1.commit.committedInstType_0::IntDiv", 1),
+        ("system.cpu1.commit.committedInstType.FloatMisc", 0),
+        ("system.cpu1.commit.committedInstType_0::FloatMisc", 0),
+        ("system.cpu1.commit.committedInstType.SimdFloatMisc", 0),
+        ("system.cpu1.commit.committedInstType_0::SimdFloatMisc", 0),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+    }
+
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+        "sim.host_actions.stats_dump.cpu0.o3.iq.issued_inst_type.int_mul",
+        "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+        "system.cpu0.iq.issuedInstType.IntMult",
+        "system.cpu0.iq.issuedInstType_0::IntMult",
+        "system.cpu0.commit.committedInstType.IntMult",
+        "system.cpu0.commit.committedInstType_0::IntMult",
+        "system.cpu.iq.issuedInstType.IntMult",
+        "system.cpu.iq.issuedInstType_0::IntMult",
+        "system.cpu.commit.committedInstType.IntMult",
+        "system.cpu.commit.committedInstType_0::IntMult",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
+    ] {
+        assert_stats_dump_sample_absent(dump, path);
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.fu_latency_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.fu_integer_mul_instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.fu_float_misc_instructions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu1.iq.issuedInstType_0::IntMult",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_absent(&json, "sim.cpu0.o3.fu_latency_instructions");
+    assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType_0::IntMult");
+}
+
+#[test]
 fn rem6_run_m5_dump_reset_stats_snapshots_then_resets_o3_fu_classes() {
     let path = detailed_o3_dump_reset_fu_stats_binary("m5-switch-cpu-o3-dump-reset-fu-stats");
 
