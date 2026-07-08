@@ -35,8 +35,8 @@ use fabric::{
 };
 use host_action::{
     host_action_trace_checkpoint_restore_authority_stats,
-    host_action_trace_execution_mode_switch_quiescence_stats, host_action_trace_records,
-    Rem6HostActionTraceCountStat, Rem6HostActionTraceRecord,
+    host_action_trace_execution_mode_switch_stats, host_action_trace_records,
+    Rem6HostActionTraceRecord, Rem6HostActionTraceStat,
 };
 use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
@@ -600,15 +600,15 @@ impl Rem6DebugSummary {
         self.host_action_kind_trace_count("stop")
     }
 
-    pub(crate) fn host_action_trace_count_stats(
+    pub(crate) fn host_action_trace_stats(
         &self,
         stat_path_segment: impl Fn(&str) -> String,
-    ) -> Vec<Rem6HostActionTraceCountStat> {
+    ) -> Vec<Rem6HostActionTraceStat> {
         let mut stats = host_action_trace_checkpoint_restore_authority_stats(
             &self.host_action_checkpoint_restores,
             &stat_path_segment,
         );
-        stats.extend(host_action_trace_execution_mode_switch_quiescence_stats(
+        stats.extend(host_action_trace_execution_mode_switch_stats(
             &self.host_action_execution_mode_switches,
             stat_path_segment,
         ));
