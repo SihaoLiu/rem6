@@ -1044,6 +1044,78 @@ fn rem6_run_host_action_trace_restores_multicore_o3_checkpoint_components_by_act
     );
 }
 
+#[test]
+fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(
+        "m5-switch-cpu-hart1-o3-restore-host-action-component-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_restore = json
+        .pointer("/host_actions/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing host checkpoint restore: {json}"));
+    assert_eq!(
+        host_restore.pointer("/label").and_then(Value::as_str),
+        Some("gem5-m5-checkpoint")
+    );
+    assert_restore_component_chunk_stat(&json, host_restore, "cpu1", "xregs", "cpu1", "xregs");
+    assert_restore_component_chunk_stat(
+        &json,
+        host_restore,
+        "cpu1",
+        "in-order-pipeline",
+        "cpu1",
+        "in_order_pipeline",
+    );
+    assert_restore_component_chunk_stat(
+        &json,
+        host_restore,
+        "cpu1",
+        "o3-runtime-state",
+        "cpu1",
+        "o3_runtime_state",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+    );
+}
+
 fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk: &str) {
     let components = restore
         .pointer("/components")
@@ -1075,4 +1147,100 @@ fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk:
             .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
         "restore trace chunk should expose payload checksum: {chunk}"
     );
+}
+
+fn assert_restore_component_chunk_stat(
+    json: &Value,
+    restore: &Value,
+    component: &str,
+    chunk: &str,
+    component_path: &str,
+    chunk_path: &str,
+) {
+    let components = restore
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore components: {restore}"));
+    let component = components
+        .iter()
+        .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing restore component {component}: {restore}"));
+    let chunks = component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore chunks for {component}: {restore}"));
+    let chunk = chunks
+        .iter()
+        .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        .unwrap_or_else(|| panic!("missing restore chunk {chunk}: {component}"));
+    let component_chunks = component
+        .pointer("/chunk_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing component chunk count: {component}"));
+    let component_payload_bytes = component
+        .pointer("/payload_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing component payload bytes: {component}"));
+    let chunk_payload_bytes = chunk
+        .pointer("/payload_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing chunk payload bytes: {chunk}"));
+    let chunk_payload_checksum = chunk
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .and_then(parse_hex_u64)
+        .unwrap_or_else(|| panic!("missing chunk payload checksum: {chunk}"));
+
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.components"),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.chunks"),
+        "Count",
+        component_chunks,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.payload_bytes"),
+        "Byte",
+        component_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.chunks"
+        ),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+        ),
+        "Byte",
+        chunk_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+        ),
+        "Unspecified",
+        chunk_payload_checksum,
+        "monotonic",
+    );
+}
+
+fn parse_hex_u64(value: &str) -> Option<u64> {
+    u64::from_str_radix(value.strip_prefix("0x")?, 16).ok()
 }

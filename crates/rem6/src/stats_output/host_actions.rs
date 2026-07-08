@@ -12,14 +12,14 @@ pub(super) fn emit_run_host_action_stats(
     summary: &Rem6HostActionSummary,
 ) -> Result<(), Rem6CliError> {
     #[derive(Default)]
-    struct SwitchTransferComponentStats {
+    struct HostCheckpointComponentStats {
         components: u64,
         chunks: u64,
         payload_bytes: u64,
     }
 
     #[derive(Default)]
-    struct SwitchTransferChunkStats {
+    struct HostCheckpointChunkStats {
         chunks: u64,
         payload_bytes: u64,
         payload_checksum_accumulator: u64,
@@ -58,6 +58,10 @@ pub(super) fn emit_run_host_action_stats(
     let mut checkpoint_restore_execution_mode_authority_targets_seen = BTreeSet::<String>::new();
     let mut checkpoint_restore_execution_mode_authority_target_modes =
         BTreeMap::<(String, &'static str), u64>::new();
+    let mut checkpoint_restore_component_stats =
+        BTreeMap::<String, HostCheckpointComponentStats>::new();
+    let mut checkpoint_restore_chunk_stats =
+        BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
     for restore in &summary.checkpoint_restores {
         if restore.execution_mode_authority_present {
             checkpoint_restore_execution_mode_authority_manifests += 1;
@@ -75,6 +79,26 @@ pub(super) fn emit_run_host_action_stats(
             *checkpoint_restore_execution_mode_authority_target_modes
                 .entry((target, authority.mode))
                 .or_default() += 1;
+        }
+        for component in &restore.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = checkpoint_restore_component_stats
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = checkpoint_restore_chunk_stats
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                chunk_stats.chunks += 1;
+                chunk_stats.payload_bytes += chunk.payload_bytes;
+                chunk_stats.payload_checksum_accumulator = chunk_stats
+                    .payload_checksum_accumulator
+                    .wrapping_add(chunk.payload_checksum);
+            }
         }
     }
 
@@ -114,19 +138,19 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_quiescence_checker = None;
     let mut switch_quiescence_target_validated = BTreeMap::<String, u64>::new();
     let mut switch_quiescence_target_captured_stats =
-        BTreeMap::<String, SwitchTransferComponentStats>::new();
+        BTreeMap::<String, HostCheckpointComponentStats>::new();
     let mut switch_quiescence_target_checkers =
         BTreeMap::<String, Rem6ExecutionModeSwitchCheckerSummary>::new();
     let mut switch_state_transfer_component_stats =
-        BTreeMap::<String, SwitchTransferComponentStats>::new();
+        BTreeMap::<String, HostCheckpointComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
-        BTreeMap::<(String, String), SwitchTransferChunkStats>::new();
+        BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
     let mut switch_state_transfer_target_stats =
-        BTreeMap::<String, SwitchTransferComponentStats>::new();
+        BTreeMap::<String, HostCheckpointComponentStats>::new();
     let mut switch_state_transfer_target_component_stats =
-        BTreeMap::<(String, String), SwitchTransferComponentStats>::new();
+        BTreeMap::<(String, String), HostCheckpointComponentStats>::new();
     let mut switch_state_transfer_target_chunk_stats =
-        BTreeMap::<(String, String, String), SwitchTransferChunkStats>::new();
+        BTreeMap::<(String, String, String), HostCheckpointChunkStats>::new();
     for switch in &summary.execution_mode_switches {
         let Some(transfer) = switch.state_transfer.as_ref() else {
             continue;
@@ -527,6 +551,60 @@ pub(super) fn emit_run_host_action_stats(
         StatResetPolicy::Monotonic,
         switch_quiescence_captured_payload_bytes,
     )?;
+    for (component_path, component_stats) in checkpoint_restore_component_stats {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint_restore.component.{component_path}.components"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint_restore.component.{component_path}.chunks"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.component.{component_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            component_stats.payload_bytes,
+        )?;
+    }
+    for ((component_path, chunk_path), chunk_stats) in checkpoint_restore_chunk_stats {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            chunk_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_bytes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            ),
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_checksum_accumulator,
+        )?;
+    }
     for (component_path, component_stats) in switch_state_transfer_component_stats {
         increment_stat(
             stats,
@@ -730,7 +808,7 @@ mod tests {
     use crate::{
         Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
         Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-        Rem6HostExecutionModeSwitchSummary,
+        Rem6HostCheckpointSummary, Rem6HostExecutionModeSwitchSummary,
     };
 
     #[test]
@@ -892,6 +970,69 @@ mod tests {
     }
 
     #[test]
+    fn host_action_checkpoint_restore_stats_merge_normalized_path_collisions() {
+        let mut stats = StatsRegistry::new();
+        let summary = Rem6HostActionSummary {
+            total_action_count: 2,
+            checkpoint_restored_count: 2,
+            checkpoint_restored_component_count: 2,
+            checkpoint_restored_chunk_count: 2,
+            checkpoint_restored_payload_bytes: 24,
+            checkpoint_restores: vec![
+                restore_with_component_chunk("cpu-0", "pipe-0", 11, u64::MAX),
+                restore_with_component_chunk("cpu_0", "pipe_0", 13, 2),
+            ],
+            ..Rem6HostActionSummary::default()
+        };
+
+        emit_run_host_action_stats(&mut stats, &summary).unwrap();
+        let snapshot = stats.snapshot(0);
+
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.components",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.chunk.pipe_0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.chunk.pipe_0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.component.cpu_0.chunk.pipe_0.payload_checksum_accumulator",
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            1,
+        );
+    }
+
+    #[test]
     fn host_action_quiescence_target_capture_stats_skip_uncaptured_transfers() {
         let mut stats = StatsRegistry::new();
         let summary = Rem6HostActionSummary {
@@ -923,6 +1064,38 @@ mod tests {
             &snapshot,
             "sim.host_actions.execution_mode_switch.quiescence.target.cpu_0.captured_payload_bytes",
         );
+    }
+
+    fn restore_with_component_chunk(
+        component: &str,
+        chunk: &str,
+        payload_bytes: u64,
+        payload_checksum: u64,
+    ) -> Rem6HostCheckpointSummary {
+        Rem6HostCheckpointSummary {
+            tick: 0,
+            event: 0,
+            source: 0,
+            label: format!("restore-{component}-{chunk}"),
+            manifest_tick: 0,
+            component_count: 1,
+            chunk_count: 1,
+            payload_bytes,
+            execution_mode_authority_present: false,
+            execution_mode_authority_cleared: false,
+            execution_mode_authority_decode_error: false,
+            execution_modes: Vec::new(),
+            components: vec![Rem6HostCheckpointComponentSummary {
+                component: component.to_string(),
+                chunk_count: 1,
+                payload_bytes,
+                chunks: vec![Rem6HostCheckpointChunkSummary {
+                    name: chunk.to_string(),
+                    payload_bytes,
+                    payload_checksum,
+                }],
+            }],
+        }
     }
 
     fn switch_with_transfer_component_chunk(
