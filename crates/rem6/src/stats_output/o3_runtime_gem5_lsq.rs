@@ -116,6 +116,13 @@ pub(super) fn emit_gem5_o3_lsq_alias_stats(
             StatResetPolicy::Monotonic,
             value,
         )?;
+        increment_stat(
+            stats,
+            &format!("{gem5_cpu_alias_prefix}.lsq0.operation.total.dataResponse.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
         let operation_alias = o3_lsq_operation_alias(operation);

@@ -1347,6 +1347,13 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             value,
             "monotonic",
         );
+        assert_json_stat(
+            json,
+            &format!("system.cpu.lsq0.operation.total.dataResponse.{alias}"),
+            unit,
+            value,
+            "monotonic",
+        );
     }
     for (operation, alias_operation) in [
         ("float_load", "floatLoad"),
