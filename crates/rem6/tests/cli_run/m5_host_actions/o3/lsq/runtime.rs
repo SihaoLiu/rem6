@@ -516,6 +516,58 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
 }
 
 #[test]
+fn rem6_run_o3_debug_lsq_json_exposes_float_vector_operation_byte_lanes() {
+    let path = detailed_o3_float_vector_lsq_binary(
+        "m5-switch-cpu-detailed-o3-debug-lsq-float-vector-byte-lanes",
+    );
+    let json = o3_lsq_debug_runtime_json(&path, "220");
+    let runtime_operations = json
+        .pointer("/cores/0/o3_runtime/lsq/operation")
+        .unwrap_or_else(|| panic!("run JSON should include runtime LSQ operations: {json}"));
+    let debug_operations = json
+        .pointer("/debug/o3_trace/0/lsq/operation")
+        .unwrap_or_else(|| panic!("O3 debug trace should include LSQ operations: {json}"));
+
+    for (operation, active_lane, inactive_lane) in [
+        ("float_load", "load_bytes", "store_bytes"),
+        ("float_store", "store_bytes", "load_bytes"),
+        ("vector_load", "load_bytes", "store_bytes"),
+        ("vector_store", "store_bytes", "load_bytes"),
+    ] {
+        for lane in ["load_bytes", "store_bytes"] {
+            let pointer = format!("/{operation}/{lane}");
+            let expected = runtime_operations
+                .pointer(&pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "runtime LSQ operation byte lane {pointer} missing: {runtime_operations}"
+                    )
+                });
+            assert_eq!(
+                debug_operations.pointer(&pointer).and_then(Value::as_u64),
+                Some(expected),
+                "debug LSQ operation byte lane {pointer} should mirror runtime LSQ operations: {debug_operations}"
+            );
+        }
+        assert!(
+            debug_operations
+                .pointer(&format!("/{operation}/{active_lane}"))
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "active debug LSQ byte lane should be positive for {operation}: {debug_operations}"
+        );
+        assert_eq!(
+            debug_operations
+                .pointer(&format!("/{operation}/{inactive_lane}"))
+                .and_then(Value::as_u64),
+            Some(0),
+            "inactive debug LSQ byte lane should stay zero for {operation}: {debug_operations}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
     let ordered_path = detailed_o3_ordered_atomic_lsq_binary(
         "m5-switch-cpu-detailed-o3-event-summary-lsq-matrix-stats",
