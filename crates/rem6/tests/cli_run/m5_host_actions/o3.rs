@@ -1047,6 +1047,27 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
         dump,
         "sim.host_actions.stats_dump.cpu1.o3.iew.producer_consumer_fanout_ppm",
     );
+    for (dotted_path, bucket_path) in [
+        (
+            "system.cpu1.iew.instsToCommit.total",
+            "system.cpu1.iew.instsToCommit::total",
+        ),
+        (
+            "system.cpu1.iew.writebackCount.total",
+            "system.cpu1.iew.writebackCount::total",
+        ),
+        (
+            "system.cpu1.iew.producerInst.total",
+            "system.cpu1.iew.producerInst::total",
+        ),
+        (
+            "system.cpu1.iew.consumerInst.total",
+            "system.cpu1.iew.consumerInst::total",
+        ),
+    ] {
+        let value = stats_dump_sample_value(dump, dotted_path);
+        assert_stats_dump_sample(dump, bucket_path, "counter", "Count", value, "resettable");
+    }
     assert_stats_dump_sample(
         dump,
         "system.cpu1.iew.wbRate",
@@ -1068,6 +1089,14 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
         "system.cpu0.rob.maxOccupancy",
         "system.cpu0.rename.renamedOperands",
         "system.cpu0.iew.writebackCount.total",
+        "system.cpu0.iew.instsToCommit::total",
+        "system.cpu0.iew.writebackCount::total",
+        "system.cpu0.iew.producerInst::total",
+        "system.cpu0.iew.consumerInst::total",
+        "system.cpu.iew.instsToCommit::total",
+        "system.cpu.iew.writebackCount::total",
+        "system.cpu.iew.producerInst::total",
+        "system.cpu.iew.consumerInst::total",
         "system.cpu0.iew.wbRate",
         "system.cpu0.iew.wbFanout",
         "system.cpu.iew.wbRate",

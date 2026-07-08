@@ -471,6 +471,11 @@ impl Rem6HostStatsDumpSummary {
             .map(Rem6HostStatsDumpSampleSummary::from_sample)
             .collect();
         append_o3_stats_dump_rate_alias_samples(snapshot.samples(), active_o3_cpus, &mut samples);
+        append_o3_stats_dump_iew_total_bucket_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         append_o3_stats_dump_inst_type_bucket_alias_samples(
             snapshot.samples(),
             active_o3_cpus,
@@ -570,6 +575,44 @@ fn o3_stats_dump_rate_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
         _ => return None,
     };
     Some((cpu, suffix))
+}
+
+fn append_o3_stats_dump_iew_total_bucket_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some(alias_path) = o3_stats_dump_iew_total_bucket_alias_path(sample.path()) else {
+            continue;
+        };
+        if samples.iter().any(|sample| sample.path == alias_path) {
+            continue;
+        }
+        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+            sample, alias_path,
+        ));
+    }
+}
+
+fn o3_stats_dump_iew_total_bucket_alias_path(path: &str) -> Option<String> {
+    let (prefix, suffix) = path.split_once(".iew.")?;
+    if !is_o3_stats_dump_cpu_alias_prefix(prefix) {
+        return None;
+    }
+    match suffix {
+        "instsToCommit.total"
+        | "writebackCount.total"
+        | "producerInst.total"
+        | "consumerInst.total" => Some(format!(
+            "{prefix}.iew.{}::total",
+            suffix.strip_suffix(".total")?
+        )),
+        _ => None,
+    }
 }
 
 fn append_o3_stats_dump_inst_type_bucket_alias_samples(
