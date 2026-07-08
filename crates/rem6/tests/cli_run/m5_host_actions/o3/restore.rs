@@ -1223,6 +1223,51 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
             .unwrap_or_else(|| panic!("missing runtime restore lane {pointer}: {runtime_restore}"));
         assert_json_stat(&json, stat_path, unit, expected, "monotonic");
     }
+    assert_restore_execution_modes_exact(runtime_restore, &[("cpu1", "detailed")]);
+    for (stat_path, expected) in [
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.manifests",
+            1,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.cleared_manifests",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.decode_errors",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.targets",
+            1,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.mode.functional",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.mode.timing",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.mode.detailed",
+            1,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.target.cpu1.mode.functional",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.target.cpu1.mode.timing",
+            0,
+        ),
+        (
+            "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.target.cpu1.mode.detailed",
+            1,
+        ),
+    ] {
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
     assert_json_stat_absent(&json, "sim.cpu0.o3.checkpoint_restore.tick");
     assert_restore_component_chunk_stat(
         &json,
@@ -1235,6 +1280,14 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
         "cpu1",
     );
     assert_json_stat_prefix_absent(&json, "sim.cpu0.o3.checkpoint_restore.component.");
+    assert_json_stat_prefix_absent(
+        &json,
+        "sim.cpu1.o3.checkpoint_restore.execution_mode_authority.target.cpu0.",
+    );
+    assert_json_stat_prefix_absent(
+        &json,
+        "sim.cpu0.o3.checkpoint_restore.execution_mode_authority.",
+    );
 
     let o3_restore = o3_trace_checkpoint_restore_scope(&json, 1);
     assert_eq!(

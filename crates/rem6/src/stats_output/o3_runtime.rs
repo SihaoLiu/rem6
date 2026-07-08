@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{
     BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
@@ -8,6 +8,8 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{increment_stat, stat_path_segment};
 use crate::{Rem6CliError, Rem6CoreSummary};
+
+const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 fn emit_o3_branch_event_aggregate_stats(
     stats: &mut StatsRegistry,
@@ -756,6 +758,81 @@ fn emit_o3_runtime_checkpoint_restore_stats(
             unit,
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+
+    let authority_prefix = format!(
+        "sim.cpu{}.o3.checkpoint_restore.execution_mode_authority",
+        core.cpu
+    );
+    for (name, value) in [
+        (
+            "manifests",
+            if restore.execution_mode_authority_present {
+                1
+            } else {
+                0
+            },
+        ),
+        (
+            "cleared_manifests",
+            if restore.execution_mode_authority_cleared {
+                1
+            } else {
+                0
+            },
+        ),
+        (
+            "decode_errors",
+            if restore.execution_mode_authority_decode_error {
+                1
+            } else {
+                0
+            },
+        ),
+        ("targets", restore.execution_modes.len() as u64),
+    ] {
+        increment_count_stat(stats, format!("{authority_prefix}.{name}"), value)?;
+    }
+
+    let mut authority_modes = BTreeMap::<&'static str, u64>::new();
+    let mut authority_targets_seen = BTreeSet::<String>::new();
+    let mut authority_target_modes = BTreeMap::<(String, &'static str), u64>::new();
+    for authority in &restore.execution_modes {
+        let target = stat_path_segment(&authority.target);
+        authority_targets_seen.insert(target.clone());
+        *authority_modes.entry(authority.mode).or_default() += 1;
+        *authority_target_modes
+            .entry((target, authority.mode))
+            .or_default() += 1;
+    }
+    for mode in EXECUTION_MODE_STAT_LANES {
+        increment_count_stat(
+            stats,
+            format!("{authority_prefix}.mode.{mode}"),
+            authority_modes.get(mode).copied().unwrap_or_default(),
+        )?;
+    }
+    for target in authority_targets_seen {
+        for mode in EXECUTION_MODE_STAT_LANES {
+            increment_count_stat(
+                stats,
+                format!("{authority_prefix}.target.{target}.mode.{mode}"),
+                authority_target_modes
+                    .get(&(target.clone(), mode))
+                    .copied()
+                    .unwrap_or_default(),
+            )?;
+        }
+    }
+    for ((target, mode), count) in authority_target_modes {
+        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+            continue;
+        }
+        increment_count_stat(
+            stats,
+            format!("{authority_prefix}.target.{target}.mode.{mode}"),
+            count,
         )?;
     }
 
