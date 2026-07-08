@@ -26,11 +26,18 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_counts: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_alias_total: StatId,
+    lsq_operation_load_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_store_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_suppressed: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_address_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_byte_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_forwarding_suppressed: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_forwarding_address_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_forwarding_byte_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_candidate_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_match_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_suppressed_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
@@ -38,6 +45,7 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     lsq_operation_forwarding_byte_mismatch_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_nested_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
     lsq_ordering_alias_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
     lsq_ordering_alias_total: StatId,
@@ -160,6 +168,18 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq0.operation.total",
                 "Count",
             )?,
+            lsq_operation_load_bytes: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "load_bytes",
+                "Byte",
+            )?,
+            lsq_operation_store_bytes: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "store_bytes",
+                "Byte",
+            )?,
             lsq_operation_forwarding_candidates: register_o3_lsq_operation_forwarding_counters(
                 registry,
                 &prefix,
@@ -186,6 +206,38 @@ impl RiscvO3RuntimeCpuStats {
                     registry,
                     &prefix,
                     "forwarding_byte_mismatches",
+                )?,
+            lsq_operation_nested_forwarding_candidates: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_candidates",
+                "Count",
+            )?,
+            lsq_operation_nested_forwarding_matches: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_matches",
+                "Count",
+            )?,
+            lsq_operation_nested_forwarding_suppressed: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_suppressed",
+                "Count",
+            )?,
+            lsq_operation_nested_forwarding_address_mismatches:
+                register_o3_lsq_operation_nested_counters(
+                    registry,
+                    &prefix,
+                    "forwarding_address_mismatches",
+                    "Count",
+                )?,
+            lsq_operation_nested_forwarding_byte_mismatches:
+                register_o3_lsq_operation_nested_counters(
+                    registry,
+                    &prefix,
+                    "forwarding_byte_mismatches",
+                    "Count",
                 )?,
             lsq_operation_forwarding_candidate_aliases:
                 register_o3_lsq_operation_forwarding_alias_counters(
@@ -223,6 +275,9 @@ impl RiscvO3RuntimeCpuStats {
                 "lsq_data_latency",
             )?,
             lsq_operation_latency: register_o3_lsq_operation_latency_counters(registry, &prefix)?,
+            lsq_operation_nested_latency: register_o3_lsq_operation_nested_latency_counters(
+                registry, &prefix,
+            )?,
             lsq_ordering_counts: register_o3_lsq_ordering_counters(registry, &prefix)?,
             lsq_ordering_alias_counts: register_o3_lsq_ordering_alias_counters(
                 registry,
@@ -946,6 +1001,25 @@ impl RiscvO3RuntimeCpuStats {
             registry.increment(self.lsq_operation_alias_total, lsq_operation_delta_total)?;
         }
         for operation in O3RuntimeLsqOperation::TRACKED {
+            for (stat, previous, current) in [
+                (
+                    self.lsq_operation_load_bytes[operation.index()],
+                    previous.lsq_operation_load_bytes(operation),
+                    current.lsq_operation_load_bytes(operation),
+                ),
+                (
+                    self.lsq_operation_store_bytes[operation.index()],
+                    previous.lsq_operation_store_bytes(operation),
+                    current.lsq_operation_store_bytes(operation),
+                ),
+            ] {
+                let delta = current.saturating_sub(previous);
+                if delta != 0 {
+                    registry.increment(stat, delta)?;
+                }
+            }
+        }
+        for operation in O3RuntimeLsqOperation::TRACKED {
             let candidate_delta = current
                 .lsq_operation_forwarding_candidates(operation)
                 .saturating_sub(previous.lsq_operation_forwarding_candidates(operation));
@@ -956,6 +1030,10 @@ impl RiscvO3RuntimeCpuStats {
                 )?;
                 registry.increment(
                     self.lsq_operation_forwarding_candidate_aliases[operation.index()],
+                    candidate_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_nested_forwarding_candidates[operation.index()],
                     candidate_delta,
                 )?;
             }
@@ -971,6 +1049,10 @@ impl RiscvO3RuntimeCpuStats {
                     self.lsq_operation_forwarding_match_aliases[operation.index()],
                     match_delta,
                 )?;
+                registry.increment(
+                    self.lsq_operation_nested_forwarding_matches[operation.index()],
+                    match_delta,
+                )?;
             }
             let suppressed_delta = current
                 .lsq_operation_forwarding_suppressed(operation)
@@ -982,6 +1064,10 @@ impl RiscvO3RuntimeCpuStats {
                 )?;
                 registry.increment(
                     self.lsq_operation_forwarding_suppressed_aliases[operation.index()],
+                    suppressed_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_nested_forwarding_suppressed[operation.index()],
                     suppressed_delta,
                 )?;
             }
@@ -997,6 +1083,10 @@ impl RiscvO3RuntimeCpuStats {
                     self.lsq_operation_forwarding_address_mismatch_aliases[operation.index()],
                     address_mismatch_delta,
                 )?;
+                registry.increment(
+                    self.lsq_operation_nested_forwarding_address_mismatches[operation.index()],
+                    address_mismatch_delta,
+                )?;
             }
             let byte_mismatch_delta = current
                 .lsq_operation_forwarding_byte_mismatches(operation)
@@ -1008,6 +1098,10 @@ impl RiscvO3RuntimeCpuStats {
                 )?;
                 registry.increment(
                     self.lsq_operation_forwarding_byte_mismatch_aliases[operation.index()],
+                    byte_mismatch_delta,
+                )?;
+                registry.increment(
+                    self.lsq_operation_nested_forwarding_byte_mismatches[operation.index()],
                     byte_mismatch_delta,
                 )?;
             }
@@ -1220,6 +1314,14 @@ impl RiscvO3RuntimeCpuStats {
         registry.set_resettable_counter(self.lsq_operation_alias_total, lsq_operation_total)?;
         for operation in O3RuntimeLsqOperation::TRACKED {
             registry.set_resettable_counter(
+                self.lsq_operation_load_bytes[operation.index()],
+                snapshot.lsq_operation_load_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_store_bytes[operation.index()],
+                snapshot.lsq_operation_store_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
                 self.lsq_operation_forwarding_candidates[operation.index()],
                 snapshot.lsq_operation_forwarding_candidates(operation),
             )?;
@@ -1237,6 +1339,26 @@ impl RiscvO3RuntimeCpuStats {
             )?;
             registry.set_resettable_counter(
                 self.lsq_operation_forwarding_byte_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_byte_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_nested_forwarding_candidates[operation.index()],
+                snapshot.lsq_operation_forwarding_candidates(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_nested_forwarding_matches[operation.index()],
+                snapshot.lsq_operation_forwarding_matches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_nested_forwarding_suppressed[operation.index()],
+                snapshot.lsq_operation_forwarding_suppressed(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_nested_forwarding_address_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_address_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_nested_forwarding_byte_mismatches[operation.index()],
                 snapshot.lsq_operation_forwarding_byte_mismatches(operation),
             )?;
             registry.set_resettable_counter(
@@ -1422,6 +1544,15 @@ impl RiscvO3RuntimeCpuStats {
             set_o3_lsq_latency_counters(
                 registry,
                 self.lsq_operation_latency[operation.index()],
+                snapshot.lsq_operation_latency_samples(operation),
+                snapshot.lsq_operation_latency_ticks(operation),
+                snapshot.lsq_operation_latency_max_ticks(operation),
+                snapshot.lsq_operation_latency_min_ticks(operation),
+                snapshot.lsq_operation_latency_avg_ticks(operation),
+            )?;
+            set_o3_lsq_latency_counters(
+                registry,
+                self.lsq_operation_nested_latency[operation.index()],
                 snapshot.lsq_operation_latency_samples(operation),
                 snapshot.lsq_operation_latency_ticks(operation),
                 snapshot.lsq_operation_latency_max_ticks(operation),

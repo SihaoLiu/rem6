@@ -1237,13 +1237,10 @@ pub(super) fn emit_o3_runtime_stats(
         )?;
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
+        let operation_name = operation.as_str();
         increment_count_stat(
             stats,
-            format!(
-                "sim.cpu{}.o3.lsq_operation.{}",
-                core.cpu,
-                operation.as_str()
-            ),
+            format!("sim.cpu{}.o3.lsq_operation.{operation_name}", core.cpu),
             o3.lsq_operation_count(operation),
         )?;
         for (suffix, value) in [
@@ -1254,9 +1251,17 @@ pub(super) fn emit_o3_runtime_stats(
                 stats,
                 &format!(
                     "sim.cpu{}.o3.lsq_operation.{}_{}",
-                    core.cpu,
-                    operation.as_str(),
-                    suffix
+                    core.cpu, operation_name, suffix
+                ),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.lsq_operation.{operation_name}.{suffix}",
+                    core.cpu
                 ),
                 "Byte",
                 StatResetPolicy::Monotonic,
@@ -1289,36 +1294,47 @@ pub(super) fn emit_o3_runtime_stats(
                 stats,
                 format!(
                     "sim.cpu{}.o3.lsq_operation.{}_{}",
-                    core.cpu,
-                    operation.as_str(),
-                    suffix
+                    core.cpu, operation_name, suffix
+                ),
+                value,
+            )?;
+            increment_count_stat(
+                stats,
+                format!(
+                    "sim.cpu{}.o3.lsq_operation.{operation_name}.{suffix}",
+                    core.cpu
                 ),
                 value,
             )?;
         }
-        for (suffix, unit, value) in [
+        for (flat_suffix, nested_suffix, unit, value) in [
             (
                 "latency_samples",
+                "samples",
                 "Count",
                 o3.lsq_operation_latency_samples(operation),
             ),
             (
                 "latency_ticks",
+                "ticks",
                 "Tick",
                 o3.lsq_operation_latency_ticks(operation),
             ),
             (
                 "latency_max_ticks",
+                "max_ticks",
                 "Tick",
                 o3.lsq_operation_latency_max_ticks(operation),
             ),
             (
                 "latency_min_ticks",
+                "min_ticks",
                 "Tick",
                 o3.lsq_operation_latency_min_ticks(operation),
             ),
             (
                 "latency_avg_ticks",
+                "avg_ticks",
                 "Tick",
                 o3.lsq_operation_latency_avg_ticks(operation),
             ),
@@ -1327,9 +1343,17 @@ pub(super) fn emit_o3_runtime_stats(
                 stats,
                 &format!(
                     "sim.cpu{}.o3.lsq_operation.{}_{}",
-                    core.cpu,
-                    operation.as_str(),
-                    suffix
+                    core.cpu, operation_name, flat_suffix
+                ),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.lsq_operation.{operation_name}.latency.{nested_suffix}",
+                    core.cpu
                 ),
                 unit,
                 StatResetPolicy::Monotonic,

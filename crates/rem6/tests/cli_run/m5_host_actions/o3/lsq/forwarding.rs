@@ -92,6 +92,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
             value,
             "resettable",
         );
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            &format!("sim.host_actions.stats_dump.cpu1.o3.lsq_operation.load.forwarding_{suffix}"),
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
     }
     for (suffix, value) in [("Candidates", 1), ("Matches", 1), ("Suppressed", 0)] {
         assert_stats_dump_sample(
@@ -134,6 +142,14 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
             value,
             "resettable",
         );
+        assert_stats_dump_sample(
+            post_reset_dump,
+            &format!("sim.host_actions.stats_dump.cpu1.o3.lsq_operation.load.forwarding_{suffix}"),
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
     }
     for (suffix, value) in [
         ("Candidates", 0),
@@ -162,6 +178,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
             for prefix in [
                 "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding",
                 "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding",
+                "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.forwarding",
             ] {
                 assert_stats_dump_sample_absent(dump, &format!("{prefix}_{suffix}"));
             }

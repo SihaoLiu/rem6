@@ -1,5 +1,101 @@
 use super::*;
 
+pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
+    pre_reset_dump: &Value,
+    post_reset_dump: &Value,
+) {
+    for (path, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.load_bytes",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.store_bytes",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store.store_bytes",
+            24,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved.load_bytes",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.store_bytes",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic.load_bytes",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic.store_bytes",
+            8,
+        ),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", "Byte", value, "resettable");
+    }
+    for (dump, path, unit, value) in [
+        (
+            pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.latency.samples",
+            "Count",
+            1,
+        ),
+        (
+            pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.latency.ticks",
+            "Tick",
+            2,
+        ),
+        (
+            pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store.latency.samples",
+            "Count",
+            3,
+        ),
+        (
+            pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store.latency.ticks",
+            "Tick",
+            6,
+        ),
+        (
+            pre_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.atomic.latency.ticks",
+            "Tick",
+            2,
+        ),
+        (
+            post_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.latency.samples",
+            "Count",
+            0,
+        ),
+        (
+            post_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store.latency.samples",
+            "Count",
+            1,
+        ),
+        (
+            post_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store.latency.ticks",
+            "Tick",
+            2,
+        ),
+        (
+            post_reset_dump,
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.latency.ticks",
+            "Tick",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", unit, value, "resettable");
+    }
+}
+
 #[test]
 fn rem6_run_o3_runtime_json_exposes_ordered_atomic_lsq_matrix() {
     let path = detailed_o3_ordered_atomic_lsq_binary(
@@ -101,7 +197,7 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/load/load_bytes",
-            "sim.cpu0.o3.lsq_operation.load_load_bytes",
+            "sim.cpu0.o3.lsq_operation.load.load_bytes",
             8,
         ),
         (
@@ -111,7 +207,7 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/load/store_bytes",
-            "sim.cpu0.o3.lsq_operation.load_store_bytes",
+            "sim.cpu0.o3.lsq_operation.load.store_bytes",
             0,
         ),
         (
@@ -121,12 +217,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/store/load_bytes",
-            "sim.cpu0.o3.lsq_operation.store_load_bytes",
+            "sim.cpu0.o3.lsq_operation.store.load_bytes",
             0,
         ),
         (
             "/lsq/operation/store/store_bytes",
-            "sim.cpu0.o3.lsq_operation.store_store_bytes",
+            "sim.cpu0.o3.lsq_operation.store.store_bytes",
             24,
         ),
         (
@@ -136,12 +232,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/load_reserved/load_bytes",
-            "sim.cpu0.o3.lsq_operation.load_reserved_load_bytes",
+            "sim.cpu0.o3.lsq_operation.load_reserved.load_bytes",
             8,
         ),
         (
             "/lsq/operation/load_reserved/store_bytes",
-            "sim.cpu0.o3.lsq_operation.load_reserved_store_bytes",
+            "sim.cpu0.o3.lsq_operation.load_reserved.store_bytes",
             0,
         ),
         (
@@ -151,12 +247,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/store_conditional/load_bytes",
-            "sim.cpu0.o3.lsq_operation.store_conditional_load_bytes",
+            "sim.cpu0.o3.lsq_operation.store_conditional.load_bytes",
             0,
         ),
         (
             "/lsq/operation/store_conditional/store_bytes",
-            "sim.cpu0.o3.lsq_operation.store_conditional_store_bytes",
+            "sim.cpu0.o3.lsq_operation.store_conditional.store_bytes",
             8,
         ),
         (
@@ -166,12 +262,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/atomic/load_bytes",
-            "sim.cpu0.o3.lsq_operation.atomic_load_bytes",
+            "sim.cpu0.o3.lsq_operation.atomic.load_bytes",
             8,
         ),
         (
             "/lsq/operation/atomic/store_bytes",
-            "sim.cpu0.o3.lsq_operation.atomic_store_bytes",
+            "sim.cpu0.o3.lsq_operation.atomic.store_bytes",
             8,
         ),
         (
@@ -186,12 +282,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/vector_load/load_bytes",
-            "sim.cpu0.o3.lsq_operation.vector_load_load_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_load.load_bytes",
             0,
         ),
         (
             "/lsq/operation/vector_load/store_bytes",
-            "sim.cpu0.o3.lsq_operation.vector_load_store_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_load.store_bytes",
             0,
         ),
         (
@@ -201,12 +297,12 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/vector_store/load_bytes",
-            "sim.cpu0.o3.lsq_operation.vector_store_load_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_store.load_bytes",
             0,
         ),
         (
             "/lsq/operation/vector_store/store_bytes",
-            "sim.cpu0.o3.lsq_operation.vector_store_store_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_store.store_bytes",
             0,
         ),
         (
@@ -235,6 +331,29 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
             value,
             "stat path {stat_path} should match nested O3 runtime expectation"
         );
+    }
+    for operation in [
+        "load",
+        "store",
+        "load_reserved",
+        "store_conditional",
+        "atomic",
+        "float_load",
+        "float_store",
+        "vector_load",
+        "vector_store",
+    ] {
+        for lane in ["load_bytes", "store_bytes"] {
+            let pointer = format!("/lsq/operation/{operation}/{lane}");
+            let stat_path = format!("sim.cpu0.o3.lsq_operation.{operation}.{lane}");
+            let value = o3_runtime
+                .pointer(&pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
+                });
+            assert_json_stat(&json, &stat_path, "Byte", value, "monotonic");
+        }
     }
 
     let snapshot = o3_runtime
@@ -286,26 +405,17 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         "store_conditional",
         "atomic",
     ] {
-        for (metric, stat_suffix) in [
-            ("samples", "latency_samples"),
-            ("ticks", "latency_ticks"),
-            ("max_ticks", "latency_max_ticks"),
-            ("min_ticks", "latency_min_ticks"),
-            ("avg_ticks", "latency_avg_ticks"),
-        ] {
+        for metric in ["samples", "ticks", "max_ticks", "min_ticks", "avg_ticks"] {
             let pointer = format!("/lsq/operation/{operation}/latency/{metric}");
-            let stat_path = format!("sim.cpu0.o3.lsq_operation.{operation}_{stat_suffix}");
+            let stat_path = format!("sim.cpu0.o3.lsq_operation.{operation}.latency.{metric}");
+            let unit = if metric == "samples" { "Count" } else { "Tick" };
             let structured = o3_runtime
                 .pointer(&pointer)
                 .and_then(Value::as_u64)
                 .unwrap_or_else(|| {
                     panic!("structured O3 runtime JSON should expose {pointer}: {o3_runtime}")
                 });
-            assert_eq!(
-                structured,
-                json_stat_value(&json, &stat_path),
-                "nested O3 runtime {pointer} should match stat path {stat_path}"
-            );
+            assert_json_stat(&json, &stat_path, unit, structured, "monotonic");
             assert!(
                 structured > 0,
                 "active LSQ operation latency metric {pointer} should be positive: {o3_runtime}"
@@ -365,11 +475,11 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         ),
         (
             "/lsq/operation/load/forwarding_candidates",
-            "sim.cpu0.o3.lsq_operation.load_forwarding_candidates",
+            "sim.cpu0.o3.lsq_operation.load.forwarding_candidates",
         ),
         (
             "/lsq/operation/load/forwarding_matches",
-            "sim.cpu0.o3.lsq_operation.load_forwarding_matches",
+            "sim.cpu0.o3.lsq_operation.load.forwarding_matches",
         ),
     ] {
         assert_eq!(

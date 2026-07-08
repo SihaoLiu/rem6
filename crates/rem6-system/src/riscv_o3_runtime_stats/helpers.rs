@@ -85,6 +85,24 @@ pub(super) fn register_o3_lsq_operation_alias_counters(
     Ok(stats)
 }
 
+pub(super) fn register_o3_lsq_operation_nested_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    suffix: &str,
+    unit: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        stats[operation.index()] = register_o3_counter(
+            registry,
+            prefix,
+            &format!("lsq_operation.{}.{suffix}", operation.as_str()),
+            unit,
+        )?;
+    }
+    Ok(stats)
+}
+
 pub(super) fn register_o3_lsq_operation_forwarding_counters(
     registry: &mut StatsRegistry,
     prefix: &str,
@@ -155,6 +173,56 @@ pub(super) fn register_o3_lsq_operation_latency_counters(
             prefix,
             &format!("lsq_operation.{}_latency", operation.as_str()),
         )?;
+    }
+    Ok(stats)
+}
+
+pub(super) fn register_o3_lsq_operation_nested_latency_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT], StatsError> {
+    let empty = RiscvO3RuntimeLsqLatencyStats {
+        samples: StatId::new(0),
+        ticks: StatId::new(0),
+        max_ticks: StatId::new(0),
+        min_ticks: StatId::new(0),
+        avg_ticks: StatId::new(0),
+    };
+    let mut stats = [empty; O3RuntimeLsqOperation::COUNT];
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        let operation_name = operation.as_str();
+        stats[operation.index()] = RiscvO3RuntimeLsqLatencyStats {
+            samples: register_o3_counter(
+                registry,
+                prefix,
+                &format!("lsq_operation.{operation_name}.latency.samples"),
+                "Count",
+            )?,
+            ticks: register_o3_counter(
+                registry,
+                prefix,
+                &format!("lsq_operation.{operation_name}.latency.ticks"),
+                "Tick",
+            )?,
+            max_ticks: register_o3_counter(
+                registry,
+                prefix,
+                &format!("lsq_operation.{operation_name}.latency.max_ticks"),
+                "Tick",
+            )?,
+            min_ticks: register_o3_counter(
+                registry,
+                prefix,
+                &format!("lsq_operation.{operation_name}.latency.min_ticks"),
+                "Tick",
+            )?,
+            avg_ticks: register_o3_counter(
+                registry,
+                prefix,
+                &format!("lsq_operation.{operation_name}.latency.avg_ticks"),
+                "Tick",
+            )?,
+        };
     }
     Ok(stats)
 }

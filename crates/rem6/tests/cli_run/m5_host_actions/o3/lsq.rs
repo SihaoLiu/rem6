@@ -356,6 +356,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", unit, value, "resettable");
     }
+    runtime::assert_o3_lsq_matrix_dump_nested_aliases(pre_reset_dump, post_reset_dump);
 
     assert_json_stat(
         &json,
