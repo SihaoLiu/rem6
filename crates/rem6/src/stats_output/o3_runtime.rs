@@ -653,6 +653,27 @@ fn emit_o3_runtime_event_summary_stats(
     Ok(())
 }
 
+fn emit_o3_runtime_snapshot_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+) -> Result<(), Rem6CliError> {
+    let snapshot = &core.o3_runtime_snapshot;
+    for (name, value) in [
+        ("snapshot.rob.count", snapshot.reorder_buffer().len() as u64),
+        (
+            "snapshot.lsq.count",
+            snapshot.load_store_queue().len() as u64,
+        ),
+        (
+            "snapshot.rename_map.count",
+            snapshot.rename_map().len() as u64,
+        ),
+    ] {
+        increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
+    }
+    Ok(())
+}
+
 pub(super) fn emit_o3_runtime_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
@@ -709,6 +730,7 @@ pub(super) fn emit_o3_runtime_stats(
     ] {
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
+    emit_o3_runtime_snapshot_stats(stats, core)?;
     emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {

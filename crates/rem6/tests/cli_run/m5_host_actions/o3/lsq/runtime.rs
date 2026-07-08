@@ -157,6 +157,27 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
         );
     }
 
+    let snapshot = o3_runtime
+        .pointer("/snapshot")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose final snapshot: {o3_runtime}"));
+    let snapshot_count = |pointer: &str| {
+        snapshot
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("O3 runtime snapshot should expose {pointer}: {snapshot}"))
+    };
+    assert_eq!(snapshot_count("/rob/count"), 0);
+    assert_eq!(snapshot_count("/lsq/count"), 0);
+    assert!(snapshot_count("/rename_map/count") > 0);
+    for (pointer, stat_path) in [
+        ("/rob/count", "sim.cpu0.o3.snapshot.rob.count"),
+        ("/lsq/count", "sim.cpu0.o3.snapshot.lsq.count"),
+        ("/rename_map/count", "sim.cpu0.o3.snapshot.rename_map.count"),
+    ] {
+        let expected = snapshot_count(pointer);
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
+
     for operation in [
         "load",
         "store",
