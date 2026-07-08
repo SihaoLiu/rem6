@@ -91,11 +91,42 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     }
 
     for (pointer, stat_path, unit) in [
+        (
+            "/first_tick",
+            "sim.cpu0.o3.event_summary.first_tick",
+            "Tick",
+        ),
+        ("/last_tick", "sim.cpu0.o3.event_summary.last_tick", "Tick"),
         ("/records", "sim.cpu0.o3.event_summary.records", "Count"),
         (
             "/span_ticks",
             "sim.cpu0.o3.event_summary.span_ticks",
             "Tick",
+        ),
+        (
+            "/event_window/first/tick",
+            "sim.cpu0.o3.event_summary.event_window.first.tick",
+            "Tick",
+        ),
+        (
+            "/event_window/last/sequence",
+            "sim.cpu0.o3.event_summary.event_window.last.sequence",
+            "Count",
+        ),
+        (
+            "/event_window/max_rob_occupancy/tick",
+            "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
+            "Tick",
+        ),
+        (
+            "/event_window/max_lsq_occupancy/lsq_occupancy",
+            "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.lsq_occupancy",
+            "Count",
+        ),
+        (
+            "/event_window/max_rename_map_entries/rename_map_entries",
+            "sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.rename_map_entries",
+            "Count",
         ),
         (
             "/rob/allocations",
@@ -409,6 +440,8 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
     );
     for path in [
         "sim.cpu0.o3.event_summary.records",
+        "sim.cpu0.o3.event_summary.first_tick",
+        "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
         "sim.cpu0.o3.event_summary.span_ticks",
         "sim.cpu0.o3.event_summary.rob.allocations",
         "sim.cpu0.o3.event_summary.lsq_operation.load",

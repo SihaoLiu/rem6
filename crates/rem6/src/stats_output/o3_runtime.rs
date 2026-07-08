@@ -368,6 +368,63 @@ fn emit_o3_runtime_event_summary_branch_mismatch_stats(
     Ok(())
 }
 
+fn emit_o3_runtime_event_summary_window_row_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    row: &str,
+    event: Option<&O3RuntimeTraceRecord>,
+) -> Result<(), Rem6CliError> {
+    let sequence = event.map_or(0, |event| event.sequence());
+    let tick = event.map_or(0, |event| event.tick());
+    let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
+    let lsq_occupancy = event.map_or(0, |event| event.lsq_occupancy());
+    let rename_map_entries = event.map_or(0, |event| event.rename_map_entries());
+    for (name, unit, value) in [
+        ("sequence", "Count", sequence),
+        ("tick", "Tick", tick),
+        ("rob_occupancy", "Count", rob_occupancy),
+        ("lsq_occupancy", "Count", lsq_occupancy),
+        ("rename_map_entries", "Count", rename_map_entries),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.event_window.{row}.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_o3_runtime_event_summary_window_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    events: &[O3RuntimeTraceRecord],
+) -> Result<(), Rem6CliError> {
+    emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "first", events.first())?;
+    emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "last", events.last())?;
+    emit_o3_runtime_event_summary_window_row_stats(
+        stats,
+        cpu,
+        "max_rob_occupancy",
+        events.iter().max_by_key(|event| event.rob_occupancy()),
+    )?;
+    emit_o3_runtime_event_summary_window_row_stats(
+        stats,
+        cpu,
+        "max_lsq_occupancy",
+        events.iter().max_by_key(|event| event.lsq_occupancy()),
+    )?;
+    emit_o3_runtime_event_summary_window_row_stats(
+        stats,
+        cpu,
+        "max_rename_map_entries",
+        events.iter().max_by_key(|event| event.rename_map_entries()),
+    )?;
+    Ok(())
+}
+
 fn emit_o3_runtime_event_summary_stats(
     stats: &mut StatsRegistry,
     cpu: u32,
@@ -484,7 +541,11 @@ fn emit_o3_runtime_event_summary_stats(
             value,
         )?;
     }
-    for (name, value) in [("span_ticks", span_ticks)] {
+    for (name, value) in [
+        ("first_tick", first_tick),
+        ("last_tick", last_tick),
+        ("span_ticks", span_ticks),
+    ] {
         increment_stat(
             stats,
             &format!("sim.cpu{cpu}.o3.event_summary.{name}"),
@@ -493,6 +554,7 @@ fn emit_o3_runtime_event_summary_stats(
             value,
         )?;
     }
+    emit_o3_runtime_event_summary_window_stats(stats, cpu, events)?;
     for operation in O3RuntimeLsqOperation::TRACKED {
         let count = events
             .iter()
