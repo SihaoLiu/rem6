@@ -467,9 +467,10 @@ fn emit_o3_runtime_event_summary_branch_mismatch_stats(
     Ok(())
 }
 
-fn emit_o3_runtime_event_summary_window_row_stats(
+fn emit_o3_runtime_window_row_stats(
     stats: &mut StatsRegistry,
     cpu: u32,
+    family: &str,
     row: &str,
     event: Option<&O3RuntimeTraceRecord>,
 ) -> Result<(), Rem6CliError> {
@@ -489,7 +490,7 @@ fn emit_o3_runtime_event_summary_window_row_stats(
     ] {
         increment_stat(
             stats,
-            &format!("sim.cpu{cpu}.o3.event_summary.event_window.{row}.{name}"),
+            &format!("sim.cpu{cpu}.o3.{family}.{row}.{name}"),
             unit,
             StatResetPolicy::Monotonic,
             value,
@@ -498,11 +499,15 @@ fn emit_o3_runtime_event_summary_window_row_stats(
     Ok(())
 }
 
-fn emit_o3_runtime_event_summary_window_stats(
+fn emit_o3_runtime_window_stats(
     stats: &mut StatsRegistry,
     cpu: u32,
+    family: &str,
     events: &[O3RuntimeTraceRecord],
 ) -> Result<(), Rem6CliError> {
+    if events.is_empty() {
+        return Ok(());
+    }
     let records = events.len() as u64;
     let first_tick = events.first().map_or(0, |event| event.tick());
     let last_tick = events.last().map_or(0, |event| event.tick());
@@ -513,29 +518,32 @@ fn emit_o3_runtime_event_summary_window_stats(
     ] {
         increment_stat(
             stats,
-            &format!("sim.cpu{cpu}.o3.event_summary.event_window.{name}"),
+            &format!("sim.cpu{cpu}.o3.{family}.{name}"),
             unit,
             StatResetPolicy::Monotonic,
             value,
         )?;
     }
-    emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "first", events.first())?;
-    emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "last", events.last())?;
-    emit_o3_runtime_event_summary_window_row_stats(
+    emit_o3_runtime_window_row_stats(stats, cpu, family, "first", events.first())?;
+    emit_o3_runtime_window_row_stats(stats, cpu, family, "last", events.last())?;
+    emit_o3_runtime_window_row_stats(
         stats,
         cpu,
+        family,
         "max_rob_occupancy",
         events.iter().max_by_key(|event| event.rob_occupancy()),
     )?;
-    emit_o3_runtime_event_summary_window_row_stats(
+    emit_o3_runtime_window_row_stats(
         stats,
         cpu,
+        family,
         "max_lsq_occupancy",
         events.iter().max_by_key(|event| event.lsq_occupancy()),
     )?;
-    emit_o3_runtime_event_summary_window_row_stats(
+    emit_o3_runtime_window_row_stats(
         stats,
         cpu,
+        family,
         "max_rename_map_entries",
         events.iter().max_by_key(|event| event.rename_map_entries()),
     )?;
@@ -897,7 +905,7 @@ fn emit_o3_runtime_event_summary_stats(
             value,
         )?;
     }
-    emit_o3_runtime_event_summary_window_stats(stats, cpu, events)?;
+    emit_o3_runtime_window_stats(stats, cpu, "event_summary.event_window", events)?;
     emit_o3_runtime_event_summary_branch_event_stats(stats, cpu, events)?;
     for operation in O3RuntimeLsqOperation::TRACKED {
         let count = events
@@ -1121,6 +1129,12 @@ pub(super) fn emit_o3_runtime_stats(
     }
     emit_o3_runtime_snapshot_stats(stats, core)?;
     emit_o3_runtime_checkpoint_restore_stats(stats, core)?;
+    emit_o3_runtime_window_stats(
+        stats,
+        core.cpu,
+        "event_window",
+        &core.o3_runtime_trace_records,
+    )?;
     emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {

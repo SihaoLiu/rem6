@@ -54,9 +54,19 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     let runtime_summary = o3_runtime
         .pointer("/event_summary")
         .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {o3_runtime}"));
+    let runtime_window = o3_runtime
+        .pointer("/event_window")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event window: {o3_runtime}"));
     let debug_summary = json
         .pointer("/debug/o3_trace/0/event_summary")
         .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
+    assert_eq!(
+        runtime_window,
+        runtime_summary
+            .pointer("/event_window")
+            .unwrap_or_else(|| panic!("runtime event summary should expose event window: {runtime_summary}")),
+        "top-level O3 runtime event window should be the same trace-window state as the event summary"
+    );
 
     assert_eq!(
         runtime_summary.pointer("/records"),
@@ -429,6 +439,65 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             stat_path,
             "Address",
             event_summary_hex_u64(runtime_summary, pointer),
+            "monotonic",
+        );
+    }
+
+    for (pointer, stat_path, unit) in [
+        ("/records", "sim.cpu0.o3.event_window.records", "Count"),
+        ("/span_ticks", "sim.cpu0.o3.event_window.span_ticks", "Tick"),
+        ("/first/tick", "sim.cpu0.o3.event_window.first.tick", "Tick"),
+        (
+            "/last/sequence",
+            "sim.cpu0.o3.event_window.last.sequence",
+            "Count",
+        ),
+        (
+            "/max_rob_occupancy/rob_occupancy",
+            "sim.cpu0.o3.event_window.max_rob_occupancy.rob_occupancy",
+            "Count",
+        ),
+        (
+            "/max_lsq_occupancy/lsq_occupancy",
+            "sim.cpu0.o3.event_window.max_lsq_occupancy.lsq_occupancy",
+            "Count",
+        ),
+        (
+            "/max_rename_map_entries/rename_map_entries",
+            "sim.cpu0.o3.event_window.max_rename_map_entries.rename_map_entries",
+            "Count",
+        ),
+    ] {
+        let expected = runtime_window
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime event window should expose u64 lane {pointer}: {runtime_window}")
+            });
+        assert_json_stat(&json, stat_path, unit, expected, "monotonic");
+    }
+
+    for (pointer, stat_path) in [
+        ("/first/pc", "sim.cpu0.o3.event_window.first.pc"),
+        ("/last/pc", "sim.cpu0.o3.event_window.last.pc"),
+        (
+            "/max_rob_occupancy/pc",
+            "sim.cpu0.o3.event_window.max_rob_occupancy.pc",
+        ),
+        (
+            "/max_lsq_occupancy/pc",
+            "sim.cpu0.o3.event_window.max_lsq_occupancy.pc",
+        ),
+        (
+            "/max_rename_map_entries/pc",
+            "sim.cpu0.o3.event_window.max_rename_map_entries.pc",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            "Address",
+            event_summary_hex_u64(runtime_window, pointer),
             "monotonic",
         );
     }
@@ -883,6 +952,12 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
     );
     assert!(
         o3_runtime
+            .pointer("/event_window")
+            .is_some_and(Value::is_null),
+        "non-debug O3 runtime JSON should expose an explicit null event window: {o3_runtime}"
+    );
+    assert!(
+        o3_runtime
             .pointer("/branch_direction_mismatch")
             .is_some_and(Value::is_null),
         "non-debug O3 runtime JSON should expose an explicit null direction mismatch summary: {o3_runtime}"
@@ -901,6 +976,10 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
         "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_summary.span_ticks",
+        "sim.cpu0.o3.event_window.records",
+        "sim.cpu0.o3.event_window.span_ticks",
+        "sim.cpu0.o3.event_window.max_rob_occupancy.tick",
+        "sim.cpu0.o3.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_summary.rob_allocations",
         "sim.cpu0.o3.event_summary.rob_commits",
         "sim.cpu0.o3.event_summary.rename_writes",
