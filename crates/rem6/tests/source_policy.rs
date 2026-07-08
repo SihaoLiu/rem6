@@ -8,6 +8,7 @@ const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
 const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
 const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
+const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
@@ -240,6 +241,17 @@ fn cli_stats_output_cpu_stays_focused() {
     assert!(
         lines <= MAX_STATS_OUTPUT_CPU_LINES,
         "src/stats_output/cpu.rs should delegate detailed CPU stat families to focused modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_stats_output_o3_runtime_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stats_output/o3_runtime.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_O3_RUNTIME_STATS_LINES,
+        "src/stats_output/o3_runtime.rs should delegate O3 stat families to focused modules, but it has {lines} lines"
     );
 }
 
