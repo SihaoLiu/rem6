@@ -1,6 +1,6 @@
 use rem6_cpu::{
     BranchTargetKindCounts, BranchTargetProviderCounts, O3RuntimeSnapshot, O3RuntimeStats,
-    RiscvReturnAddressStackStats,
+    O3RuntimeTraceRecord, RiscvReturnAddressStackStats,
 };
 
 use crate::branch_predictor_summary::{
@@ -110,6 +110,7 @@ pub struct Rem6CoreSummary {
     pub(crate) o3_runtime_stats_reset_tick: u64,
     pub(crate) o3_runtime_checkpoint_restore: Option<Rem6HostCheckpointSummary>,
     pub(crate) o3_runtime_snapshot: O3RuntimeSnapshot,
+    pub(crate) o3_runtime_trace_records: Vec<O3RuntimeTraceRecord>,
     pub(crate) branch_target_buffer_lookups: u64,
     pub(crate) branch_target_buffer_hits: u64,
     pub(crate) branch_target_buffer_misses: u64,

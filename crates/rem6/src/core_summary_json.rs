@@ -1,7 +1,7 @@
 use rem6_cpu::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetProvider, BranchTargetProviderCounts,
     O3LoadStoreQueueKind, O3PhysicalRegisterId, O3RegisterClass, O3RuntimeFuLatencyClass,
-    O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
 };
 use rem6_memory::Address;
 
@@ -274,6 +274,46 @@ fn o3_runtime_snapshot_json(summary: &Rem6CoreSummary) -> String {
         lsq_entries,
         snapshot.rename_map().len(),
         rename_entries
+    )
+}
+
+fn o3_runtime_event_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String {
+    event.map_or_else(
+        || "null".to_string(),
+        |event| {
+            format!(
+                "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                event.sequence(),
+                event.tick(),
+                event.pc().get(),
+                event.rob_occupancy(),
+                event.lsq_occupancy(),
+                event.rename_map_entries()
+            )
+        },
+    )
+}
+
+fn o3_runtime_event_window_json(summary: &Rem6CoreSummary) -> String {
+    let events = &summary.o3_runtime_trace_records;
+    if events.is_empty() {
+        return "null".to_string();
+    }
+    let records = events.len() as u64;
+    let first_tick = events.first().map_or(0, |event| event.tick());
+    let last_tick = events.last().map_or(0, |event| event.tick());
+    let span_ticks = last_tick.saturating_sub(first_tick);
+    let first = o3_runtime_event_window_row_json(events.first());
+    let last = o3_runtime_event_window_row_json(events.last());
+    let max_rob_occupancy =
+        o3_runtime_event_window_row_json(events.iter().max_by_key(|event| event.rob_occupancy()));
+    let max_lsq_occupancy =
+        o3_runtime_event_window_row_json(events.iter().max_by_key(|event| event.lsq_occupancy()));
+    let max_rename_map_entries = o3_runtime_event_window_row_json(
+        events.iter().max_by_key(|event| event.rename_map_entries()),
+    );
+    format!(
+        "{{\"records\":{records},\"span_ticks\":{span_ticks},\"first\":{first},\"last\":{last},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries}}}"
     )
 }
 
@@ -647,12 +687,14 @@ impl Rem6CoreSummary {
             let rename = o3_runtime_rename_json(self);
             let lsq = o3_runtime_lsq_json(self);
             let snapshot = o3_runtime_snapshot_json(self);
+            let event_window = o3_runtime_event_window_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore\":{},\"event_window\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
                 checkpoint_restore,
+                event_window,
                 self.o3_runtime.instructions(),
                 self.o3_runtime.rob_allocations(),
                 self.o3_runtime.rob_commits(),

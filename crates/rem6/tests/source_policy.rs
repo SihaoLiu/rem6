@@ -1014,6 +1014,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/cores/0/o3_runtime/iq/issued_inst_type/int_mul",
         "/cores/0/o3_runtime/iew/writeback_count",
         "/cores/0/o3_runtime/commit/committed_inst_type/vector_float_misc",
+        "/cores/0/o3_runtime/event_window/max_rob_occupancy/tick",
         "/cores/0/o3_runtime/rob/allocations",
         "/cores/0/o3_runtime/rename/writes",
         "/cores/0/o3_runtime/snapshot/rob/count",

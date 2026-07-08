@@ -2699,6 +2699,12 @@ fn rem6_run_o3_runtime_json_exposes_extended_float_fu_latency_classes() {
     let o3_runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert!(
+        o3_runtime
+            .pointer("/event_window")
+            .is_some_and(Value::is_null),
+        "non-debug O3 runtime JSON should expose an explicit null event window: {o3_runtime}"
+    );
     assert_eq!(
         o3_runtime
             .pointer("/fu_latency_instructions")
@@ -2982,6 +2988,8 @@ fn rem6_run_o3_runtime_json_exposes_iq_iew_commit_matrices() {
             "--stats-format",
             "json",
             "--execute",
+            "--debug-flags",
+            "O3",
             "--memory-system",
             "direct",
             "--dump-memory",
@@ -3008,6 +3016,82 @@ fn rem6_run_o3_runtime_json_exposes_iq_iew_commit_matrices() {
     let o3_runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    let event_window = o3_runtime.pointer("/event_window").unwrap_or_else(|| {
+        panic!("O3 runtime JSON should expose event-window state: {o3_runtime}")
+    });
+    let runtime_instructions = o3_runtime
+        .pointer("/instructions")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose instructions: {o3_runtime}"));
+    assert_eq!(
+        event_window.pointer("/records").and_then(Value::as_u64),
+        Some(runtime_instructions),
+        "O3 runtime event window should count the same executed trace rows as instructions: {event_window}"
+    );
+    assert!(
+        event_window
+            .pointer("/span_ticks")
+            .and_then(Value::as_u64)
+            .is_some_and(|span| span > 0),
+        "O3 runtime event window should expose a positive tick span: {event_window}"
+    );
+    let first_event = event_window.pointer("/first").unwrap_or_else(|| {
+        panic!("O3 runtime event window should expose first event: {event_window}")
+    });
+    let last_event = event_window.pointer("/last").unwrap_or_else(|| {
+        panic!("O3 runtime event window should expose last event: {event_window}")
+    });
+    assert!(
+        first_event
+            .pointer("/pc")
+            .and_then(Value::as_str)
+            .is_some_and(|pc| pc.starts_with("0x")),
+        "first O3 runtime event should expose a hex PC: {first_event}"
+    );
+    assert!(
+        last_event.pointer("/sequence").and_then(Value::as_u64)
+            >= first_event.pointer("/sequence").and_then(Value::as_u64),
+        "O3 runtime event window should keep sequence order: {event_window}"
+    );
+    assert!(
+        last_event.pointer("/tick").and_then(Value::as_u64)
+            >= first_event.pointer("/tick").and_then(Value::as_u64),
+        "O3 runtime event window should keep tick order: {event_window}"
+    );
+    let max_rob_event = event_window
+        .pointer("/max_rob_occupancy")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime event window should expose max ROB row: {event_window}")
+        });
+    let max_lsq_event = event_window
+        .pointer("/max_lsq_occupancy")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime event window should expose max LSQ row: {event_window}")
+        });
+    let max_rename_event = event_window
+        .pointer("/max_rename_map_entries")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime event window should expose max rename row: {event_window}")
+        });
+    assert_eq!(
+        max_rob_event.pointer("/rob_occupancy"),
+        o3_runtime.pointer("/rob/max_occupancy"),
+        "O3 runtime event window should identify the max ROB occupancy row: {event_window}"
+    );
+    assert_eq!(
+        max_lsq_event.pointer("/lsq_occupancy"),
+        o3_runtime.pointer("/lsq/max_occupancy"),
+        "O3 runtime event window should identify the max LSQ occupancy row: {event_window}"
+    );
+    assert!(
+        max_rename_event
+            .pointer("/rename_map_entries")
+            .and_then(Value::as_u64)
+            >= o3_runtime
+                .pointer("/rename/map_entries")
+                .and_then(Value::as_u64),
+        "O3 runtime event window should identify a rename-map high-water row: {event_window}"
+    );
 
     for (pointer, stat_path) in [
         (
