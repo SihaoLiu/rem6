@@ -904,7 +904,13 @@ pub(super) fn emit_o3_runtime_stats(
         "event_window",
         &core.o3_runtime_trace_records,
     )?;
-    emit_o3_runtime_branch_mismatch_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
+    if core.o3_runtime_stats_epoch != 0
+        || o3.branch_direction_mismatches() != 0
+        || o3.branch_target_mismatch_targetless_mismatches() != 0
+        || o3.branch_target_mismatch_wrong_targets() != 0
+    {
+        emit_o3_runtime_branch_mismatch_stats(stats, core.cpu, o3)?;
+    }
     emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {

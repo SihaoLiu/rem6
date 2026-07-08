@@ -53,6 +53,31 @@ pub struct O3RuntimeStats {
     pub(crate) branch_repair_targetless_mismatch_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_repair_direction_only_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_link_write_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_without_link_write_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_squashed_target_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_squashed_target_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_direction_mismatch_squashed_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_targetless_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_targetless_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_targetless_squashed_target_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_targetless_squashed_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_link_write_kinds: [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_squashed_target_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_squashed_target_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
+    pub(crate) branch_target_mismatch_wrong_target_squashed_target_without_link_write_kinds:
+        [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_taken_kinds: [u64; BranchTargetKind::COUNT],
     pub(crate) branch_event_predicted_taken_kinds: [u64; BranchTargetKind::COUNT],
@@ -76,6 +101,10 @@ pub struct O3RuntimeStats {
     pub(crate) max_rob_occupancy: u64,
     pub(crate) max_lsq_occupancy: u64,
     pub(crate) rename_map_entries: u64,
+}
+
+fn sum_branch_kind_counts(counts: [u64; BranchTargetKind::COUNT]) -> u64 {
+    counts.into_iter().fold(0_u64, u64::saturating_add)
 }
 
 impl O3RuntimeStats {
@@ -267,6 +296,174 @@ impl O3RuntimeStats {
 
     pub fn branch_repair_direction_only_kind(self, kind: BranchTargetKind) -> u64 {
         self.branch_repair_direction_only_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatches(self) -> u64 {
+        sum_branch_kind_counts(self.branch_direction_mismatch_kinds)
+    }
+
+    pub fn branch_direction_mismatch_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_direction_mismatch_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatch_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_direction_mismatch_link_write_kinds)
+    }
+
+    pub fn branch_direction_mismatch_link_write_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_direction_mismatch_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatch_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_direction_mismatch_without_link_write_kinds)
+    }
+
+    pub fn branch_direction_mismatch_without_link_write_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_direction_mismatch_without_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatch_squashed_targets(self) -> u64 {
+        sum_branch_kind_counts(self.branch_direction_mismatch_squashed_target_kinds)
+    }
+
+    pub fn branch_direction_mismatch_squashed_target_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_direction_mismatch_squashed_target_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatch_squashed_target_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_direction_mismatch_squashed_target_link_write_kinds)
+    }
+
+    pub fn branch_direction_mismatch_squashed_target_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_direction_mismatch_squashed_target_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_direction_mismatch_squashed_target_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(
+            self.branch_direction_mismatch_squashed_target_without_link_write_kinds,
+        )
+    }
+
+    pub fn branch_direction_mismatch_squashed_target_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_direction_mismatch_squashed_target_without_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_targetless_mismatches(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_targetless_kinds)
+    }
+
+    pub fn branch_target_mismatch_targetless_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_target_mismatch_targetless_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_targetless_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_targetless_without_link_write_kinds)
+    }
+
+    pub fn branch_target_mismatch_targetless_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_targetless_without_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_targetless_squashed_targets(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_targetless_squashed_target_kinds)
+    }
+
+    pub fn branch_target_mismatch_targetless_squashed_target_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_targetless_squashed_target_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_targetless_squashed_target_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(
+            self.branch_target_mismatch_targetless_squashed_target_without_link_write_kinds,
+        )
+    }
+
+    pub fn branch_target_mismatch_targetless_squashed_target_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_targetless_squashed_target_without_link_write_kinds
+            [kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_targets(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_wrong_target_kinds)
+    }
+
+    pub fn branch_target_mismatch_wrong_target_kind(self, kind: BranchTargetKind) -> u64 {
+        self.branch_target_mismatch_wrong_target_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_target_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_wrong_target_link_write_kinds)
+    }
+
+    pub fn branch_target_mismatch_wrong_target_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_wrong_target_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_target_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_wrong_target_without_link_write_kinds)
+    }
+
+    pub fn branch_target_mismatch_wrong_target_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_wrong_target_without_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_targets(self) -> u64 {
+        sum_branch_kind_counts(self.branch_target_mismatch_wrong_target_squashed_target_kinds)
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_target_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_wrong_target_squashed_target_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_target_link_writes(self) -> u64 {
+        sum_branch_kind_counts(
+            self.branch_target_mismatch_wrong_target_squashed_target_link_write_kinds,
+        )
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_target_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_wrong_target_squashed_target_link_write_kinds[kind.index()]
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_target_without_link_writes(self) -> u64 {
+        sum_branch_kind_counts(
+            self.branch_target_mismatch_wrong_target_squashed_target_without_link_write_kinds,
+        )
+    }
+
+    pub fn branch_target_mismatch_wrong_target_squashed_target_without_link_write_kind(
+        self,
+        kind: BranchTargetKind,
+    ) -> u64 {
+        self.branch_target_mismatch_wrong_target_squashed_target_without_link_write_kinds
+            [kind.index()]
     }
 
     pub fn branch_event_misprediction_kind(self, kind: BranchTargetKind) -> u64 {
@@ -563,6 +760,7 @@ impl O3RuntimeStats {
         self.rob_allocations = self.rob_allocations.saturating_add(1);
         self.rob_commits = self.rob_commits.saturating_add(1);
         self.record_branch_event(trace_record);
+        self.record_branch_mismatch(trace_record);
         self.record_branch_repair(trace_record);
         if trace_record.branch_event() {
             self.iq_branch_insts_issued = self.iq_branch_insts_issued.saturating_add(1);
@@ -664,6 +862,97 @@ impl O3RuntimeStats {
         if event.branch_squashed_target().is_some() && !event.branch_link_register_write() {
             self.branch_event_squashed_target_without_link_write_kinds[index] =
                 self.branch_event_squashed_target_without_link_write_kinds[index].saturating_add(1);
+        }
+    }
+
+    fn record_branch_mismatch(&mut self, event: O3RuntimeTraceRecord) {
+        if !event.branch_event() {
+            return;
+        }
+        let index = event.branch_kind().index();
+        let link_write = event.branch_link_register_write();
+        let squashed_target = event.branch_squashed_target().is_some();
+        if event.branch_predicted_taken() != event.branch_resolved_taken() {
+            self.branch_direction_mismatch_kinds[index] =
+                self.branch_direction_mismatch_kinds[index].saturating_add(1);
+            if link_write {
+                self.branch_direction_mismatch_link_write_kinds[index] =
+                    self.branch_direction_mismatch_link_write_kinds[index].saturating_add(1);
+            } else {
+                self.branch_direction_mismatch_without_link_write_kinds[index] = self
+                    .branch_direction_mismatch_without_link_write_kinds[index]
+                    .saturating_add(1);
+            }
+            if squashed_target {
+                self.branch_direction_mismatch_squashed_target_kinds[index] =
+                    self.branch_direction_mismatch_squashed_target_kinds[index].saturating_add(1);
+                if link_write {
+                    self.branch_direction_mismatch_squashed_target_link_write_kinds[index] = self
+                        .branch_direction_mismatch_squashed_target_link_write_kinds[index]
+                        .saturating_add(1);
+                } else {
+                    self.branch_direction_mismatch_squashed_target_without_link_write_kinds
+                        [index] = self
+                        .branch_direction_mismatch_squashed_target_without_link_write_kinds[index]
+                        .saturating_add(1);
+                }
+            }
+        }
+        if event.branch_predicted_target().is_some() && event.branch_resolved_target().is_none() {
+            self.branch_target_mismatch_targetless_kinds[index] =
+                self.branch_target_mismatch_targetless_kinds[index].saturating_add(1);
+            if !link_write {
+                self.branch_target_mismatch_targetless_without_link_write_kinds[index] = self
+                    .branch_target_mismatch_targetless_without_link_write_kinds[index]
+                    .saturating_add(1);
+            }
+            if squashed_target {
+                self.branch_target_mismatch_targetless_squashed_target_kinds[index] = self
+                    .branch_target_mismatch_targetless_squashed_target_kinds[index]
+                    .saturating_add(1);
+                if !link_write {
+                    self.branch_target_mismatch_targetless_squashed_target_without_link_write_kinds
+                        [index] = self
+                        .branch_target_mismatch_targetless_squashed_target_without_link_write_kinds
+                        [index]
+                        .saturating_add(1);
+                }
+            }
+        }
+        if event
+            .branch_predicted_target()
+            .zip(event.branch_resolved_target())
+            .is_some_and(|(predicted, resolved)| predicted != resolved)
+        {
+            self.branch_target_mismatch_wrong_target_kinds[index] =
+                self.branch_target_mismatch_wrong_target_kinds[index].saturating_add(1);
+            if link_write {
+                self.branch_target_mismatch_wrong_target_link_write_kinds[index] = self
+                    .branch_target_mismatch_wrong_target_link_write_kinds[index]
+                    .saturating_add(1);
+            } else {
+                self.branch_target_mismatch_wrong_target_without_link_write_kinds[index] = self
+                    .branch_target_mismatch_wrong_target_without_link_write_kinds[index]
+                    .saturating_add(1);
+            }
+            if squashed_target {
+                self.branch_target_mismatch_wrong_target_squashed_target_kinds[index] = self
+                    .branch_target_mismatch_wrong_target_squashed_target_kinds[index]
+                    .saturating_add(1);
+                if link_write {
+                    self.branch_target_mismatch_wrong_target_squashed_target_link_write_kinds
+                        [index] = self
+                        .branch_target_mismatch_wrong_target_squashed_target_link_write_kinds
+                        [index]
+                        .saturating_add(1);
+                } else {
+                    self.branch_target_mismatch_wrong_target_squashed_target_without_link_write_kinds
+                        [index] = self
+                        .branch_target_mismatch_wrong_target_squashed_target_without_link_write_kinds
+                        [index]
+                        .saturating_add(1);
+                }
+            }
         }
     }
 

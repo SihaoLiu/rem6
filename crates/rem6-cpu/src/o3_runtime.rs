@@ -18,6 +18,8 @@ use crate::RiscvDataAccessEventKind;
 
 #[path = "o3_runtime_checkpoint.rs"]
 mod o3_runtime_checkpoint;
+#[path = "o3_runtime_checkpoint_branch_mismatch.rs"]
+mod o3_runtime_checkpoint_branch_mismatch;
 #[path = "o3_runtime_helpers.rs"]
 mod o3_runtime_helpers;
 #[path = "o3_runtime_stats.rs"]

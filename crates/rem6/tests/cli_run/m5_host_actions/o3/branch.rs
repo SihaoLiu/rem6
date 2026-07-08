@@ -171,7 +171,6 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_repair_snapshot() {
             "resettable",
         );
     }
-
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
         .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
@@ -452,6 +451,54 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
             "resettable",
         );
     }
+    let branch_mismatch_dump_samples = [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_direction_mismatch.mismatches",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_direction_mismatch.without_link_writes",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_direction_mismatch.squashed_targets",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_direction_mismatch.kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_direction_mismatch.squashed_target_without_link_write_kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.targetless_mismatches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.targetless_mismatch_squashed_target_without_link_write_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_targets",
+            0,
+        ),
+    ];
+    for (path, value) in branch_mismatch_dump_samples {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
 
     let post_reset_dump = host_actions
         .pointer("/stats_dumps/1")
@@ -501,6 +548,9 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
+    for (path, _) in branch_mismatch_dump_samples {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
 
     assert_json_stat(
         &json,
@@ -519,6 +569,20 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_branch_event_snapshot() {
     assert_json_stat(
         &json,
         "sim.cpu0.o3.branch_event.squashes",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_direction_mismatch.mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_target_mismatch.targetless_mismatches",
         "Count",
         0,
         "monotonic",

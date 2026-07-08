@@ -1,0 +1,183 @@
+use super::*;
+
+#[test]
+fn rem6_run_json_stats_exposes_live_o3_branch_mismatch_without_debug_trace() {
+    let path = detailed_o3_branch_repair_text_stats_binary(
+        "m5-switch-cpu-o3-live-branch-mismatch-no-debug",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    assert!(
+        o3_runtime
+            .pointer("/branch_direction_mismatch")
+            .is_some_and(Value::is_null),
+        "non-debug O3 runtime JSON should keep trace-derived direction summary null: {o3_runtime}"
+    );
+    assert_json_stat_at_least(
+        &json,
+        "sim.cpu0.o3.branch_direction_mismatch.mismatches",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_at_least(
+        &json,
+        "sim.cpu0.o3.branch_target_mismatch.targetless_mismatches",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_wrong_target_mismatch_snapshot() {
+    let path = detailed_o3_indirect_call_wrong_target_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-wrong-target-mismatch-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    let wrong_target_samples = [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_targets",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_without_link_writes",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_squashed_targets",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_squashed_target_link_writes",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_link_write_kind.call_indirect",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.branch_target_mismatch.wrong_target_squashed_target_link_write_kind.call_indirect",
+            1,
+        ),
+    ];
+    for (path, value) in wrong_target_samples {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    for (path, _) in wrong_target_samples {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.branch_target_mismatch.wrong_targets",
+        "Count",
+        0,
+        "monotonic",
+    );
+}

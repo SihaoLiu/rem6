@@ -56,6 +56,8 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    branch_direction_mismatch: RiscvO3RuntimeBranchDirectionMismatchStats,
+    branch_target_mismatch: RiscvO3RuntimeBranchTargetMismatchStats,
     branch_event_branches: StatId,
     branch_event_taken: StatId,
     branch_event_not_taken: StatId,
@@ -326,6 +328,12 @@ impl RiscvO3RuntimeCpuStats {
                 "Count",
             )?,
             branch_repair_kinds: register_o3_branch_repair_kind_counters(registry, &prefix)?,
+            branch_direction_mismatch: RiscvO3RuntimeBranchDirectionMismatchStats::register(
+                registry, &prefix,
+            )?,
+            branch_target_mismatch: RiscvO3RuntimeBranchTargetMismatchStats::register(
+                registry, &prefix,
+            )?,
             branch_event_branches: register_o3_counter(
                 registry,
                 &prefix,
@@ -859,6 +867,10 @@ impl RiscvO3RuntimeCpuStats {
             .increment_delta(registry, previous, current)?;
         self.branch_aliases
             .increment_delta(registry, previous, current)?;
+        self.branch_direction_mismatch
+            .increment_delta(registry, previous, current)?;
+        self.branch_target_mismatch
+            .increment_delta(registry, previous, current)?;
         self.set_iew_rate_snapshots(registry, current, in_order_pipeline_cycles)?;
         for kind in BranchTargetKind::ALL {
             let repair_stats = self.branch_repair_kinds[kind.index()];
@@ -1322,6 +1334,10 @@ impl RiscvO3RuntimeCpuStats {
         }
         self.structural_aliases.set_snapshot(registry, snapshot)?;
         self.branch_aliases.set_snapshot(registry, snapshot)?;
+        self.branch_direction_mismatch
+            .set_snapshot(registry, snapshot)?;
+        self.branch_target_mismatch
+            .set_snapshot(registry, snapshot)?;
         self.set_iew_rate_snapshots(registry, snapshot, in_order_pipeline_cycles)?;
         let mut lsq_operation_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {

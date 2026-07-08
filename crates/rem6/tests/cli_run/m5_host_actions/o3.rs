@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "o3/branch.rs"]
 mod branch;
+#[path = "o3/branch_mismatch.rs"]
+mod branch_mismatch;
 #[path = "o3/branch_multicore.rs"]
 mod branch_multicore;
 #[path = "o3/lsq.rs"]
