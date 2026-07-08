@@ -62,6 +62,12 @@ pub(super) fn emit_run_host_action_stats(
         BTreeMap::<String, HostCheckpointComponentStats>::new();
     let mut checkpoint_restore_chunk_stats =
         BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
+    let mut checkpoint_restore_target_stats =
+        BTreeMap::<String, HostCheckpointComponentStats>::new();
+    let mut checkpoint_restore_target_component_stats =
+        BTreeMap::<(String, String), HostCheckpointComponentStats>::new();
+    let mut checkpoint_restore_target_chunk_stats =
+        BTreeMap::<(String, String, String), HostCheckpointChunkStats>::new();
     for restore in &summary.checkpoint_restores {
         if restore.execution_mode_authority_present {
             checkpoint_restore_execution_mode_authority_manifests += 1;
@@ -80,6 +86,11 @@ pub(super) fn emit_run_host_action_stats(
                 .entry((target, authority.mode))
                 .or_default() += 1;
         }
+        let restore_target_paths = restore
+            .execution_modes
+            .iter()
+            .map(|authority| stat_path_segment(&authority.target))
+            .collect::<BTreeSet<_>>();
         for component in &restore.components {
             let component_path = stat_path_segment(&component.component);
             let component_stats = checkpoint_restore_component_stats
@@ -88,16 +99,40 @@ pub(super) fn emit_run_host_action_stats(
             component_stats.components += 1;
             component_stats.chunks += component.chunk_count;
             component_stats.payload_bytes += component.payload_bytes;
+            if restore_target_paths.contains(&component_path) {
+                let target_stats = checkpoint_restore_target_stats
+                    .entry(component_path.clone())
+                    .or_default();
+                target_stats.components += 1;
+                target_stats.chunks += component.chunk_count;
+                target_stats.payload_bytes += component.payload_bytes;
+                let target_component_stats = checkpoint_restore_target_component_stats
+                    .entry((component_path.clone(), component_path.clone()))
+                    .or_default();
+                target_component_stats.components += 1;
+                target_component_stats.chunks += component.chunk_count;
+                target_component_stats.payload_bytes += component.payload_bytes;
+            }
             for chunk in &component.chunks {
                 let chunk_path = stat_path_segment(&chunk.name);
                 let chunk_stats = checkpoint_restore_chunk_stats
-                    .entry((component_path.clone(), chunk_path))
+                    .entry((component_path.clone(), chunk_path.clone()))
                     .or_default();
                 chunk_stats.chunks += 1;
                 chunk_stats.payload_bytes += chunk.payload_bytes;
                 chunk_stats.payload_checksum_accumulator = chunk_stats
                     .payload_checksum_accumulator
                     .wrapping_add(chunk.payload_checksum);
+                if restore_target_paths.contains(&component_path) {
+                    let target_chunk_stats = checkpoint_restore_target_chunk_stats
+                        .entry((component_path.clone(), component_path.clone(), chunk_path))
+                        .or_default();
+                    target_chunk_stats.chunks += 1;
+                    target_chunk_stats.payload_bytes += chunk.payload_bytes;
+                    target_chunk_stats.payload_checksum_accumulator = target_chunk_stats
+                        .payload_checksum_accumulator
+                        .wrapping_add(chunk.payload_checksum);
+                }
             }
         }
     }
@@ -605,6 +640,91 @@ pub(super) fn emit_run_host_action_stats(
             chunk_stats.payload_checksum_accumulator,
         )?;
     }
+    for (target_path, target_stats) in checkpoint_restore_target_stats {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint_restore.target.{target_path}.components"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            target_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint_restore.target.{target_path}.chunks"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            target_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint_restore.target.{target_path}.payload_bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            target_stats.payload_bytes,
+        )?;
+    }
+    for ((target_path, component_path), component_stats) in
+        checkpoint_restore_target_component_stats
+    {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.components"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            component_stats.payload_bytes,
+        )?;
+    }
+    for ((target_path, component_path, chunk_path), chunk_stats) in
+        checkpoint_restore_target_chunk_stats
+    {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            chunk_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_bytes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            ),
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_checksum_accumulator,
+        )?;
+    }
     for (component_path, component_stats) in switch_state_transfer_component_stats {
         increment_stat(
             stats,
@@ -808,7 +928,8 @@ mod tests {
     use crate::{
         Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
         Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-        Rem6HostCheckpointSummary, Rem6HostExecutionModeSwitchSummary,
+        Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
+        Rem6HostExecutionModeSwitchSummary,
     };
 
     #[test]
@@ -1030,6 +1151,69 @@ mod tests {
             StatResetPolicy::Monotonic,
             1,
         );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.components",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.components",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.chunk.pipe_0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.chunk.pipe_0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.checkpoint_restore.target.cpu_0.component.cpu_0.chunk.pipe_0.payload_checksum_accumulator",
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            1,
+        );
     }
 
     #[test]
@@ -1084,7 +1268,10 @@ mod tests {
             execution_mode_authority_present: false,
             execution_mode_authority_cleared: false,
             execution_mode_authority_decode_error: false,
-            execution_modes: Vec::new(),
+            execution_modes: vec![Rem6HostExecutionModeSummary {
+                target: component.to_string(),
+                mode: "detailed",
+            }],
             components: vec![Rem6HostCheckpointComponentSummary {
                 component: component.to_string(),
                 chunk_count: 1,

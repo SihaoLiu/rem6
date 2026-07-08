@@ -1093,7 +1093,17 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
         host_restore.pointer("/label").and_then(Value::as_str),
         Some("gem5-m5-checkpoint")
     );
-    assert_restore_component_chunk_stat(&json, host_restore, "cpu1", "xregs", "cpu1", "xregs");
+    assert_restore_execution_modes_exact(host_restore, &[("cpu1", "detailed")]);
+    assert_restore_component_present(host_restore, "cpu0");
+    assert_restore_component_chunk_stat(
+        &json,
+        host_restore,
+        "cpu1",
+        "xregs",
+        "cpu1",
+        "xregs",
+        "cpu1",
+    );
     assert_restore_component_chunk_stat(
         &json,
         host_restore,
@@ -1101,6 +1111,7 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
         "in-order-pipeline",
         "cpu1",
         "in_order_pipeline",
+        "cpu1",
     );
     assert_restore_component_chunk_stat(
         &json,
@@ -1109,11 +1120,13 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
         "o3-runtime-state",
         "cpu1",
         "o3_runtime_state",
+        "cpu1",
     );
     assert_json_stat_absent(
         &json,
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
     );
+    assert_json_stat_prefix_absent(&json, "sim.host_actions.checkpoint_restore.target.cpu0.");
 }
 
 fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk: &str) {
@@ -1149,6 +1162,45 @@ fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk:
     );
 }
 
+fn assert_restore_execution_modes_exact(restore: &Value, expected: &[(&str, &str)]) {
+    let mut actual = restore
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore execution modes: {restore}"))
+        .iter()
+        .map(|mode| {
+            (
+                mode.pointer("/target")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                mode.pointer("/mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "unexpected restored execution modes: {restore}"
+    );
+}
+
+fn assert_restore_component_present(restore: &Value, component: &str) {
+    let components = restore
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restore components: {restore}"));
+    assert!(
+        components
+            .iter()
+            .any(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component)),
+        "expected restore manifest to include component {component}: {restore}"
+    );
+}
+
 fn assert_restore_component_chunk_stat(
     json: &Value,
     restore: &Value,
@@ -1156,6 +1208,7 @@ fn assert_restore_component_chunk_stat(
     chunk: &str,
     component_path: &str,
     chunk_path: &str,
+    target_path: &str,
 ) {
     let components = restore
         .pointer("/components")
@@ -1238,6 +1291,97 @@ fn assert_restore_component_chunk_stat(
         "Unspecified",
         chunk_payload_checksum,
         "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.components"),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.chunks"),
+        "Count",
+        component_chunks,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.payload_bytes"),
+        "Byte",
+        component_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.components"
+        ),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunks"
+        ),
+        "Count",
+        component_chunks,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.payload_bytes"
+        ),
+        "Byte",
+        component_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.chunks"
+        ),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+        ),
+        "Byte",
+        chunk_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!(
+            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+        ),
+        "Unspecified",
+        chunk_payload_checksum,
+        "monotonic",
+    );
+}
+
+fn assert_json_stat_prefix_absent(json: &Value, path_prefix: &str) {
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    let matches = stats
+        .iter()
+        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
+        .filter(|path| path.starts_with(path_prefix))
+        .collect::<Vec<_>>();
+    assert!(
+        matches.is_empty(),
+        "unexpected stat paths with prefix {path_prefix}: {matches:?}"
     );
 }
 
