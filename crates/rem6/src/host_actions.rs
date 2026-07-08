@@ -487,6 +487,11 @@ impl Rem6HostStatsDumpSummary {
             active_o3_cpus,
             &mut samples,
         );
+        append_o3_stats_dump_lsq_data_response_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         Self {
             id: record.id().get(),
             tick: record.tick(),
@@ -759,6 +764,83 @@ fn o3_stats_dump_frontend_alias_suffix(path: &str) -> Option<(u32, &'static str)
         _ => return None,
     };
     Some((cpu.parse().ok()?, suffix))
+}
+
+fn append_o3_stats_dump_lsq_data_response_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some(alias_paths) =
+            o3_stats_dump_lsq_data_response_alias_paths(core_count, sample.path())
+        else {
+            continue;
+        };
+        for alias_path in alias_paths {
+            if samples.iter().any(|sample| sample.path == alias_path) {
+                continue;
+            }
+            samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+                sample, alias_path,
+            ));
+        }
+    }
+}
+
+fn o3_stats_dump_lsq_data_response_alias_paths(core_count: u64, path: &str) -> Option<Vec<String>> {
+    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
+    let (cpu, suffix) = rest.split_once(".o3.")?;
+    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu.parse().ok()?);
+    if let Some(metric_suffix) = suffix.strip_prefix("lsq_data_latency_") {
+        let metric = o3_stats_dump_lsq_data_response_metric_alias(metric_suffix)?;
+        return Some(vec![
+            format!("{alias_prefix}.lsq0.dataResponse.{metric}"),
+            format!("{alias_prefix}.lsq0.operation.total.dataResponse.{metric}"),
+        ]);
+    }
+
+    let suffix = suffix.strip_prefix("lsq_operation.")?;
+    let (operation, metric_suffix) = suffix.split_once("_latency_")?;
+    let operation_alias = o3_stats_dump_lsq_operation_alias(operation)?;
+    let metric = o3_stats_dump_lsq_data_response_metric_alias(metric_suffix)?;
+    Some(vec![
+        format!("{alias_prefix}.lsq0.dataResponse.{operation_alias}.{metric}"),
+        format!("{alias_prefix}.lsq0.operation.{operation_alias}.dataResponse.{metric}"),
+    ])
+}
+
+fn o3_stats_dump_lsq_data_response_metric_alias(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "samples" => Some("samples"),
+        "ticks" => Some("totalLatency"),
+        "max_ticks" => Some("maxLatency"),
+        "min_ticks" => Some("minLatency"),
+        "avg_ticks" => Some("avgLatency"),
+        _ => None,
+    }
+}
+
+fn o3_stats_dump_lsq_operation_alias(operation: &str) -> Option<&'static str> {
+    match operation {
+        "load" => Some("load"),
+        "store" => Some("store"),
+        "load_reserved" => Some("loadReserved"),
+        "store_conditional" => Some("storeConditional"),
+        "atomic" => Some("atomic"),
+        "float_load" => Some("floatLoad"),
+        "float_store" => Some("floatStore"),
+        "vector_load" => Some("vectorLoad"),
+        "vector_store" => Some("vectorStore"),
+        _ => None,
+    }
 }
 
 fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {

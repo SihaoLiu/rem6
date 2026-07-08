@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "restore/lsq_data_response.rs"]
+mod lsq_data_response;
+
 #[test]
 fn rem6_run_m5_dump_stats_restores_multicore_o3_branch_ftq_snapshot_by_active_hart() {
     let path = multicore_hart1_detailed_o3_restore_indirect_call_ftq_dump_stats_binary(
