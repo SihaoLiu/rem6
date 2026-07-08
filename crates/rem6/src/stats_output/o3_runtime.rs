@@ -7,8 +7,12 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 #[path = "o3_runtime_snapshot_restore.rs"]
 mod o3_runtime_snapshot_restore;
 
+#[path = "o3_runtime_event_summary_branch.rs"]
+mod o3_runtime_event_summary_branch;
+
 use super::{increment_stat, stat_path_segment};
 use crate::{Rem6CliError, Rem6CoreSummary};
+use o3_runtime_event_summary_branch::emit_o3_runtime_event_summary_branch_event_stats;
 use o3_runtime_snapshot_restore::{
     emit_o3_runtime_checkpoint_restore_stats, emit_o3_runtime_snapshot_stats,
 };
@@ -131,97 +135,6 @@ where
             value,
         )?;
     }
-    Ok(())
-}
-
-fn emit_o3_runtime_event_summary_branch_event_stats(
-    stats: &mut StatsRegistry,
-    cpu: u32,
-    events: &[O3RuntimeTraceRecord],
-) -> Result<(), Rem6CliError> {
-    for (name, value) in [
-        (
-            "branch_event.branches",
-            count_o3_event_summary_records(events, |event| event.branch_event()),
-        ),
-        (
-            "branch_event.squashes",
-            count_o3_event_summary_records(events, |event| {
-                event.branch_event() && event.branch_squash()
-            }),
-        ),
-        (
-            "branch_event.squashed_targets",
-            count_o3_event_summary_records(events, |event| {
-                event.branch_event() && event.branch_squashed_target().is_some()
-            }),
-        ),
-        (
-            "branch_event.squashed_targets_with_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                event.branch_event()
-                    && event.branch_squashed_target().is_some()
-                    && event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_event.squashed_targets_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                event.branch_event()
-                    && event.branch_squashed_target().is_some()
-                    && !event.branch_link_register_write()
-            }),
-        ),
-    ] {
-        increment_count_stat(
-            stats,
-            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
-            value,
-        )?;
-    }
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_event.kind",
-        |event| event.branch_event(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_event.squash_kind",
-        |event| event.branch_event() && event.branch_squash(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_event.squashed_target_kind",
-        |event| event.branch_event() && event.branch_squashed_target().is_some(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_event.squashed_target_link_write_kind",
-        |event| {
-            event.branch_event()
-                && event.branch_squashed_target().is_some()
-                && event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_event.squashed_target_without_link_write_kind",
-        |event| {
-            event.branch_event()
-                && event.branch_squashed_target().is_some()
-                && !event.branch_link_register_write()
-        },
-    )?;
     Ok(())
 }
 

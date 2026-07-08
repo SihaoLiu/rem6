@@ -306,6 +306,55 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
         .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
 
     for pointer in [
+        "/branch_event/taken",
+        "/branch_event/not_taken",
+        "/branch_event/predicted_taken",
+        "/branch_event/predicted_not_taken",
+        "/branch_event/predicted_targets",
+        "/branch_event/predicted_target_matches",
+        "/branch_event/predicted_target_mismatches",
+        "/branch_event/resolved_targets",
+        "/branch_event/mispredictions",
+        "/branch_event/link_writes",
+        "/branch_event/without_link_writes",
+        "/branch_event/taken_kind/direct_conditional",
+        "/branch_event/not_taken_kind/direct_unconditional",
+        "/branch_event/predicted_taken_kind/direct_conditional",
+        "/branch_event/predicted_not_taken_kind/direct_unconditional",
+        "/branch_event/predicted_target_kind/direct_conditional",
+        "/branch_event/predicted_target_match_kind/direct_conditional",
+        "/branch_event/predicted_target_mismatch_kind/direct_conditional",
+        "/branch_event/resolved_target_kind/direct_unconditional",
+        "/branch_event/misprediction_kind/direct_conditional",
+        "/branch_event/link_write_kind/call_indirect",
+        "/branch_event/without_link_write_kind/direct_unconditional",
+    ] {
+        assert_eq!(
+            runtime_summary.pointer(pointer),
+            debug_summary.pointer(pointer),
+            "runtime event-summary branch lane {pointer} should mirror debug trace event summary"
+        );
+    }
+
+    for pointer in [
+        "/branch_event/taken",
+        "/branch_event/not_taken",
+        "/branch_event/predicted_taken",
+        "/branch_event/predicted_not_taken",
+        "/branch_event/predicted_targets",
+        "/branch_event/predicted_target_mismatches",
+        "/branch_event/resolved_targets",
+        "/branch_event/mispredictions",
+        "/branch_event/without_link_writes",
+        "/branch_event/taken_kind/direct_unconditional",
+        "/branch_event/not_taken_kind/direct_conditional",
+        "/branch_event/predicted_taken_kind/direct_conditional",
+        "/branch_event/predicted_not_taken_kind/direct_unconditional",
+        "/branch_event/predicted_target_kind/direct_conditional",
+        "/branch_event/predicted_target_mismatch_kind/direct_conditional",
+        "/branch_event/resolved_target_kind/direct_unconditional",
+        "/branch_event/misprediction_kind/direct_conditional",
+        "/branch_event/without_link_write_kind/direct_unconditional",
         "/branch_event/squashes",
         "/branch_event/squashed_targets",
         "/branch_event/squashed_target_kind/direct_unconditional",
@@ -452,6 +501,94 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
 
     for (pointer, stat_path) in [
         (
+            "/branch_event/taken",
+            "sim.cpu0.o3.event_summary.branch_event.taken",
+        ),
+        (
+            "/branch_event/not_taken",
+            "sim.cpu0.o3.event_summary.branch_event.not_taken",
+        ),
+        (
+            "/branch_event/predicted_taken",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_taken",
+        ),
+        (
+            "/branch_event/predicted_not_taken",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_not_taken",
+        ),
+        (
+            "/branch_event/predicted_targets",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_targets",
+        ),
+        (
+            "/branch_event/predicted_target_matches",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_target_matches",
+        ),
+        (
+            "/branch_event/predicted_target_mismatches",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_target_mismatches",
+        ),
+        (
+            "/branch_event/resolved_targets",
+            "sim.cpu0.o3.event_summary.branch_event.resolved_targets",
+        ),
+        (
+            "/branch_event/mispredictions",
+            "sim.cpu0.o3.event_summary.branch_event.mispredictions",
+        ),
+        (
+            "/branch_event/link_writes",
+            "sim.cpu0.o3.event_summary.branch_event.link_writes",
+        ),
+        (
+            "/branch_event/without_link_writes",
+            "sim.cpu0.o3.event_summary.branch_event.without_link_writes",
+        ),
+        (
+            "/branch_event/taken_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.taken_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/not_taken_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.not_taken_kind.direct_unconditional",
+        ),
+        (
+            "/branch_event/predicted_taken_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_taken_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/predicted_not_taken_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_not_taken_kind.direct_unconditional",
+        ),
+        (
+            "/branch_event/predicted_target_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_target_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/predicted_target_match_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_target_match_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/predicted_target_mismatch_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.predicted_target_mismatch_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/resolved_target_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.resolved_target_kind.direct_unconditional",
+        ),
+        (
+            "/branch_event/misprediction_kind/direct_conditional",
+            "sim.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_conditional",
+        ),
+        (
+            "/branch_event/link_write_kind/call_indirect",
+            "sim.cpu0.o3.event_summary.branch_event.link_write_kind.call_indirect",
+        ),
+        (
+            "/branch_event/without_link_write_kind/direct_unconditional",
+            "sim.cpu0.o3.event_summary.branch_event.without_link_write_kind.direct_unconditional",
+        ),
+        (
             "/branch_event/squashes",
             "sim.cpu0.o3.event_summary.branch_event.squashes",
         ),
@@ -565,6 +702,15 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.branch_direction_mismatch.kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatches",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
+        "sim.cpu0.o3.event_summary.branch_event.taken",
+        "sim.cpu0.o3.event_summary.branch_event.predicted_taken",
+        "sim.cpu0.o3.event_summary.branch_event.predicted_target_matches",
+        "sim.cpu0.o3.event_summary.branch_event.predicted_target_mismatches",
+        "sim.cpu0.o3.event_summary.branch_event.predicted_target_match_kind.direct_conditional",
+        "sim.cpu0.o3.event_summary.branch_event.resolved_target_kind.direct_unconditional",
+        "sim.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_conditional",
+        "sim.cpu0.o3.event_summary.branch_event.link_write_kind.call_indirect",
+        "sim.cpu0.o3.event_summary.branch_event.without_link_write_kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_event.squashes",
         "sim.cpu0.o3.event_summary.branch_event.squashed_target_kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
