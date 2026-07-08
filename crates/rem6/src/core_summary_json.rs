@@ -376,9 +376,11 @@ fn o3_runtime_lsq_operation_matrix_json(summary: &Rem6CoreSummary) -> String {
                     .lsq_operation_latency_avg_ticks(operation),
             );
             format!(
-                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"load_bytes\":{},\"store_bytes\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
                 summary.o3_runtime.lsq_operation_count(operation),
+                summary.o3_runtime.lsq_operation_load_bytes(operation),
+                summary.o3_runtime.lsq_operation_store_bytes(operation),
                 summary
                     .o3_runtime
                     .lsq_operation_forwarding_candidates(operation),
@@ -453,6 +455,14 @@ fn o3_runtime_lsq_operation_json(summary: &Rem6CoreSummary) -> String {
                 format!(
                     "\"lsq_operation_{name}\":{}",
                     summary.o3_runtime.lsq_operation_count(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_load_bytes\":{}",
+                    summary.o3_runtime.lsq_operation_load_bytes(operation)
+                ),
+                format!(
+                    "\"lsq_operation_{name}_store_bytes\":{}",
+                    summary.o3_runtime.lsq_operation_store_bytes(operation)
                 ),
                 format!(
                     "\"lsq_operation_{name}_forwarding_candidates\":{}",

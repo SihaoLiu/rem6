@@ -1247,6 +1247,23 @@ pub(super) fn emit_o3_runtime_stats(
             o3.lsq_operation_count(operation),
         )?;
         for (suffix, value) in [
+            ("load_bytes", o3.lsq_operation_load_bytes(operation)),
+            ("store_bytes", o3.lsq_operation_store_bytes(operation)),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.lsq_operation.{}_{}",
+                    core.cpu,
+                    operation.as_str(),
+                    suffix
+                ),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+        for (suffix, value) in [
             (
                 "forwarding_candidates",
                 o3.lsq_operation_forwarding_candidates(operation),

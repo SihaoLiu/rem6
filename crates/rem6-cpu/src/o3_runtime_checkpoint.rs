@@ -15,11 +15,12 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
 const O3_RUNTIME_CHECKPOINT_VERSION: u8 =
-    O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS;
+    O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -102,6 +103,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -180,13 +182,35 @@ impl O3RuntimeCheckpointPayload {
                 true,
                 true,
                 true,
+                true,
             )?,
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS => {
+                read_o3_runtime_stats(
+                    payload,
+                    &mut offset,
+                    true,
+                    true,
+                    false,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                )?
+            }
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS => {
                 read_o3_runtime_stats(
                     payload,
                     &mut offset,
                     true,
                     true,
+                    false,
                     true,
                     true,
                     true,
@@ -206,6 +230,7 @@ impl O3RuntimeCheckpointPayload {
                     &mut offset,
                     true,
                     true,
+                    false,
                     true,
                     true,
                     true,
@@ -224,6 +249,7 @@ impl O3RuntimeCheckpointPayload {
                 &mut offset,
                 true,
                 true,
+                false,
                 true,
                 true,
                 true,
@@ -242,6 +268,7 @@ impl O3RuntimeCheckpointPayload {
                     &mut offset,
                     true,
                     true,
+                    false,
                     true,
                     true,
                     true,
@@ -260,6 +287,7 @@ impl O3RuntimeCheckpointPayload {
                 &mut offset,
                 true,
                 true,
+                false,
                 true,
                 true,
                 true,
@@ -277,6 +305,7 @@ impl O3RuntimeCheckpointPayload {
                 &mut offset,
                 true,
                 true,
+                false,
                 true,
                 true,
                 true,
@@ -295,6 +324,7 @@ impl O3RuntimeCheckpointPayload {
                     &mut offset,
                     true,
                     true,
+                    false,
                     true,
                     true,
                     true,
@@ -313,6 +343,7 @@ impl O3RuntimeCheckpointPayload {
                 &mut offset,
                 true,
                 true,
+                false,
                 true,
                 true,
                 true,
@@ -331,6 +362,7 @@ impl O3RuntimeCheckpointPayload {
                     &mut offset,
                     true,
                     true,
+                    false,
                     true,
                     true,
                     false,
@@ -349,6 +381,7 @@ impl O3RuntimeCheckpointPayload {
                 &mut offset,
                 true,
                 true,
+                false,
                 true,
                 false,
                 false,
@@ -377,6 +410,7 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => read_o3_runtime_stats(
                 payload,
@@ -394,10 +428,12 @@ impl O3RuntimeCheckpointPayload {
                 false,
                 false,
                 false,
+                false,
             )?,
             O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
                 payload,
                 &mut offset,
+                false,
                 false,
                 false,
                 false,
@@ -584,6 +620,12 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
         payload.extend_from_slice(&stats.lsq_operation_count(operation).to_le_bytes());
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(&stats.lsq_operation_load_bytes(operation).to_le_bytes());
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        payload.extend_from_slice(&stats.lsq_operation_store_bytes(operation).to_le_bytes());
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
         payload.extend_from_slice(
@@ -803,6 +845,7 @@ fn read_o3_runtime_stats(
     offset: &mut usize,
     has_class_stats: bool,
     has_lsq_matrix_stats: bool,
+    has_lsq_operation_byte_stats: bool,
     has_branch_repair_stats: bool,
     has_lsq_latency_stats: bool,
     has_lsq_data_latency_stats: bool,
@@ -818,6 +861,8 @@ fn read_o3_runtime_stats(
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_load_bytes = [0; O3RuntimeLsqOperation::COUNT];
+    let mut lsq_operation_store_bytes = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_operation_forwarding_candidates = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_operation_forwarding_matches = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_operation_forwarding_suppressed = [0; O3RuntimeLsqOperation::COUNT];
@@ -885,6 +930,14 @@ fn read_o3_runtime_stats(
     let lsq_store_conditional_failures = if has_lsq_matrix_stats {
         for operation in O3RuntimeLsqOperation::TRACKED {
             lsq_operation_counts[operation.index()] = read_u64(payload, offset)?;
+        }
+        if has_lsq_operation_byte_stats {
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_load_bytes[operation.index()] = read_u64(payload, offset)?;
+            }
+            for operation in O3RuntimeLsqOperation::TRACKED {
+                lsq_operation_store_bytes[operation.index()] = read_u64(payload, offset)?;
+            }
         }
         if has_lsq_forwarding_matrix_stats {
             for operation in O3RuntimeLsqOperation::TRACKED {
@@ -1029,6 +1082,8 @@ fn read_o3_runtime_stats(
         lsq_store_to_load_forwarding_address_mismatches,
         lsq_store_to_load_forwarding_byte_mismatches,
         lsq_operation_counts,
+        lsq_operation_load_bytes,
+        lsq_operation_store_bytes,
         lsq_operation_forwarding_candidates,
         lsq_operation_forwarding_matches,
         lsq_operation_forwarding_suppressed,
@@ -1149,6 +1204,8 @@ mod tests {
     const BASE_AND_FU_STATS_BYTES: usize = (12 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES;
     const CURRENT_BASE_AND_FU_STATS_BYTES: usize = BASE_AND_FU_STATS_BYTES + U64_BYTES;
     const LSQ_OPERATION_STATS_BYTES: usize = O3RuntimeLsqOperation::TRACKED.len() * U64_BYTES;
+    const LSQ_OPERATION_BYTE_STATS_BYTES: usize =
+        O3RuntimeLsqOperation::TRACKED.len() * 2 * U64_BYTES;
     const LSQ_OPERATION_FORWARDING_STATS_BYTES: usize =
         O3RuntimeLsqOperation::TRACKED.len() * 2 * U64_BYTES;
     const LSQ_FORWARDING_SUPPRESSION_STATS_BYTES: usize =
@@ -1169,6 +1226,7 @@ mod tests {
         crate::BranchTargetKind::COUNT * 4 * U64_BYTES;
     const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
         + LSQ_OPERATION_STATS_BYTES
+        + LSQ_OPERATION_BYTE_STATS_BYTES
         + LSQ_OPERATION_FORWARDING_STATS_BYTES
         + LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         + LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES
@@ -1182,21 +1240,42 @@ mod tests {
         + BRANCH_EVENT_STATS_BYTES
         + BRANCH_EVENT_PREDICTION_STATS_BYTES;
     const STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION: usize =
-        CURRENT_STATS_BYTES - BRANCH_EVENT_PREDICTION_STATS_BYTES;
+        CURRENT_STATS_BYTES - BRANCH_EVENT_PREDICTION_STATS_BYTES - LSQ_OPERATION_BYTE_STATS_BYTES;
     const STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
         STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
     const PRE_BRANCH_EVENT_STATS_BYTES: usize = CURRENT_STATS_BYTES
+        - LSQ_OPERATION_BYTE_STATS_BYTES
         - BRANCH_EVENT_PREDICTION_STATS_BYTES
         - BRANCH_EVENT_STATS_BYTES
         - LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+
+    fn encoded_without_lsq_operation_byte_stats(
+        encoded: &[u8],
+        stats_bytes_with_lsq_operation_byte_stats: usize,
+    ) -> Vec<u8> {
+        let stats_offset = encoded
+            .len()
+            .checked_sub(stats_bytes_with_lsq_operation_byte_stats)
+            .unwrap();
+        let operation_byte_offset =
+            stats_offset + CURRENT_BASE_AND_FU_STATS_BYTES + LSQ_OPERATION_STATS_BYTES;
+        [
+            &encoded[..operation_byte_offset],
+            &encoded[operation_byte_offset + LSQ_OPERATION_BYTE_STATS_BYTES..],
+        ]
+        .concat()
+    }
 
     fn encoded_without_branch_event_prediction_stats(encoded: &[u8]) -> Vec<u8> {
         let prediction_offset = encoded
             .len()
             .checked_sub(BRANCH_EVENT_PREDICTION_STATS_BYTES)
             .unwrap();
-        encoded[..prediction_offset].to_vec()
+        encoded_without_lsq_operation_byte_stats(
+            &encoded[..prediction_offset],
+            CURRENT_STATS_BYTES - BRANCH_EVENT_PREDICTION_STATS_BYTES,
+        )
     }
 
     fn encoded_without_branch_event_stats(encoded: &[u8]) -> Vec<u8> {
@@ -1673,5 +1752,50 @@ mod tests {
         );
         assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 1);
         assert_eq!(stats.lsq_store_to_load_forwarding_byte_mismatches(), 2);
+    }
+
+    #[test]
+    fn checkpoint_v15_payloads_decode_without_lsq_operation_byte_stats() {
+        let operation = O3RuntimeLsqOperation::Atomic;
+        let mut operation_counts = [0; O3RuntimeLsqOperation::COUNT];
+        let mut operation_load_bytes = [0; O3RuntimeLsqOperation::COUNT];
+        let mut operation_store_bytes = [0; O3RuntimeLsqOperation::COUNT];
+        let mut branch_event_predicted_taken_kinds = [0; crate::BranchTargetKind::COUNT];
+        operation_counts[operation.index()] = 2;
+        operation_load_bytes[operation.index()] = 8;
+        operation_store_bytes[operation.index()] = 8;
+        branch_event_predicted_taken_kinds[crate::BranchTargetKind::Return.index()] = 1;
+        let payload = O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+            super::super::default_o3_runtime_snapshot(),
+            O3RuntimeStats {
+                lsq_load_bytes: 8,
+                lsq_store_bytes: 8,
+                lsq_operation_counts: operation_counts,
+                lsq_operation_load_bytes: operation_load_bytes,
+                lsq_operation_store_bytes: operation_store_bytes,
+                branch_event_predicted_taken_kinds,
+                iq_branch_insts_issued: 3,
+                ..O3RuntimeStats::default()
+            },
+        )
+        .unwrap();
+        let mut v15_encoded =
+            encoded_without_lsq_operation_byte_stats(&payload.encode(), CURRENT_STATS_BYTES);
+        v15_encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS;
+
+        let decoded = O3RuntimeCheckpointPayload::decode(&v15_encoded).unwrap();
+        let stats = decoded.stats();
+
+        assert_eq!(stats.iq_branch_insts_issued(), 3);
+        assert_eq!(stats.lsq_load_bytes(), 8);
+        assert_eq!(stats.lsq_store_bytes(), 8);
+        assert_eq!(stats.lsq_operation_count(operation), 2);
+        assert_eq!(stats.lsq_operation_load_bytes(operation), 0);
+        assert_eq!(stats.lsq_operation_store_bytes(operation), 0);
+        assert_eq!(
+            stats.branch_event_predicted_taken_kind(crate::BranchTargetKind::Return),
+            1
+        );
     }
 }

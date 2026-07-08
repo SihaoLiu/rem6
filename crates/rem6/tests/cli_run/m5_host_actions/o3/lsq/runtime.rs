@@ -100,9 +100,34 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
             1,
         ),
         (
+            "/lsq/operation/load/load_bytes",
+            "sim.cpu0.o3.lsq_operation.load_load_bytes",
+            8,
+        ),
+        (
+            "/lsq_operation_load_load_bytes",
+            "sim.cpu0.o3.lsq_operation.load_load_bytes",
+            8,
+        ),
+        (
+            "/lsq/operation/load/store_bytes",
+            "sim.cpu0.o3.lsq_operation.load_store_bytes",
+            0,
+        ),
+        (
             "/lsq/operation/store/count",
             "sim.cpu0.o3.lsq_operation.store",
             3,
+        ),
+        (
+            "/lsq/operation/store/load_bytes",
+            "sim.cpu0.o3.lsq_operation.store_load_bytes",
+            0,
+        ),
+        (
+            "/lsq/operation/store/store_bytes",
+            "sim.cpu0.o3.lsq_operation.store_store_bytes",
+            24,
         ),
         (
             "/lsq/operation/load_reserved/count",
@@ -110,9 +135,29 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
             1,
         ),
         (
+            "/lsq/operation/load_reserved/load_bytes",
+            "sim.cpu0.o3.lsq_operation.load_reserved_load_bytes",
+            8,
+        ),
+        (
+            "/lsq/operation/load_reserved/store_bytes",
+            "sim.cpu0.o3.lsq_operation.load_reserved_store_bytes",
+            0,
+        ),
+        (
             "/lsq/operation/store_conditional/count",
             "sim.cpu0.o3.lsq_operation.store_conditional",
             1,
+        ),
+        (
+            "/lsq/operation/store_conditional/load_bytes",
+            "sim.cpu0.o3.lsq_operation.store_conditional_load_bytes",
+            0,
+        ),
+        (
+            "/lsq/operation/store_conditional/store_bytes",
+            "sim.cpu0.o3.lsq_operation.store_conditional_store_bytes",
+            8,
         ),
         (
             "/lsq/operation/atomic/count",
@@ -120,13 +165,48 @@ fn rem6_run_o3_runtime_json_exposes_nested_rob_lsq_matrices() {
             1,
         ),
         (
+            "/lsq/operation/atomic/load_bytes",
+            "sim.cpu0.o3.lsq_operation.atomic_load_bytes",
+            8,
+        ),
+        (
+            "/lsq/operation/atomic/store_bytes",
+            "sim.cpu0.o3.lsq_operation.atomic_store_bytes",
+            8,
+        ),
+        (
+            "/lsq_operation_atomic_store_bytes",
+            "sim.cpu0.o3.lsq_operation.atomic_store_bytes",
+            8,
+        ),
+        (
             "/lsq/operation/vector_load/count",
             "sim.cpu0.o3.lsq_operation.vector_load",
             0,
         ),
         (
+            "/lsq/operation/vector_load/load_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_load_load_bytes",
+            0,
+        ),
+        (
+            "/lsq/operation/vector_load/store_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_load_store_bytes",
+            0,
+        ),
+        (
             "/lsq/operation/vector_store/count",
             "sim.cpu0.o3.lsq_operation.vector_store",
+            0,
+        ),
+        (
+            "/lsq/operation/vector_store/load_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_store_load_bytes",
+            0,
+        ),
+        (
+            "/lsq/operation/vector_store/store_bytes",
+            "sim.cpu0.o3.lsq_operation.vector_store_store_bytes",
             0,
         ),
         (

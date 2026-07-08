@@ -30,6 +30,8 @@ pub struct O3RuntimeStats {
     pub(crate) lsq_store_to_load_forwarding_address_mismatches: u64,
     pub(crate) lsq_store_to_load_forwarding_byte_mismatches: u64,
     pub(crate) lsq_operation_counts: [u64; O3RuntimeLsqOperation::COUNT],
+    pub(crate) lsq_operation_load_bytes: [u64; O3RuntimeLsqOperation::COUNT],
+    pub(crate) lsq_operation_store_bytes: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_forwarding_candidates: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_forwarding_matches: [u64; O3RuntimeLsqOperation::COUNT],
     pub(crate) lsq_operation_forwarding_suppressed: [u64; O3RuntimeLsqOperation::COUNT],
@@ -131,6 +133,14 @@ impl O3RuntimeStats {
 
     pub fn lsq_operation_count(self, operation: O3RuntimeLsqOperation) -> u64 {
         self.lsq_operation_counts[operation.index()]
+    }
+
+    pub fn lsq_operation_load_bytes(self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.lsq_operation_load_bytes[operation.index()]
+    }
+
+    pub fn lsq_operation_store_bytes(self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.lsq_operation_store_bytes[operation.index()]
     }
 
     pub fn lsq_operation_forwarding_candidates(self, operation: O3RuntimeLsqOperation) -> u64 {
@@ -581,6 +591,10 @@ impl O3RuntimeStats {
             let operation_index = operation.index();
             self.lsq_operation_counts[operation_index] =
                 self.lsq_operation_counts[operation_index].saturating_add(1);
+            self.lsq_operation_load_bytes[operation_index] =
+                self.lsq_operation_load_bytes[operation_index].saturating_add(load_bytes);
+            self.lsq_operation_store_bytes[operation_index] =
+                self.lsq_operation_store_bytes[operation_index].saturating_add(store_bytes);
 
             let ordering = o3_lsq_ordering(access);
             if ordering != O3RuntimeLsqOrdering::None {
