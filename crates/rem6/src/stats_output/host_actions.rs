@@ -347,6 +347,21 @@ pub(super) fn emit_run_host_action_stats(
             value,
         )?;
     }
+    if let Some(reset) = summary.stats_resets.last() {
+        for (name, unit, value) in [
+            ("latest_id", "Count", reset.id),
+            ("latest_tick", "Tick", reset.tick),
+            ("latest_epoch", "Count", reset.epoch),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.host_actions.stats_reset.{name}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
             stats,

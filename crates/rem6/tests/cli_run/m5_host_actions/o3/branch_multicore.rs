@@ -64,6 +64,39 @@ fn rem6_run_m5_reset_stats_scopes_multicore_o3_branch_event_ftq_aliases_by_activ
         Some(1),
         "multicore indirect-call fixture should deliver one m5_reset_stats action: {host_actions}"
     );
+    let stats_reset = host_actions
+        .pointer("/stats_resets/0")
+        .unwrap_or_else(|| panic!("missing CPU1 O3 stats reset action: {host_actions}"));
+    assert_json_stat(
+        &json,
+        "sim.host_actions.stats_reset.latest_id",
+        "Count",
+        stats_reset
+            .pointer("/id")
+            .and_then(Value::as_u64)
+            .expect("stats reset action should expose an id"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.stats_reset.latest_tick",
+        "Tick",
+        stats_reset
+            .pointer("/tick")
+            .and_then(Value::as_u64)
+            .expect("stats reset action should expose a tick"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.stats_reset.latest_epoch",
+        "Count",
+        stats_reset
+            .pointer("/epoch")
+            .and_then(Value::as_u64)
+            .expect("stats reset action should expose an epoch"),
+        "monotonic",
+    );
     assert_execution_mode_switch(
         host_actions,
         0,
