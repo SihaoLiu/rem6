@@ -2369,6 +2369,36 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_lsq_forwarding_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+        b_type(20, 11, 12, 0x1),                        // bne x12, x11, fail
+        i_type(0, 0, 0x0, 10, 0x13),                    // addi x10, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),                    // addi x11, x0, 0
+        m5op(M5_DUMP_STATS),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_float_misc_prefix_words() -> Vec<u32> {
     vec![
         u_type(0x3f80_0000, 8, 0x37),                   // lui x8, 1.0f bits
