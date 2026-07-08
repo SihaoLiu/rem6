@@ -1,6 +1,6 @@
 use rem6_cpu::{
     BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeStats,
+    O3RuntimeStats, O3RuntimeTraceRecord,
 };
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
@@ -68,6 +68,228 @@ fn emit_o3_branch_event_aggregate_stats(
     Ok(())
 }
 
+fn emit_o3_runtime_event_summary_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    events: &[O3RuntimeTraceRecord],
+) -> Result<(), Rem6CliError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let records = events.len() as u64;
+    let first_tick = events.first().map_or(0, |event| event.tick());
+    let last_tick = events.last().map_or(0, |event| event.tick());
+    let span_ticks = last_tick.saturating_sub(first_tick);
+    let rob_allocations = events.iter().filter(|event| event.rob_allocated()).count() as u64;
+    let rob_commits = events.iter().filter(|event| event.rob_committed()).count() as u64;
+    let rename_writes = events
+        .iter()
+        .map(|event| event.rename_writes())
+        .sum::<u64>();
+    let max_rob_occupancy = events
+        .iter()
+        .map(|event| event.rob_occupancy())
+        .max()
+        .unwrap_or(0);
+    let max_lsq_occupancy = events
+        .iter()
+        .map(|event| event.lsq_occupancy())
+        .max()
+        .unwrap_or(0);
+    let max_rename_map_entries = events
+        .iter()
+        .map(|event| event.rename_map_entries())
+        .max()
+        .unwrap_or(0);
+    let mut lsq_latency_samples = 0_u64;
+    let mut lsq_latency_ticks = 0_u64;
+    let mut lsq_latency_max_ticks = 0_u64;
+    let mut lsq_latency_min_ticks: Option<u64> = None;
+    for event in events
+        .iter()
+        .filter(|event| event.lsq_operation() != O3RuntimeLsqOperation::None)
+    {
+        let ticks = event.lsq_data_latency_ticks();
+        lsq_latency_samples = lsq_latency_samples.saturating_add(1);
+        lsq_latency_ticks = lsq_latency_ticks.saturating_add(ticks);
+        lsq_latency_max_ticks = lsq_latency_max_ticks.max(ticks);
+        lsq_latency_min_ticks = Some(lsq_latency_min_ticks.map_or(ticks, |min| min.min(ticks)));
+    }
+    let lsq_latency_avg_ticks = if lsq_latency_samples == 0 {
+        0
+    } else {
+        lsq_latency_ticks / lsq_latency_samples
+    };
+
+    for (name, value) in [
+        ("records", records),
+        ("max_rob_occupancy", max_rob_occupancy),
+        ("max_lsq_occupancy", max_lsq_occupancy),
+        ("max_rename_map_entries", max_rename_map_entries),
+        (
+            "system_events",
+            events.iter().filter(|event| event.system_event()).count() as u64,
+        ),
+        ("rob.allocations", rob_allocations),
+        ("rob.commits", rob_commits),
+        ("rename.writes", rename_writes),
+        ("iq.insts_issued", records),
+        (
+            "iq.mem_insts_issued",
+            events
+                .iter()
+                .map(|event| event.lsq_loads().saturating_add(event.lsq_stores()))
+                .sum::<u64>(),
+        ),
+        (
+            "iq.branch_insts_issued",
+            events.iter().filter(|event| event.branch_event()).count() as u64,
+        ),
+        ("iew.dispatched_insts", records),
+        ("iew.insts_to_commit", rob_commits),
+        ("iew.writeback_count", records),
+        (
+            "iew.producer_inst",
+            events
+                .iter()
+                .map(|event| event.iew_dependency_producers())
+                .sum::<u64>(),
+        ),
+        (
+            "iew.consumer_inst",
+            events
+                .iter()
+                .map(|event| event.iew_dependency_consumers())
+                .sum::<u64>(),
+        ),
+        (
+            "iew.branch_mispredicts",
+            events
+                .iter()
+                .filter(|event| event.branch_mispredicted())
+                .count() as u64,
+        ),
+        (
+            "commit.branch_mispredicts",
+            events
+                .iter()
+                .filter(|event| event.branch_mispredicted())
+                .count() as u64,
+        ),
+    ] {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+    for (name, value) in [("span_ticks", span_ticks)] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        let count = events
+            .iter()
+            .filter(|event| event.lsq_operation() == operation)
+            .count() as u64;
+        increment_count_stat(
+            stats,
+            format!(
+                "sim.cpu{cpu}.o3.event_summary.lsq_operation.{}",
+                operation.as_str()
+            ),
+            count,
+        )?;
+    }
+    for (name, unit, value) in [
+        ("samples", "Count", lsq_latency_samples),
+        ("ticks", "Tick", lsq_latency_ticks),
+        ("max_ticks", "Tick", lsq_latency_max_ticks),
+        ("min_ticks", "Tick", lsq_latency_min_ticks.unwrap_or(0)),
+        ("avg_ticks", "Tick", lsq_latency_avg_ticks),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.lsq_data_latency.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        let instructions = events
+            .iter()
+            .filter(|event| event.fu_latency_class() == Some(class))
+            .count() as u64;
+        let cycles = events
+            .iter()
+            .filter(|event| event.fu_latency_class() == Some(class))
+            .map(|event| event.fu_latency_cycles())
+            .sum::<u64>();
+        let inst_type = o3_fu_latency_class_inst_type_stem(class);
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.iq.issued_inst_type.{inst_type}"),
+            instructions,
+        )?;
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.commit.committed_inst_type.{inst_type}"),
+            instructions,
+        )?;
+        increment_count_stat(
+            stats,
+            format!(
+                "sim.cpu{cpu}.o3.event_summary.fu_latency_class.{}.instructions",
+                class.stat_stem()
+            ),
+            instructions,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{cpu}.o3.event_summary.fu_latency_class.{}.cycles",
+                class.stat_stem()
+            ),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            cycles,
+        )?;
+    }
+    for (name, value) in [
+        (
+            "iq.issued_inst_type.mem_read",
+            events.iter().map(|event| event.lsq_loads()).sum::<u64>(),
+        ),
+        (
+            "iq.issued_inst_type.mem_write",
+            events.iter().map(|event| event.lsq_stores()).sum::<u64>(),
+        ),
+        (
+            "commit.committed_inst_type.mem_read",
+            events.iter().map(|event| event.lsq_loads()).sum::<u64>(),
+        ),
+        (
+            "commit.committed_inst_type.mem_write",
+            events.iter().map(|event| event.lsq_stores()).sum::<u64>(),
+        ),
+    ] {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
+            value,
+        )?;
+    }
+
+    Ok(())
+}
+
 pub(super) fn emit_o3_runtime_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
@@ -124,6 +346,7 @@ pub(super) fn emit_o3_runtime_stats(
     ] {
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
+    emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {
         let branch_event_resolved = o3.branch_event_resolved_target_kind(kind);

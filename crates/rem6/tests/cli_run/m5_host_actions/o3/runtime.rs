@@ -89,6 +89,83 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "representative runtime event-summary lane {pointer} should be positive: {runtime_summary}"
         );
     }
+
+    for (pointer, stat_path, unit) in [
+        ("/records", "sim.cpu0.o3.event_summary.records", "Count"),
+        (
+            "/span_ticks",
+            "sim.cpu0.o3.event_summary.span_ticks",
+            "Tick",
+        ),
+        (
+            "/rob/allocations",
+            "sim.cpu0.o3.event_summary.rob.allocations",
+            "Count",
+        ),
+        (
+            "/rob/commits",
+            "sim.cpu0.o3.event_summary.rob.commits",
+            "Count",
+        ),
+        (
+            "/rename/writes",
+            "sim.cpu0.o3.event_summary.rename.writes",
+            "Count",
+        ),
+        (
+            "/lsq_operation/load/count",
+            "sim.cpu0.o3.event_summary.lsq_operation.load",
+            "Count",
+        ),
+        (
+            "/lsq_operation/store/count",
+            "sim.cpu0.o3.event_summary.lsq_operation.store",
+            "Count",
+        ),
+        (
+            "/lsq_data_latency/samples",
+            "sim.cpu0.o3.event_summary.lsq_data_latency.samples",
+            "Count",
+        ),
+        (
+            "/lsq_data_latency/ticks",
+            "sim.cpu0.o3.event_summary.lsq_data_latency.ticks",
+            "Tick",
+        ),
+        (
+            "/iq/issued_inst_type/int_mul",
+            "sim.cpu0.o3.event_summary.iq.issued_inst_type.int_mul",
+            "Count",
+        ),
+        (
+            "/iew/writeback_count",
+            "sim.cpu0.o3.event_summary.iew.writeback_count",
+            "Count",
+        ),
+        (
+            "/commit/committed_inst_type/int_div",
+            "sim.cpu0.o3.event_summary.commit.committed_inst_type.int_div",
+            "Count",
+        ),
+        (
+            "/fu_latency_class/integer_mul/instructions",
+            "sim.cpu0.o3.event_summary.fu_latency_class.integer_mul.instructions",
+            "Count",
+        ),
+        (
+            "/fu_latency_class/integer_div/cycles",
+            "sim.cpu0.o3.event_summary.fu_latency_class.integer_div.cycles",
+            "Cycle",
+        ),
+    ] {
+        let expected = runtime_summary
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime event summary should expose u64 lane {pointer}: {runtime_summary}")
+            });
+        assert_json_stat(&json, stat_path, unit, expected, "monotonic");
+    }
 }
 
 #[test]
@@ -132,4 +209,13 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
             .is_some_and(Value::is_null),
         "non-debug O3 runtime JSON should expose an explicit null event summary: {o3_runtime}"
     );
+    for path in [
+        "sim.cpu0.o3.event_summary.records",
+        "sim.cpu0.o3.event_summary.span_ticks",
+        "sim.cpu0.o3.event_summary.rob.allocations",
+        "sim.cpu0.o3.event_summary.lsq_operation.load",
+        "sim.cpu0.o3.event_summary.fu_latency_class.integer_mul.instructions",
+    ] {
+        assert_json_stat_absent(&json, path);
+    }
 }
