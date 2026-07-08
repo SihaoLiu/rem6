@@ -57,6 +57,8 @@ const O3_RUNTIME_CHECKPOINT_IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES: usize = 2 *
 const O3_RUNTIME_CHECKPOINT_IEW_DEPENDENCY_STATS_BYTES: usize = 2 * 8;
 const O3_RUNTIME_CHECKPOINT_IQ_BRANCH_ISSUED_STATS_BYTES: usize = 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES: usize = BranchTargetKind::COUNT * 6 * 8;
+const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES: usize =
+    BranchTargetKind::COUNT * 4 * 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
     (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
         + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
@@ -72,6 +74,8 @@ const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+const O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES: usize =
+    O3_RUNTIME_CHECKPOINT_STATS_BYTES + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
     O3_RUNTIME_CHECKPOINT_STATS_BYTES
         - O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
@@ -147,7 +151,7 @@ fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
     let mut encoded = payload.encode();
     let v1_len = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
         .unwrap();
     encoded.truncate(v1_len);
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 1;
@@ -176,7 +180,7 @@ fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
     let mut encoded = payload.encode();
     let stats_offset = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
         .unwrap();
     encoded.truncate(stats_offset);
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 2;
@@ -1227,6 +1231,7 @@ fn strip_current_lsq_forwarding_suppression_stats(payload: &[u8]) -> Vec<u8> {
 }
 
 fn strip_current_lsq_forwarding_suppression_reason_stats(payload: &[u8]) -> Vec<u8> {
+    let payload = strip_current_branch_event_prediction_stats(payload);
     let stats_offset = payload
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES)
@@ -1244,6 +1249,14 @@ fn strip_current_lsq_forwarding_suppression_reason_stats(payload: &[u8]) -> Vec<
             [reason_offset + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES..],
     ]
     .concat()
+}
+
+fn strip_current_branch_event_prediction_stats(payload: &[u8]) -> Vec<u8> {
+    let prediction_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES)
+        .unwrap();
+    payload[..prediction_offset].to_vec()
 }
 
 fn checkpoint_u32(payload: &[u8], offset: usize) -> u32 {
