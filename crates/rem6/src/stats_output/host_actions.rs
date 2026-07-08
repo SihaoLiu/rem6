@@ -117,6 +117,8 @@ pub(super) fn emit_run_host_action_stats(
         BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
         BTreeMap::<(String, String), SwitchTransferChunkStats>::new();
+    let mut switch_state_transfer_target_stats =
+        BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_target_component_stats =
         BTreeMap::<(String, String), SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_target_chunk_stats =
@@ -130,6 +132,12 @@ pub(super) fn emit_run_host_action_stats(
         switch_state_transfer_components += transfer.component_count;
         switch_state_transfer_chunks += transfer.chunk_count;
         switch_state_transfer_payload_bytes += transfer.payload_bytes;
+        let target_stats = switch_state_transfer_target_stats
+            .entry(target_path.clone())
+            .or_default();
+        target_stats.components += transfer.component_count;
+        target_stats.chunks += transfer.chunk_count;
+        target_stats.payload_bytes += transfer.payload_bytes;
         if transfer.quiescence_gate.validated {
             switch_quiescence_validated += 1;
             *switch_quiescence_target_validated
@@ -510,6 +518,35 @@ pub(super) fn emit_run_host_action_stats(
             chunk_stats.payload_checksum_accumulator,
         )?;
     }
+    for (target_path, target_stats) in switch_state_transfer_target_stats {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.components"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            target_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            target_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            target_stats.payload_bytes,
+        )?;
+    }
     for ((target_path, component_path), component_stats) in
         switch_state_transfer_target_component_stats
     {
@@ -686,6 +723,27 @@ mod tests {
             "Unspecified",
             StatResetPolicy::Monotonic,
             36,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.components",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
         );
         assert_snapshot_stat(
             &snapshot,
