@@ -6472,8 +6472,9 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         json_record_u64(event_summary, "last_tick"),
         json_record_u64(&events[events.len() - 1], "tick")
     );
+    let event_summary_span_ticks = json_record_u64(event_summary, "span_ticks");
     assert_eq!(
-        json_record_u64(event_summary, "span_ticks"),
+        event_summary_span_ticks,
         json_record_u64(&events[events.len() - 1], "tick") - json_record_u64(&events[0], "tick")
     );
     assert_eq!(
@@ -6658,6 +6659,16 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         json_record_u64(event_summary_iew, "writeback_count"),
         iew_dispatched_insts
     );
+    assert!(
+        event_summary_span_ticks > 0,
+        "O3 event summary should expose a nonzero event tick span: {event_summary}"
+    );
+    let iew_writeback_rate_ppm = (u128::from(iew_dispatched_insts) * 1_000_000
+        / u128::from(event_summary_span_ticks)) as u64;
+    assert_eq!(
+        json_record_u64(event_summary_iew, "writeback_rate_ppm"),
+        iew_writeback_rate_ppm
+    );
     assert_eq!(
         json_record_u64(event_summary_iew, "producer_inst"),
         iew_dependency_producers
@@ -6787,6 +6798,11 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
             "sim.debug.o3_trace.event.iew_writeback_count",
             "Count",
             iew_dispatched_insts,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_writeback_rate_ppm",
+            "Ppm",
+            iew_writeback_rate_ppm,
         ),
         (
             "sim.debug.o3_trace.event.iew_dependency_producers",
@@ -14823,6 +14839,11 @@ fn rem6_run_o3_debug_flag_omits_timing_mode_runtime_trace() {
         ("sim.debug.o3_trace.event.first_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.last_tick", "Tick", 0),
         ("sim.debug.o3_trace.event.tick_span", "Tick", 0),
+        (
+            "sim.debug.o3_trace.event.iew_writeback_rate_ppm",
+            "Ppm",
+            0,
+        ),
         ("sim.debug.o3_trace.event.lsq_data_latency_ticks", "Tick", 0),
         (
             "sim.debug.o3_trace.event.lsq_data_latency_samples",

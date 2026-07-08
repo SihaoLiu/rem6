@@ -291,8 +291,9 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let branch_repair = o3_branch_repair_events_to_json(events);
     let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(events);
     let branch_target_mismatch = o3_branch_target_mismatch_to_json(events);
+    let span_ticks = last_tick.saturating_sub(first_tick);
     let iq = event_summary_iq_json(events);
-    let iew = event_summary_iew_json(events);
+    let iew = event_summary_iew_json(events, span_ticks);
     let commit = event_summary_commit_json(events);
     let rob = format!(
         "{{\"allocations\":{rob_allocations},\"commits\":{rob_commits},\"max_occupancy\":{max_rob_occupancy}}}"
@@ -301,7 +302,7 @@ pub(super) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
 
     format!(
         "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"branch_direction_mismatch\":{branch_direction_mismatch},\"branch_target_mismatch\":{branch_target_mismatch},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
-        last_tick.saturating_sub(first_tick),
+        span_ticks,
         lsq_forwarding.candidates,
         lsq_forwarding.matches,
         lsq_forwarding.suppressed,
@@ -520,18 +521,19 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
     )
 }
 
-fn event_summary_iew_json(events: &[O3RuntimeTraceRecord]) -> String {
+fn event_summary_iew_json(events: &[O3RuntimeTraceRecord], span_ticks: u64) -> String {
     let totals = Rem6O3EventIewTotals::from_events(events);
     let dispatched_insts = totals.dispatched_insts();
     let insts_to_commit = totals.insts_to_commit();
     let writeback_count = totals.writeback_count();
+    let writeback_rate_ppm = totals.writeback_rate_ppm(span_ticks);
     let producer_inst = totals.dependency_producers();
     let consumer_inst = totals.dependency_consumers();
     let predicted_taken_incorrect = totals.predicted_taken_incorrect();
     let predicted_not_taken_incorrect = totals.predicted_not_taken_incorrect();
     let branch_mispredicts = totals.branch_mispredicts();
     format!(
-        "{{\"dispatched_insts\":{dispatched_insts},\"insts_to_commit\":{insts_to_commit},\"writeback_count\":{writeback_count},\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"predicted_taken_incorrect\":{predicted_taken_incorrect},\"predicted_not_taken_incorrect\":{predicted_not_taken_incorrect},\"branch_mispredicts\":{branch_mispredicts},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
+        "{{\"dispatched_insts\":{dispatched_insts},\"insts_to_commit\":{insts_to_commit},\"writeback_count\":{writeback_count},\"writeback_rate_ppm\":{writeback_rate_ppm},\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"predicted_taken_incorrect\":{predicted_taken_incorrect},\"predicted_not_taken_incorrect\":{predicted_not_taken_incorrect},\"branch_mispredicts\":{branch_mispredicts},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
         ratio_ppm(producer_inst, consumer_inst)
     )
 }

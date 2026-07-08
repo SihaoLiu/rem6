@@ -1268,6 +1268,15 @@ impl Rem6O3TraceTotals {
             });
         }
         self.execution_modes.push_stats(&mut stats);
+        let event_tick_span = self
+            .event_last_tick
+            .unwrap_or(0)
+            .saturating_sub(self.event_first_tick.unwrap_or(0));
+        stats.push(Rem6O3TraceStat {
+            suffix: "event.iew_writeback_rate_ppm",
+            unit: "Ppm",
+            value: self.event_iew.writeback_rate_ppm(event_tick_span),
+        });
         for (suffix, value) in self.event_iew.stats() {
             stats.push(Rem6O3TraceStat {
                 suffix,
@@ -1477,7 +1486,7 @@ impl Rem6O3TraceTotals {
         stats.push(Rem6O3TraceStat {
             suffix: "event.tick_span",
             unit: "Tick",
-            value: last_event_tick.saturating_sub(first_event_tick),
+            value: event_tick_span,
         });
         stats.push(Rem6O3TraceStat {
             suffix: "event.lsq_data_latency_ticks",

@@ -54,6 +54,10 @@ impl Rem6O3EventIewTotals {
         self.writeback_count
     }
 
+    pub(super) const fn writeback_rate_ppm(self, span_ticks: u64) -> u64 {
+        ratio_ppm(self.writeback_count, span_ticks)
+    }
+
     pub(super) const fn dependency_producers(self) -> u64 {
         self.dependency_producers
     }
@@ -92,5 +96,18 @@ impl Rem6O3EventIewTotals {
             ),
             ("event.iew_branch_mispredicts", self.branch_mispredicts()),
         ]
+    }
+}
+
+const fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        0
+    } else {
+        let ppm = (numerator as u128).saturating_mul(1_000_000) / (denominator as u128);
+        if ppm > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            ppm as u64
+        }
     }
 }
