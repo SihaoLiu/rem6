@@ -35,9 +35,8 @@ mod o3_lsq_json;
 #[path = "o3_summary_json.rs"]
 mod o3_summary_json;
 
-use o3_branch_direction_mismatch::{
-    o3_branch_direction_mismatch_to_json, Rem6O3BranchDirectionMismatchTotals,
-};
+pub(crate) use o3_branch_direction_mismatch::o3_branch_direction_mismatch_to_json;
+use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;
 use o3_branch_repair::{
     o3_branch_repair_kind, o3_branch_repair_to_json, o3_branch_targetless_mismatch,
     o3_branch_wrong_target, Rem6O3BranchRepairTotals,
@@ -62,7 +61,7 @@ use o3_branch_stats::{
     o3_branch_wrong_target_squashed_target_without_link_write_kind_stat_suffix,
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
-use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
+pub(crate) use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
 use o3_checkpoint_restore_json::{
     o3_checkpoint_restore_to_json, o3_trace_checkpoint_restore_authority_stats,
     o3_trace_checkpoint_restore_component_stats, Rem6O3CheckpointRestoreAuthorityTotals,

@@ -120,7 +120,7 @@ where
     format!("{{{fields}}}")
 }
 
-pub(super) fn o3_branch_target_mismatch_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+pub(crate) fn o3_branch_target_mismatch_to_json(events: &[O3RuntimeTraceRecord]) -> String {
     let mut totals = Rem6O3BranchTargetMismatchTotals::default();
     for event in events {
         totals.add_event(event);

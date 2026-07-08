@@ -43,7 +43,10 @@ use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
     Rem6MemoryTraceStat,
 };
-pub(crate) use o3::o3_event_summary_to_json;
+pub(crate) use o3::{
+    o3_branch_direction_mismatch_to_json, o3_branch_target_mismatch_to_json,
+    o3_event_summary_to_json,
+};
 use o3::{
     o3_trace_authority_stats, o3_trace_cpu_checkpoint_restore_authority_stats,
     o3_trace_cpu_checkpoint_restore_component_stats, o3_trace_cpu_execution_mode_authority_stats,

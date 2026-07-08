@@ -324,6 +324,20 @@ fn o3_runtime_event_summary_json(summary: &Rem6CoreSummary) -> String {
     crate::debug_output::o3_event_summary_to_json(&summary.o3_runtime_trace_records)
 }
 
+fn o3_runtime_branch_direction_mismatch_json(summary: &Rem6CoreSummary) -> String {
+    if summary.o3_runtime_trace_records.is_empty() {
+        return "null".to_string();
+    }
+    crate::debug_output::o3_branch_direction_mismatch_to_json(&summary.o3_runtime_trace_records)
+}
+
+fn o3_runtime_branch_target_mismatch_json(summary: &Rem6CoreSummary) -> String {
+    if summary.o3_runtime_trace_records.is_empty() {
+        return "null".to_string();
+    }
+    crate::debug_output::o3_branch_target_mismatch_to_json(&summary.o3_runtime_trace_records)
+}
+
 fn o3_runtime_latency_json(
     samples: u64,
     ticks: u64,
@@ -687,6 +701,8 @@ impl Rem6CoreSummary {
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
             let branch_event = o3_runtime_branch_event_json(self);
             let branch_repair = o3_runtime_branch_repair_json(self);
+            let branch_direction_mismatch = o3_runtime_branch_direction_mismatch_json(self);
+            let branch_target_mismatch = o3_runtime_branch_target_mismatch_json(self);
             let iq = o3_runtime_iq_json(self);
             let iew = o3_runtime_iew_json(self);
             let commit = o3_runtime_commit_json(self);
@@ -697,7 +713,7 @@ impl Rem6CoreSummary {
             let event_window = o3_runtime_event_window_json(self);
             let event_summary = o3_runtime_event_summary_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
@@ -727,6 +743,8 @@ impl Rem6CoreSummary {
                 commit,
                 branch_event,
                 branch_repair,
+                branch_direction_mismatch,
+                branch_target_mismatch,
                 snapshot,
                 self.o3_runtime.iew_predicted_taken_incorrect(),
                 self.o3_runtime.iew_predicted_not_taken_incorrect(),

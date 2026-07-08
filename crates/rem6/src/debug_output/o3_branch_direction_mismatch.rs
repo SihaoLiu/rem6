@@ -148,7 +148,7 @@ where
     format!("{{{fields}}}")
 }
 
-pub(super) fn o3_branch_direction_mismatch_to_json(events: &[O3RuntimeTraceRecord]) -> String {
+pub(crate) fn o3_branch_direction_mismatch_to_json(events: &[O3RuntimeTraceRecord]) -> String {
     let mut totals = Rem6O3BranchDirectionMismatchTotals::default();
     for event in events {
         if !event.branch_event() {

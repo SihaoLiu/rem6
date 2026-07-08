@@ -169,6 +169,126 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
 }
 
 #[test]
+fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
+    let path = detailed_o3_branch_repair_text_stats_binary(
+        "m5-switch-cpu-detailed-o3-runtime-branch-mismatch",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let o3_runtime = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
+    let runtime_direction = o3_runtime
+        .pointer("/branch_direction_mismatch")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime JSON should expose direction mismatch partitions: {o3_runtime}")
+        });
+    let runtime_target = o3_runtime
+        .pointer("/branch_target_mismatch")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime JSON should expose target mismatch partitions: {o3_runtime}")
+        });
+    let debug_direction = json
+        .pointer("/debug/o3_trace/0/branch_direction_mismatch")
+        .unwrap_or_else(|| {
+            panic!("O3 debug trace should expose direction mismatch partitions: {json}")
+        });
+    let debug_target = json
+        .pointer("/debug/o3_trace/0/branch_target_mismatch")
+        .unwrap_or_else(|| {
+            panic!("O3 debug trace should expose target mismatch partitions: {json}")
+        });
+
+    for pointer in [
+        "/mismatches",
+        "/without_link_writes",
+        "/squashed_targets",
+        "/kind/direct_unconditional",
+        "/squashed_target_without_link_write_kind/direct_unconditional",
+    ] {
+        assert_eq!(
+            runtime_direction.pointer(pointer),
+            debug_direction.pointer(pointer),
+            "runtime direction-mismatch lane {pointer} should mirror debug trace"
+        );
+        assert!(
+            runtime_direction
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "representative direction-mismatch lane {pointer} should be positive: {runtime_direction}"
+        );
+    }
+
+    for pointer in [
+        "/targetless_mismatches",
+        "/targetless_mismatch_without_link_writes",
+        "/targetless_mismatch_squashed_targets",
+        "/targetless_mismatch_kind/direct_conditional",
+        "/targetless_mismatch_squashed_target_without_link_write_kind/direct_conditional",
+    ] {
+        assert_eq!(
+            runtime_target.pointer(pointer),
+            debug_target.pointer(pointer),
+            "runtime target-mismatch lane {pointer} should mirror debug trace"
+        );
+        assert!(
+            runtime_target
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "representative target-mismatch lane {pointer} should be positive: {runtime_target}"
+        );
+    }
+
+    for pointer in [
+        "/wrong_targets",
+        "/wrong_target_squashed_targets",
+        "/wrong_target_link_writes",
+        "/wrong_target_without_link_writes",
+    ] {
+        assert_eq!(
+            runtime_target.pointer(pointer),
+            debug_target.pointer(pointer),
+            "runtime wrong-target lane {pointer} should mirror debug trace"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace() {
     let path = detailed_o3_float_extended_fu_latency_binary(
         "m5-switch-cpu-detailed-o3-runtime-event-summary-suppressed",
@@ -208,6 +328,18 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
             .pointer("/event_summary")
             .is_some_and(Value::is_null),
         "non-debug O3 runtime JSON should expose an explicit null event summary: {o3_runtime}"
+    );
+    assert!(
+        o3_runtime
+            .pointer("/branch_direction_mismatch")
+            .is_some_and(Value::is_null),
+        "non-debug O3 runtime JSON should expose an explicit null direction mismatch summary: {o3_runtime}"
+    );
+    assert!(
+        o3_runtime
+            .pointer("/branch_target_mismatch")
+            .is_some_and(Value::is_null),
+        "non-debug O3 runtime JSON should expose an explicit null target mismatch summary: {o3_runtime}"
     );
     for path in [
         "sim.cpu0.o3.event_summary.records",
