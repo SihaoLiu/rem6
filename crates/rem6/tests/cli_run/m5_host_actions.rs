@@ -2273,6 +2273,51 @@ fn multicore_hart1_detailed_o3_indirect_call_wrong_target_dump_reset_dump_stats_
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_restore_indirect_call_ftq_dump_stats_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    let data_start = 1024_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 warmup path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        u_type(0, 11, 0x17),
+        i_type(16, 11, 0x0, 11, 0x13),
+        i_type(0, 11, 0x0, 1, 0x67),
+        i_type(99, 0, 0x0, 6, 0x13),
+        m5op(M5_SWITCH_CPU), // hart 1: switch cpu1 to detailed
+        u_type(0, 11, 0x17),
+        i_type(16, 11, 0x0, 11, 0x13),
+        j_type(-20, 0),
+        i_type(77, 0, 0x0, 6, 0x13),
+    ];
+    let data_auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - data_auipc_pc, 10, 0x0, 10, 0x13),
+        s_type(0, 11, 10, 0b011),
+        s_type(8, 1, 10, 0b011),
+        s_type(16, 6, 10, 0b011),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_CHECKPOINT),
+        m5op(M5_DUMP_STATS),
+        j_type(8, 1),
+        i_type(9, 0, 0x0, 7, 0x13),
+    ]);
+    while words.len() < 220 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_direct_call_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;

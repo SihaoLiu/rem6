@@ -1,6 +1,256 @@
 use super::*;
 
 #[test]
+fn rem6_run_m5_dump_stats_restores_multicore_o3_branch_ftq_snapshot_by_active_hart() {
+    let path = multicore_hart1_detailed_o3_restore_indirect_call_ftq_dump_stats_binary(
+        "m5-switch-cpu-hart1-o3-restore-indirect-call-ftq-dump-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+            "--dump-memory",
+            "0x80000400:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("30000080000000001800008000000000"),
+        "restored indirect-call O3 run should replay the checkpointed target and link witnesses"
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let restored_modes = host_actions
+        .pointer("/checkpoint_restores/0/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing restored execution modes: {host_actions}"));
+    assert!(
+        restored_modes.iter().any(|mode| {
+            mode.pointer("/target").and_then(Value::as_str) == Some("cpu1")
+                && mode.pointer("/mode").and_then(Value::as_str) == Some("detailed")
+        }),
+        "restored checkpoint should preserve cpu1 detailed-mode authority: {restored_modes:?}"
+    );
+
+    let first_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing first stats dump: {host_actions}"));
+    let restored_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing restored stats dump: {host_actions}"));
+    let restore_tick = host_actions
+        .pointer("/checkpoint_restores/0/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing checkpoint restore tick: {host_actions}"));
+    let first_dump_tick = first_dump
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing first dump tick: {first_dump}"));
+    let restored_dump_tick = restored_dump
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing restored dump tick: {restored_dump}"));
+    assert!(
+        first_dump_tick < restore_tick && restore_tick < restored_dump_tick,
+        "expected first dump before restore before restored dump, first={first_dump_tick}, restore={restore_tick}, restored={restored_dump_tick}"
+    );
+
+    for dump in [first_dump, restored_dump] {
+        assert_eq!(
+            dump.pointer("/epoch").and_then(Value::as_u64),
+            Some(0),
+            "restored dump should preserve checkpoint-era stats epoch: {dump}"
+        );
+        for (path, value) in [
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.branches",
+                2,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.link_writes",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.without_link_writes",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.mispredictions",
+                2,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashes",
+                2,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_targets",
+                2,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.kind.call_indirect",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.kind.direct_unconditional",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.link_write_kind.call_indirect",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.without_link_write_kind.direct_unconditional",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.misprediction_kind.call_indirect",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.misprediction_kind.direct_unconditional",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squash_kind.call_indirect",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squash_kind.direct_unconditional",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_link_write_kind.call_indirect",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu1.o3.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
+                1,
+            ),
+            ("system.cpu1.ftq.squashes_0::CallIndirect", 1),
+            ("system.cpu1.ftq.squashes_0::DirectUncond", 1),
+            ("system.cpu1.ftq.squashes_0::total", 2),
+            ("system.cpu1.ftq.squashedTargets_0::CallIndirect", 1),
+            ("system.cpu1.ftq.squashedTargets_0::DirectUncond", 1),
+            ("system.cpu1.ftq.squashedTargets_0::total", 2),
+            (
+                "system.cpu1.ftq.squashedTargetsWithLinkWrites_0::CallIndirect",
+                1,
+            ),
+            (
+                "system.cpu1.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+                1,
+            ),
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+        }
+        for path in [
+            "sim.host_actions.stats_dump.cpu0.o3.branch_event.kind.call_indirect",
+            "system.cpu.ftq.squashes_0::CallIndirect",
+            "system.cpu0.ftq.squashes_0::CallIndirect",
+            "system.cpu.ftq.squashedTargets_0::CallIndirect",
+            "system.cpu0.ftq.squashedTargets_0::CallIndirect",
+            "system.cpu.ftq.squashedTargetsWithLinkWrites_0::CallIndirect",
+            "system.cpu0.ftq.squashedTargetsWithLinkWrites_0::CallIndirect",
+            "system.cpu.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+            "system.cpu0.ftq.squashedTargetsWithoutLinkWrites_0::DirectUncond",
+        ] {
+            assert_stats_dump_sample_absent(dump, path);
+            assert_json_stat_absent(&json, path);
+        }
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.branch_event.branches",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.branch_event.kind.call_indirect",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.branch_event.kind.direct_unconditional",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu1.o3.branch_event.kind.call_direct",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu1.ftq.squashes_0::CallDirect",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_absent(&json, "sim.cpu0.o3.branch_event.kind.call_indirect");
+}
+
+#[test]
 fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
     let path = sparse_three_core_detailed_o3_restore_trace_binary(
         "m5-switch-cpu-sparse-three-core-o3-restore-trace",
