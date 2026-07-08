@@ -35,6 +35,13 @@ struct Rem6HostActionTraceTransferStats {
     payload_bytes: u64,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Rem6HostActionTraceChunkStats {
+    chunks: u64,
+    payload_bytes: u64,
+    payload_checksum_accumulator: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6HostActionTraceField {
     name: &'static str,
@@ -114,6 +121,10 @@ impl Rem6HostActionTraceStat {
 
     fn byte(path: String, value: u64) -> Self {
         Self::new(path, "Byte", value)
+    }
+
+    fn unspecified(path: String, value: u64) -> Self {
+        Self::new(path, "Unspecified", value)
     }
 
     fn new(path: String, unit: &'static str, value: u64) -> Self {
@@ -260,6 +271,10 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6HostActionTraceStat> {
     let mut target_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut target_component_transfers =
+        BTreeMap::<(String, String), Rem6HostActionTraceTransferStats>::new();
+    let mut target_chunk_transfers =
+        BTreeMap::<(String, String, String), Rem6HostActionTraceChunkStats>::new();
     let mut target_quiescence_validated = BTreeMap::<String, u64>::new();
     let mut target_quiescence_captured =
         BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
@@ -269,10 +284,30 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
             continue;
         };
         let target = stat_path_segment(&switch.target);
-        let transfer_stats = target_transfers.entry(target).or_default();
+        let transfer_stats = target_transfers.entry(target.clone()).or_default();
         transfer_stats.components += transfer.component_count;
         transfer_stats.chunks += transfer.chunk_count;
         transfer_stats.payload_bytes += transfer.payload_bytes;
+        for component in &transfer.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = target_component_transfers
+                .entry((target.clone(), component_path.clone()))
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = target_chunk_transfers
+                    .entry((target.clone(), component_path.clone(), chunk_path))
+                    .or_default();
+                chunk_stats.chunks += 1;
+                chunk_stats.payload_bytes += chunk.payload_bytes;
+                chunk_stats.payload_checksum_accumulator = chunk_stats
+                    .payload_checksum_accumulator
+                    .wrapping_add(chunk.payload_checksum);
+            }
+        }
 
         let quiescence_target = stat_path_segment(&transfer.quiescence_gate.target);
         if transfer.quiescence_gate.validated {
@@ -310,6 +345,46 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         stats.push(Rem6HostActionTraceStat::byte(
             format!("execution_mode_switch.state_transfer.target.{target}.payload_bytes"),
             transfer.payload_bytes,
+        ));
+    }
+    for ((target, component), transfer) in target_component_transfers {
+        stats.push(Rem6HostActionTraceStat::count(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.components"
+            ),
+            transfer.components,
+        ));
+        stats.push(Rem6HostActionTraceStat::count(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunks"
+            ),
+            transfer.chunks,
+        ));
+        stats.push(Rem6HostActionTraceStat::byte(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.payload_bytes"
+            ),
+            transfer.payload_bytes,
+        ));
+    }
+    for ((target, component, chunk), transfer) in target_chunk_transfers {
+        stats.push(Rem6HostActionTraceStat::count(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.chunks"
+            ),
+            transfer.chunks,
+        ));
+        stats.push(Rem6HostActionTraceStat::byte(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.payload_bytes"
+            ),
+            transfer.payload_bytes,
+        ));
+        stats.push(Rem6HostActionTraceStat::unspecified(
+            format!(
+                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.payload_checksum_accumulator"
+            ),
+            transfer.payload_checksum_accumulator,
         ));
     }
     for (target, validated) in target_quiescence_validated {

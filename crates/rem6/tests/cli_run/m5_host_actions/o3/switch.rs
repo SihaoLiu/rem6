@@ -181,6 +181,27 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
         execution_mode_switch_transfer_component_total(host_actions, "cpu1", "payload_bytes"),
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.components",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "component_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.chunks",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.payload_bytes",
+        "Byte",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "payload_bytes"),
+        "monotonic",
+    );
     for chunk in ["xregs", "in-order-pipeline", "o3-runtime-state"] {
         let stat_chunk = stat_path_segment(chunk);
         assert_json_stat(
@@ -211,6 +232,34 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
             ),
             "monotonic",
         );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.chunk.{stat_chunk}.chunks"
+            ),
+            "Count",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu1",
+                chunk,
+                "chunk_count",
+            ),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.chunk.{stat_chunk}.payload_bytes"
+            ),
+            "Byte",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu1",
+                chunk,
+                "payload_bytes",
+            ),
+            "monotonic",
+        );
     }
     let o3_checksum = execution_mode_switch_transfer_component_chunk_checksum(
         host_actions,
@@ -221,6 +270,13 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     assert_json_stat(
         &json,
         "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.payload_checksum_accumulator",
+        "Unspecified",
+        parse_hex_u64(&o3_checksum),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.payload_checksum_accumulator",
         "Unspecified",
         parse_hex_u64(&o3_checksum),
         "monotonic",
@@ -240,6 +296,14 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     assert_json_stat_absent(
         &json,
         "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.components",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.component.cpu0.components",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
     );
     assert_json_stat_absent(
         &json,
