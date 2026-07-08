@@ -10,11 +10,17 @@ mod o3_runtime_snapshot_restore;
 #[path = "o3_runtime_event_summary_branch.rs"]
 mod o3_runtime_event_summary_branch;
 
+#[path = "o3_runtime_branch_mismatch.rs"]
+mod o3_runtime_branch_mismatch;
+
 #[path = "o3_runtime_gem5_lsq.rs"]
 mod o3_runtime_gem5_lsq;
 
 use super::{increment_stat, stat_path_segment};
 use crate::{Rem6CliError, Rem6CoreSummary};
+use o3_runtime_branch_mismatch::{
+    emit_o3_runtime_branch_mismatch_stats, emit_o3_runtime_event_summary_branch_mismatch_stats,
+};
 use o3_runtime_event_summary_branch::emit_o3_runtime_event_summary_branch_event_stats;
 use o3_runtime_gem5_lsq::emit_gem5_o3_lsq_alias_stats;
 use o3_runtime_snapshot_restore::{
@@ -214,255 +220,6 @@ fn emit_o3_runtime_event_summary_branch_repair_stats(
         events,
         "branch_repair.direction_only_kind",
         o3_event_branch_repair_direction_only,
-    )?;
-    Ok(())
-}
-
-fn emit_o3_runtime_event_summary_branch_mismatch_stats(
-    stats: &mut StatsRegistry,
-    cpu: u32,
-    events: &[O3RuntimeTraceRecord],
-) -> Result<(), Rem6CliError> {
-    for (name, value) in [
-        (
-            "branch_direction_mismatch.mismatches",
-            count_o3_event_summary_records(events, o3_event_branch_direction_mismatch),
-        ),
-        (
-            "branch_direction_mismatch.without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_direction_mismatch(event) && !event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_direction_mismatch.squashed_targets",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_direction_mismatch(event)
-                    && event.branch_squashed_target().is_some()
-            }),
-        ),
-        (
-            "branch_direction_mismatch.squashed_target_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_direction_mismatch(event)
-                    && event.branch_squashed_target().is_some()
-                    && !event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_direction_mismatch.squashed_target_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_direction_mismatch(event)
-                    && event.branch_squashed_target().is_some()
-                    && event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.targetless_mismatches",
-            count_o3_event_summary_records(events, o3_event_branch_targetless_mismatch),
-        ),
-        (
-            "branch_target_mismatch.targetless_mismatch_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_targetless_mismatch(event) && !event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.targetless_mismatch_squashed_targets",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_targetless_mismatch(event)
-                    && event.branch_squashed_target().is_some()
-            }),
-        ),
-        (
-            "branch_target_mismatch.targetless_mismatch_squashed_target_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_targetless_mismatch(event)
-                    && event.branch_squashed_target().is_some()
-                    && !event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.wrong_targets",
-            count_o3_event_summary_records(events, o3_event_branch_wrong_target),
-        ),
-        (
-            "branch_target_mismatch.wrong_target_squashed_targets",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_wrong_target(event) && event.branch_squashed_target().is_some()
-            }),
-        ),
-        (
-            "branch_target_mismatch.wrong_target_squashed_target_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_wrong_target(event)
-                    && event.branch_squashed_target().is_some()
-                    && !event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.wrong_target_squashed_target_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_wrong_target(event)
-                    && event.branch_squashed_target().is_some()
-                    && event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.wrong_target_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_wrong_target(event) && event.branch_link_register_write()
-            }),
-        ),
-        (
-            "branch_target_mismatch.wrong_target_without_link_writes",
-            count_o3_event_summary_records(events, |event| {
-                o3_event_branch_wrong_target(event) && !event.branch_link_register_write()
-            }),
-        ),
-    ] {
-        increment_count_stat(
-            stats,
-            format!("sim.cpu{cpu}.o3.event_summary.{name}"),
-            value,
-        )?;
-    }
-
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.kind",
-        o3_event_branch_direction_mismatch,
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.link_write_kind",
-        |event| o3_event_branch_direction_mismatch(event) && event.branch_link_register_write(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.without_link_write_kind",
-        |event| o3_event_branch_direction_mismatch(event) && !event.branch_link_register_write(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.squashed_target_kind",
-        |event| {
-            o3_event_branch_direction_mismatch(event) && event.branch_squashed_target().is_some()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.squashed_target_link_write_kind",
-        |event| {
-            o3_event_branch_direction_mismatch(event)
-                && event.branch_squashed_target().is_some()
-                && event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_direction_mismatch.squashed_target_without_link_write_kind",
-        |event| {
-            o3_event_branch_direction_mismatch(event)
-                && event.branch_squashed_target().is_some()
-                && !event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.targetless_mismatch_kind",
-        o3_event_branch_targetless_mismatch,
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.targetless_mismatch_without_link_write_kind",
-        |event| o3_event_branch_targetless_mismatch(event) && !event.branch_link_register_write(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.targetless_mismatch_squashed_target_kind",
-        |event| {
-            o3_event_branch_targetless_mismatch(event) && event.branch_squashed_target().is_some()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.targetless_mismatch_squashed_target_without_link_write_kind",
-        |event| {
-            o3_event_branch_targetless_mismatch(event)
-                && event.branch_squashed_target().is_some()
-                && !event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_kind",
-        o3_event_branch_wrong_target,
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_squashed_target_kind",
-        |event| o3_event_branch_wrong_target(event) && event.branch_squashed_target().is_some(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_squashed_target_without_link_write_kind",
-        |event| {
-            o3_event_branch_wrong_target(event)
-                && event.branch_squashed_target().is_some()
-                && !event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_squashed_target_link_write_kind",
-        |event| {
-            o3_event_branch_wrong_target(event)
-                && event.branch_squashed_target().is_some()
-                && event.branch_link_register_write()
-        },
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_link_write_kind",
-        |event| o3_event_branch_wrong_target(event) && event.branch_link_register_write(),
-    )?;
-    emit_o3_runtime_event_summary_branch_kind_stats(
-        stats,
-        cpu,
-        events,
-        "branch_target_mismatch.wrong_target_without_link_write_kind",
-        |event| o3_event_branch_wrong_target(event) && !event.branch_link_register_write(),
     )?;
     Ok(())
 }
@@ -1147,6 +904,7 @@ pub(super) fn emit_o3_runtime_stats(
         "event_window",
         &core.o3_runtime_trace_records,
     )?;
+    emit_o3_runtime_branch_mismatch_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_runtime_event_summary_stats(stats, core.cpu, &core.o3_runtime_trace_records)?;
     emit_o3_branch_event_aggregate_stats(stats, core.cpu, o3)?;
     for kind in BranchTargetKind::ALL {

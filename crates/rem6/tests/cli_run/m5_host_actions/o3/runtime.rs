@@ -739,6 +739,37 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
 
     for (pointer, stat_path) in [
         (
+            "/mismatches",
+            "sim.cpu0.o3.branch_direction_mismatch.mismatches",
+        ),
+        (
+            "/without_link_writes",
+            "sim.cpu0.o3.branch_direction_mismatch.without_link_writes",
+        ),
+        (
+            "/squashed_targets",
+            "sim.cpu0.o3.branch_direction_mismatch.squashed_targets",
+        ),
+        (
+            "/kind/direct_unconditional",
+            "sim.cpu0.o3.branch_direction_mismatch.kind.direct_unconditional",
+        ),
+        (
+            "/squashed_target_without_link_write_kind/direct_unconditional",
+            "sim.cpu0.o3.branch_direction_mismatch.squashed_target_without_link_write_kind.direct_unconditional",
+        ),
+    ] {
+        let expected = runtime_direction
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime direction mismatch should expose u64 lane {pointer}: {runtime_direction}")
+            });
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
+
+    for (pointer, stat_path) in [
+        (
             "/targetless_mismatches",
             "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatches",
         ),
@@ -761,6 +792,41 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
         (
             "/wrong_targets",
             "sim.cpu0.o3.event_summary.branch_target_mismatch.wrong_targets",
+        ),
+    ] {
+        let expected = runtime_target
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime target mismatch should expose u64 lane {pointer}: {runtime_target}")
+            });
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
+
+    for (pointer, stat_path) in [
+        (
+            "/targetless_mismatches",
+            "sim.cpu0.o3.branch_target_mismatch.targetless_mismatches",
+        ),
+        (
+            "/targetless_mismatch_without_link_writes",
+            "sim.cpu0.o3.branch_target_mismatch.targetless_mismatch_without_link_writes",
+        ),
+        (
+            "/targetless_mismatch_squashed_targets",
+            "sim.cpu0.o3.branch_target_mismatch.targetless_mismatch_squashed_targets",
+        ),
+        (
+            "/targetless_mismatch_kind/direct_conditional",
+            "sim.cpu0.o3.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
+        ),
+        (
+            "/targetless_mismatch_squashed_target_without_link_write_kind/direct_conditional",
+            "sim.cpu0.o3.branch_target_mismatch.targetless_mismatch_squashed_target_without_link_write_kind.direct_conditional",
+        ),
+        (
+            "/wrong_targets",
+            "sim.cpu0.o3.branch_target_mismatch.wrong_targets",
         ),
     ] {
         let expected = runtime_target
@@ -1051,6 +1117,10 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.branch_direction_mismatch.kind.direct_unconditional",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatches",
         "sim.cpu0.o3.event_summary.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
+        "sim.cpu0.o3.branch_direction_mismatch.mismatches",
+        "sim.cpu0.o3.branch_direction_mismatch.kind.direct_unconditional",
+        "sim.cpu0.o3.branch_target_mismatch.targetless_mismatches",
+        "sim.cpu0.o3.branch_target_mismatch.targetless_mismatch_kind.direct_conditional",
         "sim.cpu0.o3.event_summary.branch_event.taken",
         "sim.cpu0.o3.event_summary.branch_event.predicted_taken",
         "sim.cpu0.o3.event_summary.branch_event.predicted_target_matches",
