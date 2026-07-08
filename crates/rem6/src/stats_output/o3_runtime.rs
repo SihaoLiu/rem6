@@ -699,6 +699,16 @@ fn emit_o3_runtime_event_summary_stats(
         .iter()
         .map(|event| event.iew_dependency_consumers())
         .sum::<u64>();
+    let iew_predicted_taken_incorrect = events
+        .iter()
+        .filter(|event| event.branch_mispredicted() && event.branch_predicted_taken())
+        .count() as u64;
+    let iew_predicted_not_taken_incorrect = events
+        .iter()
+        .filter(|event| event.branch_mispredicted() && !event.branch_predicted_taken())
+        .count() as u64;
+    let iew_branch_mispredicts =
+        iew_predicted_taken_incorrect.saturating_add(iew_predicted_not_taken_incorrect);
     let max_rob_occupancy = events
         .iter()
         .map(|event| event.rob_occupancy())
@@ -768,19 +778,15 @@ fn emit_o3_runtime_event_summary_stats(
         ("iew.dependency.producer", iew_dependency_producers),
         ("iew.dependency.consumer", iew_dependency_consumers),
         (
-            "iew.branch_mispredicts",
-            events
-                .iter()
-                .filter(|event| event.branch_mispredicted())
-                .count() as u64,
+            "iew.predicted_taken_incorrect",
+            iew_predicted_taken_incorrect,
         ),
         (
-            "commit.branch_mispredicts",
-            events
-                .iter()
-                .filter(|event| event.branch_mispredicted())
-                .count() as u64,
+            "iew.predicted_not_taken_incorrect",
+            iew_predicted_not_taken_incorrect,
         ),
+        ("iew.branch_mispredicts", iew_branch_mispredicts),
+        ("commit.branch_mispredicts", iew_branch_mispredicts),
     ] {
         increment_count_stat(
             stats,

@@ -249,6 +249,16 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "Ppm",
         ),
         (
+            "/iew/predicted_taken_incorrect",
+            "sim.cpu0.o3.event_summary.iew.predicted_taken_incorrect",
+            "Count",
+        ),
+        (
+            "/iew/predicted_not_taken_incorrect",
+            "sim.cpu0.o3.event_summary.iew.predicted_not_taken_incorrect",
+            "Count",
+        ),
+        (
             "/iew/dependency/producer",
             "sim.cpu0.o3.event_summary.iew.dependency.producer",
             "Count",
@@ -459,6 +469,8 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
         "/branch_event/resolved_target_kind/direct_unconditional",
         "/branch_event/misprediction_kind/direct_conditional",
         "/branch_event/without_link_write_kind/direct_unconditional",
+        "/iew/predicted_taken_incorrect",
+        "/iew/predicted_not_taken_incorrect",
         "/branch_event/squashes",
         "/branch_event/squashed_targets",
         "/branch_event/squashed_target_kind/direct_unconditional",
@@ -693,6 +705,14 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
             "sim.cpu0.o3.event_summary.branch_event.without_link_write_kind.direct_unconditional",
         ),
         (
+            "/iew/predicted_taken_incorrect",
+            "sim.cpu0.o3.event_summary.iew.predicted_taken_incorrect",
+        ),
+        (
+            "/iew/predicted_not_taken_incorrect",
+            "sim.cpu0.o3.event_summary.iew.predicted_not_taken_incorrect",
+        ),
+        (
             "/branch_event/squashes",
             "sim.cpu0.o3.event_summary.branch_event.squashes",
         ),
@@ -819,6 +839,8 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.iew.producer_inst",
         "sim.cpu0.o3.event_summary.iew.consumer_inst",
         "sim.cpu0.o3.event_summary.iew.producer_consumer_fanout_ppm",
+        "sim.cpu0.o3.event_summary.iew.predicted_taken_incorrect",
+        "sim.cpu0.o3.event_summary.iew.predicted_not_taken_incorrect",
         "sim.cpu0.o3.event_summary.iew.dependency.producer",
         "sim.cpu0.o3.event_summary.iew.dependency.consumer",
         "sim.cpu0.o3.event_summary.branch_direction_mismatch.mismatches",

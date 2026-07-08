@@ -810,6 +810,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.cpu0.o3.event_summary.iew.producer_consumer_fanout_ppm",
         "sim.cpu0.o3.event_summary.iew.dependency.producer",
         "sim.cpu0.o3.event_summary.iew.dependency.consumer",
+        "sim.cpu0.o3.event_summary.iew.predicted_taken_incorrect",
+        "sim.cpu0.o3.event_summary.iew.predicted_not_taken_incorrect",
         "/debug/o3_trace/0/event_summary/branch_event/branches",
         "/debug/o3_trace/0/event_summary/branch_event/taken",
         "/debug/o3_trace/0/event_summary/branch_event/not_taken",
