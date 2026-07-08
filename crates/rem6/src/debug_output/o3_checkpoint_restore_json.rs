@@ -1,8 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{formatting::json_escape, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary};
+use crate::{
+    formatting::json_escape, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSummary,
+};
 
 use super::{Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord, Rem6O3TraceStat};
+use crate::debug_output::checkpoint_components_json::checkpoint_components_to_json;
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
@@ -30,6 +34,7 @@ pub(super) struct Rem6O3CheckpointRestoreScope {
     pub(super) execution_mode_authority_cleared_manifests: u64,
     pub(super) execution_mode_authority_decode_errors: u64,
     pub(super) execution_modes: Vec<Rem6HostExecutionModeSummary>,
+    pub(super) components: Vec<Rem6HostCheckpointComponentSummary>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -39,6 +44,29 @@ pub(super) struct Rem6O3CheckpointRestoreAuthorityTotals {
     decode_errors: u64,
     targets: u64,
     modes: [u64; 3],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6O3CheckpointRestoreComponentTotals {
+    components: u64,
+    chunks: u64,
+    payload_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6O3CheckpointRestoreChunkTotals {
+    chunks: u64,
+    payload_bytes: u64,
+    payload_checksum_accumulator: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Rem6O3CheckpointRestoreComponentStatTotals {
+    components: BTreeMap<String, Rem6O3CheckpointRestoreComponentTotals>,
+    chunks: BTreeMap<(String, String), Rem6O3CheckpointRestoreChunkTotals>,
+    targets: BTreeMap<String, Rem6O3CheckpointRestoreComponentTotals>,
+    target_components: BTreeMap<(String, String), Rem6O3CheckpointRestoreComponentTotals>,
+    target_chunks: BTreeMap<(String, String, String), Rem6O3CheckpointRestoreChunkTotals>,
 }
 
 impl Rem6O3CheckpointRestoreScope {
@@ -71,6 +99,10 @@ impl Rem6O3CheckpointRestoreScope {
                 .filter(|summary| summary.execution_mode_authority_decode_error)
                 .count() as u64,
             execution_modes,
+            components: summaries
+                .iter()
+                .flat_map(|summary| summary.components.iter().cloned())
+                .collect(),
         })
     }
 
@@ -87,6 +119,144 @@ impl Rem6O3CheckpointRestoreScope {
             counts[index] = counts[index].saturating_add(1);
         }
         counts
+    }
+}
+
+impl Rem6O3CheckpointRestoreComponentTotals {
+    fn add_component(&mut self, component: &Rem6HostCheckpointComponentSummary) {
+        self.components = self.components.saturating_add(1);
+        self.chunks = self.chunks.saturating_add(component.chunk_count);
+        self.payload_bytes = self.payload_bytes.saturating_add(component.payload_bytes);
+    }
+
+    fn merge_max(&mut self, other: Self) {
+        self.components = self.components.max(other.components);
+        self.chunks = self.chunks.max(other.chunks);
+        self.payload_bytes = self.payload_bytes.max(other.payload_bytes);
+    }
+}
+
+impl Rem6O3CheckpointRestoreChunkTotals {
+    fn add_chunk(&mut self, payload_bytes: u64, payload_checksum: u64) {
+        self.chunks = self.chunks.saturating_add(1);
+        self.payload_bytes = self.payload_bytes.saturating_add(payload_bytes);
+        self.payload_checksum_accumulator = self
+            .payload_checksum_accumulator
+            .wrapping_add(payload_checksum);
+    }
+
+    fn merge_max(&mut self, other: Self) {
+        self.chunks = self.chunks.max(other.chunks);
+        self.payload_bytes = self.payload_bytes.max(other.payload_bytes);
+        self.payload_checksum_accumulator = self
+            .payload_checksum_accumulator
+            .max(other.payload_checksum_accumulator);
+    }
+}
+
+impl Rem6O3CheckpointRestoreComponentStatTotals {
+    fn from_restore(
+        restore: &Rem6O3CheckpointRestoreScope,
+        stat_path_segment: &impl Fn(&str) -> String,
+    ) -> Self {
+        let restore_targets = restore
+            .execution_modes
+            .iter()
+            .map(|authority| stat_path_segment(&authority.target))
+            .collect::<BTreeSet<_>>();
+        let mut totals = Self::default();
+        for component in &restore.components {
+            let component_path = stat_path_segment(&component.component);
+            totals
+                .components
+                .entry(component_path.clone())
+                .or_default()
+                .add_component(component);
+            let is_target_component = restore_targets.contains(&component_path);
+            if is_target_component {
+                totals
+                    .targets
+                    .entry(component_path.clone())
+                    .or_default()
+                    .add_component(component);
+                totals
+                    .target_components
+                    .entry((component_path.clone(), component_path.clone()))
+                    .or_default()
+                    .add_component(component);
+            }
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                totals
+                    .chunks
+                    .entry((component_path.clone(), chunk_path.clone()))
+                    .or_default()
+                    .add_chunk(chunk.payload_bytes, chunk.payload_checksum);
+                if is_target_component {
+                    totals
+                        .target_chunks
+                        .entry((component_path.clone(), component_path.clone(), chunk_path))
+                        .or_default()
+                        .add_chunk(chunk.payload_bytes, chunk.payload_checksum);
+                }
+            }
+        }
+        totals
+    }
+
+    fn merge_max(&mut self, other: Self) {
+        for (key, stats) in other.components {
+            self.components.entry(key).or_default().merge_max(stats);
+        }
+        for (key, stats) in other.chunks {
+            self.chunks.entry(key).or_default().merge_max(stats);
+        }
+        for (key, stats) in other.targets {
+            self.targets.entry(key).or_default().merge_max(stats);
+        }
+        for (key, stats) in other.target_components {
+            self.target_components
+                .entry(key)
+                .or_default()
+                .merge_max(stats);
+        }
+        for (key, stats) in other.target_chunks {
+            self.target_chunks.entry(key).or_default().merge_max(stats);
+        }
+    }
+
+    fn push_stats(self, stats: &mut Vec<Rem6O3ExecutionModeAuthorityStat>, prefix: &str) {
+        for (component, component_stats) in self.components {
+            push_component_stats(
+                stats,
+                &format!("{prefix}.component.{component}"),
+                component_stats,
+            );
+        }
+        for ((component, chunk), chunk_stats) in self.chunks {
+            push_chunk_stats(
+                stats,
+                &format!("{prefix}.component.{component}.chunk.{chunk}"),
+                chunk_stats,
+            );
+        }
+        for (target, target_stats) in self.targets {
+            push_component_stats(stats, &format!("{prefix}.target.{target}"), target_stats);
+        }
+        for ((target, component), component_stats) in self.target_components {
+            push_component_stats(
+                stats,
+                &format!("{prefix}.target.{target}.component.{component}"),
+                component_stats,
+            );
+        }
+        for ((target, component, chunk), chunk_stats) in self.target_chunks {
+            push_chunk_stats(
+                stats,
+                &format!("{prefix}.target.{target}.component.{component}.chunk.{chunk}"),
+                chunk_stats,
+            );
+        }
     }
 }
 
@@ -151,7 +321,7 @@ pub(super) fn o3_checkpoint_restore_to_json(
 ) -> String {
     let Some(restore) = restore else {
         return format!(
-            "{{\"count\":0,\"labels\":[],\"latest_label\":null,\"latest_tick\":0,\"latest_manifest_tick\":0,\"latest_payload_bytes\":0,\"execution_mode_authority\":{}}}",
+            "{{\"count\":0,\"labels\":[],\"latest_label\":null,\"latest_tick\":0,\"latest_manifest_tick\":0,\"latest_payload_bytes\":0,\"components\":[],\"execution_mode_authority\":{}}}",
             execution_mode_authority_to_json(0, 0, 0, &[])
         );
     };
@@ -168,13 +338,14 @@ pub(super) fn o3_checkpoint_restore_to_json(
         &restore.execution_modes,
     );
     format!(
-        "{{\"count\":{},\"labels\":[{}],\"latest_label\":\"{}\",\"latest_tick\":{},\"latest_manifest_tick\":{},\"latest_payload_bytes\":{},\"execution_mode_authority\":{}}}",
+        "{{\"count\":{},\"labels\":[{}],\"latest_label\":\"{}\",\"latest_tick\":{},\"latest_manifest_tick\":{},\"latest_payload_bytes\":{},\"components\":{},\"execution_mode_authority\":{}}}",
         restore.count,
         labels,
         json_escape(&restore.label),
         restore.tick,
         restore.manifest_tick,
         restore.payload_bytes,
+        checkpoint_components_to_json(&restore.components),
         authority
     )
 }
@@ -209,6 +380,26 @@ pub(super) fn o3_trace_checkpoint_restore_authority_stats(
             ));
         }
     }
+    stats
+}
+
+pub(super) fn o3_trace_checkpoint_restore_component_stats(
+    records: &[Rem6O3TraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
+    let mut totals = Rem6O3CheckpointRestoreComponentStatTotals::default();
+    for record in records {
+        let Some(restore) = record.checkpoint_restore() else {
+            continue;
+        };
+        totals.merge_max(Rem6O3CheckpointRestoreComponentStatTotals::from_restore(
+            restore,
+            &stat_path_segment,
+        ));
+    }
+
+    let mut stats = Vec::new();
+    totals.push_stats(&mut stats, "checkpoint_restore");
     stats
 }
 
@@ -250,6 +441,70 @@ pub(in crate::debug_output) fn o3_trace_cpu_checkpoint_restore_authority_stats(
         }
     }
     stats
+}
+
+pub(in crate::debug_output) fn o3_trace_cpu_checkpoint_restore_component_stats(
+    records: &[Rem6O3TraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<(u32, Rem6O3ExecutionModeAuthorityStat)> {
+    let mut cpu_totals = BTreeMap::<u32, Rem6O3CheckpointRestoreComponentStatTotals>::new();
+    for record in records {
+        let Some(restore) = record.checkpoint_restore() else {
+            continue;
+        };
+        cpu_totals.entry(record.cpu()).or_default().merge_max(
+            Rem6O3CheckpointRestoreComponentStatTotals::from_restore(restore, &stat_path_segment),
+        );
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, totals) in cpu_totals {
+        let mut cpu_stats = Vec::new();
+        totals.push_stats(&mut cpu_stats, "checkpoint_restore");
+        stats.extend(cpu_stats.into_iter().map(|stat| (cpu, stat)));
+    }
+    stats
+}
+
+fn push_component_stats(
+    stats: &mut Vec<Rem6O3ExecutionModeAuthorityStat>,
+    prefix: &str,
+    component_stats: Rem6O3CheckpointRestoreComponentTotals,
+) {
+    stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+        format!("{prefix}.components"),
+        component_stats.components,
+    ));
+    stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+        format!("{prefix}.chunks"),
+        component_stats.chunks,
+    ));
+    stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
+        format!("{prefix}.payload_bytes"),
+        "Byte",
+        component_stats.payload_bytes,
+    ));
+}
+
+fn push_chunk_stats(
+    stats: &mut Vec<Rem6O3ExecutionModeAuthorityStat>,
+    prefix: &str,
+    chunk_stats: Rem6O3CheckpointRestoreChunkTotals,
+) {
+    stats.push(Rem6O3ExecutionModeAuthorityStat::new(
+        format!("{prefix}.chunks"),
+        chunk_stats.chunks,
+    ));
+    stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
+        format!("{prefix}.payload_bytes"),
+        "Byte",
+        chunk_stats.payload_bytes,
+    ));
+    stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
+        format!("{prefix}.payload_checksum_accumulator"),
+        "Unspecified",
+        chunk_stats.payload_checksum_accumulator,
+    ));
 }
 
 fn execution_mode_authority_to_json(

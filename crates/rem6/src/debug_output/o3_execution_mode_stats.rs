@@ -25,6 +25,7 @@ struct Rem6O3ExecutionModeAuthorityTotals {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6O3ExecutionModeAuthorityStat {
     path: String,
+    unit: &'static str,
     value: u64,
 }
 
@@ -95,11 +96,19 @@ impl Rem6O3ExecutionModeAuthorityTotals {
 
 impl Rem6O3ExecutionModeAuthorityStat {
     pub(super) fn new(path: String, value: u64) -> Self {
-        Self { path, value }
+        Self::with_unit(path, "Count", value)
+    }
+
+    pub(super) fn with_unit(path: String, unit: &'static str, value: u64) -> Self {
+        Self { path, unit, value }
     }
 
     pub(crate) fn path(&self) -> &str {
         &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
     }
 
     pub(crate) const fn value(&self) -> u64 {

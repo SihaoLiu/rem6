@@ -8,6 +8,7 @@ use rem6_transport::MemoryTrace;
 
 mod branch;
 mod cache;
+mod checkpoint_components_json;
 mod dram;
 mod fabric;
 mod host_action;
@@ -44,8 +45,9 @@ use memory::{
 };
 use o3::{
     o3_trace_authority_stats, o3_trace_cpu_checkpoint_restore_authority_stats,
-    o3_trace_cpu_execution_mode_authority_stats, o3_trace_cpu_stats, o3_trace_records,
-    o3_trace_stats, Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord, Rem6O3TraceStat,
+    o3_trace_cpu_checkpoint_restore_component_stats, o3_trace_cpu_execution_mode_authority_stats,
+    o3_trace_cpu_stats, o3_trace_records, o3_trace_stats, Rem6O3ExecutionModeAuthorityStat,
+    Rem6O3TraceRecord, Rem6O3TraceStat,
 };
 use pipeline::{pipeline_trace_records, pipeline_trace_summary_to_json, Rem6PipelineTraceRecord};
 pub(crate) use sbi::Rem6SbiTraceInputs;
@@ -533,6 +535,10 @@ impl Rem6DebugSummary {
         let mut stats =
             o3_trace_cpu_execution_mode_authority_stats(&self.o3_trace, &stat_path_segment);
         stats.extend(o3_trace_cpu_checkpoint_restore_authority_stats(
+            &self.o3_trace,
+            &stat_path_segment,
+        ));
+        stats.extend(o3_trace_cpu_checkpoint_restore_component_stats(
             &self.o3_trace,
             stat_path_segment,
         ));

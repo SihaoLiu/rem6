@@ -61,10 +61,14 @@ use o3_branch_stats::{
     o3_branch_wrong_target_without_link_write_kind_stat_suffix, push_o3_branch_kind_count_stats,
 };
 use o3_branch_target_mismatch::o3_branch_target_mismatch_to_json;
-pub(super) use o3_checkpoint_restore_json::o3_trace_cpu_checkpoint_restore_authority_stats;
 use o3_checkpoint_restore_json::{
     o3_checkpoint_restore_to_json, o3_trace_checkpoint_restore_authority_stats,
-    Rem6O3CheckpointRestoreAuthorityTotals, Rem6O3CheckpointRestoreScope,
+    o3_trace_checkpoint_restore_component_stats, Rem6O3CheckpointRestoreAuthorityTotals,
+    Rem6O3CheckpointRestoreScope,
+};
+pub(super) use o3_checkpoint_restore_json::{
+    o3_trace_cpu_checkpoint_restore_authority_stats,
+    o3_trace_cpu_checkpoint_restore_component_stats,
 };
 use o3_event_iew::Rem6O3EventIewTotals;
 use o3_event_json::o3_event_to_json;
@@ -521,6 +525,10 @@ pub(super) fn o3_trace_authority_stats(
 ) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
     let mut stats = o3_trace_execution_mode_authority_stats(records, &stat_path_segment);
     stats.extend(o3_trace_checkpoint_restore_authority_stats(
+        records,
+        &stat_path_segment,
+    ));
+    stats.extend(o3_trace_checkpoint_restore_component_stats(
         records,
         stat_path_segment,
     ));

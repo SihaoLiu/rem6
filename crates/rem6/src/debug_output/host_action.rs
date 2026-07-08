@@ -3,13 +3,15 @@ use std::collections::BTreeMap;
 use crate::formatting::json_escape;
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
+
+use super::checkpoint_components_json::checkpoint_components_to_json;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionTraceRecord {
@@ -523,7 +525,10 @@ fn checkpoint_restore_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActi
             "execution_mode_authority",
             checkpoint_restore_authority_json(action),
         ),
-        field_json("components", components_json(&action.components)),
+        field_json(
+            "components",
+            checkpoint_components_to_json(&action.components),
+        ),
     ];
     Rem6HostActionTraceRecord::new(
         "checkpoint_restore",
@@ -660,41 +665,7 @@ fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> Stri
         transfer.chunk_count,
         transfer.payload_bytes,
         quiescence_gate_json(&transfer.quiescence_gate),
-        components_json(&transfer.components),
-    )
-}
-
-fn components_json(components: &[Rem6HostCheckpointComponentSummary]) -> String {
-    let components = components
-        .iter()
-        .map(component_json)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{components}]")
-}
-
-fn component_json(component: &Rem6HostCheckpointComponentSummary) -> String {
-    let chunks = component
-        .chunks
-        .iter()
-        .map(chunk_json)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
-        json_escape(&component.component),
-        component.chunk_count,
-        component.payload_bytes,
-        chunks,
-    )
-}
-
-fn chunk_json(chunk: &Rem6HostCheckpointChunkSummary) -> String {
-    format!(
-        "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"}}",
-        json_escape(&chunk.name),
-        chunk.payload_bytes,
-        chunk.payload_checksum,
+        checkpoint_components_to_json(&transfer.components),
     )
 }
 

@@ -365,7 +365,7 @@ pub(super) fn emit_debug_stats(
         increment_stat(
             stats,
             &format!("sim.debug.o3_trace.{}", stat.path()),
-            "Count",
+            stat.unit(),
             StatResetPolicy::Monotonic,
             stat.value(),
         )?;
@@ -383,7 +383,7 @@ pub(super) fn emit_debug_stats(
         increment_stat(
             stats,
             &format!("sim.debug.o3_trace.cpu.cpu{cpu}.{}", stat.path()),
-            "Count",
+            stat.unit(),
             StatResetPolicy::Monotonic,
             stat.value(),
         )?;

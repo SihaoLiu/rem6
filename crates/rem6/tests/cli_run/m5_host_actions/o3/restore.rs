@@ -405,6 +405,16 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
                 .and_then(Value::as_u64),
             Some(restore_tick)
         );
+        let restore_scope = record
+            .pointer("/checkpoint_restore")
+            .unwrap_or_else(|| panic!("missing CPU{cpu} checkpoint restore scope: {record}"));
+        assert_eq!(
+            restore_scope.pointer("/components"),
+            restore.pointer("/components"),
+            "CPU{cpu} O3 restore scope should preserve component payload metadata without per-record mutation: {restore_scope}"
+        );
+        let component = format!("cpu{cpu}");
+        assert_trace_restore_component_chunk(restore_scope, &component, "o3-runtime-state");
         for target in ["cpu0", "cpu2"] {
             assert_eq!(
                 record
@@ -465,6 +475,28 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
                         == Some(expected_address)
             }),
             "CPU{cpu} restored replay should include the load event: {events:?}"
+        );
+    }
+    for target in ["cpu0", "cpu2"] {
+        assert_restore_component_chunk_stat(
+            &json,
+            restore,
+            "sim.debug.o3_trace.checkpoint_restore",
+            target,
+            "o3-runtime-state",
+            target,
+            "o3_runtime_state",
+            target,
+        );
+        assert_restore_component_chunk_stat(
+            &json,
+            restore,
+            &format!("sim.debug.o3_trace.cpu.{target}.checkpoint_restore"),
+            target,
+            "o3-runtime-state",
+            target,
+            "o3_runtime_state",
+            target,
         );
     }
 
@@ -1045,7 +1077,7 @@ fn rem6_run_host_action_trace_restores_multicore_o3_checkpoint_components_by_act
 }
 
 #[test]
-fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_active_hart() {
+fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
     let path = multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(
         "m5-switch-cpu-hart1-o3-restore-host-action-component-stats",
     );
@@ -1068,6 +1100,8 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
             "2",
             "--memory-system",
             "direct",
+            "--debug-flags",
+            "O3",
             "--host-restore-checkpoint",
             "150:gem5-m5-checkpoint",
         ])
@@ -1098,6 +1132,7 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
     assert_restore_component_chunk_stat(
         &json,
         host_restore,
+        "sim.host_actions.checkpoint_restore",
         "cpu1",
         "xregs",
         "cpu1",
@@ -1107,6 +1142,7 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
     assert_restore_component_chunk_stat(
         &json,
         host_restore,
+        "sim.host_actions.checkpoint_restore",
         "cpu1",
         "in-order-pipeline",
         "cpu1",
@@ -1116,6 +1152,7 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
     assert_restore_component_chunk_stat(
         &json,
         host_restore,
+        "sim.host_actions.checkpoint_restore",
         "cpu1",
         "o3-runtime-state",
         "cpu1",
@@ -1127,6 +1164,70 @@ fn rem6_run_host_action_stats_restore_multicore_o3_checkpoint_components_by_acti
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
     );
     assert_json_stat_prefix_absent(&json, "sim.host_actions.checkpoint_restore.target.cpu0.");
+
+    let o3_restore = o3_trace_checkpoint_restore_scope(&json, 1);
+    assert_eq!(
+        o3_restore.pointer("/components"),
+        host_restore.pointer("/components"),
+        "O3 restore scope should preserve restored component/chunk payload metadata: O3 {o3_restore}; host {host_restore}"
+    );
+    assert_trace_restore_component_chunk(o3_restore, "cpu1", "xregs");
+    assert_trace_restore_component_chunk(o3_restore, "cpu1", "in-order-pipeline");
+    assert_trace_restore_component_chunk(o3_restore, "cpu1", "o3-runtime-state");
+    assert_restore_component_chunk_stat(
+        &json,
+        o3_restore,
+        "sim.debug.o3_trace.checkpoint_restore",
+        "cpu1",
+        "xregs",
+        "cpu1",
+        "xregs",
+        "cpu1",
+    );
+    assert_restore_component_chunk_stat(
+        &json,
+        o3_restore,
+        "sim.debug.o3_trace.cpu.cpu1.checkpoint_restore",
+        "cpu1",
+        "o3-runtime-state",
+        "cpu1",
+        "o3_runtime_state",
+        "cpu1",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
+    );
+    assert_json_stat_prefix_absent(&json, "sim.debug.o3_trace.checkpoint_restore.target.cpu0.");
+    assert_json_stat_prefix_absent(&json, "sim.debug.o3_trace.cpu.cpu0.checkpoint_restore.");
+}
+
+fn o3_trace_checkpoint_restore_scope(json: &Value, cpu: u64) -> &Value {
+    let o3_trace = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 trace records: {json}"));
+    let record = o3_trace
+        .iter()
+        .find(|record| record.pointer("/cpu").and_then(Value::as_u64) == Some(cpu))
+        .unwrap_or_else(|| panic!("missing CPU{cpu} O3 trace record: {o3_trace:?}"));
+    assert_eq!(
+        record
+            .pointer("/checkpoint_restore_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "CPU{cpu} O3 trace should be scoped to one checkpoint restore: {record}"
+    );
+    record
+        .pointer("/checkpoint_restore")
+        .unwrap_or_else(|| panic!("missing CPU{cpu} O3 checkpoint restore scope: {record}"))
 }
 
 fn assert_trace_restore_component_chunk(restore: &Value, component: &str, chunk: &str) {
@@ -1204,6 +1305,7 @@ fn assert_restore_component_present(restore: &Value, component: &str) {
 fn assert_restore_component_chunk_stat(
     json: &Value,
     restore: &Value,
+    stat_prefix: &str,
     component: &str,
     chunk: &str,
     component_path: &str,
@@ -1246,39 +1348,35 @@ fn assert_restore_component_chunk_stat(
 
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.components"),
+        &format!("{stat_prefix}.component.{component_path}.components"),
         "Count",
         1,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.chunks"),
+        &format!("{stat_prefix}.component.{component_path}.chunks"),
         "Count",
         component_chunks,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.component.{component_path}.payload_bytes"),
+        &format!("{stat_prefix}.component.{component_path}.payload_bytes"),
         "Byte",
         component_payload_bytes,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!(
-            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.chunks"
-        ),
+        &format!("{stat_prefix}.component.{component_path}.chunk.{chunk_path}.chunks"),
         "Count",
         1,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!(
-            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_bytes"
-        ),
+        &format!("{stat_prefix}.component.{component_path}.chunk.{chunk_path}.payload_bytes"),
         "Byte",
         chunk_payload_bytes,
         "monotonic",
@@ -1286,7 +1384,7 @@ fn assert_restore_component_chunk_stat(
     assert_json_stat(
         json,
         &format!(
-            "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            "{stat_prefix}.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
         ),
         "Unspecified",
         chunk_payload_checksum,
@@ -1294,21 +1392,42 @@ fn assert_restore_component_chunk_stat(
     );
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.components"),
+        &format!("{stat_prefix}.target.{target_path}.components"),
         "Count",
         1,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.chunks"),
+        &format!("{stat_prefix}.target.{target_path}.chunks"),
         "Count",
         component_chunks,
         "monotonic",
     );
     assert_json_stat(
         json,
-        &format!("sim.host_actions.checkpoint_restore.target.{target_path}.payload_bytes"),
+        &format!("{stat_prefix}.target.{target_path}.payload_bytes"),
+        "Byte",
+        component_payload_bytes,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{stat_prefix}.target.{target_path}.component.{component_path}.components"),
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{stat_prefix}.target.{target_path}.component.{component_path}.chunks"),
+        "Count",
+        component_chunks,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{stat_prefix}.target.{target_path}.component.{component_path}.payload_bytes"),
         "Byte",
         component_payload_bytes,
         "monotonic",
@@ -1316,7 +1435,7 @@ fn assert_restore_component_chunk_stat(
     assert_json_stat(
         json,
         &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.components"
+            "{stat_prefix}.target.{target_path}.component.{component_path}.chunk.{chunk_path}.chunks"
         ),
         "Count",
         1,
@@ -1325,34 +1444,7 @@ fn assert_restore_component_chunk_stat(
     assert_json_stat(
         json,
         &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunks"
-        ),
-        "Count",
-        component_chunks,
-        "monotonic",
-    );
-    assert_json_stat(
-        json,
-        &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.payload_bytes"
-        ),
-        "Byte",
-        component_payload_bytes,
-        "monotonic",
-    );
-    assert_json_stat(
-        json,
-        &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.chunks"
-        ),
-        "Count",
-        1,
-        "monotonic",
-    );
-    assert_json_stat(
-        json,
-        &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+            "{stat_prefix}.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_bytes"
         ),
         "Byte",
         chunk_payload_bytes,
@@ -1361,7 +1453,7 @@ fn assert_restore_component_chunk_stat(
     assert_json_stat(
         json,
         &format!(
-            "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            "{stat_prefix}.target.{target_path}.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
         ),
         "Unspecified",
         chunk_payload_checksum,
