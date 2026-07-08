@@ -795,6 +795,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/debug/o3_trace/0/event_summary/event_window/max_rob_occupancy/tick",
         "/debug/o3_trace/0/event_summary/event_window/max_lsq_occupancy/pc",
         "/debug/o3_trace/0/event_summary/event_window/max_rename_map_entries/sequence",
+        "sim.cpu0.o3.event_summary.event_window.records",
+        "sim.cpu0.o3.event_summary.event_window.span_ticks",
         "sim.cpu0.o3.event_summary.event_window.first.pc",
         "sim.cpu0.o3.event_summary.event_window.last.pc",
         "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.pc",

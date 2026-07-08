@@ -76,6 +76,8 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/lsq_stores",
         "/lsq_operation_load",
         "/lsq_operation_store",
+        "/event_window/records",
+        "/event_window/span_ticks",
         "/event_window/max_rob_occupancy/tick",
         "/event_window/max_lsq_occupancy/sequence",
         "/rob/allocations",
@@ -155,6 +157,16 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         (
             "/span_ticks",
             "sim.cpu0.o3.event_summary.span_ticks",
+            "Tick",
+        ),
+        (
+            "/event_window/records",
+            "sim.cpu0.o3.event_summary.event_window.records",
+            "Count",
+        ),
+        (
+            "/event_window/span_ticks",
+            "sim.cpu0.o3.event_summary.event_window.span_ticks",
             "Tick",
         ),
         (
@@ -872,6 +884,8 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
     for path in [
         "sim.cpu0.o3.event_summary.records",
         "sim.cpu0.o3.event_summary.first_tick",
+        "sim.cpu0.o3.event_summary.event_window.records",
+        "sim.cpu0.o3.event_summary.event_window.span_ticks",
         "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
         "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_summary.span_ticks",

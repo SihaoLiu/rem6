@@ -499,6 +499,22 @@ fn emit_o3_runtime_event_summary_window_stats(
     cpu: u32,
     events: &[O3RuntimeTraceRecord],
 ) -> Result<(), Rem6CliError> {
+    let records = events.len() as u64;
+    let first_tick = events.first().map_or(0, |event| event.tick());
+    let last_tick = events.last().map_or(0, |event| event.tick());
+    let span_ticks = last_tick.saturating_sub(first_tick);
+    for (name, unit, value) in [
+        ("records", "Count", records),
+        ("span_ticks", "Tick", span_ticks),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.event_window.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "first", events.first())?;
     emit_o3_runtime_event_summary_window_row_stats(stats, cpu, "last", events.last())?;
     emit_o3_runtime_event_summary_window_row_stats(
