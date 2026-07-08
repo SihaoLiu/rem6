@@ -1113,11 +1113,23 @@ pub(super) fn emit_o3_runtime_stats(
             o3.branch_repair_targetless_mismatches(),
         ),
         (
+            "branch_repair.targetless_mismatches",
+            o3.branch_repair_targetless_mismatches(),
+        ),
+        (
             "branch_repair_wrong_targets",
             o3.branch_repair_wrong_targets(),
         ),
         (
+            "branch_repair.wrong_targets",
+            o3.branch_repair_wrong_targets(),
+        ),
+        (
             "branch_repair_direction_only_mismatches",
+            o3.branch_repair_direction_only_mismatches(),
+        ),
+        (
+            "branch_repair.direction_only_mismatches",
             o3.branch_repair_direction_only_mismatches(),
         ),
         ("fu_latency_instructions", o3.fu_latency_instructions()),
@@ -1195,11 +1207,23 @@ pub(super) fn emit_o3_runtime_stats(
                 o3.branch_repair_targetless_mismatch_kind(kind),
             ),
             (
+                "branch_repair.targetless_mismatch_kind",
+                o3.branch_repair_targetless_mismatch_kind(kind),
+            ),
+            (
                 "branch_repair_wrong_target_kind",
                 o3.branch_repair_wrong_target_kind(kind),
             ),
             (
+                "branch_repair.wrong_target_kind",
+                o3.branch_repair_wrong_target_kind(kind),
+            ),
+            (
                 "branch_repair_direction_only_kind",
+                o3.branch_repair_direction_only_kind(kind),
+            ),
+            (
+                "branch_repair.direction_only_kind",
                 o3.branch_repair_direction_only_kind(kind),
             ),
         ] {

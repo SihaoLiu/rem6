@@ -559,6 +559,9 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
     let runtime_summary = o3_runtime
         .pointer("/event_summary")
         .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {o3_runtime}"));
+    let runtime_repair = o3_runtime.pointer("/branch_repair").unwrap_or_else(|| {
+        panic!("O3 runtime JSON should expose branch repair matrix: {o3_runtime}")
+    });
     let debug_direction = json
         .pointer("/debug/o3_trace/0/branch_direction_mismatch")
         .unwrap_or_else(|| {
@@ -765,6 +768,38 @@ fn rem6_run_o3_runtime_json_exposes_branch_mismatch_trace_partitions() {
             .and_then(Value::as_u64)
             .unwrap_or_else(|| {
                 panic!("runtime target mismatch should expose u64 lane {pointer}: {runtime_target}")
+            });
+        assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
+    }
+
+    for (pointer, stat_path) in [
+        (
+            "/targetless_mismatches",
+            "sim.cpu0.o3.branch_repair.targetless_mismatches",
+        ),
+        ("/wrong_targets", "sim.cpu0.o3.branch_repair.wrong_targets"),
+        (
+            "/direction_only_mismatches",
+            "sim.cpu0.o3.branch_repair.direction_only_mismatches",
+        ),
+        (
+            "/targetless_mismatch_kind/direct_conditional",
+            "sim.cpu0.o3.branch_repair.targetless_mismatch_kind.direct_conditional",
+        ),
+        (
+            "/wrong_target_kind/call_indirect",
+            "sim.cpu0.o3.branch_repair.wrong_target_kind.call_indirect",
+        ),
+        (
+            "/direction_only_kind/direct_unconditional",
+            "sim.cpu0.o3.branch_repair.direction_only_kind.direct_unconditional",
+        ),
+    ] {
+        let expected = runtime_repair
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("runtime branch repair should expose u64 lane {pointer}: {runtime_repair}")
             });
         assert_json_stat(&json, stat_path, "Count", expected, "monotonic");
     }
