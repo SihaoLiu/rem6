@@ -471,12 +471,14 @@ fn emit_o3_runtime_event_summary_window_row_stats(
 ) -> Result<(), Rem6CliError> {
     let sequence = event.map_or(0, |event| event.sequence());
     let tick = event.map_or(0, |event| event.tick());
+    let pc = event.map_or(0, |event| event.pc().get());
     let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
     let lsq_occupancy = event.map_or(0, |event| event.lsq_occupancy());
     let rename_map_entries = event.map_or(0, |event| event.rename_map_entries());
     for (name, unit, value) in [
         ("sequence", "Count", sequence),
         ("tick", "Tick", tick),
+        ("pc", "Address", pc),
         ("rob_occupancy", "Count", rob_occupancy),
         ("lsq_occupancy", "Count", lsq_occupancy),
         ("rename_map_entries", "Count", rename_map_entries),

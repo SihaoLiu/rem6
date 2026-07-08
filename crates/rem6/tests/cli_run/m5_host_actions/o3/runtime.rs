@@ -1,5 +1,16 @@
 use super::*;
 
+fn event_summary_hex_u64(value: &Value, pointer: &str) -> u64 {
+    let hex = value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            panic!("runtime event summary should expose hex lane {pointer}: {value}")
+        });
+    u64::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16)
+        .unwrap_or_else(|error| panic!("invalid hex lane {pointer}={hex}: {error}"))
+}
+
 #[test]
 fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     let path =
@@ -111,6 +122,25 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 .and_then(Value::as_u64)
                 .is_some_and(|value| value > 0),
             "representative runtime event-summary lane {pointer} should be positive: {runtime_summary}"
+        );
+    }
+
+    for pointer in [
+        "/event_window/first/pc",
+        "/event_window/last/pc",
+        "/event_window/max_rob_occupancy/pc",
+        "/event_window/max_lsq_occupancy/pc",
+        "/event_window/max_rename_map_entries/pc",
+    ] {
+        assert_eq!(
+            runtime_summary.pointer(pointer),
+            debug_summary.pointer(pointer),
+            "runtime event-summary lane {pointer} should mirror debug trace event summary"
+        );
+        let pc = event_summary_hex_u64(runtime_summary, pointer);
+        assert!(
+            pc > 0,
+            "representative runtime event-summary lane {pointer} should be a positive PC: {runtime_summary}"
         );
     }
 
@@ -346,6 +376,37 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 panic!("runtime event summary should expose u64 lane {pointer}: {runtime_summary}")
             });
         assert_json_stat(&json, stat_path, unit, expected, "monotonic");
+    }
+
+    for (pointer, stat_path) in [
+        (
+            "/event_window/first/pc",
+            "sim.cpu0.o3.event_summary.event_window.first.pc",
+        ),
+        (
+            "/event_window/last/pc",
+            "sim.cpu0.o3.event_summary.event_window.last.pc",
+        ),
+        (
+            "/event_window/max_rob_occupancy/pc",
+            "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.pc",
+        ),
+        (
+            "/event_window/max_lsq_occupancy/pc",
+            "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
+        ),
+        (
+            "/event_window/max_rename_map_entries/pc",
+            "sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.pc",
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            stat_path,
+            "Address",
+            event_summary_hex_u64(runtime_summary, pointer),
+            "monotonic",
+        );
     }
 }
 
@@ -812,6 +873,7 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.records",
         "sim.cpu0.o3.event_summary.first_tick",
         "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
+        "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_summary.span_ticks",
         "sim.cpu0.o3.event_summary.rob_allocations",
         "sim.cpu0.o3.event_summary.rob_commits",
