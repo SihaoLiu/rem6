@@ -2973,6 +2973,74 @@ fn multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(name: &str) -> std::
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_restore_lsq_forwarding_dump_stats_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    let data_start = 1024_i32;
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                             // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13), // addi x5, x5, data
+        i_type(0x5a, 0, 0x0, 11, 0x13),                 // addi x11, x0, 0x5a
+        s_type(0, 11, 5, 0b010),                        // sw x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),                  // lw x12, 0(x5)
+    ]);
+    let first_check_branch_index = words.len();
+    words.push(0);
+    words.extend([
+        i_type(0, 0, 0x0, 10, 0x13),   // addi x10, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),   // addi x11, x0, 0
+        m5op(M5_CHECKPOINT),           // checkpoint one LSQ forwarding match
+        m5op(M5_DUMP_STATS),           // dump restored-baseline LSQ counters
+        i_type(4, 5, 0b010, 15, 0x03), // lw x15, 4(x5)
+    ]);
+    let restored_word_branch_index = words.len();
+    words.push(0);
+    words.extend([
+        i_type(0x6b, 0, 0x0, 13, 0x13), // addi x13, x0, 0x6b
+        s_type(4, 13, 5, 0b010),        // sw x13, 4(x5)
+        i_type(4, 5, 0b010, 14, 0x03),  // lw x14, 4(x5)
+    ]);
+    let second_check_branch_index = words.len();
+    words.push(0);
+    while words.len() < 220 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    append_host_stop(&mut words);
+    let fail_index = words.len() - 1;
+    words[first_check_branch_index] = b_type(
+        ((fail_index - first_check_branch_index) * 4) as i32,
+        11,
+        12,
+        0x1,
+    );
+    words[restored_word_branch_index] = b_type(
+        ((fail_index - restored_word_branch_index) * 4) as i32,
+        0,
+        15,
+        0x1,
+    );
+    words[second_check_branch_index] = b_type(
+        ((fail_index - second_check_branch_index) * 4) as i32,
+        13,
+        14,
+        0x1,
+    );
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn scheduled_host_restore_missing_label_binary(name: &str) -> std::path::PathBuf {
     let mut words = Vec::new();
     for _ in 0..20 {
