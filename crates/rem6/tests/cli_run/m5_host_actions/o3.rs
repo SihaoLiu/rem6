@@ -4025,11 +4025,15 @@ fn rem6_run_text_stats_alias_o3_fu_latency_after_detailed_switch() {
     assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_integer_mul_latency_cycles", 2);
     assert_text_count_stat(&stdout, "sim.cpu0.o3.fu_integer_div_instructions", 1);
     assert_text_cycle_stat(&stdout, "sim.cpu0.o3.fu_integer_div_latency_cycles", 19);
+    assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType.IntMult", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntMult", 1);
+    assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType.IntDiv", 1);
     assert_text_count_stat(&stdout, "system.cpu.iq.issuedInstType_0::IntDiv", 1);
     assert_text_count_stat(&stdout, "sim.cpu0.o3.commit.committed_inst_type.int_mul", 1);
     assert_text_count_stat(&stdout, "sim.cpu0.o3.commit.committed_inst_type.int_div", 1);
+    assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType.IntMult", 1);
     assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType_0::IntMult", 1);
+    assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType.IntDiv", 1);
     assert_text_count_stat(&stdout, "system.cpu.commit.committedInstType_0::IntDiv", 1);
 }
 
