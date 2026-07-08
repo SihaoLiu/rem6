@@ -4,6 +4,8 @@ use super::*;
 mod branch;
 #[path = "o3/lsq.rs"]
 mod lsq;
+#[path = "o3/restore.rs"]
+mod restore;
 
 #[test]
 fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {

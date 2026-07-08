@@ -2836,6 +2836,39 @@ fn detailed_o3_restore_fu_dump_stats_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn multicore_hart1_detailed_o3_restore_fu_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        csr_read(0xf14, 5),   // csrr x5, mhartid
+        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
+        u_type(0x3f80_0000, 8, 0x37),
+        fp_r_type(0x78, 0, 8, 0x0, 1),
+        fp_r_type(0x78, 0, 8, 0x0, 2),
+        i_type(3, 0, 0x0, 9, 0x13),
+        i_type(2, 0, 0x0, 10, 0x13),
+        vsetvli_type(0xd0, 10, 5),
+        vector_arith_type(0b010111, 0b100, 0, 1, 1),
+        vector_arith_type(0b010111, 0b100, 0, 2, 2),
+        m5op(M5_SWITCH_CPU),
+    ];
+    append_integer_mul_div_work(&mut words);
+    words.extend([
+        m5op(M5_CHECKPOINT),
+        m5op(M5_DUMP_STATS),
+        fp_r_type(0x68, 0, 9, 0x0, 3),
+        fp_r_type(0x10, 2, 1, 0x0, 4),
+        vector_arith_type(0b010010, 0b001, 1, 0x02, 3),
+        vector_arith_type(0b001000, 0b001, 2, 1, 4),
+    ]);
+    while words.len() < 220 {
+        words.push(i_type(0, 0, 0x0, 0, 0x13));
+    }
+    append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn scheduled_host_restore_missing_label_binary(name: &str) -> std::path::PathBuf {
     let mut words = Vec::new();
     for _ in 0..20 {
