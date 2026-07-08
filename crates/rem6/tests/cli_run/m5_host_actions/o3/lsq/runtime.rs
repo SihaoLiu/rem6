@@ -1284,6 +1284,13 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
                 value,
                 "monotonic",
             );
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.operation.{alias_operation}.dataResponse.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
         }
     }
     let aggregate_latency_avg_ticks = aggregate_latency_ticks / aggregate_latency_samples;
@@ -1373,6 +1380,13 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             assert_json_stat(
                 json,
                 &format!("system.cpu.lsq0.dataResponse.{alias_operation}.{alias}"),
+                unit,
+                0,
+                "monotonic",
+            );
+            assert_json_stat(
+                json,
+                &format!("system.cpu.lsq0.operation.{alias_operation}.dataResponse.{alias}"),
                 unit,
                 0,
                 "monotonic",
