@@ -1,6 +1,9 @@
 use rem6_cpu::{BranchTargetKind, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
+use super::o3_branch_mismatch_aliases::{
+    O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
+};
 use super::text::{
     append_derived_count_per_count_stat, append_derived_count_per_cycle_stat,
     append_derived_count_stat, append_derived_count_stat_if_absent,
@@ -49,6 +52,7 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
             "Count",
         );
         append_gem5_o3_branch_event_alias_stats(output, snapshot, cpu, &alias_prefix);
+        append_gem5_o3_branch_mismatch_alias_stats(output, snapshot, cpu, &alias_prefix);
         let targetless_mismatches = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.o3.branch_repair_targetless_mismatches"),
@@ -287,6 +291,51 @@ fn append_gem5_o3_branch_event_alias_stats(
 ) {
     append_gem5_o3_branch_prediction_alias_stats(output, snapshot, cpu, alias_prefix);
     append_gem5_o3_ftq_alias_stats(output, snapshot, cpu, alias_prefix);
+}
+
+fn append_gem5_o3_branch_mismatch_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for alias in O3_BRANCH_MISMATCH_SCALAR_ALIASES {
+        let source_path = format!("sim.cpu{cpu}.o3.{}", alias.source_suffix);
+        append_derived_stat_from_snapshot_if_absent(
+            output,
+            snapshot,
+            &source_path,
+            &format!("{alias_prefix}.iew.{}", alias.alias_suffix),
+            "Count",
+        );
+        append_derived_stat_from_snapshot_if_absent(
+            output,
+            snapshot,
+            &source_path,
+            &format!("{alias_prefix}.iew.{}_0::total", alias.bucket_alias),
+            "Count",
+        );
+    }
+
+    for alias in O3_BRANCH_MISMATCH_KIND_ALIASES {
+        let source_family = alias.source_family;
+        let alias_family = alias.alias_family;
+        for kind in BranchTargetKind::ALL {
+            append_derived_stat_from_snapshot_if_absent(
+                output,
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.o3.{source_family}.{}",
+                    kind.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.iew.{alias_family}_0::{}",
+                    kind.gem5_branch_type_name()
+                ),
+                "Count",
+            );
+        }
+    }
 }
 
 fn append_gem5_o3_branch_prediction_alias_stats(

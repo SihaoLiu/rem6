@@ -181,3 +181,118 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_wrong_target_mismatch_snapshot() {
         "monotonic",
     );
 }
+
+#[test]
+fn rem6_run_exposes_live_o3_branch_mismatch_gem5_alias_stats() {
+    let path = detailed_o3_branch_repair_text_stats_binary(
+        "m5-switch-cpu-o3-live-branch-mismatch-gem5-alias-stats",
+    );
+
+    let text_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        text_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&text_output.stderr)
+    );
+    let stdout = String::from_utf8(text_output.stdout).unwrap();
+    for (path, value) in [
+        ("system.cpu.iew.branchDirectionMismatches", 3),
+        ("system.cpu.iew.branchDirectionMismatch_0::DirectUncond", 2),
+        ("system.cpu.iew.branchTargetlessMismatches", 1),
+        ("system.cpu.iew.branchTargetlessMismatch_0::DirectCond", 1),
+        ("system.cpu.iew.branchWrongTargets", 0),
+        ("system.cpu.iew.branchWrongTarget_0::CallIndirect", 0),
+    ] {
+        assert_text_count_stat(&stdout, path, value);
+        assert_text_stat_occurs_once(&stdout, path);
+    }
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        json_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&json_output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&json_output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchDirectionMismatches",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchDirectionMismatch_0::DirectUncond",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchTargetlessMismatches",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchTargetlessMismatch_0::DirectCond",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchWrongTargets",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "system.cpu.iew.branchWrongTarget_0::CallIndirect",
+        "Count",
+        0,
+        "monotonic",
+    );
+}

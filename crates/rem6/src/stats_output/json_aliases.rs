@@ -1,6 +1,9 @@
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::{StatResetPolicy, StatSnapshot};
 
+use super::o3_branch_mismatch_aliases::{
+    O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
+};
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
 
 pub(super) fn append_gem5_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
@@ -305,6 +308,13 @@ fn append_gem5_o3_json_alias_stats(
             );
         }
         append_gem5_o3_branch_repair_json_alias_stats(snapshot, records, next_id, &alias_prefix);
+        append_gem5_o3_branch_mismatch_json_alias_stats(
+            snapshot,
+            records,
+            next_id,
+            cpu,
+            &alias_prefix,
+        );
         append_gem5_o3_branch_prediction_json_alias_stats(
             snapshot,
             records,
@@ -313,6 +323,52 @@ fn append_gem5_o3_json_alias_stats(
             &alias_prefix,
         );
         append_gem5_o3_ftq_json_alias_stats(snapshot, records, next_id, cpu, &alias_prefix);
+    }
+}
+
+fn append_gem5_o3_branch_mismatch_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for alias in O3_BRANCH_MISMATCH_SCALAR_ALIASES {
+        let source_path = format!("sim.cpu{cpu}.o3.{}", alias.source_suffix);
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &source_path,
+            &format!("{alias_prefix}.iew.{}", alias.alias_suffix),
+        );
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &source_path,
+            &format!("{alias_prefix}.iew.{}_0::total", alias.bucket_alias),
+        );
+    }
+
+    for alias in O3_BRANCH_MISMATCH_KIND_ALIASES {
+        let source_family = alias.source_family;
+        let alias_family = alias.alias_family;
+        for kind in BranchTargetKind::ALL {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &format!(
+                    "sim.cpu{cpu}.o3.{source_family}.{}",
+                    kind.canonical_stat_name()
+                ),
+                &format!(
+                    "{alias_prefix}.iew.{alias_family}_0::{}",
+                    kind.gem5_branch_type_name()
+                ),
+            );
+        }
     }
 }
 

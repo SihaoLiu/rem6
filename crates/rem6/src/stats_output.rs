@@ -14,6 +14,7 @@ mod host_actions;
 mod json_aliases;
 mod memory_resources;
 mod multi_run;
+mod o3_branch_mismatch_aliases;
 mod o3_runtime;
 mod pipeline;
 mod resource_acquire;
