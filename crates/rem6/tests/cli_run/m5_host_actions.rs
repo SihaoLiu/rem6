@@ -3654,6 +3654,32 @@ fn execution_mode_switch_transfer_total(host_actions: &Value, field: &str) -> u6
         .sum()
 }
 
+fn execution_mode_switch_quiescence_target_total(
+    host_actions: &Value,
+    target: &str,
+    field: &str,
+) -> u64 {
+    host_actions
+        .pointer("/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution mode switch actions: {host_actions}"))
+        .iter()
+        .filter(|action| {
+            action
+                .pointer("/state_transfer/quiescence_gate/target")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing switch quiescence target: {action}"))
+                == target
+        })
+        .map(|action| {
+            action
+                .pointer(&format!("/state_transfer/quiescence_gate/{field}"))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing switch quiescence {field}: {action}"))
+        })
+        .sum()
+}
+
 fn execution_mode_switch_transfer_component_total(
     host_actions: &Value,
     component: &str,

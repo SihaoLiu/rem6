@@ -822,6 +822,35 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     );
     assert_json_stat(
         &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_components",
+        "Count",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu1",
+            "captured_component_count",
+        ),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_chunks",
+        "Count",
+        execution_mode_switch_quiescence_target_total(host_actions, "cpu1", "captured_chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_payload_bytes",
+        "Byte",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu1",
+            "captured_payload_bytes",
+        ),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.components",
         "Count",
         execution_mode_switch_transfer_component_total(host_actions, "cpu1", "component_count"),
@@ -892,6 +921,10 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     assert_json_stat_absent(
         &json,
         "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.components",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.captured_components",
     );
 }
 

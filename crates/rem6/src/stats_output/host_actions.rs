@@ -113,6 +113,8 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_quiescence_captured_payload_bytes = 0;
     let mut switch_quiescence_checker = None;
     let mut switch_quiescence_target_validated = BTreeMap::<String, u64>::new();
+    let mut switch_quiescence_target_captured_stats =
+        BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_component_stats =
         BTreeMap::<String, SwitchTransferComponentStats>::new();
     let mut switch_state_transfer_chunk_stats =
@@ -138,15 +140,28 @@ pub(super) fn emit_run_host_action_stats(
         target_stats.components += transfer.component_count;
         target_stats.chunks += transfer.chunk_count;
         target_stats.payload_bytes += transfer.payload_bytes;
+        let quiescence_target_path = stat_path_segment(&transfer.quiescence_gate.target);
         if transfer.quiescence_gate.validated {
             switch_quiescence_validated += 1;
             *switch_quiescence_target_validated
-                .entry(stat_path_segment(&transfer.quiescence_gate.target))
+                .entry(quiescence_target_path.clone())
                 .or_default() += 1;
         }
         switch_quiescence_captured_components += transfer.quiescence_gate.captured_component_count;
         switch_quiescence_captured_chunks += transfer.quiescence_gate.captured_chunk_count;
         switch_quiescence_captured_payload_bytes += transfer.quiescence_gate.captured_payload_bytes;
+        if transfer.quiescence_gate.captured_component_count > 0
+            || transfer.quiescence_gate.captured_chunk_count > 0
+            || transfer.quiescence_gate.captured_payload_bytes > 0
+        {
+            let quiescence_target_stats = switch_quiescence_target_captured_stats
+                .entry(quiescence_target_path)
+                .or_default();
+            quiescence_target_stats.components += transfer.quiescence_gate.captured_component_count;
+            quiescence_target_stats.chunks += transfer.quiescence_gate.captured_chunk_count;
+            quiescence_target_stats.payload_bytes +=
+                transfer.quiescence_gate.captured_payload_bytes;
+        }
         if let Some(checker) = transfer.quiescence_gate.checker {
             switch_quiescence_checker = Some(checker);
         }
@@ -407,6 +422,35 @@ pub(super) fn emit_run_host_action_stats(
             "Count",
             StatResetPolicy::Monotonic,
             validated,
+        )?;
+    }
+    for (target, captured_stats) in switch_quiescence_target_captured_stats {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.quiescence.target.{target}.captured_components"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            captured_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.quiescence.target.{target}.captured_chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            captured_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.execution_mode_switch.quiescence.target.{target}.captured_payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            captured_stats.payload_bytes,
         )?;
     }
     if let Some(checker) = switch_quiescence_checker {
@@ -801,6 +845,61 @@ mod tests {
             StatResetPolicy::Monotonic,
             2,
         );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.captured_components",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.captured_chunks",
+            "Count",
+            StatResetPolicy::Monotonic,
+            2,
+        );
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.captured_payload_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            24,
+        );
+    }
+
+    #[test]
+    fn host_action_quiescence_target_capture_stats_skip_uncaptured_transfers() {
+        let mut stats = StatsRegistry::new();
+        let summary = Rem6HostActionSummary {
+            total_action_count: 1,
+            execution_mode_switch_count: 1,
+            execution_mode_switches: vec![switch_with_uncaptured_quiescence("cpu-0")],
+            ..Rem6HostActionSummary::default()
+        };
+
+        emit_run_host_action_stats(&mut stats, &summary).unwrap();
+        let snapshot = stats.snapshot(0);
+
+        assert_snapshot_stat(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu_0.validated",
+            "Count",
+            StatResetPolicy::Monotonic,
+            1,
+        );
+        assert_snapshot_stat_absent(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu_0.captured_components",
+        );
+        assert_snapshot_stat_absent(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu_0.captured_chunks",
+        );
+        assert_snapshot_stat_absent(
+            &snapshot,
+            "sim.host_actions.execution_mode_switch.quiescence.target.cpu_0.captured_payload_bytes",
+        );
     }
 
     fn switch_with_transfer_component_chunk(
@@ -846,6 +945,35 @@ mod tests {
         }
     }
 
+    fn switch_with_uncaptured_quiescence(target: &str) -> Rem6HostExecutionModeSwitchSummary {
+        Rem6HostExecutionModeSwitchSummary {
+            tick: 0,
+            event: 0,
+            source: 0,
+            target: target.to_string(),
+            previous_mode: Some("atomic"),
+            mode: "timing",
+            stats_epoch: 0,
+            stats_reset_tick: 0,
+            state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
+                manifest_label: format!("switch-{target}-uncaptured"),
+                manifest_tick: 0,
+                component_count: 0,
+                chunk_count: 0,
+                payload_bytes: 0,
+                quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
+                    validated: true,
+                    target: target.to_string(),
+                    captured_component_count: 0,
+                    captured_chunk_count: 0,
+                    captured_payload_bytes: 0,
+                    checker: None,
+                },
+                components: Vec::new(),
+            }),
+        }
+    }
+
     fn assert_snapshot_stat(
         snapshot: &StatSnapshot,
         path: &str,
@@ -872,5 +1000,18 @@ mod tests {
             "unexpected reset policy for {path}"
         );
         assert_eq!(sample.value(), value, "unexpected value for {path}");
+    }
+
+    fn assert_snapshot_stat_absent(snapshot: &StatSnapshot, path: &str) {
+        let matches = snapshot
+            .samples()
+            .iter()
+            .filter(|sample| sample.path() == path)
+            .collect::<Vec<_>>();
+        assert!(
+            matches.is_empty(),
+            "expected stat path {path} to be absent, found {}",
+            matches.len()
+        );
     }
 }
