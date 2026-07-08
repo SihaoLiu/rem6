@@ -19,6 +19,33 @@ use o3_runtime_snapshot_restore::{
 
 const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3EventSummaryFuLatencyStats {
+    instructions: u64,
+    cycles: u64,
+    max_cycles: u64,
+    min_cycles: u64,
+}
+
+impl O3EventSummaryFuLatencyStats {
+    fn add(&mut self, cycles: u64) {
+        self.instructions = self.instructions.saturating_add(1);
+        self.cycles = self.cycles.saturating_add(cycles);
+        self.max_cycles = self.max_cycles.max(cycles);
+        if self.min_cycles == 0 || cycles < self.min_cycles {
+            self.min_cycles = cycles;
+        }
+    }
+
+    const fn avg_cycles(self) -> u64 {
+        if self.instructions == 0 {
+            0
+        } else {
+            self.cycles / self.instructions
+        }
+    }
+}
+
 fn emit_o3_branch_event_aggregate_stats(
     stats: &mut StatsRegistry,
     cpu: u32,
@@ -692,6 +719,7 @@ fn emit_o3_runtime_event_summary_stats(
     } else {
         lsq_latency_ticks / lsq_latency_samples
     };
+    let (fu_latency, fu_latency_classes) = o3_event_summary_fu_latency_stats(events);
 
     for (name, value) in [
         ("records", records),
@@ -806,16 +834,27 @@ fn emit_o3_runtime_event_summary_stats(
         )?;
     }
     emit_o3_runtime_event_summary_lsq_matrix_stats(stats, cpu, events)?;
+    for (name, unit, value) in [
+        ("instructions", "Count", fu_latency.instructions),
+        ("cycles", "Cycle", fu_latency.cycles),
+        ("max_cycles", "Cycle", fu_latency.max_cycles),
+        ("min_cycles", "Cycle", fu_latency.min_cycles),
+        ("avg_cycles", "Cycle", fu_latency.avg_cycles()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.o3.event_summary.fu_latency.{name}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     for class in O3RuntimeFuLatencyClass::ALL {
         let instructions = events
             .iter()
             .filter(|event| event.fu_latency_class() == Some(class))
             .count() as u64;
-        let cycles = events
-            .iter()
-            .filter(|event| event.fu_latency_class() == Some(class))
-            .map(|event| event.fu_latency_cycles())
-            .sum::<u64>();
+        let latency = fu_latency_classes[class.index()];
         let inst_type = o3_fu_latency_class_inst_type_stem(class);
         increment_count_stat(
             stats,
@@ -833,18 +872,25 @@ fn emit_o3_runtime_event_summary_stats(
                 "sim.cpu{cpu}.o3.event_summary.fu_latency_class.{}.instructions",
                 class.stat_stem()
             ),
-            instructions,
+            latency.instructions,
         )?;
-        increment_stat(
-            stats,
-            &format!(
-                "sim.cpu{cpu}.o3.event_summary.fu_latency_class.{}.cycles",
-                class.stat_stem()
-            ),
-            "Cycle",
-            StatResetPolicy::Monotonic,
-            cycles,
-        )?;
+        for (name, value) in [
+            ("cycles", latency.cycles),
+            ("max_cycles", latency.max_cycles),
+            ("min_cycles", latency.min_cycles),
+            ("avg_cycles", latency.avg_cycles()),
+        ] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{cpu}.o3.event_summary.fu_latency_class.{}.{name}",
+                    class.stat_stem()
+                ),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for (name, value) in [
         (
@@ -874,6 +920,27 @@ fn emit_o3_runtime_event_summary_stats(
     emit_o3_runtime_event_summary_branch_mismatch_stats(stats, cpu, events)?;
 
     Ok(())
+}
+
+fn o3_event_summary_fu_latency_stats(
+    events: &[O3RuntimeTraceRecord],
+) -> (
+    O3EventSummaryFuLatencyStats,
+    [O3EventSummaryFuLatencyStats; O3RuntimeFuLatencyClass::COUNT],
+) {
+    let mut summary = O3EventSummaryFuLatencyStats::default();
+    let mut classes = [O3EventSummaryFuLatencyStats::default(); O3RuntimeFuLatencyClass::COUNT];
+    for event in events {
+        let cycles = event.fu_latency_cycles();
+        if cycles == 0 {
+            continue;
+        }
+        summary.add(cycles);
+        if let Some(class) = event.fu_latency_class() {
+            classes[class.index()].add(cycles);
+        }
+    }
+    (summary, classes)
 }
 
 pub(super) fn emit_o3_runtime_stats(
