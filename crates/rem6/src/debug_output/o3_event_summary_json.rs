@@ -522,13 +522,16 @@ fn event_summary_branch_event_json(events: &[O3RuntimeTraceRecord]) -> String {
 
 fn event_summary_iew_json(events: &[O3RuntimeTraceRecord]) -> String {
     let totals = Rem6O3EventIewTotals::from_events(events);
+    let dispatched_insts = totals.dispatched_insts();
+    let insts_to_commit = totals.insts_to_commit();
+    let writeback_count = totals.writeback_count();
     let producer_inst = totals.dependency_producers();
     let consumer_inst = totals.dependency_consumers();
     let predicted_taken_incorrect = totals.predicted_taken_incorrect();
     let predicted_not_taken_incorrect = totals.predicted_not_taken_incorrect();
     let branch_mispredicts = totals.branch_mispredicts();
     format!(
-        "{{\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"predicted_taken_incorrect\":{predicted_taken_incorrect},\"predicted_not_taken_incorrect\":{predicted_not_taken_incorrect},\"branch_mispredicts\":{branch_mispredicts},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
+        "{{\"dispatched_insts\":{dispatched_insts},\"insts_to_commit\":{insts_to_commit},\"writeback_count\":{writeback_count},\"producer_inst\":{producer_inst},\"consumer_inst\":{consumer_inst},\"producer_consumer_fanout_ppm\":{},\"predicted_taken_incorrect\":{predicted_taken_incorrect},\"predicted_not_taken_incorrect\":{predicted_not_taken_incorrect},\"branch_mispredicts\":{branch_mispredicts},\"dependency\":{{\"producer\":{producer_inst},\"consumer\":{consumer_inst}}}}}",
         ratio_ppm(producer_inst, consumer_inst)
     )
 }

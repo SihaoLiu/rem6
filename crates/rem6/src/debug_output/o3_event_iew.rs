@@ -2,6 +2,9 @@ use rem6_cpu::O3RuntimeTraceRecord;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct Rem6O3EventIewTotals {
+    dispatched_insts: u64,
+    insts_to_commit: u64,
+    writeback_count: u64,
     dependency_producers: u64,
     dependency_consumers: u64,
     predicted_taken_incorrect: u64,
@@ -18,6 +21,11 @@ impl Rem6O3EventIewTotals {
     }
 
     pub(super) fn add_event(&mut self, event: O3RuntimeTraceRecord) {
+        self.dispatched_insts = self.dispatched_insts.saturating_add(1);
+        self.writeback_count = self.writeback_count.saturating_add(1);
+        self.insts_to_commit = self
+            .insts_to_commit
+            .saturating_add(u64::from(event.rob_committed()));
         self.dependency_producers = self
             .dependency_producers
             .saturating_add(event.iew_dependency_producers());
@@ -32,6 +40,18 @@ impl Rem6O3EventIewTotals {
                     self.predicted_not_taken_incorrect.saturating_add(1);
             }
         }
+    }
+
+    pub(super) const fn dispatched_insts(self) -> u64 {
+        self.dispatched_insts
+    }
+
+    pub(super) const fn insts_to_commit(self) -> u64 {
+        self.insts_to_commit
+    }
+
+    pub(super) const fn writeback_count(self) -> u64 {
+        self.writeback_count
     }
 
     pub(super) const fn dependency_producers(self) -> u64 {
@@ -55,8 +75,11 @@ impl Rem6O3EventIewTotals {
             .saturating_add(self.predicted_not_taken_incorrect)
     }
 
-    pub(super) fn stats(self) -> [(&'static str, u64); 5] {
+    pub(super) fn stats(self) -> [(&'static str, u64); 8] {
         [
+            ("event.iew_dispatched_insts", self.dispatched_insts),
+            ("event.iew_insts_to_commit", self.insts_to_commit),
+            ("event.iew_writeback_count", self.writeback_count),
             ("event.iew_dependency_producers", self.dependency_producers),
             ("event.iew_dependency_consumers", self.dependency_consumers),
             (

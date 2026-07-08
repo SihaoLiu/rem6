@@ -6641,6 +6641,23 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
     let event_summary_iew = event_summary
         .pointer("/iew")
         .expect("O3 event summary IEW dependency matrix");
+    let iew_dispatched_insts = events.len() as u64;
+    let iew_insts_to_commit = events
+        .iter()
+        .filter(|event| event.get("rob_committed").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    assert_eq!(
+        json_record_u64(event_summary_iew, "dispatched_insts"),
+        iew_dispatched_insts
+    );
+    assert_eq!(
+        json_record_u64(event_summary_iew, "insts_to_commit"),
+        iew_insts_to_commit
+    );
+    assert_eq!(
+        json_record_u64(event_summary_iew, "writeback_count"),
+        iew_dispatched_insts
+    );
     assert_eq!(
         json_record_u64(event_summary_iew, "producer_inst"),
         iew_dependency_producers
@@ -6756,6 +6773,21 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.event.rob_allocations", "Count", 6),
         ("sim.debug.o3_trace.event.rob_commits", "Count", 6),
         ("sim.debug.o3_trace.event.rename_writes", "Count", 4),
+        (
+            "sim.debug.o3_trace.event.iew_dispatched_insts",
+            "Count",
+            iew_dispatched_insts,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_insts_to_commit",
+            "Count",
+            iew_insts_to_commit,
+        ),
+        (
+            "sim.debug.o3_trace.event.iew_writeback_count",
+            "Count",
+            iew_dispatched_insts,
+        ),
         (
             "sim.debug.o3_trace.event.iew_dependency_producers",
             "Count",
