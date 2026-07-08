@@ -538,6 +538,9 @@ fn append_gem5_in_order_pipeline_json_alias_stats(
         );
         for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
             for (source_name, alias_name) in [
+                ("width", "width"),
+                ("in_flight", "inFlight"),
+                ("max_in_flight", "maxInFlight"),
                 ("occupied_cycles", "occupiedCycles"),
                 ("advanced", "advanced"),
                 ("advanced_cycles", "advancedCycles"),

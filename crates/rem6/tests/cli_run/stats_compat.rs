@@ -16491,6 +16491,9 @@ fn rem6_run_text_stats_emit_in_order_stage_movement_aliases() {
         .enumerate()
     {
         for (source_name, alias_name, unit) in [
+            ("width", "width", "Count"),
+            ("in_flight", "inFlight", "Count"),
+            ("max_in_flight", "maxInFlight", "Count"),
             ("advanced", "advanced", "Count"),
             ("advanced_cycles", "advancedCycles", "Cycle"),
             ("retired", "retired", "Count"),
@@ -16503,8 +16506,18 @@ fn rem6_run_text_stats_emit_in_order_stage_movement_aliases() {
                 text_stat_value(&stdout, &source)
             );
             let alias_line = text_stat_line(&stdout, &alias);
-            assert!(alias_line.contains(&format!("unit={unit}")), "{stdout}");
-            assert!(alias_line.contains("reset_policy=monotonic"), "{stdout}");
+            let source_line = text_stat_line(&stdout, &source);
+            assert_eq!(text_stat_tag(alias_line, "unit="), unit, "{alias}");
+            assert_eq!(
+                text_stat_tag(alias_line, "unit="),
+                text_stat_tag(source_line, "unit="),
+                "{alias}"
+            );
+            assert_eq!(
+                text_stat_tag(alias_line, "reset_policy="),
+                text_stat_tag(source_line, "reset_policy="),
+                "{alias}"
+            );
         }
         for branch_alias in [
             format!("system.cpu.pipeline.inOrder.stage.{stage}.branchPredictionFlushed"),
@@ -20416,6 +20429,12 @@ fn text_stat_line<'a>(stdout: &'a str, path: &str) -> &'a str {
         .lines()
         .find(|line| line.split_whitespace().next() == Some(path))
         .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
+}
+
+fn text_stat_tag<'a>(line: &'a str, prefix: &str) -> &'a str {
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix(prefix))
+        .unwrap_or_else(|| panic!("missing text stat tag {prefix} in line {line}"))
 }
 
 fn fixed_ratio(numerator: u64, denominator: u64) -> String {

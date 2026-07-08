@@ -2597,6 +2597,9 @@ fn assert_in_order_pipeline_stage_aliases(json: &Value) {
 fn assert_in_order_pipeline_stage_aliases_for_cpu(json: &Value, cpu: u64, alias_prefix: &str) {
     for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
         for (source_name, alias_name) in [
+            ("width", "width"),
+            ("in_flight", "inFlight"),
+            ("max_in_flight", "maxInFlight"),
             ("occupied_cycles", "occupiedCycles"),
             ("advanced", "advanced"),
             ("advanced_cycles", "advancedCycles"),

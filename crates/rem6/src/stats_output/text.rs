@@ -978,7 +978,10 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
             );
         }
         #[rustfmt::skip]
-        const STAGE_ALIAS_STATS: [(&str, &str, &str); 17] = [
+        const STAGE_ALIAS_STATS: [(&str, &str, &str); 20] = [
+            ("width", "width", "Count"),
+            ("in_flight", "inFlight", "Count"),
+            ("max_in_flight", "maxInFlight", "Count"),
             ("occupied_cycles", "occupiedCycles", "Cycle"),
             ("advanced", "advanced", "Count"),
             ("advanced_cycles", "advancedCycles", "Cycle"),
@@ -1359,10 +1362,6 @@ pub(super) fn append_derived_count_stat_if_absent(
     }
 }
 
-fn append_derived_cycle_stat(output: &mut String, path: &str, value: u64) {
-    append_derived_unit_stat(output, path, value, "Cycle");
-}
-
 fn append_derived_unit_stat(output: &mut String, path: &str, value: u64, unit: &str) {
     output.push_str(&format!(
         "{path:<64} {value:>20} # kind=derived unit={unit} reset_policy=monotonic\n"
@@ -1376,14 +1375,18 @@ fn append_derived_stat_from_snapshot(
     alias_path: &str,
     unit: &str,
 ) {
-    let Some(value) = snapshot_value(snapshot, source_path) else {
+    let Some(sample) = snapshot
+        .samples()
+        .iter()
+        .find(|sample| sample.path() == source_path)
+    else {
         return;
     };
-    match unit {
-        "Count" => append_derived_count_stat(output, alias_path, value),
-        "Cycle" => append_derived_cycle_stat(output, alias_path, value),
-        _ => append_derived_unit_stat(output, alias_path, value, unit),
-    }
+    output.push_str(&format!(
+        "{alias_path:<64} {:>20} # kind=derived unit={unit} reset_policy={}\n",
+        sample.value(),
+        sample.reset_policy()
+    ));
 }
 
 fn append_derived_stat_from_snapshot_if_absent(
