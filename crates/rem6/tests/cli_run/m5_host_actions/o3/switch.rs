@@ -1,0 +1,181 @@
+use super::*;
+
+#[test]
+fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
+    let path = multicore_hart1_detailed_o3_binary("m5-switch-cpu-hart1-detailed-o3-transfer-scope");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu1",
+        None,
+        "detailed",
+        "execution-mode-switch-cpu1",
+    );
+
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.components",
+        "Count",
+        execution_mode_switch_transfer_total(host_actions, "component_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.chunks",
+        "Count",
+        execution_mode_switch_transfer_total(host_actions, "chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.payload_bytes",
+        "Byte",
+        execution_mode_switch_transfer_total(host_actions, "payload_bytes"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_components",
+        "Count",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu1",
+            "captured_component_count",
+        ),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_chunks",
+        "Count",
+        execution_mode_switch_quiescence_target_total(host_actions, "cpu1", "captured_chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu1.captured_payload_bytes",
+        "Byte",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu1",
+            "captured_payload_bytes",
+        ),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.components",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "component_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunks",
+        "Count",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.payload_bytes",
+        "Byte",
+        execution_mode_switch_transfer_component_total(host_actions, "cpu1", "payload_bytes"),
+        "monotonic",
+    );
+    for chunk in ["xregs", "in-order-pipeline", "o3-runtime-state"] {
+        let stat_chunk = stat_path_segment(chunk);
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.{stat_chunk}.chunks"
+            ),
+            "Count",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu1",
+                chunk,
+                "chunk_count",
+            ),
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.{stat_chunk}.payload_bytes"
+            ),
+            "Byte",
+            execution_mode_switch_transfer_component_chunk_total(
+                host_actions,
+                "cpu1",
+                chunk,
+                "payload_bytes",
+            ),
+            "monotonic",
+        );
+    }
+    let o3_checksum = execution_mode_switch_transfer_component_chunk_checksum(
+        host_actions,
+        0,
+        "cpu1",
+        "o3-runtime-state",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.payload_checksum_accumulator",
+        "Unspecified",
+        parse_hex_u64(&o3_checksum),
+        "monotonic",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.component.cpu0.components",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.components",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.captured_components",
+    );
+}
