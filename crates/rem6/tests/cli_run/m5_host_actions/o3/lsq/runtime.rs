@@ -350,6 +350,29 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
                 .unwrap_or(0)
         })
         .sum::<u64>();
+    let operation_byte_totals = |operation: &str| {
+        ordered_events
+            .iter()
+            .filter(|event| {
+                event.pointer("/lsq_operation").and_then(Value::as_str) == Some(operation)
+            })
+            .map(|event| {
+                (
+                    event
+                        .pointer("/lsq_load_bytes")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    event
+                        .pointer("/lsq_store_bytes")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                )
+            })
+            .fold(
+                (0_u64, 0_u64),
+                |(load_total, store_total), (load, store)| (load_total + load, store_total + store),
+            )
+    };
 
     for pointer in [
         "/lsq_operation/load/latency/ticks",
@@ -401,6 +424,42 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
             "event summary byte lane {pointer} should match emitted O3 events: {ordered_summary}"
         );
         assert_json_stat(&ordered_json, stat_path, "Byte", expected, "monotonic");
+    }
+    for operation in [
+        "load",
+        "store",
+        "load_reserved",
+        "store_conditional",
+        "atomic",
+    ] {
+        let (expected_load_bytes, expected_store_bytes) = operation_byte_totals(operation);
+        assert!(
+            expected_load_bytes > 0 || expected_store_bytes > 0,
+            "representative O3 event stream should have operation byte traffic for {operation}: {ordered_events:?}"
+        );
+        for (lane, expected) in [
+            ("load_bytes", expected_load_bytes),
+            ("store_bytes", expected_store_bytes),
+        ] {
+            let pointer = format!("/lsq_operation/{operation}/{lane}");
+            assert_eq!(
+                ordered_summary.pointer(&pointer),
+                ordered_debug_summary.pointer(&pointer),
+                "runtime event-summary operation byte lane {pointer} should mirror debug trace event summary"
+            );
+            assert_eq!(
+                ordered_summary.pointer(&pointer).and_then(Value::as_u64),
+                Some(expected),
+                "event-summary operation byte lane {pointer} should match emitted O3 events: {ordered_summary}"
+            );
+            assert_json_stat(
+                &ordered_json,
+                &format!("sim.cpu0.o3.event_summary.lsq_operation.{operation}.{lane}"),
+                "Byte",
+                expected,
+                "monotonic",
+            );
+        }
     }
     for (pointer, stat_path, unit) in [
         (

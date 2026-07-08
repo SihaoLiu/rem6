@@ -70,6 +70,12 @@ struct O3EventSummaryLsqForwarding {
     byte_mismatches: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3EventSummaryLsqBytes {
+    load_bytes: u64,
+    store_bytes: u64,
+}
+
 impl O3EventSummaryLsqForwarding {
     fn add_event(&mut self, event: O3RuntimeTraceRecord) {
         self.candidates = self
@@ -289,13 +295,14 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
         .count() as u64;
     let (fu_latency, fu_latency_classes) = event_summary_fu_latency(events);
     let fu_latency_class = event_summary_fu_latency_class_json(&fu_latency_classes);
-    let (lsq_data_latency, lsq_operation_counts, lsq_operation_latencies) =
+    let (lsq_data_latency, lsq_operation_counts, lsq_operation_latencies, lsq_operation_bytes) =
         event_summary_lsq_latency(events);
     let lsq_data_latency = event_summary_lsq_latency_json(lsq_data_latency);
     let (lsq_forwarding, lsq_operation_forwarding) = event_summary_lsq_forwarding(events);
     let lsq_operation = event_summary_lsq_operation_json(
         &lsq_operation_counts,
         &lsq_operation_latencies,
+        &lsq_operation_bytes,
         &lsq_operation_forwarding,
     );
     let lsq_ordering = event_summary_lsq_ordering_json(events);
@@ -426,22 +433,36 @@ fn event_summary_lsq_latency(
     O3EventSummaryLsqLatency,
     [u64; O3RuntimeLsqOperation::COUNT],
     [O3EventSummaryLsqLatency; O3RuntimeLsqOperation::COUNT],
+    [O3EventSummaryLsqBytes; O3RuntimeLsqOperation::COUNT],
 ) {
     let mut summary = O3EventSummaryLsqLatency::default();
     let mut operation_counts = [0_u64; O3RuntimeLsqOperation::COUNT];
     let mut operation_latencies =
         [O3EventSummaryLsqLatency::default(); O3RuntimeLsqOperation::COUNT];
+    let mut operation_bytes = [O3EventSummaryLsqBytes::default(); O3RuntimeLsqOperation::COUNT];
     for event in events {
         let operation = event.lsq_operation();
         if operation == O3RuntimeLsqOperation::None {
             continue;
         }
         let ticks = event.lsq_data_latency_ticks();
+        let index = operation.index();
         summary.add(ticks);
-        operation_counts[operation.index()] = operation_counts[operation.index()].saturating_add(1);
-        operation_latencies[operation.index()].add(ticks);
+        operation_counts[index] = operation_counts[index].saturating_add(1);
+        operation_latencies[index].add(ticks);
+        operation_bytes[index].load_bytes = operation_bytes[index]
+            .load_bytes
+            .saturating_add(event.lsq_load_bytes());
+        operation_bytes[index].store_bytes = operation_bytes[index]
+            .store_bytes
+            .saturating_add(event.lsq_store_bytes());
     }
-    (summary, operation_counts, operation_latencies)
+    (
+        summary,
+        operation_counts,
+        operation_latencies,
+        operation_bytes,
+    )
 }
 
 fn event_summary_lsq_forwarding(
@@ -477,6 +498,7 @@ fn event_summary_lsq_latency_json(latency: O3EventSummaryLsqLatency) -> String {
 fn event_summary_lsq_operation_json(
     counts: &[u64; O3RuntimeLsqOperation::COUNT],
     latencies: &[O3EventSummaryLsqLatency; O3RuntimeLsqOperation::COUNT],
+    bytes: &[O3EventSummaryLsqBytes; O3RuntimeLsqOperation::COUNT],
     forwarding: &[O3EventSummaryLsqForwarding; O3RuntimeLsqOperation::COUNT],
 ) -> String {
     let fields = O3RuntimeLsqOperation::TRACKED
@@ -484,10 +506,13 @@ fn event_summary_lsq_operation_json(
         .map(|operation| {
             let latency = event_summary_lsq_latency_json(latencies[operation.index()]);
             let forwarding = forwarding[operation.index()];
+            let bytes = bytes[operation.index()];
             format!(
-                "\"{}\":{{\"count\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
+                "\"{}\":{{\"count\":{},\"load_bytes\":{},\"store_bytes\":{},\"forwarding_candidates\":{},\"forwarding_matches\":{},\"forwarding_suppressed\":{},\"forwarding_address_mismatches\":{},\"forwarding_byte_mismatches\":{},\"latency\":{latency}}}",
                 operation.as_str(),
                 counts[operation.index()],
+                bytes.load_bytes,
+                bytes.store_bytes,
                 forwarding.candidates,
                 forwarding.matches,
                 forwarding.suppressed,

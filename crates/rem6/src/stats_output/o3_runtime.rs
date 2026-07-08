@@ -583,6 +583,8 @@ fn emit_o3_runtime_event_summary_lsq_matrix_stats(
         let mut latency_ticks = 0_u64;
         let mut latency_max_ticks = 0_u64;
         let mut latency_min_ticks: Option<u64> = None;
+        let mut load_bytes = 0_u64;
+        let mut store_bytes = 0_u64;
         for event in events
             .iter()
             .filter(|event| event.lsq_operation() == operation)
@@ -592,6 +594,8 @@ fn emit_o3_runtime_event_summary_lsq_matrix_stats(
             latency_ticks = latency_ticks.saturating_add(ticks);
             latency_max_ticks = latency_max_ticks.max(ticks);
             latency_min_ticks = Some(latency_min_ticks.map_or(ticks, |min| min.min(ticks)));
+            load_bytes = load_bytes.saturating_add(event.lsq_load_bytes());
+            store_bytes = store_bytes.saturating_add(event.lsq_store_bytes());
         }
         let latency_avg_ticks = if latency_samples == 0 {
             0
@@ -638,6 +642,18 @@ fn emit_o3_runtime_event_summary_lsq_matrix_stats(
                     "sim.cpu{cpu}.o3.event_summary.lsq_operation.{}.{name}",
                     operation.as_str()
                 ),
+                value,
+            )?;
+        }
+        for (name, value) in [("load_bytes", load_bytes), ("store_bytes", store_bytes)] {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{cpu}.o3.event_summary.lsq_operation.{}.{name}",
+                    operation.as_str()
+                ),
+                "Byte",
+                StatResetPolicy::Monotonic,
                 value,
             )?;
         }
