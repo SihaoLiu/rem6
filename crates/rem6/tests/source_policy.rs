@@ -767,6 +767,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.o3_trace.store_load_forwarding_byte_mismatches",
         "sim.debug.o3_trace.execution_mode.detailed",
         "/cores/1/o3_runtime/execution_mode",
+        "/cores/0/o3_runtime/checkpoint_restore/components",
         "sim.debug.o3_trace.execution_mode_authority.targets",
         "sim.debug.o3_trace.execution_mode_authority.mode.detailed",
         "sim.debug.o3_trace.execution_mode_authority.target.cpu1.mode.detailed",

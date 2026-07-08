@@ -212,7 +212,7 @@ five-stage in-order pipeline width, allowing wider fetch-stage overlap in real
 executed state without false younger retire, and exposing width plus max
 in-flight occupancy through executed-run JSON/stat output, top-level default
 RISC-V instruction/data traffic through L1/L2/L3 MSI cache/fabric/DRAM,
-explicit `--memory-system direct` timing-test coverage, target-scoped CPU1 O3 mode-switch state-transfer stats such as `sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.payload_checksum_accumulator`, top-level CPU1 `/cores/1/o3_runtime/execution_mode` detailed authority, and O3 policy helpers.
+explicit `--memory-system direct` timing-test coverage, target-scoped CPU1 O3 mode-switch state-transfer stats such as `sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.payload_checksum_accumulator`, top-level CPU1 `/cores/1/o3_runtime/execution_mode` detailed authority, sparse top-level `/cores/0/o3_runtime/checkpoint_restore/components` restore metadata, and O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
 squashes, executable O3 timing, broader predictor-family speculation snapshots

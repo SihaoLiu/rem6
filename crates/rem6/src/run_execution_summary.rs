@@ -49,13 +49,13 @@ use crate::{
     execute_error, guest_trap_name, instruction_probe_summary, memory_transport_summary,
     Rem6BranchPredictorCounterSummary, Rem6CheckerSummary, Rem6CliError, Rem6CoreSummary,
     Rem6DataAccessProbeSummary, Rem6DebugSummary, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6HostActionSummary, Rem6MemoryResourceInputs, Rem6MemoryResourceSummary,
-    Rem6MultiperspectivePerceptronCounterSummary, Rem6RiscvGuestWriteSummary,
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary,
-    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary, Rem6SbiTraceInputs,
-    Rem6TageScLBranchPredictorCounterSummary, RISCV_DATA_PROBE_PAGE_BYTES,
+    Rem6HostActionSummary, Rem6HostCheckpointSummary, Rem6MemoryResourceInputs,
+    Rem6MemoryResourceSummary, Rem6MultiperspectivePerceptronCounterSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary,
+    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    Rem6SbiTraceInputs, Rem6TageScLBranchPredictorCounterSummary, RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
 pub(super) struct ExecutionSummaryInputs<'a> {
@@ -456,6 +456,10 @@ pub(super) fn execution_summary(
                 .max_pending(),
             o3_runtime: core.o3_runtime_stats(),
             o3_runtime_execution_mode: execution_mode_for_cpu(&inputs.host_actions, cpu),
+            o3_runtime_checkpoint_restore: o3_runtime_checkpoint_restore_for_cpu(
+                &inputs.host_actions,
+                cpu,
+            ),
             o3_runtime_snapshot: core.o3_runtime_checkpoint_payload().snapshot().clone(),
             branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
             branch_target_buffer_hits: branch_target_buffer.hit_count(),
@@ -678,6 +682,24 @@ fn execution_mode_for_cpu(
         .iter()
         .find(|mode| mode.target.as_str() == target.as_str())
         .map(|mode| mode.mode)
+}
+
+fn o3_runtime_checkpoint_restore_for_cpu(
+    host_actions: &Rem6HostActionSummary,
+    cpu: CpuId,
+) -> Option<Rem6HostCheckpointSummary> {
+    let target = riscv_execution_mode_target_for_cpu(cpu);
+    host_actions
+        .checkpoint_restores
+        .iter()
+        .rev()
+        .find(|restore| {
+            restore
+                .execution_modes
+                .iter()
+                .any(|mode| mode.target.as_str() == target.as_str() && mode.mode == "detailed")
+        })
+        .cloned()
 }
 
 fn data_access_probe_summary(

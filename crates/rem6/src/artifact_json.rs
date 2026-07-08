@@ -1530,7 +1530,7 @@ impl Rem6HostStatsDumpSampleSummary {
 }
 
 impl Rem6HostCheckpointSummary {
-    fn to_json(&self) -> String {
+    pub(crate) fn to_json(&self) -> String {
         let components = self
             .components
             .iter()

@@ -358,6 +358,32 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
         [("cpu0", "detailed"), ("cpu2", "detailed")],
         "restore authority should preserve the sparse detailed CPU set: {restored_modes:?}"
     );
+    for cpu in [0, 2] {
+        let core_o3 = json
+            .pointer(&format!("/cores/{cpu}/o3_runtime"))
+            .unwrap_or_else(|| panic!("missing CPU{cpu} top-level O3 runtime summary: {json}"));
+        assert_eq!(
+            core_o3.pointer("/execution_mode").and_then(Value::as_str),
+            Some("detailed"),
+            "CPU{cpu} top-level O3 runtime should preserve restored detailed authority: {core_o3}"
+        );
+        let core_restore = core_o3
+            .pointer("/checkpoint_restore")
+            .unwrap_or_else(|| panic!("missing CPU{cpu} top-level O3 restore scope: {core_o3}"));
+        assert_eq!(
+            core_restore, restore,
+            "CPU{cpu} top-level O3 restore scope should mirror the restored host manifest: core {core_restore}; host {restore}"
+        );
+        assert_trace_restore_component_chunk(
+            core_restore,
+            &format!("cpu{cpu}"),
+            "o3-runtime-state",
+        );
+    }
+    assert!(
+        json.pointer("/cores/1/o3_runtime").is_none(),
+        "CPU1 should remain suppressed from sparse top-level O3 runtime: {json}"
+    );
 
     let o3_trace = json
         .pointer("/debug/o3_trace")
