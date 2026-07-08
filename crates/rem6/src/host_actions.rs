@@ -1,3 +1,4 @@
+use rem6_cpu::BranchTargetKind;
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
@@ -471,6 +472,11 @@ impl Rem6HostStatsDumpSummary {
             active_o3_cpus,
             &mut samples,
         );
+        append_o3_stats_dump_ftq_bucket_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         Self {
             id: record.id().get(),
             tick: record.tick(),
@@ -592,6 +598,76 @@ fn branch_repair_bucket_alias_suffix(suffix: &str) -> Option<&'static str> {
     }
 }
 
+fn append_o3_stats_dump_ftq_bucket_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some((cpu, suffix)) = o3_stats_dump_ftq_bucket_alias_suffix(sample.path()) else {
+            continue;
+        };
+        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
+        let alias_path = format!("{alias_prefix}.ftq.{suffix}");
+        if samples.iter().any(|sample| sample.path == alias_path) {
+            continue;
+        }
+        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+            sample, alias_path,
+        ));
+    }
+}
+
+fn o3_stats_dump_ftq_bucket_alias_suffix(path: &str) -> Option<(u32, String)> {
+    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
+    let (cpu, suffix) = rest.split_once(".o3.branch_event.")?;
+    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let cpu = cpu.parse().ok()?;
+    for (source_family, source_total, alias_family) in [
+        ("squash_kind", "squashes", "squashes"),
+        (
+            "squashed_target_kind",
+            "squashed_targets",
+            "squashedTargets",
+        ),
+        (
+            "squashed_target_link_write_kind",
+            "squashed_targets_with_link_writes",
+            "squashedTargetsWithLinkWrites",
+        ),
+        (
+            "squashed_target_without_link_write_kind",
+            "squashed_targets_without_link_writes",
+            "squashedTargetsWithoutLinkWrites",
+        ),
+    ] {
+        if suffix == source_total {
+            return Some((cpu, format!("{alias_family}_0::total")));
+        }
+        let Some((family, kind_name)) = suffix.split_once('.') else {
+            continue;
+        };
+        if family != source_family {
+            continue;
+        }
+        for kind in BranchTargetKind::ALL {
+            if kind.canonical_stat_name() == kind_name {
+                return Some((
+                    cpu,
+                    format!("{alias_family}_0::{}", kind.gem5_branch_type_name()),
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {
     let path = sample.path().to_string();
     if is_single_cpu_o3_alias_path(&path) {
@@ -611,6 +687,7 @@ fn is_single_cpu_o3_alias_path(path: &str) -> bool {
         "system.cpu.lsq0.",
         "system.cpu.iq.",
         "system.cpu.commit.",
+        "system.cpu.ftq.",
     ]
     .into_iter()
     .any(|prefix| path.starts_with(prefix))
@@ -621,9 +698,11 @@ fn o3_stats_dump_sample_cpu(path: &str) -> Option<u32> {
         return parse_o3_stats_dump_cpu(rest, ".o3.");
     }
     let rest = path.strip_prefix("system.cpu")?;
-    [".rob.", ".rename.", ".iew.", ".lsq0.", ".iq.", ".commit."]
-        .into_iter()
-        .find_map(|separator| parse_o3_stats_dump_cpu(rest, separator))
+    [
+        ".rob.", ".rename.", ".iew.", ".lsq0.", ".iq.", ".commit.", ".ftq.",
+    ]
+    .into_iter()
+    .find_map(|separator| parse_o3_stats_dump_cpu(rest, separator))
 }
 
 fn parse_o3_stats_dump_cpu(rest: &str, separator: &str) -> Option<u32> {

@@ -2111,6 +2111,32 @@ fn detailed_o3_indirect_call_wrong_target_dump_reset_stats_binary(
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_direct_call_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    let data_start = 128_i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        j_type(8, 1),
+        i_type(9, 0, 0x0, 6, 0x13),
+        s_type(0, 1, 10, 0b011),
+        s_type(8, 6, 10, 0b011),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_DUMP_STATS),
+        i_type(1, 0, 0x0, 7, 0x13),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_branch_repair_text_stats_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = detailed_o3_branch_repair_words(data_start);
