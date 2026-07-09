@@ -6,6 +6,8 @@ mod branch;
 mod branch_mismatch;
 #[path = "o3/branch_multicore.rs"]
 mod branch_multicore;
+#[path = "o3/branch_prediction.rs"]
+mod branch_prediction;
 #[path = "o3/checkpoint.rs"]
 mod checkpoint;
 #[path = "o3/fu_latency.rs"]

@@ -2180,6 +2180,40 @@ fn detailed_o3_branch_dump_reset_stats_binary(name: &str) -> std::path::PathBuf 
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_branch_predicted_target_match_dump_reset_stats_binary(
+    name: &str,
+) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![
+        i_type(1, 0, 0x0, 7, 0x13),
+        i_type(0, 0, 0x0, 9, 0x13),
+        b_type(8, 0, 7, 0x1),
+        i_type(99, 0, 0x0, 6, 0x13),
+        b_type(16, 0, 9, 0x1),
+        m5op(M5_SWITCH_CPU),
+        i_type(1, 0, 0x0, 9, 0x13),
+        j_type(-20, 0),
+        u_type(0, 10, 0x17),
+        i_type(data_start - 32, 10, 0x0, 10, 0x13),
+        s_type(0, 7, 10, 0b011),
+        s_type(8, 9, 10, 0b011),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_DUMP_RESET_STATS),
+    ];
+    append_integer_mul_div_work(&mut words);
+    words.extend([i_type(0, 0, 0x0, 10, 0x13), i_type(0, 0, 0x0, 11, 0x13)]);
+    words.push(m5op(M5_DUMP_STATS));
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_indirect_call_wrong_target_dump_reset_stats_binary(
     name: &str,
 ) -> std::path::PathBuf {
