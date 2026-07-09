@@ -261,6 +261,7 @@ pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
     trace_records: Vec<O3RuntimeTraceRecord>,
+    dirty_trace_record_indices: BTreeSet<usize>,
     data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
@@ -276,6 +277,7 @@ impl O3RuntimeState {
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
         self.trace_records.clear();
+        self.dirty_trace_record_indices.clear();
         self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
@@ -306,6 +308,19 @@ impl O3RuntimeState {
 
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
         &self.trace_records
+    }
+
+    pub fn take_trace_updates(&mut self, start: usize) -> (usize, Vec<O3RuntimeTraceRecord>) {
+        let start = start.min(self.trace_records.len());
+        let mut records = self.trace_records[start..].to_vec();
+        let dirty = std::mem::take(&mut self.dirty_trace_record_indices);
+        records.extend(
+            dirty
+                .into_iter()
+                .filter(|index| *index < start)
+                .filter_map(|index| self.trace_records.get(index).copied()),
+        );
+        (self.trace_records.len(), records)
     }
 
     #[cfg(test)]
@@ -350,6 +365,7 @@ impl O3RuntimeState {
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.trace_records.clear();
+        self.dirty_trace_record_indices.clear();
         self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
@@ -685,22 +701,26 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
     ) {
-        if let Some(record) = self
+        if let Some((index, record)) = self
             .trace_records
             .iter_mut()
-            .find(|record| record.sequence() == sequence)
+            .enumerate()
+            .find(|(_, record)| record.sequence() == sequence)
         {
             record.set_lsq_data_response(response_tick, latency_ticks);
+            self.dirty_trace_record_indices.insert(index);
         }
     }
 
     fn mark_trace_store_conditional_failed(&mut self, sequence: u64) {
-        if let Some(record) = self
+        if let Some((index, record)) = self
             .trace_records
             .iter_mut()
-            .find(|record| record.sequence() == sequence)
+            .enumerate()
+            .find(|(_, record)| record.sequence() == sequence)
         {
             record.set_lsq_store_conditional_failed(true);
+            self.dirty_trace_record_indices.insert(index);
         }
     }
 
@@ -733,6 +753,7 @@ impl Default for O3RuntimeState {
             snapshot: default_o3_runtime_snapshot(),
             stats: O3RuntimeStats::default(),
             trace_records: Vec::new(),
+            dirty_trace_record_indices: BTreeSet::new(),
             data_access_sequences: BTreeMap::new(),
             trace_data_access_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
@@ -1674,37 +1695,32 @@ impl fmt::Display for O3RuntimeError {
 impl Error for O3RuntimeError {}
 
 impl crate::RiscvCore {
+    fn with_o3_runtime<T>(&self, f: impl FnOnce(&mut O3RuntimeState) -> T) -> T {
+        let mut state = self.state.lock().expect("riscv core lock");
+        f(&mut state.o3_runtime)
+    }
+
     pub fn o3_runtime_stats(&self) -> O3RuntimeStats {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .stats()
+        self.with_o3_runtime(|runtime| runtime.stats())
     }
 
     pub fn o3_runtime_trace_records(&self) -> Vec<O3RuntimeTraceRecord> {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .trace_records()
-            .to_vec()
+        self.with_o3_runtime(|runtime| runtime.trace_records().to_vec())
+    }
+
+    pub fn take_o3_runtime_trace_updates(
+        &self,
+        start: usize,
+    ) -> (usize, Vec<O3RuntimeTraceRecord>) {
+        self.with_o3_runtime(|runtime| runtime.take_trace_updates(start))
     }
 
     pub fn reset_o3_runtime_stats(&self) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .reset_stats();
+        self.with_o3_runtime(O3RuntimeState::reset_stats);
     }
 
     pub fn record_o3_retired_instruction(&self, execution: &RiscvCpuExecutionEvent) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .record_retired_instruction(execution);
+        self.with_o3_runtime(|runtime| runtime.record_retired_instruction(execution));
     }
 
     pub fn record_o3_retired_instruction_with_trace(
@@ -1712,11 +1728,9 @@ impl crate::RiscvCore {
         execution: &RiscvCpuExecutionEvent,
         trace_enabled: bool,
     ) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .record_retired_instruction_with_trace(execution, trace_enabled);
+        self.with_o3_runtime(|runtime| {
+            runtime.record_retired_instruction_with_trace(execution, trace_enabled);
+        });
     }
 
     pub fn record_o3_completed_load_data(
@@ -1725,11 +1739,9 @@ impl crate::RiscvCore {
         access: &MemoryAccessKind,
         data: &[u8],
     ) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .record_completed_load_data(fetch_request, access, data);
+        self.with_o3_runtime(|runtime| {
+            runtime.record_completed_load_data(fetch_request, access, data);
+        });
     }
 
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {
@@ -1738,13 +1750,14 @@ impl crate::RiscvCore {
     }
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
-        let state = self.state.lock().expect("riscv core lock");
-        O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
-            state.o3_runtime.snapshot(),
-            state.o3_runtime.stats(),
-            state.o3_runtime.dependency_producers_with_consumers.clone(),
-        )
-        .expect("captured RISC-V O3 runtime checkpoint is internally consistent")
+        self.with_o3_runtime(|runtime| {
+            O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
+                runtime.snapshot(),
+                runtime.stats(),
+                runtime.dependency_producers_with_consumers.clone(),
+            )
+            .expect("captured RISC-V O3 runtime checkpoint is internally consistent")
+        })
     }
 
     pub fn restore_o3_runtime_checkpoint_payload(
@@ -1752,11 +1765,7 @@ impl crate::RiscvCore {
         payload: O3RuntimeCheckpointPayload,
     ) -> Result<(), O3RuntimeError> {
         self.validate_o3_runtime_checkpoint_payload(&payload)?;
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .restore_checkpoint_payload(payload)
+        self.with_o3_runtime(|runtime| runtime.restore_checkpoint_payload(payload))
     }
 
     pub fn validate_o3_runtime_checkpoint_payload(
@@ -1771,11 +1780,7 @@ impl crate::RiscvCore {
     }
 
     pub fn o3_pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .pending_state_checkpoint_payload()
+        self.with_o3_runtime(|runtime| runtime.pending_state_checkpoint_payload())
     }
 
     pub fn restore_o3_pending_state_checkpoint_payload(
@@ -1783,11 +1788,7 @@ impl crate::RiscvCore {
         payload: O3PendingStateCheckpointPayload,
     ) -> Result<(), O3PipelineError> {
         self.validate_o3_pending_state_checkpoint_payload(&payload)?;
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .restore_pending_state_checkpoint_payload(payload)
+        self.with_o3_runtime(|runtime| runtime.restore_pending_state_checkpoint_payload(payload))
     }
 
     pub fn validate_o3_pending_state_checkpoint_payload(

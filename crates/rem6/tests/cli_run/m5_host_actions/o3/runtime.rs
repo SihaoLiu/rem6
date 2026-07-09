@@ -1306,6 +1306,224 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
 }
 
 #[test]
+fn rem6_run_m5_dump_reset_stats_suppresses_o3_event_window_without_debug_trace() {
+    let path = detailed_o3_branch_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-event-window-dump-reset-suppressed",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    for dump_index in [0, 1] {
+        let dump = host_actions
+            .pointer(&format!("/stats_dumps/{dump_index}"))
+            .unwrap_or_else(|| panic!("missing stats dump action {dump_index}: {host_actions}"));
+        assert_stats_dump_sample_at_least(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.instructions",
+            "counter",
+            "Count",
+            1,
+            "resettable",
+        );
+        for path in [
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.records",
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.span_ticks",
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.first.pc",
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
+        ] {
+            assert_stats_dump_sample_absent(dump, path);
+        }
+    }
+}
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_event_window_trace_rows() {
+    let path =
+        detailed_o3_branch_dump_reset_stats_binary("m5-switch-cpu-o3-event-window-dump-reset");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/parallel/scheduler/worker_limit")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 debug trace host-action stats should use deterministic single-worker scheduling"
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+
+    for (dump, minimum_records) in [(pre_reset_dump, 6), (post_reset_dump, 2)] {
+        assert_stats_dump_sample_at_least(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.records",
+            "counter",
+            "Count",
+            minimum_records,
+            "resettable",
+        );
+        assert_stats_dump_sample_at_least(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.span_ticks",
+            "counter",
+            "Tick",
+            1,
+            "resettable",
+        );
+        assert_stats_dump_sample_at_least(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.first.pc",
+            "counter",
+            "Address",
+            0x8000_0000,
+            "resettable",
+        );
+    }
+
+    assert_stats_dump_sample_at_least(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_lsq_data_latency.pc",
+        "counter",
+        "Address",
+        0x8000_0000,
+        "resettable",
+    );
+    assert_stats_dump_sample_at_least(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+        "counter",
+        "Tick",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample_at_least(
+        post_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_fu_latency.pc",
+        "counter",
+        "Address",
+        0x8000_0000,
+        "resettable",
+    );
+    assert_stats_dump_sample_at_least(
+        post_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
+        "counter",
+        "Cycle",
+        1,
+        "resettable",
+    );
+
+    let pre_reset_records = stats_dump_sample_value(
+        pre_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.records",
+    );
+    let post_reset_records = stats_dump_sample_value(
+        post_reset_dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.records",
+    );
+    assert!(
+        pre_reset_records > post_reset_records,
+        "m5_dump_reset_stats should reset O3 event-window trace rows before post-reset work: pre={pre_reset_records}, post={post_reset_records}"
+    );
+}
+
+#[test]
 fn rem6_run_o3_runtime_json_exposes_lsq_operation_byte_aliases() {
     let path = detailed_o3_float_vector_lsq_binary(
         "m5-switch-cpu-detailed-o3-runtime-lsq-operation-byte-aliases",

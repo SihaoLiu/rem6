@@ -779,10 +779,15 @@ fn execute_riscv(
         None
     };
 
+    let scheduler_workers = if config.debug_o3_enabled() {
+        1
+    } else {
+        config.parallel_workers()
+    };
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         partition_count,
         config.min_remote_delay(),
-        config.parallel_workers(),
+        scheduler_workers,
     )
     .map_err(execute_error)?;
     let mut transport = run_memory_transport(config.fabric());
@@ -864,6 +869,7 @@ fn execute_riscv(
         RiscvO3RuntimeStats::register_for_cpus(
             controller.executor_mut().stats_mut(),
             (0..core_count).map(CpuId::new),
+            config.debug_o3_enabled(),
         )
         .map_err(stats_error)?
     };

@@ -1,6 +1,7 @@
 mod checkpoint_accessors;
 mod execution_mode_checkpoint;
 mod execution_mode_transfer;
+mod stats_sync;
 
 use std::collections::BTreeMap;
 
@@ -34,6 +35,8 @@ use execution_mode_checkpoint::{
     decode_execution_modes, encode_execution_modes, execution_mode_checkpoint_component,
     manifest_has_execution_mode_checkpoint, EXECUTION_MODE_CHECKPOINT_CHUNK,
 };
+use stats_sync::StatsSyncHook;
+pub(crate) use stats_sync::StatsSyncPhase;
 
 const EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX: &str = "execution-mode-switch-";
 
@@ -311,6 +314,7 @@ pub struct SystemActionExecutor {
     checkpoints: CheckpointRegistry,
     captured_manifests: BTreeMap<String, CheckpointManifest>,
     riscv_o3_runtime_stats: Option<RiscvO3RuntimeStats>,
+    pre_stats_sync: Option<StatsSyncHook>,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
     msi_bank_checkpoints: Option<MsiBankCheckpointBank>,
     fabric_checkpoints: Option<FabricCheckpointBank>,
@@ -361,6 +365,7 @@ impl SystemActionExecutor {
             checkpoints,
             captured_manifests: BTreeMap::new(),
             riscv_o3_runtime_stats: None,
+            pre_stats_sync: None,
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -1505,12 +1510,24 @@ impl SystemActionExecutor {
                 work_id: *work_id,
                 thread_id: *thread_id,
             }),
-            HostAction::ResetStats => self
-                .stats
-                .try_reset(record.tick())
-                .map(SystemActionOutcome::StatsReset)
-                .map_err(SystemError::Stats),
+            HostAction::ResetStats => {
+                if let Some(hook) = &self.pre_stats_sync {
+                    hook.sync(&mut self.stats, StatsSyncPhase::BeforeReset)?;
+                }
+                let outcome = self
+                    .stats
+                    .try_reset(record.tick())
+                    .map(SystemActionOutcome::StatsReset)
+                    .map_err(SystemError::Stats)?;
+                if let Some(hook) = &self.pre_stats_sync {
+                    hook.sync(&mut self.stats, StatsSyncPhase::AfterReset)?;
+                }
+                Ok(outcome)
+            }
             HostAction::DumpStats => {
+                if let Some(hook) = &self.pre_stats_sync {
+                    hook.sync(&mut self.stats, StatsSyncPhase::BeforeDump)?;
+                }
                 let active_o3_cpus = self
                     .riscv_o3_runtime_stats
                     .as_ref()

@@ -5,6 +5,7 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_mmio::MmioBus;
+use rem6_stats::StatsRegistry;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 mod clint_checkpoint;
@@ -329,7 +330,35 @@ impl RiscvSystemRunDriver {
         if let Some(firmware) = &self.riscv_sbi_firmware {
             firmware.register_cluster(cluster)?;
         }
+        self.install_o3_runtime_stats_host_sync(cluster);
         self.reset_runtime_stats(cluster)
+    }
+
+    fn install_o3_runtime_stats_host_sync(&self, cluster: &RiscvCluster) {
+        let Some(o3_runtime_stats) = self.o3_runtime_stats.clone() else {
+            return;
+        };
+        let cluster = cluster.clone();
+        let trace_enabled = self.o3_runtime_trace_enabled;
+        self.trap_port
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .set_pre_stats_sync(move |registry, phase| {
+                if phase == host::StatsSyncPhase::AfterReset {
+                    Self::reset_o3_runtime_stats_for(&o3_runtime_stats, &cluster)?;
+                    o3_runtime_stats.mark_host_reset_applied();
+                    return Ok(());
+                }
+                Self::sync_o3_runtime_stats(
+                    &o3_runtime_stats,
+                    &cluster,
+                    trace_enabled,
+                    registry,
+                    cluster.core_ids(),
+                )
+            });
     }
 
     pub(crate) fn schedule_riscv_system_events_from_turn<F>(
@@ -386,26 +415,45 @@ impl RiscvSystemRunDriver {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
         }
-        if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
-            let cycle_baselines = cluster
-                .core_ids()
-                .into_iter()
-                .map(|cpu| {
-                    cluster
-                        .core(cpu)
-                        .map(|core| (cpu, core.in_order_pipeline_snapshot().cycle()))
-                        .map_err(SystemError::RiscvCluster)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            o3_runtime_stats.reset_snapshots(cycle_baselines);
+        let reset_o3 = self
+            .o3_runtime_stats
+            .as_ref()
+            .map_or(true, |stats| !stats.take_host_reset_applied());
+        if reset_o3 {
+            self.reset_o3_runtime_stats(cluster)?;
         }
+        self.reset_data_access_stats_for_run(cluster)
+    }
+
+    fn reset_o3_runtime_stats(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
+        if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
+            Self::reset_o3_runtime_stats_for(o3_runtime_stats, cluster)?;
+        }
+        Ok(())
+    }
+
+    fn reset_o3_runtime_stats_for(
+        o3_runtime_stats: &RiscvO3RuntimeStats,
+        cluster: &RiscvCluster,
+    ) -> Result<(), SystemError> {
+        let cycle_baselines = cluster
+            .core_ids()
+            .into_iter()
+            .map(|cpu| {
+                cluster
+                    .core(cpu)
+                    .map(|core| (cpu, core.in_order_pipeline_snapshot().cycle()))
+                    .map_err(SystemError::RiscvCluster)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        o3_runtime_stats.reset_snapshots(cycle_baselines);
         for cpu in cluster.core_ids() {
             cluster
                 .core(cpu)
                 .map_err(SystemError::RiscvCluster)?
                 .reset_o3_runtime_stats();
         }
-        self.reset_data_access_stats_for_run(cluster)
+        Ok(())
     }
 
     pub(crate) fn run_result(
@@ -779,22 +827,55 @@ impl RiscvSystemRunDriver {
                 );
             updated_cpus.insert(cpu);
         }
+        if self.o3_runtime_trace_enabled {
+            updated_cpus.extend(cluster.core_ids());
+        }
         if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
             let controller = self.trap_port.controller();
             let mut controller = controller.lock().expect("system host controller lock");
-            for cpu in updated_cpus {
-                let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
-                let snapshot = core.o3_runtime_stats();
-                let in_order_pipeline_cycles = core.in_order_pipeline_snapshot().cycle();
-                o3_runtime_stats
-                    .record_cpu_snapshot(
-                        controller.executor_mut().stats_mut(),
-                        cpu,
-                        snapshot,
-                        in_order_pipeline_cycles,
-                    )
-                    .map_err(SystemError::Stats)?;
-            }
+            Self::sync_o3_runtime_stats(
+                o3_runtime_stats,
+                cluster,
+                self.o3_runtime_trace_enabled,
+                controller.executor_mut().stats_mut(),
+                updated_cpus,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn sync_o3_runtime_stats<I>(
+        o3_runtime_stats: &RiscvO3RuntimeStats,
+        cluster: &RiscvCluster,
+        trace_enabled: bool,
+        registry: &mut StatsRegistry,
+        cpus: I,
+    ) -> Result<(), SystemError>
+    where
+        I: IntoIterator<Item = CpuId>,
+    {
+        for cpu in cpus {
+            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+            let snapshot = core.o3_runtime_stats();
+            let trace_records = if trace_enabled {
+                let trace_offset = o3_runtime_stats.trace_record_offset(cpu);
+                let (next_trace_offset, trace_records) =
+                    core.take_o3_runtime_trace_updates(trace_offset);
+                o3_runtime_stats.set_trace_record_offset(cpu, next_trace_offset);
+                trace_records
+            } else {
+                Vec::new()
+            };
+            let in_order_pipeline_cycles = core.in_order_pipeline_snapshot().cycle();
+            o3_runtime_stats
+                .record_cpu_snapshot(
+                    registry,
+                    cpu,
+                    snapshot,
+                    &trace_records,
+                    in_order_pipeline_cycles,
+                )
+                .map_err(SystemError::Stats)?;
         }
         Ok(())
     }
