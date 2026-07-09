@@ -142,6 +142,48 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
             "resettable",
         );
     }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation_0::Load", 1),
+        ("system.cpu.lsq0.operation_0::Store", 3),
+        ("system.cpu.lsq0.operation_0::LoadReserved", 1),
+        ("system.cpu.lsq0.operation_0::StoreConditional", 1),
+        ("system.cpu.lsq0.operation_0::Atomic", 1),
+        ("system.cpu.lsq0.operation_0::total", 7),
+        ("system.cpu.lsq0.ordering_0::Acquire", 1),
+        ("system.cpu.lsq0.ordering_0::Release", 1),
+        ("system.cpu.lsq0.ordering_0::AcquireRelease", 1),
+        ("system.cpu.lsq0.ordering_0::total", 3),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation_0::Load", 0),
+        ("system.cpu.lsq0.operation_0::Store", 1),
+        ("system.cpu.lsq0.operation_0::LoadReserved", 0),
+        ("system.cpu.lsq0.operation_0::StoreConditional", 1),
+        ("system.cpu.lsq0.operation_0::Atomic", 0),
+        ("system.cpu.lsq0.operation_0::total", 2),
+        ("system.cpu.lsq0.ordering_0::Acquire", 0),
+        ("system.cpu.lsq0.ordering_0::Release", 0),
+        ("system.cpu.lsq0.ordering_0::AcquireRelease", 0),
+        ("system.cpu.lsq0.ordering_0::total", 0),
+    ] {
+        assert_stats_dump_sample(
+            post_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
     for (dump, path, unit, value) in [
         (
             pre_reset_dump,

@@ -4161,6 +4161,18 @@ fn assert_o3_lsq_count_alias(json: &Value, field: &str, value: u64) {
         value,
         "monotonic",
     );
+    let bucket_alias = match family {
+        "operation" => o3_lsq_operation_bucket_alias(alias),
+        "ordering" => o3_lsq_ordering_bucket_alias(alias),
+        _ => unreachable!("unexpected O3 LSQ alias family {family}"),
+    };
+    assert_json_stat(
+        json,
+        &format!("system.cpu.lsq0.{family}_0::{bucket_alias}"),
+        "Count",
+        value,
+        "monotonic",
+    );
 }
 
 fn assert_o3_lsq_count_alias_totals(json: &Value, operation_total: u64, ordering_total: u64) {
@@ -4168,6 +4180,13 @@ fn assert_o3_lsq_count_alias_totals(json: &Value, operation_total: u64, ordering
         assert_json_stat(
             json,
             &format!("system.cpu.lsq0.{family}.total"),
+            "Count",
+            value,
+            "monotonic",
+        );
+        assert_json_stat(
+            json,
+            &format!("system.cpu.lsq0.{family}_0::total"),
             "Count",
             value,
             "monotonic",
@@ -4196,6 +4215,30 @@ fn o3_lsq_ordering_count_alias(ordering: &str) -> &'static str {
         "release" => "release",
         "acquire_release" => "acquireRelease",
         _ => panic!("unexpected O3 LSQ ordering field {ordering}"),
+    }
+}
+
+fn o3_lsq_operation_bucket_alias(alias: &str) -> &'static str {
+    match alias {
+        "load" => "Load",
+        "store" => "Store",
+        "loadReserved" => "LoadReserved",
+        "storeConditional" => "StoreConditional",
+        "atomic" => "Atomic",
+        "floatLoad" => "FloatLoad",
+        "floatStore" => "FloatStore",
+        "vectorLoad" => "VectorLoad",
+        "vectorStore" => "VectorStore",
+        _ => panic!("unexpected O3 LSQ operation alias {alias}"),
+    }
+}
+
+fn o3_lsq_ordering_bucket_alias(alias: &str) -> &'static str {
+    match alias {
+        "acquire" => "Acquire",
+        "release" => "Release",
+        "acquireRelease" => "AcquireRelease",
+        _ => panic!("unexpected O3 LSQ ordering alias {alias}"),
     }
 }
 

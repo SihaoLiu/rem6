@@ -481,6 +481,11 @@ impl Rem6HostStatsDumpSummary {
             active_o3_cpus,
             &mut samples,
         );
+        append_o3_stats_dump_lsq_count_bucket_alias_samples(
+            snapshot.samples(),
+            active_o3_cpus,
+            &mut samples,
+        );
         append_o3_stats_dump_branch_repair_bucket_alias_samples(
             snapshot.samples(),
             active_o3_cpus,
@@ -658,6 +663,69 @@ fn is_o3_stats_dump_cpu_alias_prefix(prefix: &str) -> bool {
         return false;
     };
     !cpu.is_empty() && cpu.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn append_o3_stats_dump_lsq_count_bucket_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some(alias_path) = o3_stats_dump_lsq_count_bucket_alias_path(sample.path()) else {
+            continue;
+        };
+        if samples.iter().any(|sample| sample.path == alias_path) {
+            continue;
+        }
+        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+            sample, alias_path,
+        ));
+    }
+}
+
+fn o3_stats_dump_lsq_count_bucket_alias_path(path: &str) -> Option<String> {
+    if let Some((prefix, suffix)) = path.split_once(".lsq0.operation.") {
+        if is_o3_stats_dump_cpu_alias_prefix(prefix) {
+            let bucket = o3_stats_dump_lsq_operation_bucket_alias(suffix)?;
+            return Some(format!("{prefix}.lsq0.operation_0::{bucket}"));
+        }
+    }
+    if let Some((prefix, suffix)) = path.split_once(".lsq0.ordering.") {
+        if is_o3_stats_dump_cpu_alias_prefix(prefix) {
+            let bucket = o3_stats_dump_lsq_ordering_bucket_alias(suffix)?;
+            return Some(format!("{prefix}.lsq0.ordering_0::{bucket}"));
+        }
+    }
+    None
+}
+
+fn o3_stats_dump_lsq_operation_bucket_alias(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "load" => Some("Load"),
+        "store" => Some("Store"),
+        "loadReserved" => Some("LoadReserved"),
+        "storeConditional" => Some("StoreConditional"),
+        "atomic" => Some("Atomic"),
+        "floatLoad" => Some("FloatLoad"),
+        "floatStore" => Some("FloatStore"),
+        "vectorLoad" => Some("VectorLoad"),
+        "vectorStore" => Some("VectorStore"),
+        "total" => Some("total"),
+        _ => None,
+    }
+}
+
+fn o3_stats_dump_lsq_ordering_bucket_alias(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "acquire" => Some("Acquire"),
+        "release" => Some("Release"),
+        "acquireRelease" => Some("AcquireRelease"),
+        "total" => Some("total"),
+        _ => None,
+    }
 }
 
 fn append_o3_stats_dump_branch_repair_bucket_alias_samples(

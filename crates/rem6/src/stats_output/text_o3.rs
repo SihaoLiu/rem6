@@ -51,6 +51,7 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
             &format!("{alias_prefix}.lsq0.forwLoads"),
             "Count",
         );
+        append_gem5_o3_lsq_count_bucket_alias_stats(output, snapshot, &alias_prefix);
         append_gem5_o3_branch_event_alias_stats(output, snapshot, cpu, &alias_prefix);
         append_gem5_o3_branch_mismatch_alias_stats(output, snapshot, cpu, &alias_prefix);
         let targetless_mismatches = snapshot_value(
@@ -229,6 +230,49 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 consumer_inst,
             );
         }
+    }
+}
+
+fn append_gem5_o3_lsq_count_bucket_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_prefix: &str,
+) {
+    for (source_suffix, bucket_suffix) in [
+        ("lsq0.operation.load", "lsq0.operation_0::Load"),
+        ("lsq0.operation.store", "lsq0.operation_0::Store"),
+        (
+            "lsq0.operation.loadReserved",
+            "lsq0.operation_0::LoadReserved",
+        ),
+        (
+            "lsq0.operation.storeConditional",
+            "lsq0.operation_0::StoreConditional",
+        ),
+        ("lsq0.operation.atomic", "lsq0.operation_0::Atomic"),
+        ("lsq0.operation.floatLoad", "lsq0.operation_0::FloatLoad"),
+        ("lsq0.operation.floatStore", "lsq0.operation_0::FloatStore"),
+        ("lsq0.operation.vectorLoad", "lsq0.operation_0::VectorLoad"),
+        (
+            "lsq0.operation.vectorStore",
+            "lsq0.operation_0::VectorStore",
+        ),
+        ("lsq0.operation.total", "lsq0.operation_0::total"),
+        ("lsq0.ordering.acquire", "lsq0.ordering_0::Acquire"),
+        ("lsq0.ordering.release", "lsq0.ordering_0::Release"),
+        (
+            "lsq0.ordering.acquireRelease",
+            "lsq0.ordering_0::AcquireRelease",
+        ),
+        ("lsq0.ordering.total", "lsq0.ordering_0::total"),
+    ] {
+        append_derived_stat_from_snapshot_if_absent(
+            output,
+            snapshot,
+            &format!("{alias_prefix}.{source_suffix}"),
+            &format!("{alias_prefix}.{bucket_suffix}"),
+            "Count",
+        );
     }
 }
 

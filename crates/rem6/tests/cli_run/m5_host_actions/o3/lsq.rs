@@ -1179,6 +1179,16 @@ fn rem6_run_text_stats_alias_o3_lsq_store_load_matches_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingCandidates", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.storeLoadForwardingMatches", 1);
     assert_text_count_stat(&stdout, "system.cpu.lsq0.forwLoads", 1);
+    for (path, value) in [
+        ("system.cpu.lsq0.operation_0::Load", 1),
+        ("system.cpu.lsq0.operation_0::Store", 1),
+        ("system.cpu.lsq0.operation_0::StoreConditional", 0),
+        ("system.cpu.lsq0.operation_0::total", 2),
+        ("system.cpu.lsq0.ordering_0::AcquireRelease", 0),
+        ("system.cpu.lsq0.ordering_0::total", 0),
+    ] {
+        assert_text_count_stat(&stdout, path, value);
+    }
     assert_text_count_stat(
         &stdout,
         "sim.cpu0.o3.lsq_operation.load_forwarding_candidates",
