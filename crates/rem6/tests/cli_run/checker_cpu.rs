@@ -92,6 +92,11 @@ fn rem6_run_checker_cpu_covers_initial_timing_and_detailed_modes() {
             .pointer("/cores/0/checker")
             .unwrap_or_else(|| panic!("missing checker summary for initial mode {mode}: {json}"));
         assert_eq!(
+            checker.pointer("/execution_mode").and_then(Value::as_str),
+            Some(mode),
+            "mode {mode} should publish checker execution-mode authority in the core JSON: {checker}"
+        );
+        assert_eq!(
             checker
                 .pointer("/checked_instructions")
                 .and_then(Value::as_u64),

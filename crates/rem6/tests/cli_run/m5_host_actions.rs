@@ -1352,6 +1352,11 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
         Some(0),
         "checker should preserve zero mismatches after timing-mode switch: {json}"
     );
+    assert_eq!(
+        final_checker.pointer("/execution_mode"),
+        Some(&Value::Null),
+        "mixed-mode checker runs should not claim a single checker execution mode: {json}"
+    );
     assert_json_stat(
         &json,
         "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",

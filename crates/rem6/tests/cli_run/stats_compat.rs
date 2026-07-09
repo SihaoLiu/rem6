@@ -8424,7 +8424,24 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"checker\":{\"checked_instructions\":2,\"mismatches\":0}"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let checker = json
+        .pointer("/cores/0/checker")
+        .unwrap_or_else(|| panic!("missing checker JSON summary: {json}"));
+    assert_eq!(
+        checker
+            .pointer("/checked_instructions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        checker.pointer("/mismatches").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        checker.pointer("/execution_mode").and_then(Value::as_str),
+        Some("functional")
+    );
     assert_stat(
         &stdout,
         "sim.cpu0.checker.checked_instructions",
@@ -8439,7 +8456,6 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
         0,
         "monotonic",
     );
-    let json: Value = serde_json::from_str(&stdout).unwrap();
     for (mode, checked_instructions) in [("functional", 2), ("timing", 0), ("detailed", 0)] {
         assert_eq!(
             json_stat_value(

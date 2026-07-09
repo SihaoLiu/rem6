@@ -202,7 +202,7 @@ per-core fetch-response and data-response wait cycle stats, retired branch
 prediction, speculation repair, and redirect summaries in normal in-order timing records, RISC-V
 normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the basic fetch-steering branch predictor/BTB payload, including live fetch-ahead pending branch speculation state, plus GShare, BiMode, Tournament, TAGE-SC-L, and multiperspective perceptron predictor checkpoint payloads, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
-mismatches, and exposes aggregate plus single-mode functional/timing/detailed checked/mismatch mode-lane counts through `rem6 run --checker-cpu`
+mismatches, and exposes aggregate plus single-mode functional/timing/detailed checked/mismatch mode-lane counts plus `/cores/0/checker/execution_mode` structured authority through `rem6 run --checker-cpu`
 stats, per-stage in-order flush plus branch-prediction, trap-redirect, and
 SBI timer interrupt-redirect attribution stats, plus aggregate and per-stage
 branch/trap/interrupt redirect counters and flush-cycle stats from real redirect cycle records, top-level SBI timer interrupt redirects with Pipeline+Fetch debug evidence proving a flushed younger fallback-loop fetch, non-branch attribution, JSON stage/cause conservation, and gem5-style interruptRedirect aggregate, stage, flushCause, and redirectCause text aliases,

@@ -747,9 +747,13 @@ impl Rem6CoreSummary {
             .checker
             .as_ref()
             .map(|checker| {
+                let execution_mode = checker
+                    .execution_mode
+                    .map(|mode| format!("\"{}\"", json_escape(mode)))
+                    .unwrap_or_else(|| "null".to_string());
                 format!(
-                    ",\"checker\":{{\"checked_instructions\":{},\"mismatches\":{}}}",
-                    checker.checked_instructions, checker.mismatches
+                    ",\"checker\":{{\"checked_instructions\":{},\"mismatches\":{},\"execution_mode\":{}}}",
+                    checker.checked_instructions, checker.mismatches, execution_mode
                 )
             })
             .unwrap_or_default();

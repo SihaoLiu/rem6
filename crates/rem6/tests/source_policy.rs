@@ -757,6 +757,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.pipeline.inOrder.redirectCause.trapRedirect.stage.commit.flushedCycles",
         "sim.host_actions.execution_mode_switch_quiescence.checker.checked_instructions",
         "sim.host_actions.execution_mode_switch_quiescence.checker.mismatches",
+        "/cores/0/checker/execution_mode",
         "/debug/host_action_trace/0/state_transfer/quiescence_gate/checker/checked_instructions",
         "/debug/host_action_trace/0/state_transfer/quiescence_gate/captured_payload_bytes",
         "/debug/host_action_trace/1/execution_mode_authority/mode/detailed",
