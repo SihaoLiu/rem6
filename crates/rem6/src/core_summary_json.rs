@@ -99,7 +99,7 @@ fn in_order_pipeline_stage_total(summary: Rem6InOrderPipelineStageSummary) -> u6
 }
 
 fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
-    O3RuntimeFuLatencyClass::ALL
+    let mut fields = O3RuntimeFuLatencyClass::ALL
         .into_iter()
         .flat_map(|class| {
             [
@@ -115,8 +115,21 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
                 ),
             ]
         })
+        .collect::<Vec<_>>();
+    let class_summary = O3RuntimeFuLatencyClass::ALL
+        .into_iter()
+        .map(|class| {
+            format!(
+                "\"{}\":{{\"instructions\":{},\"cycles\":{}}}",
+                class.stat_stem(),
+                summary.o3_runtime.fu_latency_class_instructions(class),
+                summary.o3_runtime.fu_latency_class_cycles(class)
+            )
+        })
         .collect::<Vec<_>>()
-        .join(",")
+        .join(",");
+    fields.push(format!("\"fu_latency_class\":{{{class_summary}}}"));
+    fields.join(",")
 }
 
 fn o3_runtime_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {

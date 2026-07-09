@@ -110,3 +110,88 @@ fn rem6_run_m5_dump_reset_stats_snapshots_nested_o3_fu_latency_classes() {
         "monotonic",
     );
 }
+
+#[test]
+fn rem6_run_restore_exposes_nested_o3_fu_latency_class_runtime_summary() {
+    let path =
+        detailed_o3_restore_fu_dump_stats_binary("m5-switch-cpu-o3-restore-nested-fu-summary");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    for (pointer, value) in [
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_mul/instructions",
+            1,
+        ),
+        ("/cores/0/o3_runtime/fu_latency_class/integer_mul/cycles", 2),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_div/instructions",
+            1,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_div/cycles",
+            19,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/float_misc/instructions",
+            2,
+        ),
+        ("/cores/0/o3_runtime/fu_latency_class/float_misc/cycles", 3),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/vector_float_misc/instructions",
+            2,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/vector_float_misc/cycles",
+            3,
+        ),
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "missing restored nested FU latency summary {pointer}: {json}"
+        );
+    }
+
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/fu_integer_mul_instructions")
+            .and_then(Value::as_u64),
+        Some(1),
+        "legacy flat runtime summary should remain available: {json}"
+    );
+}
