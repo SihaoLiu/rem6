@@ -995,7 +995,22 @@ fn rem6_run_m5_dump_stats_restores_multicore_o3_fu_snapshot_by_active_hart() {
             assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
         }
         for path in [
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.rob.count",
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.rob.entries",
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.lsq.count",
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.lsq.entries",
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Count", 0, "resettable");
+        }
+        for path in [
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.rename_map.count",
+            "sim.host_actions.stats_dump.cpu1.o3.snapshot.rename_map.entries",
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Count", 3, "resettable");
+        }
+        for path in [
             "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+            "sim.host_actions.stats_dump.cpu0.o3.snapshot.rename_map.count",
             "system.cpu0.iq.issuedInstType_0::IntMult",
             "system.cpu0.commit.committedInstType_0::IntMult",
             "system.cpu.iq.issuedInstType_0::IntMult",
