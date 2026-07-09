@@ -54,6 +54,22 @@ impl Rem6O3TraceWindowRow {
             fu_latency_cycles: event.fu_latency_cycles(),
         }
     }
+
+    fn structural_pressure_key(self) -> (u64, u64, u64, u64, u64, u64) {
+        let active_structures = u64::from(self.rob_occupancy != 0)
+            + u64::from(self.lsq_occupancy != 0)
+            + u64::from(self.rename_map_entries != 0);
+        (
+            active_structures,
+            self.rob_occupancy
+                .saturating_add(self.lsq_occupancy)
+                .saturating_add(self.rename_map_entries),
+            self.rob_occupancy,
+            self.lsq_occupancy,
+            self.rename_map_entries,
+            self.sequence,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,6 +154,7 @@ pub(super) struct Rem6O3TraceTotals {
     event_window_max_rob_occupancy: Option<Rem6O3TraceWindowRow>,
     event_window_max_lsq_occupancy: Option<Rem6O3TraceWindowRow>,
     event_window_max_rename_map_entries: Option<Rem6O3TraceWindowRow>,
+    event_window_max_structural_pressure: Option<Rem6O3TraceWindowRow>,
     event_window_max_lsq_data_latency: Option<Rem6O3TraceWindowRow>,
     event_window_max_fu_latency: Option<Rem6O3TraceWindowRow>,
     event_lsq_operation_load_latency_ticks: u64,
@@ -415,6 +432,14 @@ impl Rem6O3TraceTotals {
             .is_none_or(|current| row.rename_map_entries >= current.rename_map_entries)
         {
             self.event_window_max_rename_map_entries = Some(row);
+        }
+        if self
+            .event_window_max_structural_pressure
+            .is_none_or(|current| {
+                row.structural_pressure_key() >= current.structural_pressure_key()
+            })
+        {
+            self.event_window_max_structural_pressure = Some(row);
         }
         if self
             .event_window_max_lsq_data_latency
@@ -1600,6 +1625,21 @@ impl Rem6O3TraceTotals {
                 lsq_data_latency_ticks:
                     "event_window.max_rename_map_entries.lsq_data_latency_ticks",
                 fu_latency_cycles: "event_window.max_rename_map_entries.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_structural_pressure,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_structural_pressure.sequence",
+                tick: "event_window.max_structural_pressure.tick",
+                pc: "event_window.max_structural_pressure.pc",
+                rob_occupancy: "event_window.max_structural_pressure.rob_occupancy",
+                lsq_occupancy: "event_window.max_structural_pressure.lsq_occupancy",
+                rename_map_entries: "event_window.max_structural_pressure.rename_map_entries",
+                lsq_data_latency_ticks:
+                    "event_window.max_structural_pressure.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_structural_pressure.fu_latency_cycles",
             },
         );
         push_event_window_row_stats(

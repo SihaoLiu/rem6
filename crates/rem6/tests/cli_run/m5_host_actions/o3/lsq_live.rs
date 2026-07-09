@@ -129,6 +129,56 @@ fn assert_o3_live_lsq_overlap(json: &Value) {
         Some("0x80000014"),
         "max LSQ occupancy should occur when the load overlaps the older resident store: {max_lsq_event}"
     );
+
+    let max_structural_event = o3_runtime
+        .pointer("/event_window/max_structural_pressure")
+        .unwrap_or_else(|| {
+            panic!(
+                "O3 runtime event window should expose max structural-pressure row: {o3_runtime}"
+            )
+        });
+    assert!(
+        max_structural_event
+            .pointer("/rob_occupancy")
+            .and_then(Value::as_u64)
+            .is_some_and(|occupancy| occupancy >= 1),
+        "structural-pressure row should be tied to real O3 ROB residency: {max_structural_event}"
+    );
+    assert!(
+        max_structural_event
+            .pointer("/lsq_occupancy")
+            .and_then(Value::as_u64)
+            .is_some_and(|occupancy| occupancy >= 1),
+        "structural-pressure row should include live LSQ residency: {max_structural_event}"
+    );
+    assert!(
+        max_structural_event
+            .pointer("/rename_map_entries")
+            .and_then(Value::as_u64)
+            .is_some_and(|entries| entries >= 3),
+        "structural-pressure row should include live rename-map state: {max_structural_event}"
+    );
+    assert_json_stat_at_least(
+        json,
+        "sim.cpu0.o3.event_window.max_structural_pressure.rob_occupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_at_least(
+        json,
+        "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.lsq_occupancy",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_at_least(
+        json,
+        "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.rename_map_entries",
+        "Count",
+        3,
+        "monotonic",
+    );
 }
 
 fn assert_cache_fabric_dram_lsq_resources(json: &Value) {

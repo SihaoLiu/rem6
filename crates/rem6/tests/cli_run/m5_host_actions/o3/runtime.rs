@@ -14,6 +14,34 @@ fn event_summary_hex_u64(value: &Value, pointer: &str) -> u64 {
         .unwrap_or_else(|error| panic!("invalid hex lane {pointer}={hex}: {error}"))
 }
 
+fn event_structural_pressure_key(event: &Value) -> (u64, u64, u64, u64, u64, u64) {
+    let rob_occupancy = event
+        .get("rob_occupancy")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let lsq_occupancy = event
+        .get("lsq_occupancy")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let rename_map_entries = event
+        .get("rename_map_entries")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let active_structures = u64::from(rob_occupancy != 0)
+        + u64::from(lsq_occupancy != 0)
+        + u64::from(rename_map_entries != 0);
+    (
+        active_structures,
+        rob_occupancy
+            .saturating_add(lsq_occupancy)
+            .saturating_add(rename_map_entries),
+        rob_occupancy,
+        lsq_occupancy,
+        rename_map_entries,
+        event.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+    )
+}
+
 fn assert_event_window_row_matches_event(row: &Value, event: &Value, label: &str) {
     for field in [
         "sequence",
@@ -104,6 +132,10 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 .unwrap_or(0)
         })
         .expect("O3 trace should include events");
+    let max_structural_pressure_event = events
+        .iter()
+        .max_by_key(|event| event_structural_pressure_key(event))
+        .expect("O3 trace should include events");
     assert_event_window_row_matches_event(
         runtime_window
             .pointer("/max_fu_latency")
@@ -117,6 +149,13 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             .expect("runtime event window max LSQ data latency row"),
         max_lsq_data_latency_event,
         "max_lsq_data_latency",
+    );
+    assert_event_window_row_matches_event(
+        runtime_window
+            .pointer("/max_structural_pressure")
+            .expect("runtime event window max structural-pressure row"),
+        max_structural_pressure_event,
+        "max_structural_pressure",
     );
     assert_eq!(
         runtime_window,
@@ -148,6 +187,7 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/event_window/span_ticks",
         "/event_window/max_rob_occupancy/tick",
         "/event_window/max_lsq_occupancy/sequence",
+        "/event_window/max_structural_pressure/rob_occupancy",
         "/rob/allocations",
         "/rob/commits",
         "/rob/max_occupancy",
@@ -205,6 +245,7 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/event_window/max_rob_occupancy/pc",
         "/event_window/max_lsq_occupancy/pc",
         "/event_window/max_rename_map_entries/pc",
+        "/event_window/max_structural_pressure/pc",
         "/event_window/max_fu_latency/pc",
         "/event_window/max_lsq_data_latency/pc",
     ] {
@@ -266,6 +307,11 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         (
             "/event_window/max_rename_map_entries/rename_map_entries",
             "sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.rename_map_entries",
+            "Count",
+        ),
+        (
+            "/event_window/max_structural_pressure/rename_map_entries",
+            "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.rename_map_entries",
             "Count",
         ),
         (
@@ -505,6 +551,10 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "/event_window/max_rename_map_entries/pc",
             "sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.pc",
         ),
+        (
+            "/event_window/max_structural_pressure/pc",
+            "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.pc",
+        ),
     ] {
         assert_json_stat(
             &json,
@@ -537,6 +587,11 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         (
             "/max_rename_map_entries/rename_map_entries",
             "sim.cpu0.o3.event_window.max_rename_map_entries.rename_map_entries",
+            "Count",
+        ),
+        (
+            "/max_structural_pressure/lsq_occupancy",
+            "sim.cpu0.o3.event_window.max_structural_pressure.lsq_occupancy",
             "Count",
         ),
         (
@@ -573,6 +628,10 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         (
             "/max_rename_map_entries/pc",
             "sim.cpu0.o3.event_window.max_rename_map_entries.pc",
+        ),
+        (
+            "/max_structural_pressure/pc",
+            "sim.cpu0.o3.event_window.max_structural_pressure.pc",
         ),
         (
             "/max_fu_latency/pc",
@@ -617,6 +676,11 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 "Count",
             ),
             (
+                "/max_structural_pressure/rob_occupancy",
+                "max_structural_pressure.rob_occupancy",
+                "Count",
+            ),
+            (
                 "/max_fu_latency/fu_latency_cycles",
                 "max_fu_latency.fu_latency_cycles",
                 "Cycle",
@@ -650,6 +714,7 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             ("/max_rob_occupancy/pc", "max_rob_occupancy.pc"),
             ("/max_lsq_occupancy/pc", "max_lsq_occupancy.pc"),
             ("/max_rename_map_entries/pc", "max_rename_map_entries.pc"),
+            ("/max_structural_pressure/pc", "max_structural_pressure.pc"),
             ("/max_fu_latency/pc", "max_fu_latency.pc"),
             ("/max_lsq_data_latency/pc", "max_lsq_data_latency.pc"),
         ] {

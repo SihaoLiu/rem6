@@ -312,6 +312,15 @@ fn emit_o3_runtime_window_stats(
         stats,
         cpu,
         family,
+        "max_structural_pressure",
+        events
+            .iter()
+            .max_by_key(|event| event.structural_pressure_key()),
+    )?;
+    emit_o3_runtime_window_row_stats(
+        stats,
+        cpu,
+        family,
         "max_lsq_data_latency",
         events
             .iter()

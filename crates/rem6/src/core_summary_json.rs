@@ -353,6 +353,11 @@ fn o3_runtime_event_window_json(summary: &Rem6CoreSummary) -> String {
     let max_rename_map_entries = o3_runtime_event_window_row_json(
         events.iter().max_by_key(|event| event.rename_map_entries()),
     );
+    let max_structural_pressure = o3_runtime_event_window_row_json(
+        events
+            .iter()
+            .max_by_key(|event| event.structural_pressure_key()),
+    );
     let max_lsq_data_latency = o3_runtime_event_window_row_json(
         events
             .iter()
@@ -362,7 +367,7 @@ fn o3_runtime_event_window_json(summary: &Rem6CoreSummary) -> String {
         events.iter().max_by_key(|event| event.fu_latency_cycles()),
     );
     format!(
-        "{{\"records\":{records},\"span_ticks\":{span_ticks},\"first\":{first},\"last\":{last},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"max_lsq_data_latency\":{max_lsq_data_latency},\"max_fu_latency\":{max_fu_latency}}}"
+        "{{\"records\":{records},\"span_ticks\":{span_ticks},\"first\":{first},\"last\":{last},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"max_structural_pressure\":{max_structural_pressure},\"max_lsq_data_latency\":{max_lsq_data_latency},\"max_fu_latency\":{max_fu_latency}}}"
     )
 }
 

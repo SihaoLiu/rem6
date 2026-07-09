@@ -435,6 +435,22 @@ impl O3RuntimeTraceRecord {
         self.rename_map_entries
     }
 
+    pub fn structural_pressure_key(self) -> (u64, u64, u64, u64, u64, u64) {
+        let active_structures = u64::from(self.rob_occupancy != 0)
+            + u64::from(self.lsq_occupancy != 0)
+            + u64::from(self.rename_map_entries != 0);
+        (
+            active_structures,
+            self.rob_occupancy
+                .saturating_add(self.lsq_occupancy)
+                .saturating_add(self.rename_map_entries),
+            self.rob_occupancy,
+            self.lsq_occupancy,
+            self.rename_map_entries,
+            self.sequence,
+        )
+    }
+
     pub const fn store_load_forwarding_candidate(self) -> bool {
         self.store_load_forwarding_candidate
     }
