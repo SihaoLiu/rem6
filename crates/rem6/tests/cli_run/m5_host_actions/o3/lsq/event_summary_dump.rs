@@ -1,0 +1,286 @@
+use super::*;
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_lsq_matrix_rows() {
+    let path = detailed_o3_lsq_matrix_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-event-summary-lsq-matrix-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:16",
+            "--dump-memory",
+            "0x80000090:16",
+            "--dump-memory",
+            "0x800000a0:16",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("04000000000000000900000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some("00000000000000000300000000000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/2/hex").and_then(Value::as_str),
+        Some("88776655443322110100000000000000")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_load_bytes",
+            "Byte",
+            24,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_store_bytes",
+            "Byte",
+            40,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_store_conditional_failures",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store",
+            "Count",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load_reserved",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.atomic",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_ordering.acquire",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_ordering.release",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_ordering.acquire_release",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.samples",
+            "Count",
+            7,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.ticks",
+            "Tick",
+            14,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.max_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.min_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.avg_ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load.load_bytes",
+            "Byte",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store.store_bytes",
+            "Byte",
+            24,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load_reserved.load_bytes",
+            "Byte",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional.store_bytes",
+            "Byte",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.atomic.load_bytes",
+            "Byte",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.atomic.store_bytes",
+            "Byte",
+            8,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load.latency.samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store.latency.ticks",
+            "Tick",
+            6,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.atomic.latency.avg_ticks",
+            "Tick",
+            2,
+        ),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", unit, value, "resettable");
+    }
+
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load_reserved",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_ordering.acquire_release",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_store_conditional_failures",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.samples",
+            "Count",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.min_ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_data_latency.avg_ticks",
+            "Tick",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store.latency.samples",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store.latency.ticks",
+            "Tick",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional.latency.ticks",
+            "Tick",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional.store_conditional_failures",
+            "Count",
+            1,
+        ),
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", unit, value, "resettable");
+    }
+}

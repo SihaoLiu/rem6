@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "lsq/event_summary_dump.rs"]
+mod event_summary_dump;
 #[path = "lsq/forwarding.rs"]
 mod forwarding;
 #[path = "lsq/runtime.rs"]

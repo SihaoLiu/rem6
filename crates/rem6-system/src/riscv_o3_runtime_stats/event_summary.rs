@@ -1,9 +1,51 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::O3RuntimeTraceRecord;
+use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
-use super::helpers::register_o3_counter;
+use super::groups::RiscvO3RuntimeLsqLatencyStats;
+use super::helpers::{
+    register_o3_counter, register_o3_lsq_operation_counters,
+    register_o3_lsq_operation_nested_counters, register_o3_lsq_operation_nested_latency_counters,
+    register_o3_lsq_ordering_counters, set_o3_lsq_latency_counters,
+};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct LsqLatencySummary {
+    samples: u64,
+    ticks: u64,
+    max_ticks: u64,
+    min_ticks: u64,
+}
+
+impl LsqLatencySummary {
+    fn observe(&mut self, ticks: u64) {
+        if self.samples == 0 {
+            self.min_ticks = ticks;
+        } else {
+            self.min_ticks = self.min_ticks.min(ticks);
+        }
+        self.samples = self.samples.saturating_add(1);
+        self.ticks = self.ticks.saturating_add(ticks);
+        self.max_ticks = self.max_ticks.max(ticks);
+    }
+
+    fn min_ticks(self) -> u64 {
+        if self.samples == 0 {
+            0
+        } else {
+            self.min_ticks
+        }
+    }
+
+    fn avg_ticks(self) -> u64 {
+        if self.samples == 0 {
+            0
+        } else {
+            self.ticks / self.samples
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct RiscvO3RuntimeEventSummarySnapshot {
@@ -63,6 +105,124 @@ impl RiscvO3RuntimeEventSummarySnapshot {
             .count() as u64
     }
 
+    fn lsq_load_bytes(&self) -> u64 {
+        self.sum(O3RuntimeTraceRecord::lsq_load_bytes)
+    }
+
+    fn lsq_store_bytes(&self) -> u64 {
+        self.sum(O3RuntimeTraceRecord::lsq_store_bytes)
+    }
+
+    fn lsq_store_conditional_failures(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::lsq_store_conditional_failed)
+    }
+
+    fn store_load_forwarding_candidates(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::store_load_forwarding_candidate)
+    }
+
+    fn store_load_forwarding_matches(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::store_load_forwarding_match)
+    }
+
+    fn store_load_forwarding_suppressed(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::store_load_forwarding_suppressed)
+    }
+
+    fn store_load_forwarding_address_mismatches(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::store_load_forwarding_address_mismatch)
+    }
+
+    fn store_load_forwarding_byte_mismatches(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::store_load_forwarding_byte_mismatch)
+    }
+
+    fn lsq_operation_count(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| event.lsq_operation() == operation)
+    }
+
+    fn lsq_operation_load_bytes(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.events
+            .values()
+            .copied()
+            .filter(|event| event.lsq_operation() == operation)
+            .map(O3RuntimeTraceRecord::lsq_load_bytes)
+            .sum()
+    }
+
+    fn lsq_operation_store_bytes(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.events
+            .values()
+            .copied()
+            .filter(|event| event.lsq_operation() == operation)
+            .map(O3RuntimeTraceRecord::lsq_store_bytes)
+            .sum()
+    }
+
+    fn lsq_operation_store_conditional_failures(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.lsq_store_conditional_failed()
+        })
+    }
+
+    fn lsq_operation_forwarding_candidates(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.store_load_forwarding_candidate()
+        })
+    }
+
+    fn lsq_operation_forwarding_matches(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.store_load_forwarding_match()
+        })
+    }
+
+    fn lsq_operation_forwarding_suppressed(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.store_load_forwarding_suppressed()
+        })
+    }
+
+    fn lsq_operation_forwarding_address_mismatches(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.store_load_forwarding_address_mismatch()
+        })
+    }
+
+    fn lsq_operation_forwarding_byte_mismatches(&self, operation: O3RuntimeLsqOperation) -> u64 {
+        self.count(|event| {
+            event.lsq_operation() == operation && event.store_load_forwarding_byte_mismatch()
+        })
+    }
+
+    fn lsq_ordering_count(&self, ordering: O3RuntimeLsqOrdering) -> u64 {
+        self.count(|event| event.lsq_ordering() == ordering)
+    }
+
+    fn lsq_data_latency(&self) -> LsqLatencySummary {
+        self.lsq_latency(|event| event.lsq_operation() != O3RuntimeLsqOperation::None)
+    }
+
+    fn lsq_operation_latency(&self, operation: O3RuntimeLsqOperation) -> LsqLatencySummary {
+        self.lsq_latency(|event| event.lsq_operation() == operation)
+    }
+
+    fn lsq_latency<F>(&self, matches: F) -> LsqLatencySummary
+    where
+        F: Fn(O3RuntimeTraceRecord) -> bool,
+    {
+        let mut latency = LsqLatencySummary::default();
+        for event in self
+            .events
+            .values()
+            .copied()
+            .filter(|event| matches(*event))
+        {
+            latency.observe(event.lsq_data_latency_ticks());
+        }
+        latency
+    }
+
     fn count<F>(&self, matches: F) -> u64
     where
         F: Fn(O3RuntimeTraceRecord) -> bool,
@@ -92,6 +252,26 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     branch_repair_direction_only_mismatches: StatId,
     iew_branch_mispredicts: StatId,
     fu_latency_instructions: StatId,
+    lsq_load_bytes: StatId,
+    lsq_store_bytes: StatId,
+    lsq_store_conditional_failures: StatId,
+    store_load_forwarding_candidates: StatId,
+    store_load_forwarding_matches: StatId,
+    store_load_forwarding_suppressed: StatId,
+    store_load_forwarding_address_mismatches: StatId,
+    store_load_forwarding_byte_mismatches: StatId,
+    lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
+    lsq_operation_counts: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_load_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_store_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_store_conditional_failures: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_suppressed: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_address_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_forwarding_byte_mismatches: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
+    lsq_ordering_counts: [StatId; O3RuntimeLsqOrdering::COUNT],
 }
 
 impl RiscvO3RuntimeEventSummaryStats {
@@ -126,6 +306,102 @@ impl RiscvO3RuntimeEventSummaryStats {
                 "fu_latency.instructions",
                 "Count",
             )?,
+            lsq_load_bytes: register_o3_counter(registry, &prefix, "lsq_load_bytes", "Byte")?,
+            lsq_store_bytes: register_o3_counter(registry, &prefix, "lsq_store_bytes", "Byte")?,
+            lsq_store_conditional_failures: register_o3_counter(
+                registry,
+                &prefix,
+                "lsq_store_conditional_failures",
+                "Count",
+            )?,
+            store_load_forwarding_candidates: register_o3_counter(
+                registry,
+                &prefix,
+                "store_load_forwarding_candidates",
+                "Count",
+            )?,
+            store_load_forwarding_matches: register_o3_counter(
+                registry,
+                &prefix,
+                "store_load_forwarding_matches",
+                "Count",
+            )?,
+            store_load_forwarding_suppressed: register_o3_counter(
+                registry,
+                &prefix,
+                "store_load_forwarding_suppressed",
+                "Count",
+            )?,
+            store_load_forwarding_address_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "store_load_forwarding_address_mismatches",
+                "Count",
+            )?,
+            store_load_forwarding_byte_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "store_load_forwarding_byte_mismatches",
+                "Count",
+            )?,
+            lsq_data_latency: register_event_summary_lsq_latency_counters(
+                registry,
+                &prefix,
+                "lsq_data_latency",
+            )?,
+            lsq_operation_counts: register_o3_lsq_operation_counters(registry, &prefix)?,
+            lsq_operation_load_bytes: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "load_bytes",
+                "Byte",
+            )?,
+            lsq_operation_store_bytes: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "store_bytes",
+                "Byte",
+            )?,
+            lsq_operation_store_conditional_failures: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "store_conditional_failures",
+                "Count",
+            )?,
+            lsq_operation_forwarding_candidates: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_candidates",
+                "Count",
+            )?,
+            lsq_operation_forwarding_matches: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_matches",
+                "Count",
+            )?,
+            lsq_operation_forwarding_suppressed: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_suppressed",
+                "Count",
+            )?,
+            lsq_operation_forwarding_address_mismatches: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_address_mismatches",
+                "Count",
+            )?,
+            lsq_operation_forwarding_byte_mismatches: register_o3_lsq_operation_nested_counters(
+                registry,
+                &prefix,
+                "forwarding_byte_mismatches",
+                "Count",
+            )?,
+            lsq_operation_latency: register_o3_lsq_operation_nested_latency_counters(
+                registry, &prefix,
+            )?,
+            lsq_ordering_counts: register_o3_lsq_ordering_counters(registry, &prefix)?,
         })
     }
 
@@ -150,11 +426,117 @@ impl RiscvO3RuntimeEventSummaryStats {
                 self.fu_latency_instructions,
                 snapshot.fu_latency_instructions(),
             ),
+            (self.lsq_load_bytes, snapshot.lsq_load_bytes()),
+            (self.lsq_store_bytes, snapshot.lsq_store_bytes()),
+            (
+                self.lsq_store_conditional_failures,
+                snapshot.lsq_store_conditional_failures(),
+            ),
+            (
+                self.store_load_forwarding_candidates,
+                snapshot.store_load_forwarding_candidates(),
+            ),
+            (
+                self.store_load_forwarding_matches,
+                snapshot.store_load_forwarding_matches(),
+            ),
+            (
+                self.store_load_forwarding_suppressed,
+                snapshot.store_load_forwarding_suppressed(),
+            ),
+            (
+                self.store_load_forwarding_address_mismatches,
+                snapshot.store_load_forwarding_address_mismatches(),
+            ),
+            (
+                self.store_load_forwarding_byte_mismatches,
+                snapshot.store_load_forwarding_byte_mismatches(),
+            ),
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        set_lsq_latency_summary(registry, self.lsq_data_latency, snapshot.lsq_data_latency())?;
+        for operation in O3RuntimeLsqOperation::TRACKED {
+            registry.set_resettable_counter(
+                self.lsq_operation_counts[operation.index()],
+                snapshot.lsq_operation_count(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_load_bytes[operation.index()],
+                snapshot.lsq_operation_load_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_store_bytes[operation.index()],
+                snapshot.lsq_operation_store_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_store_conditional_failures[operation.index()],
+                snapshot.lsq_operation_store_conditional_failures(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_candidates[operation.index()],
+                snapshot.lsq_operation_forwarding_candidates(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_matches[operation.index()],
+                snapshot.lsq_operation_forwarding_matches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_suppressed[operation.index()],
+                snapshot.lsq_operation_forwarding_suppressed(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_address_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_address_mismatches(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_forwarding_byte_mismatches[operation.index()],
+                snapshot.lsq_operation_forwarding_byte_mismatches(operation),
+            )?;
+            set_lsq_latency_summary(
+                registry,
+                self.lsq_operation_latency[operation.index()],
+                snapshot.lsq_operation_latency(operation),
+            )?;
+        }
+        for ordering in O3RuntimeLsqOrdering::TRACKED {
+            registry.set_resettable_counter(
+                self.lsq_ordering_counts[ordering.index()],
+                snapshot.lsq_ordering_count(ordering),
+            )?;
+        }
         Ok(())
     }
+}
+
+fn register_event_summary_lsq_latency_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    stem: &str,
+) -> Result<RiscvO3RuntimeLsqLatencyStats, StatsError> {
+    Ok(RiscvO3RuntimeLsqLatencyStats {
+        samples: register_o3_counter(registry, prefix, &format!("{stem}.samples"), "Count")?,
+        ticks: register_o3_counter(registry, prefix, &format!("{stem}.ticks"), "Tick")?,
+        max_ticks: register_o3_counter(registry, prefix, &format!("{stem}.max_ticks"), "Tick")?,
+        min_ticks: register_o3_counter(registry, prefix, &format!("{stem}.min_ticks"), "Tick")?,
+        avg_ticks: register_o3_counter(registry, prefix, &format!("{stem}.avg_ticks"), "Tick")?,
+    })
+}
+
+fn set_lsq_latency_summary(
+    registry: &mut StatsRegistry,
+    stats: RiscvO3RuntimeLsqLatencyStats,
+    summary: LsqLatencySummary,
+) -> Result<(), StatsError> {
+    set_o3_lsq_latency_counters(
+        registry,
+        stats,
+        summary.samples,
+        summary.ticks,
+        summary.max_ticks,
+        summary.min_ticks(),
+        summary.avg_ticks(),
+    )
 }
 
 fn branch_targetless_mismatch(event: &O3RuntimeTraceRecord) -> bool {
