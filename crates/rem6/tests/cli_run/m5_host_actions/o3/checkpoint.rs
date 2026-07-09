@@ -68,6 +68,32 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
         Some(false),
         "post-detailed O3 runtime checkpoint chunk should decode cleanly: {after_detailed_chunk}"
     );
+    let checkpoint_cpu0_component_chunks = host_actions
+        .pointer("/checkpoints")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoints: {host_actions}"))
+        .iter()
+        .map(|checkpoint| {
+            checkpoint
+                .pointer("/components")
+                .and_then(Value::as_array)
+                .and_then(|components| {
+                    components.iter().find(|component| {
+                        component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
+                    })
+                })
+                .and_then(|component| component.pointer("/chunk_count"))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing cpu0 component chunk count: {checkpoint}"))
+        })
+        .sum::<u64>();
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.checkpoint.component.cpu0.chunks",
+        "Count",
+        checkpoint_cpu0_component_chunks,
+        "monotonic",
+    );
     for (field, expected) in [
         ("snapshot_rob_entries", 0),
         ("snapshot_lsq_entries", 0),
@@ -254,6 +280,8 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "70:o3-baseline",
             "--host-checkpoint",
             "113:o3-replayed",
+            "--debug-flags",
+            "HostAction",
         ])
         .output()
         .unwrap();
@@ -483,6 +511,47 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
                 }),
             "monotonic",
         );
+    }
+    let restored_o3_runtime = restored_checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|component| {
+                component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
+            })
+        })
+        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
+            })
+        })
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .unwrap_or_else(|| {
+            panic!("missing decoded restored O3 runtime chunk: {restored_checkpoint}")
+        });
+    for (field, unit) in [
+        ("stats_lsq_operation_load", "Count"),
+        ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_lsq_data_latency_max_ticks", "Tick"),
+        ("stats_lsq_data_latency_min_ticks", "Tick"),
+    ] {
+        let expected = restored_o3_runtime
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("missing restored O3 runtime field {field}: {restored_o3_runtime}")
+            });
+        for stat_path in [
+            format!(
+                "sim.debug.host_action_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            format!(
+                "sim.debug.host_action_trace.checkpoint_restore.target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+        ] {
+            assert_json_stat(&json, &stat_path, unit, expected, "monotonic");
+        }
     }
 
     let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");

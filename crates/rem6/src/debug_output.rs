@@ -35,7 +35,7 @@ use fabric::{
     Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
 use host_action::{
-    host_action_trace_checkpoint_restore_authority_stats, host_action_trace_checkpoint_stats,
+    host_action_trace_checkpoint_restore_stats, host_action_trace_checkpoint_stats,
     host_action_trace_execution_mode_switch_stats, host_action_trace_records,
     Rem6HostActionTraceRecord, Rem6HostActionTraceStat,
 };
@@ -623,7 +623,7 @@ impl Rem6DebugSummary {
     ) -> Vec<Rem6HostActionTraceStat> {
         let mut stats =
             host_action_trace_checkpoint_stats(&self.host_action_checkpoints, &stat_path_segment);
-        stats.extend(host_action_trace_checkpoint_restore_authority_stats(
+        stats.extend(host_action_trace_checkpoint_restore_stats(
             &self.host_action_checkpoint_restores,
             &stat_path_segment,
         ));
