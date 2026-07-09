@@ -47,7 +47,7 @@ fn chunk_to_json(chunk: &Rem6HostCheckpointChunkSummary) -> String {
 
 fn o3_runtime_to_json(summary: &Rem6HostO3RuntimeCheckpointChunkSummary) -> String {
     format!(
-        "{{\"decode_error\":{},\"snapshot_rob_entries\":{},\"snapshot_lsq_entries\":{},\"snapshot_rename_map_entries\":{},\"stats_max_rob_occupancy\":{},\"stats_max_lsq_occupancy\":{},\"stats_rename_map_entries\":{}}}",
+        "{{\"decode_error\":{},\"snapshot_rob_entries\":{},\"snapshot_lsq_entries\":{},\"snapshot_rename_map_entries\":{},\"stats_max_rob_occupancy\":{},\"stats_max_lsq_occupancy\":{},\"stats_rename_map_entries\":{},\"stats_lsq_operation_load\":{},\"stats_lsq_operation_store\":{},\"stats_lsq_data_latency_samples\":{},\"stats_lsq_data_latency_ticks\":{},\"stats_lsq_data_latency_max_ticks\":{},\"stats_lsq_data_latency_min_ticks\":{},\"stats_lsq_data_latency_avg_ticks\":{},\"stats_lsq_operation_load_latency_samples\":{},\"stats_lsq_operation_load_latency_ticks\":{},\"stats_lsq_operation_store_latency_samples\":{},\"stats_lsq_operation_store_latency_ticks\":{}}}",
         summary.decode_error,
         optional_u64_json(summary.snapshot_rob_entries),
         optional_u64_json(summary.snapshot_lsq_entries),
@@ -55,6 +55,17 @@ fn o3_runtime_to_json(summary: &Rem6HostO3RuntimeCheckpointChunkSummary) -> Stri
         optional_u64_json(summary.stats_max_rob_occupancy),
         optional_u64_json(summary.stats_max_lsq_occupancy),
         optional_u64_json(summary.stats_rename_map_entries),
+        optional_u64_json(summary.stats_lsq_operation_load),
+        optional_u64_json(summary.stats_lsq_operation_store),
+        optional_u64_json(summary.stats_lsq_data_latency_samples),
+        optional_u64_json(summary.stats_lsq_data_latency_ticks),
+        optional_u64_json(summary.stats_lsq_data_latency_max_ticks),
+        optional_u64_json(summary.stats_lsq_data_latency_min_ticks),
+        optional_u64_json(summary.stats_lsq_data_latency_avg_ticks),
+        optional_u64_json(summary.stats_lsq_operation_load_latency_samples),
+        optional_u64_json(summary.stats_lsq_operation_load_latency_ticks),
+        optional_u64_json(summary.stats_lsq_operation_store_latency_samples),
+        optional_u64_json(summary.stats_lsq_operation_store_latency_ticks),
     )
 }
 

@@ -82,6 +82,58 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
             "post-detailed O3 runtime checkpoint should expose decoded {field}: {after_detailed_chunk}"
         );
     }
+    for (field, stat_path) in [
+        ("stats_lsq_operation_load", "sim.cpu0.o3.lsq_operation.load"),
+        (
+            "stats_lsq_operation_store",
+            "sim.cpu0.o3.lsq_operation.store",
+        ),
+        (
+            "stats_lsq_data_latency_samples",
+            "sim.cpu0.o3.lsq_data_latency_samples",
+        ),
+        (
+            "stats_lsq_data_latency_ticks",
+            "sim.cpu0.o3.lsq_data_latency_ticks",
+        ),
+        (
+            "stats_lsq_data_latency_max_ticks",
+            "sim.cpu0.o3.lsq_data_latency_max_ticks",
+        ),
+        (
+            "stats_lsq_data_latency_min_ticks",
+            "sim.cpu0.o3.lsq_data_latency_min_ticks",
+        ),
+        (
+            "stats_lsq_data_latency_avg_ticks",
+            "sim.cpu0.o3.lsq_data_latency_avg_ticks",
+        ),
+        (
+            "stats_lsq_operation_load_latency_samples",
+            "sim.cpu0.o3.lsq_operation.load.latency.samples",
+        ),
+        (
+            "stats_lsq_operation_load_latency_ticks",
+            "sim.cpu0.o3.lsq_operation.load.latency.ticks",
+        ),
+        (
+            "stats_lsq_operation_store_latency_samples",
+            "sim.cpu0.o3.lsq_operation.store.latency.samples",
+        ),
+        (
+            "stats_lsq_operation_store_latency_ticks",
+            "sim.cpu0.o3.lsq_operation.store.latency.ticks",
+        ),
+    ] {
+        let expected = json_stat_u64(&json, stat_path);
+        assert_eq!(
+            after_detailed_chunk
+                .pointer(&format!("/o3_runtime/{field}"))
+                .and_then(Value::as_u64),
+            Some(expected),
+            "post-detailed O3 runtime checkpoint should expose decoded {field} matching {stat_path}: {after_detailed_chunk}"
+        );
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.max_rob_occupancy",

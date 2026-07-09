@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchTargetKind, O3RuntimeCheckpointPayload};
+use rem6_cpu::{BranchTargetKind, O3RuntimeCheckpointPayload, O3RuntimeLsqOperation};
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
@@ -1301,6 +1301,17 @@ pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) stats_max_rob_occupancy: Option<u64>,
     pub(crate) stats_max_lsq_occupancy: Option<u64>,
     pub(crate) stats_rename_map_entries: Option<u64>,
+    pub(crate) stats_lsq_operation_load: Option<u64>,
+    pub(crate) stats_lsq_operation_store: Option<u64>,
+    pub(crate) stats_lsq_data_latency_samples: Option<u64>,
+    pub(crate) stats_lsq_data_latency_ticks: Option<u64>,
+    pub(crate) stats_lsq_data_latency_max_ticks: Option<u64>,
+    pub(crate) stats_lsq_data_latency_min_ticks: Option<u64>,
+    pub(crate) stats_lsq_data_latency_avg_ticks: Option<u64>,
+    pub(crate) stats_lsq_operation_load_latency_samples: Option<u64>,
+    pub(crate) stats_lsq_operation_load_latency_ticks: Option<u64>,
+    pub(crate) stats_lsq_operation_store_latency_samples: Option<u64>,
+    pub(crate) stats_lsq_operation_store_latency_ticks: Option<u64>,
 }
 
 impl Rem6HostO3RuntimeCheckpointChunkSummary {
@@ -1313,6 +1324,17 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
             stats_max_rob_occupancy: None,
             stats_max_lsq_occupancy: None,
             stats_rename_map_entries: None,
+            stats_lsq_operation_load: None,
+            stats_lsq_operation_store: None,
+            stats_lsq_data_latency_samples: None,
+            stats_lsq_data_latency_ticks: None,
+            stats_lsq_data_latency_max_ticks: None,
+            stats_lsq_data_latency_min_ticks: None,
+            stats_lsq_data_latency_avg_ticks: None,
+            stats_lsq_operation_load_latency_samples: None,
+            stats_lsq_operation_load_latency_ticks: None,
+            stats_lsq_operation_store_latency_samples: None,
+            stats_lsq_operation_store_latency_ticks: None,
         }
     }
 }
@@ -1343,6 +1365,25 @@ fn decode_o3_runtime_checkpoint_chunk(
         stats_max_rob_occupancy: Some(stats.max_rob_occupancy()),
         stats_max_lsq_occupancy: Some(stats.max_lsq_occupancy()),
         stats_rename_map_entries: Some(stats.rename_map_entries()),
+        stats_lsq_operation_load: Some(stats.lsq_operation_count(O3RuntimeLsqOperation::Load)),
+        stats_lsq_operation_store: Some(stats.lsq_operation_count(O3RuntimeLsqOperation::Store)),
+        stats_lsq_data_latency_samples: Some(stats.lsq_data_latency_samples()),
+        stats_lsq_data_latency_ticks: Some(stats.lsq_data_latency_ticks()),
+        stats_lsq_data_latency_max_ticks: Some(stats.lsq_data_latency_max_ticks()),
+        stats_lsq_data_latency_min_ticks: Some(stats.lsq_data_latency_min_ticks()),
+        stats_lsq_data_latency_avg_ticks: Some(stats.lsq_data_latency_avg_ticks()),
+        stats_lsq_operation_load_latency_samples: Some(
+            stats.lsq_operation_latency_samples(O3RuntimeLsqOperation::Load),
+        ),
+        stats_lsq_operation_load_latency_ticks: Some(
+            stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::Load),
+        ),
+        stats_lsq_operation_store_latency_samples: Some(
+            stats.lsq_operation_latency_samples(O3RuntimeLsqOperation::Store),
+        ),
+        stats_lsq_operation_store_latency_ticks: Some(
+            stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::Store),
+        ),
     })
 }
 
