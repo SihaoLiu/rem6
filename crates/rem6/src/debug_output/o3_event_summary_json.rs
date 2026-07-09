@@ -267,6 +267,15 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let system_events = events.iter().filter(|event| event.system_event()).count() as u64;
     let rob_allocations = events.iter().filter(|event| event.rob_allocated()).count() as u64;
     let rob_commits = events.iter().filter(|event| event.rob_committed()).count() as u64;
+    let rob_commit_blocked_events = events
+        .iter()
+        .filter(|event| event.rob_commit_blocked())
+        .count() as u64;
+    let rob_max_commits_at_tick = events
+        .iter()
+        .map(|event| event.rob_commits_at_tick())
+        .max()
+        .unwrap_or(0);
     let rename_writes = events
         .iter()
         .map(|event| event.rename_writes())
@@ -322,7 +331,7 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let iew = event_summary_iew_json(events, span_ticks);
     let commit = event_summary_commit_json(events);
     let rob = format!(
-        "{{\"allocations\":{rob_allocations},\"commits\":{rob_commits},\"max_occupancy\":{max_rob_occupancy}}}"
+        "{{\"allocations\":{rob_allocations},\"commits\":{rob_commits},\"max_occupancy\":{max_rob_occupancy},\"commit_blocked_events\":{rob_commit_blocked_events},\"max_commits_at_tick\":{rob_max_commits_at_tick}}}"
     );
     let rename = format!("{{\"writes\":{rename_writes},\"map_entries\":{max_rename_map_entries}}}");
 

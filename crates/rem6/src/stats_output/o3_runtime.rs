@@ -564,6 +564,15 @@ fn emit_o3_runtime_event_summary_stats(
         .map(|event| event.rob_occupancy())
         .max()
         .unwrap_or(0);
+    let rob_commit_blocked_events = events
+        .iter()
+        .filter(|event| event.rob_commit_blocked())
+        .count() as u64;
+    let rob_max_commits_at_tick = events
+        .iter()
+        .map(|event| event.rob_commits_at_tick())
+        .max()
+        .unwrap_or(0);
     let max_lsq_occupancy = events
         .iter()
         .map(|event| event.lsq_occupancy())
@@ -607,6 +616,8 @@ fn emit_o3_runtime_event_summary_stats(
         ("rob.allocations", rob_allocations),
         ("rob.commits", rob_commits),
         ("rob.max_occupancy", max_rob_occupancy),
+        ("rob.commit_blocked_events", rob_commit_blocked_events),
+        ("rob.max_commits_at_tick", rob_max_commits_at_tick),
         ("rename.writes", rename_writes),
         ("rename.map_entries", max_rename_map_entries),
         ("rob_allocations", rob_allocations),

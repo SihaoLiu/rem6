@@ -59,6 +59,20 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         instructions,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.event_summary.rob.commit_blocked_events",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat_at_least(
+        &json,
+        "sim.cpu0.o3.event_summary.rob.max_commits_at_tick",
+        "Count",
+        2,
+        "monotonic",
+    );
     assert_json_stat_at_least(
         &json,
         "sim.cpu0.o3.max_rob_occupancy",
@@ -104,6 +118,20 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
             .and_then(Value::as_u64)
             .is_some_and(|occupancy| occupancy >= 2),
         "O3 runtime JSON should expose live ROB overlap: {o3_runtime}"
+    );
+    assert_eq!(
+        o3_runtime
+            .pointer("/event_summary/rob/commit_blocked_events")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 runtime event summary should count exactly the resident multiply as commit-blocked: {o3_runtime}"
+    );
+    assert!(
+        o3_runtime
+            .pointer("/event_summary/rob/max_commits_at_tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|commits| commits >= 2),
+        "O3 runtime event summary should expose the multi-commit drain at the writeback boundary: {o3_runtime}"
     );
     let max_rob_event = o3_runtime
         .pointer("/event_window/max_rob_occupancy")
