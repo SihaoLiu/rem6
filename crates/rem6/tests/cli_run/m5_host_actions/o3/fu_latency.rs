@@ -72,6 +72,21 @@ fn rem6_run_m5_dump_reset_stats_snapshots_nested_o3_fu_latency_classes() {
             3,
         ),
         (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.max_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.min_cycles",
+            "Cycle",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.avg_cycles",
+            "Cycle",
+            1,
+        ),
+        (
             "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.vector_float_misc.instructions",
             "Count",
             2,
@@ -84,6 +99,11 @@ fn rem6_run_m5_dump_reset_stats_snapshots_nested_o3_fu_latency_classes() {
         (
             "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.instructions",
             "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.max_cycles",
+            "Cycle",
             0,
         ),
         (

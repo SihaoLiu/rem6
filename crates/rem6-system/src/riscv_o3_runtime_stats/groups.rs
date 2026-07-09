@@ -7,6 +7,9 @@ use super::helpers::{o3_branch_mispredicts, register_o3_counter};
 pub(super) struct RiscvO3RuntimeFuLatencyClassStats {
     pub(super) instructions: StatId,
     pub(super) latency_cycles: StatId,
+    pub(super) latency_max_cycles: StatId,
+    pub(super) latency_min_cycles: StatId,
+    pub(super) latency_avg_cycles: StatId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

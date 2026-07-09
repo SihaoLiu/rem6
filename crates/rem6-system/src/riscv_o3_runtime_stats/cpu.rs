@@ -1198,6 +1198,7 @@ impl RiscvO3RuntimeCpuStats {
                 }
             }
         }
+        self.set_fu_latency_class_extrema_snapshot(registry, current)?;
         Ok(())
     }
 
@@ -1578,6 +1579,7 @@ impl RiscvO3RuntimeCpuStats {
                 registry.set_resettable_counter(stat, value)?;
             }
         }
+        self.set_fu_latency_class_extrema_snapshot(registry, snapshot)?;
         for class in O3RuntimeFuLatencyClass::ALL {
             registry.set_resettable_counter(
                 self.iq_issued_inst_type_fu_classes[class.index()],
@@ -1595,6 +1597,46 @@ impl RiscvO3RuntimeCpuStats {
                 self.commit_committed_inst_type_fu_aliases[class.index()],
                 snapshot.fu_latency_class_instructions(class),
             )?;
+        }
+        Ok(())
+    }
+
+    fn set_fu_latency_class_extrema_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for class in O3RuntimeFuLatencyClass::ALL {
+            let class_stats = self.fu_latency_classes[class.index()];
+            let nested_class_stats = self.nested_fu_latency_classes[class.index()];
+            for (stat, value) in [
+                (
+                    class_stats.latency_max_cycles,
+                    snapshot.fu_latency_class_max_cycles(class),
+                ),
+                (
+                    class_stats.latency_min_cycles,
+                    snapshot.fu_latency_class_min_cycles(class),
+                ),
+                (
+                    class_stats.latency_avg_cycles,
+                    snapshot.fu_latency_class_avg_cycles(class),
+                ),
+                (
+                    nested_class_stats.latency_max_cycles,
+                    snapshot.fu_latency_class_max_cycles(class),
+                ),
+                (
+                    nested_class_stats.latency_min_cycles,
+                    snapshot.fu_latency_class_min_cycles(class),
+                ),
+                (
+                    nested_class_stats.latency_avg_cycles,
+                    snapshot.fu_latency_class_avg_cycles(class),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
         }
         Ok(())
     }
