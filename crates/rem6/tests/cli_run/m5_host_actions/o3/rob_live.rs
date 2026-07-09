@@ -122,4 +122,45 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         Some("0x80000010"),
         "max ROB occupancy should occur when younger independent integer work overlaps the resident multiply: {max_rob_event}"
     );
+    let events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("O3 debug trace should expose per-event timing rows: {json}"));
+    let multiply = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        .unwrap_or_else(|| panic!("missing resident multiply event: {events:?}"));
+    let younger_add = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
+        .unwrap_or_else(|| panic!("missing younger independent add event: {events:?}"));
+    let multiply_issue = json_u64_field(multiply, "/issue_tick");
+    let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
+    let multiply_commit = json_u64_field(multiply, "/commit_tick");
+    let younger_issue = json_u64_field(younger_add, "/issue_tick");
+    assert!(
+        multiply_writeback > multiply_issue,
+        "multiply should occupy the FU after issue: {multiply}"
+    );
+    assert!(
+        younger_issue <= multiply_writeback,
+        "younger independent work should be visible no later than the older multiply writeback boundary: multiply={multiply}, younger={younger_add}"
+    );
+    assert!(
+        younger_add
+            .pointer("/rob_occupancy")
+            .and_then(Value::as_u64)
+            .is_some_and(|occupancy| occupancy >= 2),
+        "younger event should carry live ROB overlap at the writeback boundary: {younger_add}"
+    );
+    assert!(
+        multiply_commit >= multiply_writeback,
+        "multiply commit timing should not precede writeback: {multiply}"
+    );
+}
+
+fn json_u64_field(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing u64 field {pointer}: {json}"))
 }

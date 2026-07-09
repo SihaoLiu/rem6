@@ -354,6 +354,21 @@ impl O3RuntimeTraceRecord {
         self.tick
     }
 
+    pub const fn issue_tick(self) -> u64 {
+        self.tick
+    }
+
+    pub fn writeback_tick(self) -> u64 {
+        self.tick
+            .saturating_add(self.fu_latency_cycles)
+            .max(self.tick.saturating_add(self.lsq_data_latency_ticks))
+            .max(self.lsq_data_response_tick)
+    }
+
+    pub fn commit_tick(self) -> u64 {
+        self.writeback_tick()
+    }
+
     pub const fn pc(self) -> Address {
         self.pc
     }
