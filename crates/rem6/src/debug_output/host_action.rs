@@ -4,9 +4,10 @@ use crate::formatting::json_escape;
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
-    Rem6HostInjectedCommandSummary, Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
+    Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
@@ -168,6 +169,51 @@ fn add_host_action_trace_chunk_stats(
     }
 }
 
+fn collect_host_action_trace_component_stats<'a>(
+    components: impl IntoIterator<Item = &'a Rem6HostCheckpointComponentSummary>,
+    stat_path_segment: &impl Fn(&str) -> String,
+) -> (
+    BTreeMap<String, Rem6HostActionTraceTransferStats>,
+    BTreeMap<(String, String), Rem6HostActionTraceChunkStats>,
+) {
+    let mut component_stats = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut chunk_stats = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
+    for component in components {
+        let component_path = stat_path_segment(&component.component);
+        let transfer = component_stats.entry(component_path.clone()).or_default();
+        transfer.components += 1;
+        transfer.chunks += component.chunk_count;
+        transfer.payload_bytes += component.payload_bytes;
+        for chunk in &component.chunks {
+            let chunk_path = stat_path_segment(&chunk.name);
+            let stats = chunk_stats
+                .entry((component_path.clone(), chunk_path))
+                .or_default();
+            add_host_action_trace_chunk_stats(stats, chunk);
+        }
+    }
+    (component_stats, chunk_stats)
+}
+
+fn push_host_action_trace_transfer_stats(
+    stats: &mut Vec<Rem6HostActionTraceStat>,
+    prefix: String,
+    transfer: &Rem6HostActionTraceTransferStats,
+) {
+    stats.push(Rem6HostActionTraceStat::count(
+        format!("{prefix}.components"),
+        transfer.components,
+    ));
+    stats.push(Rem6HostActionTraceStat::count(
+        format!("{prefix}.chunks"),
+        transfer.chunks,
+    ));
+    stats.push(Rem6HostActionTraceStat::byte(
+        format!("{prefix}.payload_bytes"),
+        transfer.payload_bytes,
+    ));
+}
+
 fn push_host_action_trace_chunk_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: String,
@@ -191,6 +237,24 @@ fn push_host_action_trace_chunk_stats(
             value.unit(),
             value.value(),
         ));
+    }
+}
+
+fn push_host_action_trace_component_stats(
+    stats: &mut Vec<Rem6HostActionTraceStat>,
+    prefix: &str,
+    component_stats: BTreeMap<String, Rem6HostActionTraceTransferStats>,
+    chunk_stats: BTreeMap<(String, String), Rem6HostActionTraceChunkStats>,
+) {
+    for (component, transfer) in component_stats {
+        push_host_action_trace_transfer_stats(stats, format!("{prefix}.{component}"), &transfer);
+    }
+    for ((component, chunk), transfer) in chunk_stats {
+        push_host_action_trace_chunk_stats(
+            stats,
+            format!("{prefix}.{component}.chunk.{chunk}"),
+            transfer,
+        );
     }
 }
 
@@ -248,92 +312,35 @@ pub(crate) fn host_action_trace_checkpoint_stats(
     checkpoints: &[Rem6HostCheckpointSummary],
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6HostActionTraceStat> {
-    let mut component_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
-    let mut chunk_transfers = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
-    let mut latest_component_transfers =
-        BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
-    let mut latest_chunk_transfers =
-        BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
-    for checkpoint in checkpoints {
-        for component in &checkpoint.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = component_transfers
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = chunk_transfers
-                    .entry((component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_action_trace_chunk_stats(chunk_stats, chunk);
-            }
-        }
-    }
-    if let Some(checkpoint) = checkpoints.last() {
-        for component in &checkpoint.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = latest_component_transfers
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = latest_chunk_transfers
-                    .entry((component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_action_trace_chunk_stats(chunk_stats, chunk);
-            }
-        }
-    }
+    let (component_transfers, chunk_transfers) = collect_host_action_trace_component_stats(
+        checkpoints
+            .iter()
+            .flat_map(|checkpoint| checkpoint.components.iter()),
+        &stat_path_segment,
+    );
+    let (latest_component_transfers, latest_chunk_transfers) = checkpoints
+        .last()
+        .map(|checkpoint| {
+            collect_host_action_trace_component_stats(
+                checkpoint.components.iter(),
+                &stat_path_segment,
+            )
+        })
+        .unwrap_or_default();
 
     let mut stats = Vec::new();
-    for (component, transfer) in component_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint.component.{component}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint.component.{component}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("checkpoint.component.{component}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
-    }
-    for ((component, chunk), transfer) in chunk_transfers {
-        push_host_action_trace_chunk_stats(
-            &mut stats,
-            format!("checkpoint.component.{component}.chunk.{chunk}"),
-            transfer,
-        );
-    }
-    for (component, transfer) in latest_component_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint.latest_component.{component}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint.latest_component.{component}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("checkpoint.latest_component.{component}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
-    }
-    for ((component, chunk), transfer) in latest_chunk_transfers {
-        push_host_action_trace_chunk_stats(
-            &mut stats,
-            format!("checkpoint.latest_component.{component}.chunk.{chunk}"),
-            transfer,
-        );
-    }
+    push_host_action_trace_component_stats(
+        &mut stats,
+        "checkpoint.component",
+        component_transfers,
+        chunk_transfers,
+    );
+    push_host_action_trace_component_stats(
+        &mut stats,
+        "checkpoint.latest_component",
+        latest_component_transfers,
+        latest_chunk_transfers,
+    );
     stats
 }
 
@@ -348,8 +355,12 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     let mut modes = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
     let mut target_modes =
         BTreeMap::<String, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
-    let mut component_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
-    let mut chunk_transfers = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
+    let (component_transfers, chunk_transfers) = collect_host_action_trace_component_stats(
+        checkpoint_restores
+            .iter()
+            .flat_map(|restore| restore.components.iter()),
+        &stat_path_segment,
+    );
     let mut target_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
     let mut target_component_transfers =
         BTreeMap::<(String, String), Rem6HostActionTraceTransferStats>::new();
@@ -383,36 +394,25 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
             .collect::<BTreeSet<_>>();
         for component in &restore.components {
             let component_path = stat_path_segment(&component.component);
-            let component_stats = component_transfers
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            if restore_target_paths.contains(&component_path) {
-                let target_stats = target_transfers.entry(component_path.clone()).or_default();
-                target_stats.components += 1;
-                target_stats.chunks += component.chunk_count;
-                target_stats.payload_bytes += component.payload_bytes;
-                let target_component_stats = target_component_transfers
-                    .entry((component_path.clone(), component_path.clone()))
-                    .or_default();
-                target_component_stats.components += 1;
-                target_component_stats.chunks += component.chunk_count;
-                target_component_stats.payload_bytes += component.payload_bytes;
+            if !restore_target_paths.contains(&component_path) {
+                continue;
             }
+            let target_stats = target_transfers.entry(component_path.clone()).or_default();
+            target_stats.components += 1;
+            target_stats.chunks += component.chunk_count;
+            target_stats.payload_bytes += component.payload_bytes;
+            let target_component_stats = target_component_transfers
+                .entry((component_path.clone(), component_path.clone()))
+                .or_default();
+            target_component_stats.components += 1;
+            target_component_stats.chunks += component.chunk_count;
+            target_component_stats.payload_bytes += component.payload_bytes;
             for chunk in &component.chunks {
                 let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = chunk_transfers
-                    .entry((component_path.clone(), chunk_path.clone()))
+                let target_chunk_stats = target_chunk_transfers
+                    .entry((component_path.clone(), component_path.clone(), chunk_path))
                     .or_default();
-                add_host_action_trace_chunk_stats(chunk_stats, chunk);
-                if restore_target_paths.contains(&component_path) {
-                    let target_chunk_stats = target_chunk_transfers
-                        .entry((component_path.clone(), component_path.clone(), chunk_path))
-                        .or_default();
-                    add_host_action_trace_chunk_stats(target_chunk_stats, chunk);
-                }
+                add_host_action_trace_chunk_stats(target_chunk_stats, chunk);
             }
         }
     }
@@ -452,54 +452,25 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
             ));
         }
     }
-    for (component, transfer) in component_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.component.{component}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.component.{component}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("checkpoint_restore.component.{component}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
-    }
-    for ((component, chunk), transfer) in chunk_transfers {
-        push_host_action_trace_chunk_stats(
+    push_host_action_trace_component_stats(
+        &mut stats,
+        "checkpoint_restore.component",
+        component_transfers,
+        chunk_transfers,
+    );
+    for (target, transfer) in target_transfers {
+        push_host_action_trace_transfer_stats(
             &mut stats,
-            format!("checkpoint_restore.component.{component}.chunk.{chunk}"),
-            transfer,
+            format!("checkpoint_restore.target.{target}"),
+            &transfer,
         );
     }
-    for (target, transfer) in target_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.target.{target}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.target.{target}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("checkpoint_restore.target.{target}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
-    }
     for ((target, component), transfer) in target_component_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.target.{target}.component.{component}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.target.{target}.component.{component}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("checkpoint_restore.target.{target}.component.{component}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
+        push_host_action_trace_transfer_stats(
+            &mut stats,
+            format!("checkpoint_restore.target.{target}.component.{component}"),
+            &transfer,
+        );
     }
     for ((target, component, chunk), transfer) in target_chunk_transfers {
         push_host_action_trace_chunk_stats(
@@ -580,47 +551,67 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         latest_checker = Some(checker);
         target_checkers.insert(quiescence_target, checker);
     }
+    let latest_transfer_stats = execution_mode_switches.iter().rev().find_map(|switch| {
+        let transfer = switch.state_transfer.as_ref()?;
+        let target = stat_path_segment(&switch.target);
+        let (component_stats, chunk_stats) = collect_host_action_trace_component_stats(
+            transfer.components.iter(),
+            &stat_path_segment,
+        );
+        Some((
+            target,
+            Rem6HostActionTraceTransferStats {
+                components: transfer.component_count,
+                chunks: transfer.chunk_count,
+                payload_bytes: transfer.payload_bytes,
+            },
+            component_stats,
+            chunk_stats,
+        ))
+    });
 
     let mut stats = Vec::new();
-    for (target, transfer) in target_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("execution_mode_switch.state_transfer.target.{target}.components"),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!("execution_mode_switch.state_transfer.target.{target}.chunks"),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!("execution_mode_switch.state_transfer.target.{target}.payload_bytes"),
-            transfer.payload_bytes,
-        ));
+    for (target, transfer) in &target_transfers {
+        push_host_action_trace_transfer_stats(
+            &mut stats,
+            format!("execution_mode_switch.state_transfer.target.{target}"),
+            transfer,
+        );
     }
     for ((target, component), transfer) in target_component_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.components"
-            ),
-            transfer.components,
-        ));
-        stats.push(Rem6HostActionTraceStat::count(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunks"
-            ),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.payload_bytes"
-            ),
-            transfer.payload_bytes,
-        ));
+        push_host_action_trace_transfer_stats(
+            &mut stats,
+            format!("execution_mode_switch.state_transfer.target.{target}.component.{component}"),
+            &transfer,
+        );
     }
     for ((target, component, chunk), transfer) in target_chunk_transfers {
         push_host_action_trace_chunk_stats(
             &mut stats,
             format!("execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}"),
             transfer,
+        );
+    }
+    if let Some((latest_target, transfer, component_stats, chunk_stats)) = latest_transfer_stats {
+        let empty_transfer = Rem6HostActionTraceTransferStats::default();
+        for target in target_transfers.keys() {
+            push_host_action_trace_transfer_stats(
+                &mut stats,
+                format!("execution_mode_switch.state_transfer.latest_target.{target}"),
+                if target == &latest_target {
+                    &transfer
+                } else {
+                    &empty_transfer
+                },
+            );
+        }
+        let component_prefix =
+            format!("execution_mode_switch.state_transfer.latest_target.{latest_target}.component");
+        push_host_action_trace_component_stats(
+            &mut stats,
+            &component_prefix,
+            component_stats,
+            chunk_stats,
         );
     }
     stats.push(Rem6HostActionTraceStat::count(
