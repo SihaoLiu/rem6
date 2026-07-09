@@ -32,7 +32,7 @@ mod o3_source_operands;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
-    validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
+    rob_commit_tick, validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
 };
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
@@ -323,9 +323,11 @@ impl O3RuntimeState {
         }
         let fu_latency_cycles =
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
+        let writeback_tick = execution.fetch().tick().saturating_add(fu_latency_cycles);
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
-                .with_ready(fu_latency_cycles == 0),
+                .with_ready(fu_latency_cycles == 0)
+                .with_ready_tick(writeback_tick),
         );
         let rob_occupancy = self.snapshot.reorder_buffer.len();
         self.stats.observe_rob_occupancy(rob_occupancy);
@@ -343,9 +345,11 @@ impl O3RuntimeState {
         let lsq_occupancy = self.snapshot.load_store_queue.len();
         let rename_map_entries = self.snapshot.rename_map.len();
         let (rob_commits, rob_commit_blocked) = rob_commit_boundary(&self.snapshot);
+        let commit_tick = rob_commit_tick(&self.snapshot, rob_commits).unwrap_or(writeback_tick);
         let trace_record = O3RuntimeTraceRecord::new(
             sequence,
             execution.fetch().tick(),
+            commit_tick,
             Address::new(record.pc()),
             rob_occupancy,
             rob_commits,
@@ -1134,6 +1138,16 @@ mod tests {
         assert!(!trace[1].lsq_store_conditional_failed());
         assert_eq!(trace[1].lsq_data_response_tick(), 0);
         assert_eq!(trace[1].lsq_data_latency_ticks(), 0);
+    }
+
+    #[test]
+    fn data_response_trace_updates_current_instruction_commit_tick() {
+        let mut runtime = O3RuntimeState::default();
+        let event = store_conditional_event(0x8000, 10);
+        runtime.record_retired_instruction_with_trace(&event, true);
+        runtime.record_data_access_outcome(&event, 41, 7);
+        let record = runtime.trace_records()[0];
+        assert_eq!((record.writeback_tick(), record.commit_tick()), (41, 41));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::branch_predictor::BranchTargetKind;
 pub struct O3RuntimeTraceRecord {
     sequence: u64,
     tick: u64,
+    commit_tick: u64,
     pc: Address,
     rob_allocated: bool,
     rob_committed: bool,
@@ -271,6 +272,7 @@ impl O3RuntimeTraceRecord {
     pub(crate) fn new(
         sequence: u64,
         tick: u64,
+        commit_tick: u64,
         pc: Address,
         rob_occupancy: usize,
         rob_commits_at_tick: usize,
@@ -305,6 +307,7 @@ impl O3RuntimeTraceRecord {
         Self {
             sequence,
             tick,
+            commit_tick,
             pc,
             rob_allocated: true,
             rob_committed: true,
@@ -371,8 +374,8 @@ impl O3RuntimeTraceRecord {
             .max(self.lsq_data_response_tick)
     }
 
-    pub fn commit_tick(self) -> u64 {
-        self.writeback_tick()
+    pub const fn commit_tick(self) -> u64 {
+        self.commit_tick
     }
 
     pub fn issue_to_writeback_ticks(self) -> u64 {
@@ -470,10 +473,17 @@ impl O3RuntimeTraceRecord {
     pub(crate) fn set_lsq_data_response(&mut self, response_tick: u64, latency_ticks: u64) {
         self.lsq_data_response_tick = response_tick;
         self.lsq_data_latency_ticks = latency_ticks;
+        if self.current_instruction_committed() {
+            self.commit_tick = self.commit_tick.max(self.writeback_tick());
+        }
     }
 
     pub const fn rename_map_entries(self) -> u64 {
         self.rename_map_entries
+    }
+
+    const fn current_instruction_committed(self) -> bool {
+        self.rob_allocated && self.rob_committed && self.rob_commits_at_tick >= self.rob_occupancy
     }
 
     pub fn structural_pressure_key(self) -> (u64, u64, u64, u64, u64, u64) {

@@ -19,13 +19,14 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS: u8 = 19;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS: u8 = 18;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS: u8 = 17;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -42,7 +43,8 @@ const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC.len() + 1 + U32_BYTES * 4;
-const O3_RUNTIME_ROB_ENTRY_BYTES: usize = U64_BYTES + U64_BYTES + 1 + U32_BYTES + 1;
+const O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY: usize = U64_BYTES + U64_BYTES + 1 + U32_BYTES + 1;
+const O3_RUNTIME_ROB_ENTRY_BYTES: usize = O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY + U64_BYTES;
 const O3_RUNTIME_LSQ_ENTRY_BYTES: usize = U64_BYTES + 1 + U64_BYTES + U32_BYTES + 1 + 1;
 const O3_RUNTIME_RENAME_ENTRY_BYTES: usize = 1 + U32_BYTES + U32_BYTES;
 const O3_RUNTIME_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize = O3_RUNTIME_RENAME_ENTRY_BYTES + 1;
@@ -111,6 +113,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -129,14 +132,20 @@ impl O3RuntimeCheckpointPayload {
                 .into_snapshot();
         offset = pending_payload_end;
 
+        let has_rob_ready_ticks = version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS;
+        let rob_entry_bytes = if has_rob_ready_ticks {
+            O3_RUNTIME_ROB_ENTRY_BYTES
+        } else {
+            O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY
+        };
         ensure_remaining(
             payload,
             offset,
-            checked_bytes(rob_count, O3_RUNTIME_ROB_ENTRY_BYTES, payload.len())?,
+            checked_bytes(rob_count, rob_entry_bytes, payload.len())?,
         )?;
         let mut reorder_buffer = Vec::with_capacity(rob_count);
         for _ in 0..rob_count {
-            reorder_buffer.push(read_rob_entry(payload, &mut offset)?);
+            reorder_buffer.push(read_rob_entry(payload, &mut offset, has_rob_ready_ticks)?);
         }
 
         ensure_remaining(
@@ -313,6 +322,7 @@ fn write_rob_entry(payload: &mut Vec<u8>, entry: O3ReorderBufferEntry) {
         payload.extend_from_slice(&O3PhysicalRegisterId::invalid().get().to_le_bytes());
     }
     payload.push(bool_flag(entry.is_ready()));
+    payload.extend_from_slice(&entry.ready_tick().to_le_bytes());
 }
 
 fn write_lsq_entry(payload: &mut Vec<u8>, entry: O3LoadStoreQueueEntry) {
@@ -541,15 +551,22 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
 fn read_rob_entry(
     payload: &[u8],
     offset: &mut usize,
+    has_ready_tick: bool,
 ) -> Result<O3ReorderBufferEntry, O3RuntimeError> {
     let sequence = read_u64(payload, offset)?;
     let pc = Address::new(read_u64(payload, offset)?);
     let destination_present = read_bool("ROB destination-present", payload, offset)?;
     let physical = O3PhysicalRegisterId::new(read_u32(payload, offset)?);
     let ready = read_bool("ROB ready", payload, offset)?;
+    let ready_tick = if has_ready_tick {
+        read_u64(payload, offset)?
+    } else {
+        pc.get()
+    };
     Ok(
         O3ReorderBufferEntry::new(sequence, pc, destination_present.then_some(physical))
-            .with_ready(ready),
+            .with_ready(ready)
+            .with_ready_tick(ready_tick),
     )
 }
 

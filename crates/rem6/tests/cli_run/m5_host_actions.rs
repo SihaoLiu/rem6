@@ -2041,7 +2041,7 @@ fn detailed_o3_live_rob_overlap_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
         i_type(6, 0, 0x0, 1, 0x13),    // addi x1, x0, 6
         i_type(7, 0, 0x0, 2, 0x13),    // addi x2, x0, 7
-        r_type(1, 2, 1, 0x0, 3, 0x33), // mul x3, x1, x2
+        r_type(1, 1, 2, 0x4, 3, 0x33), // div x3, x2, x1
         i_type(5, 0, 0x0, 4, 0x13),    // addi x4, x0, 5
         i_type(11, 4, 0x0, 5, 0x13),   // addi x5, x4, 11
     ];

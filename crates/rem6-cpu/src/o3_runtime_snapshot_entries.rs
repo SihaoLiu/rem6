@@ -8,6 +8,7 @@ pub struct O3ReorderBufferEntry {
     pc: Address,
     destination: Option<O3PhysicalRegisterId>,
     ready: bool,
+    ready_tick: u64,
 }
 
 impl O3ReorderBufferEntry {
@@ -21,11 +22,17 @@ impl O3ReorderBufferEntry {
             pc,
             destination,
             ready: false,
+            ready_tick: 0,
         }
     }
 
     pub const fn with_ready(mut self, ready: bool) -> Self {
         self.ready = ready;
+        self
+    }
+
+    pub const fn with_ready_tick(mut self, ready_tick: u64) -> Self {
+        self.ready_tick = ready_tick;
         self
     }
 
@@ -47,6 +54,10 @@ impl O3ReorderBufferEntry {
 
     pub const fn is_ready(self) -> bool {
         self.ready
+    }
+
+    pub const fn ready_tick(self) -> u64 {
+        self.ready_tick
     }
 }
 

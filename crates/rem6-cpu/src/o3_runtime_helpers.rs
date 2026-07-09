@@ -54,6 +54,15 @@ pub(super) fn rob_commit_boundary(snapshot: &O3RuntimeSnapshot) -> (usize, bool)
     (commits, commits < snapshot.reorder_buffer.len())
 }
 
+pub(super) fn rob_commit_tick(snapshot: &O3RuntimeSnapshot, commits: usize) -> Option<u64> {
+    snapshot
+        .reorder_buffer
+        .iter()
+        .take(commits)
+        .map(|entry| entry.ready_tick())
+        .max()
+}
+
 pub(super) fn validate_unique<I>(kind: &'static str, keys: I) -> Result<(), O3RuntimeError>
 where
     I: IntoIterator<Item = O3RuntimeUniqueKey>,

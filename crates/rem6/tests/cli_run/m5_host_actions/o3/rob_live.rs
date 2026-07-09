@@ -39,8 +39,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     );
     assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
-        Some("2a00000010000000"),
-        "O3 live-ROB overlap run should preserve ordered multiply and younger integer results"
+        Some("0100000010000000"),
+        "O3 live-ROB overlap run should preserve ordered divide and younger integer results"
     );
 
     let instructions = json_stat_u64(&json, "sim.cpu0.o3.instructions");
@@ -89,14 +89,14 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     );
     assert_json_stat(
         &json,
-        "sim.cpu0.o3.fu_integer_mul_instructions",
+        "sim.cpu0.o3.fu_integer_div_instructions",
         "Count",
         1,
         "monotonic",
     );
     assert_json_stat_at_least(
         &json,
-        "sim.cpu0.o3.fu_integer_mul_latency_cycles",
+        "sim.cpu0.o3.fu_integer_div_latency_cycles",
         "Cycle",
         1,
         "monotonic",
@@ -124,7 +124,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
             .pointer("/event_summary/rob/commit_blocked_events")
             .and_then(Value::as_u64),
         Some(1),
-        "O3 runtime event summary should count exactly the resident multiply as commit-blocked: {o3_runtime}"
+        "O3 runtime event summary should count exactly the resident divide as commit-blocked: {o3_runtime}"
     );
     assert!(
         o3_runtime
@@ -148,7 +148,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     assert_eq!(
         max_rob_event.pointer("/pc").and_then(Value::as_str),
         Some("0x80000010"),
-        "max ROB occupancy should occur when younger independent integer work overlaps the resident multiply: {max_rob_event}"
+        "max ROB occupancy should occur when younger independent integer work overlaps the resident divide: {max_rob_event}"
     );
     let max_rob_phase_deltas = assert_o3_phase_deltas(max_rob_event);
     let max_fu_latency_event = o3_runtime
@@ -197,24 +197,23 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         .pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("O3 debug trace should expose per-event timing rows: {json}"));
-    let multiply = events
+    let resident_divide = events
         .iter()
         .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
-        .unwrap_or_else(|| panic!("missing resident multiply event: {events:?}"));
+        .unwrap_or_else(|| panic!("missing resident divide event: {events:?}"));
     let younger_add = events
         .iter()
         .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
         .unwrap_or_else(|| panic!("missing younger independent add event: {events:?}"));
-    let multiply_phase_deltas = assert_o3_phase_deltas(multiply);
+    let divide_phase_deltas = assert_o3_phase_deltas(resident_divide);
     let younger_phase_deltas = assert_o3_phase_deltas(younger_add);
     assert!(
-        multiply_phase_deltas.0 > 0,
-        "resident multiply event should expose its nonzero issue-to-writeback phase: {multiply}"
+        divide_phase_deltas.0 > 0,
+        "resident divide event should expose its nonzero issue-to-writeback phase: {resident_divide}"
     );
     assert_eq!(
-        younger_phase_deltas,
-        (0, 0, 0),
-        "younger independent add should expose a zero-latency event phase tuple: {younger_add}"
+        younger_phase_deltas.0, 0,
+        "younger independent add should have no FU issue-to-writeback delay: {younger_add}"
     );
     let event_phase_totals = events.iter().fold((0, 0, 0), |accumulator, event| {
         let deltas = assert_o3_phase_deltas(event);
@@ -236,21 +235,23 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     assert_event_phase_stat_prefix(&json, "sim.cpu0.o3.event_summary", event_phase_totals);
     assert_gem5_iew_phase_alias_stats(&json, event_phase_totals);
     assert_debug_event_phase_stats(&json, event_phase_totals);
-    let multiply_issue = json_u64_field(multiply, "/issue_tick");
-    let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
-    let multiply_commit = json_u64_field(multiply, "/commit_tick");
+    let divide_issue = json_u64_field(resident_divide, "/issue_tick");
+    let divide_writeback = json_u64_field(resident_divide, "/writeback_tick");
+    let divide_commit = json_u64_field(resident_divide, "/commit_tick");
     let younger_issue = json_u64_field(younger_add, "/issue_tick");
-    let multiply_rob_commits = json_u64_field(multiply, "/rob_commits_at_tick");
+    let younger_writeback = json_u64_field(younger_add, "/writeback_tick");
+    let younger_commit = json_u64_field(younger_add, "/commit_tick");
+    let divide_rob_commits = json_u64_field(resident_divide, "/rob_commits_at_tick");
     let younger_rob_commits = json_u64_field(younger_add, "/rob_commits_at_tick");
-    let multiply_commit_blocked = json_bool_field(multiply, "/rob_commit_blocked");
+    let divide_commit_blocked = json_bool_field(resident_divide, "/rob_commit_blocked");
     let younger_commit_blocked = json_bool_field(younger_add, "/rob_commit_blocked");
     assert!(
-        multiply_writeback > multiply_issue,
-        "multiply should occupy the FU after issue: {multiply}"
+        divide_writeback > divide_issue,
+        "divide should occupy the FU after issue: {resident_divide}"
     );
     assert!(
-        younger_issue <= multiply_writeback,
-        "younger independent work should be visible no later than the older multiply writeback boundary: multiply={multiply}, younger={younger_add}"
+        younger_issue < divide_writeback,
+        "younger independent work should be visible before the older divide writeback boundary: divide={resident_divide}, younger={younger_add}"
     );
     assert!(
         younger_add
@@ -260,24 +261,41 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         "younger event should carry live ROB overlap at the writeback boundary: {younger_add}"
     );
     assert!(
-        multiply_commit >= multiply_writeback,
-        "multiply commit timing should not precede writeback: {multiply}"
-    );
-    assert_eq!(
-        multiply_rob_commits, 0,
-        "resident multiply should not commit while its FU latency is outstanding: {multiply}"
+        divide_commit >= divide_writeback,
+        "divide commit timing should not precede writeback: {resident_divide}"
     );
     assert!(
-        multiply_commit_blocked,
-        "resident multiply should block the ROB head until writeback: {multiply}"
+        younger_commit >= divide_writeback,
+        "younger independent add should wait to commit until the older divide writes back: divide={resident_divide}, younger={younger_add}"
+    );
+    assert_eq!(
+        younger_phase_deltas.1,
+        younger_commit.saturating_sub(younger_writeback),
+        "younger writeback-to-commit phase should reflect its ROB head wait: {younger_add}"
+    );
+    assert!(
+        younger_phase_deltas.1 > 0,
+        "younger independent add should expose a nonzero writeback-to-commit ROB wait: {younger_add}"
+    );
+    assert_eq!(
+        younger_phase_deltas.2, younger_phase_deltas.1,
+        "zero-FU younger add should report issue-to-commit as only the ROB wait: {younger_add}"
+    );
+    assert_eq!(
+        divide_rob_commits, 0,
+        "resident divide should not commit while its FU latency is outstanding: {resident_divide}"
+    );
+    assert!(
+        divide_commit_blocked,
+        "resident divide should block the ROB head until writeback: {resident_divide}"
     );
     assert!(
         younger_rob_commits >= 2,
-        "younger event should drain the older multiply and itself at the writeback boundary: {younger_add}"
+        "younger event should drain the resident divide and itself at the writeback boundary: {younger_add}"
     );
     assert!(
         !younger_commit_blocked,
-        "ROB should no longer be commit-blocked when the younger event drains the resident multiply: {younger_add}"
+        "ROB should no longer be commit-blocked when the younger event drains the resident divide: {younger_add}"
     );
 }
 
@@ -545,10 +563,13 @@ fn assert_dump_gem5_iew_phase_alias_stats(dump: &Value) {
         phase_totals[0] > 0,
         "live-ROB dump fixture should expose nonzero issue-to-writeback timing: {dump}"
     );
-    assert_eq!(
-        phase_totals[2],
-        phase_totals[0].saturating_add(phase_totals[1]),
-        "dumped O3 phase totals should preserve issue-to-commit identity: {dump}"
+    assert!(
+        phase_totals[2] > 0,
+        "live-ROB dump fixture should expose nonzero issue-to-commit timing: {dump}"
+    );
+    assert!(
+        phase_totals[2] <= phase_totals[0].saturating_add(phase_totals[1]),
+        "dumped O3 phase totals should not exceed current-instruction phase decomposition: {dump}"
     );
 }
 

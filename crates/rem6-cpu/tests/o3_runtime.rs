@@ -26,7 +26,9 @@ const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
 const O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET + 4;
 const O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET + 4;
 const O3_RUNTIME_CHECKPOINT_RENAME_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET + 4;
-const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES: usize = 8 + 8 + 1 + 4 + 1;
+const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY: usize = 8 + 8 + 1 + 4 + 1;
+const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES: usize =
+    O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY + 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_ENTRY_BYTES: usize = 8 + 1 + 8 + 4 + 1 + 1;
 const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES: usize = 1 + 4 + 4;
 const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize =
@@ -106,8 +108,9 @@ fn o3_runtime_checkpoint_round_trips_rob_lsq_rename_and_pending_state() {
                 Address::new(0x8000),
                 Some(O3PhysicalRegisterId::new(40)),
             )
-            .with_ready(true),
-            O3ReorderBufferEntry::new(11, Address::new(0x8004), None),
+            .with_ready(true)
+            .with_ready_tick(123),
+            O3ReorderBufferEntry::new(11, Address::new(0x8004), None).with_ready_tick(456),
         ],
         [
             O3LoadStoreQueueEntry::load(10, Some(Address::new(0x9000)), 8).with_completed(true),
@@ -141,6 +144,8 @@ fn o3_runtime_checkpoint_round_trips_rob_lsq_rename_and_pending_state() {
 
     assert_eq!(decoded.snapshot(), &snapshot);
     assert_eq!(decoded.snapshot().reorder_buffer()[0].sequence(), 10);
+    assert_eq!(decoded.snapshot().reorder_buffer()[0].ready_tick(), 123);
+    assert_eq!(decoded.snapshot().reorder_buffer()[1].ready_tick(), 456);
     assert_eq!(
         decoded.snapshot().load_store_queue()[0].address(),
         Some(Address::new(0x9000))
@@ -239,6 +244,38 @@ fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
 }
 
 #[test]
+fn o3_runtime_checkpoint_decodes_legacy_rob_entries_with_nonzero_ready_ticks() {
+    let snapshot = rem6_cpu::O3RuntimeSnapshot::new(
+        [O3ReorderBufferEntry::new(
+            10,
+            Address::new(0x8000),
+            Some(O3PhysicalRegisterId::new(40)),
+        )
+        .with_ready(true)
+        .with_ready_tick(123)],
+        [],
+        [],
+        O3PendingStateSnapshot::new(
+            [],
+            [],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let payload = O3RuntimeCheckpointPayload::from_snapshot(snapshot).unwrap();
+    let mut encoded = strip_current_rob_ready_tick_bytes(&payload.encode());
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 18;
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot().reorder_buffer()[0].ready_tick(), 0x8000);
+}
+
+#[test]
 fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
     let core = RiscvCore::new(core(0x8000));
     for (sequence, instruction) in [
@@ -266,7 +303,7 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
     }
 
     let encoded = strip_current_lsq_forwarding_suppression_stats(
-        &core.o3_runtime_checkpoint_payload().encode(),
+        &strip_current_rob_ready_tick_bytes(&core.o3_runtime_checkpoint_payload().encode()),
     );
     let stats_offset = encoded
         .len()
@@ -397,9 +434,10 @@ fn o3_runtime_checkpoint_decodes_v4_lsq_matrix_stats_without_branch_repair_stats
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = strip_current_lsq_forwarding_suppression_stats(
-        &strip_current_rename_dependency_bytes(&payload.encode()),
-    );
+    let encoded =
+        strip_current_lsq_forwarding_suppression_stats(&strip_current_rob_ready_tick_bytes(
+            &strip_current_rename_dependency_bytes(&payload.encode()),
+        ));
     let stats_offset = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION)
@@ -503,9 +541,10 @@ fn o3_runtime_checkpoint_decodes_v5_branch_repair_stats_without_lsq_latency_stat
     }
 
     let payload = core.o3_runtime_checkpoint_payload();
-    let encoded = strip_current_lsq_forwarding_suppression_stats(
-        &strip_current_rename_dependency_bytes(&payload.encode()),
-    );
+    let encoded =
+        strip_current_lsq_forwarding_suppression_stats(&strip_current_rob_ready_tick_bytes(
+            &strip_current_rename_dependency_bytes(&payload.encode()),
+        ));
     let stats_offset = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION)
@@ -738,6 +777,60 @@ fn o3_runtime_trace_records_only_when_enabled() {
     assert!(trace[0].rob_allocated());
     assert!(trace[0].rob_committed());
     assert_eq!(trace[0].rename_writes(), 1);
+}
+
+#[test]
+fn o3_runtime_trace_dates_partial_rob_drain_at_committed_ready_tick() {
+    let core = RiscvCore::new(core(0x8000));
+    let older = RiscvInstruction::Mul {
+        rd: reg(3),
+        rs1: reg(1),
+        rs2: reg(2),
+    };
+    core.record_o3_retired_instruction_with_trace(
+        &RiscvCpuExecutionEvent::new(
+            fetch_event(0x8000, 1),
+            older,
+            RiscvExecutionRecord::new(
+                older,
+                0x8000,
+                0x8004,
+                vec![RegisterWrite::new(reg(3), 42)],
+                None,
+            ),
+        ),
+        true,
+    );
+
+    let younger = RiscvInstruction::Div {
+        rd: reg(4),
+        rs1: reg(2),
+        rs2: reg(1),
+    };
+    core.record_o3_retired_instruction_with_trace(
+        &RiscvCpuExecutionEvent::new(
+            fetch_event(0x8004, 2),
+            younger,
+            RiscvExecutionRecord::new(
+                younger,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(reg(4), 1)],
+                None,
+            ),
+        ),
+        true,
+    );
+
+    let trace = core.o3_runtime_trace_records();
+    assert_eq!(trace.len(), 2);
+    let older_ready_tick = trace[0].writeback_tick();
+    assert!(trace[1].writeback_tick() > older_ready_tick);
+    assert_eq!(trace[1].rob_commits_at_tick(), 1);
+    assert!(trace[1].rob_commit_blocked());
+    assert_eq!(trace[1].commit_tick(), older_ready_tick);
+    assert!(trace[1].commit_tick() < trace[1].writeback_tick());
+    assert_eq!(trace[1].writeback_to_commit_ticks(), 0);
 }
 
 #[test]
@@ -1196,6 +1289,23 @@ fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {
         .try_into()
         .unwrap();
     O3_RUNTIME_CHECKPOINT_HEADER_BYTES + u32::from_le_bytes(pending_len_bytes) as usize
+}
+
+fn strip_current_rob_ready_tick_bytes(payload: &[u8]) -> Vec<u8> {
+    let pending_len = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
+    let rob_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
+    let rob_offset = O3_RUNTIME_CHECKPOINT_HEADER_BYTES + pending_len;
+    let mut offset = rob_offset;
+    let mut legacy = Vec::with_capacity(payload.len().saturating_sub(rob_count * 8));
+    legacy.extend_from_slice(&payload[..rob_offset]);
+    for _ in 0..rob_count {
+        legacy.extend_from_slice(
+            &payload[offset..offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY],
+        );
+        offset += O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES;
+    }
+    legacy.extend_from_slice(&payload[offset..]);
+    legacy
 }
 
 fn strip_current_rename_dependency_bytes(payload: &[u8]) -> Vec<u8> {
