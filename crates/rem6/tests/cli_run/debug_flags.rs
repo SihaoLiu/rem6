@@ -5798,6 +5798,34 @@ fn rem6_run_host_action_debug_flag_emits_real_m5_host_action_trace() {
     );
     assert_stat(
         &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.validated",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_components",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_chunks",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_payload_bytes",
+        "Byte",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.debug.trace.records",
         "Count",
         trace.len() as u64,

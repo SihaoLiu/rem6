@@ -277,6 +277,8 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         BTreeMap::<(String, String), Rem6HostActionTraceTransferStats>::new();
     let mut target_chunk_transfers =
         BTreeMap::<(String, String, String), Rem6HostActionTraceChunkStats>::new();
+    let mut quiescence_validated = 0;
+    let mut quiescence_captured = Rem6HostActionTraceTransferStats::default();
     let mut target_quiescence_validated = BTreeMap::<String, u64>::new();
     let mut target_quiescence_captured =
         BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
@@ -314,6 +316,7 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
 
         let quiescence_target = stat_path_segment(&transfer.quiescence_gate.target);
         if transfer.quiescence_gate.validated {
+            quiescence_validated += 1;
             *target_quiescence_validated
                 .entry(quiescence_target.clone())
                 .or_default() += 1;
@@ -322,6 +325,9 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
             || transfer.quiescence_gate.captured_chunk_count > 0
             || transfer.quiescence_gate.captured_payload_bytes > 0
         {
+            quiescence_captured.components += transfer.quiescence_gate.captured_component_count;
+            quiescence_captured.chunks += transfer.quiescence_gate.captured_chunk_count;
+            quiescence_captured.payload_bytes += transfer.quiescence_gate.captured_payload_bytes;
             let captured_stats = target_quiescence_captured
                 .entry(quiescence_target.clone())
                 .or_default();
@@ -391,6 +397,22 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
             transfer.payload_checksum_accumulator,
         ));
     }
+    stats.push(Rem6HostActionTraceStat::count(
+        "execution_mode_switch.quiescence.validated".to_string(),
+        quiescence_validated,
+    ));
+    stats.push(Rem6HostActionTraceStat::count(
+        "execution_mode_switch.quiescence.captured_components".to_string(),
+        quiescence_captured.components,
+    ));
+    stats.push(Rem6HostActionTraceStat::count(
+        "execution_mode_switch.quiescence.captured_chunks".to_string(),
+        quiescence_captured.chunks,
+    ));
+    stats.push(Rem6HostActionTraceStat::byte(
+        "execution_mode_switch.quiescence.captured_payload_bytes".to_string(),
+        quiescence_captured.payload_bytes,
+    ));
     for (target, validated) in target_quiescence_validated {
         stats.push(Rem6HostActionTraceStat::count(
             format!("execution_mode_switch.quiescence.target.{target}.validated"),

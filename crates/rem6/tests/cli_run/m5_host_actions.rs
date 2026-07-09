@@ -1401,6 +1401,45 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
         0,
         "monotonic",
     );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.validated",
+        "Count",
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing execution mode switch count: {host_actions}")),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_components",
+        "Count",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu0",
+            "captured_component_count",
+        ),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_chunks",
+        "Count",
+        execution_mode_switch_quiescence_target_total(host_actions, "cpu0", "captured_chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.captured_payload_bytes",
+        "Byte",
+        execution_mode_switch_quiescence_target_total(
+            host_actions,
+            "cpu0",
+            "captured_payload_bytes",
+        ),
+        "monotonic",
+    );
     for mode in ["functional", "timing", "detailed"] {
         assert_json_stat_absent(
             &json,
