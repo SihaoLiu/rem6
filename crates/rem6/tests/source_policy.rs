@@ -9,6 +9,7 @@ const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
 const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
+const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
@@ -124,6 +125,27 @@ fn cli_source_files_stay_within_size_limit() {
         "source files exceed {MAX_SOURCE_LINES} lines: {}",
         oversized.join(", ")
     );
+}
+
+#[test]
+fn rem6_cpu_o3_runtime_root_keeps_headroom() {
+    for (relative_path, maximum) in [
+        (
+            "../rem6-cpu/src/o3_runtime.rs",
+            MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES,
+        ),
+        (
+            "../rem6-cpu/src/o3_runtime_snapshot_entries.rs",
+            MAX_SOURCE_LINES,
+        ),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+        let lines = line_count(&path);
+        assert!(
+            lines <= maximum,
+            "{relative_path} should keep headroom for executable O3 evidence, but it has {lines} lines"
+        );
+    }
 }
 
 #[test]

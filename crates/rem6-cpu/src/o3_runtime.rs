@@ -22,6 +22,8 @@ mod o3_runtime_checkpoint;
 mod o3_runtime_checkpoint_branch_mismatch;
 #[path = "o3_runtime_helpers.rs"]
 mod o3_runtime_helpers;
+#[path = "o3_runtime_snapshot_entries.rs"]
+mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
 mod o3_runtime_stats;
 #[path = "o3_source_operands.rs"]
@@ -32,131 +34,14 @@ use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
     validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
 };
+pub use o3_runtime_snapshot_entries::{
+    O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
+};
 pub use o3_runtime_stats::O3RuntimeStats;
 use o3_source_operands::o3_scalar_integer_source_registers;
 
 const U64_BYTES: usize = 8;
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct O3ReorderBufferEntry {
-    sequence: u64,
-    pc: Address,
-    destination: Option<O3PhysicalRegisterId>,
-    ready: bool,
-}
-impl O3ReorderBufferEntry {
-    pub const fn new(
-        sequence: u64,
-        pc: Address,
-        destination: Option<O3PhysicalRegisterId>,
-    ) -> Self {
-        Self {
-            sequence,
-            pc,
-            destination,
-            ready: false,
-        }
-    }
-    pub const fn with_ready(mut self, ready: bool) -> Self {
-        self.ready = ready;
-        self
-    }
-    pub const fn sequence(self) -> u64 {
-        self.sequence
-    }
-    pub const fn pc(self) -> Address {
-        self.pc
-    }
-    pub const fn destination(self) -> Option<O3PhysicalRegisterId> {
-        self.destination
-    }
-    pub const fn is_ready(self) -> bool {
-        self.ready
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum O3LoadStoreQueueKind {
-    Load,
-    Store,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct O3LoadStoreQueueEntry {
-    sequence: u64,
-    address: Option<Address>,
-    bytes: u32,
-    kind: O3LoadStoreQueueKind,
-    completed: bool,
-}
-impl O3LoadStoreQueueEntry {
-    pub const fn load(sequence: u64, address: Option<Address>, bytes: u32) -> Self {
-        Self {
-            sequence,
-            address,
-            bytes,
-            kind: O3LoadStoreQueueKind::Load,
-            completed: false,
-        }
-    }
-    pub const fn store(sequence: u64, address: Option<Address>, bytes: u32) -> Self {
-        Self {
-            sequence,
-            address,
-            bytes,
-            kind: O3LoadStoreQueueKind::Store,
-            completed: false,
-        }
-    }
-    pub const fn with_completed(mut self, completed: bool) -> Self {
-        self.completed = completed;
-        self
-    }
-    pub const fn sequence(self) -> u64 {
-        self.sequence
-    }
-    pub const fn address(self) -> Option<Address> {
-        self.address
-    }
-    pub const fn bytes(self) -> u32 {
-        self.bytes
-    }
-    pub const fn kind(self) -> O3LoadStoreQueueKind {
-        self.kind
-    }
-    pub const fn is_completed(self) -> bool {
-        self.completed
-    }
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct O3RenameMapEntry {
-    register_class: O3RegisterClass,
-    architectural: u32,
-    physical: O3PhysicalRegisterId,
-}
-impl O3RenameMapEntry {
-    pub const fn new(
-        register_class: O3RegisterClass,
-        architectural: u32,
-        physical: O3PhysicalRegisterId,
-    ) -> Self {
-        Self {
-            register_class,
-            architectural,
-            physical,
-        }
-    }
-    pub const fn register_class(self) -> O3RegisterClass {
-        self.register_class
-    }
-    pub const fn architectural(self) -> u32 {
-        self.architectural
-    }
-    pub const fn physical(self) -> O3PhysicalRegisterId {
-        self.physical
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeSnapshot {
@@ -434,7 +319,7 @@ impl O3RuntimeState {
             o3_branch_squashed_target(branch_kind, update, branch_fallthrough_target)
         });
         for entry in &mut self.snapshot.reorder_buffer {
-            entry.ready = true;
+            entry.mark_ready();
         }
         let fu_latency_cycles =
             crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
@@ -446,7 +331,7 @@ impl O3RuntimeState {
         self.stats.observe_rob_occupancy(rob_occupancy);
 
         for entry in &mut self.snapshot.load_store_queue {
-            entry.completed = true;
+            entry.mark_completed();
         }
         if let Some(access) = record.memory_access() {
             for entry in o3_lsq_entries(sequence, access) {
