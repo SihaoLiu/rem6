@@ -52,6 +52,7 @@ pub(super) fn emit_run_host_action_stats(
 
     let mut checkpoint_restore_execution_mode_authority_manifests = 0;
     let mut checkpoint_restore_execution_mode_authority_cleared_manifests = 0;
+    let mut checkpoint_restore_execution_mode_authority_decode_errors = 0;
     let mut checkpoint_restore_execution_mode_authority_targets = 0;
     let mut checkpoint_restore_execution_mode_authority_modes =
         BTreeMap::<&'static str, u64>::new();
@@ -74,6 +75,9 @@ pub(super) fn emit_run_host_action_stats(
         }
         if restore.execution_mode_authority_cleared {
             checkpoint_restore_execution_mode_authority_cleared_manifests += 1;
+        }
+        if restore.execution_mode_authority_decode_error {
+            checkpoint_restore_execution_mode_authority_decode_errors += 1;
         }
         checkpoint_restore_execution_mode_authority_targets += restore.execution_modes.len() as u64;
         for authority in &restore.execution_modes {
@@ -295,6 +299,10 @@ pub(super) fn emit_run_host_action_stats(
         (
             "checkpoint_restore.execution_mode_authority.cleared_manifests",
             checkpoint_restore_execution_mode_authority_cleared_manifests,
+        ),
+        (
+            "checkpoint_restore.execution_mode_authority.decode_errors",
+            checkpoint_restore_execution_mode_authority_decode_errors,
         ),
         (
             "checkpoint_restore.execution_mode_authority.targets",

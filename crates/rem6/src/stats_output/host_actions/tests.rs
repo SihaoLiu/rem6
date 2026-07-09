@@ -292,6 +292,36 @@ fn host_action_checkpoint_restore_stats_merge_normalized_path_collisions() {
 }
 
 #[test]
+fn host_action_checkpoint_restore_stats_count_authority_decode_errors() {
+    let mut stats = StatsRegistry::new();
+    let mut decoded_restore = restore_with_component_chunk("cpu0", "o3-runtime-state", 32, 7);
+    decoded_restore.execution_mode_authority_present = true;
+    let mut failed_restore = restore_with_component_chunk("cpu0", "o3-runtime-state", 32, 11);
+    failed_restore.execution_mode_authority_decode_error = true;
+    failed_restore.execution_modes.clear();
+    let summary = Rem6HostActionSummary {
+        total_action_count: 2,
+        checkpoint_restored_count: 2,
+        checkpoint_restored_component_count: 2,
+        checkpoint_restored_chunk_count: 2,
+        checkpoint_restored_payload_bytes: 64,
+        checkpoint_restores: vec![decoded_restore, failed_restore],
+        ..Rem6HostActionSummary::default()
+    };
+
+    emit_run_host_action_stats(&mut stats, &summary).unwrap();
+    let snapshot = stats.snapshot(0);
+
+    assert_snapshot_stat(
+        &snapshot,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.decode_errors",
+        "Count",
+        StatResetPolicy::Monotonic,
+        1,
+    );
+}
+
+#[test]
 fn host_action_latest_transfer_stats_merge_normalized_path_collisions() {
     let mut stats = StatsRegistry::new();
     let summary = Rem6HostActionSummary {

@@ -465,6 +465,13 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
     );
     assert_json_stat(
         &json,
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.decode_errors",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.host_actions.checkpoint_restore.execution_mode_authority.targets",
         "Count",
         1,

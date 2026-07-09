@@ -800,6 +800,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.execution_mode_authority.target.cpu0.mode.detailed",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.manifests",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.cleared_manifests",
+        "sim.host_actions.checkpoint_restore.execution_mode_authority.decode_errors",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.targets",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.mode.detailed",
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.functional",
