@@ -754,6 +754,9 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
     let ordered_summary = ordered_o3
         .pointer("/event_summary")
         .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {ordered_o3}"));
+    let ordered_window = ordered_o3
+        .pointer("/event_window")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event window: {ordered_o3}"));
     let ordered_debug_summary = ordered_json
         .pointer("/debug/o3_trace/0/event_summary")
         .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {ordered_json}"));
@@ -802,6 +805,19 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
                 |(load_total, store_total), (load, store)| (load_total + load, store_total + store),
             )
     };
+    let max_lsq_data_event = ordered_events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .pointer("/lsq_data_latency_ticks")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .unwrap_or_else(|| panic!("O3 debug trace should include ordered LSQ events"));
+    let max_lsq_data_operation = max_lsq_data_event
+        .pointer("/lsq_operation")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("max LSQ data latency event should expose operation"));
 
     for pointer in [
         "/lsq_operation/load/latency/ticks",
@@ -826,6 +842,21 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
             "representative runtime event-summary LSQ lane {pointer} should be positive: {ordered_summary}"
         );
     }
+    let summary_lsq_data_operation = ordered_summary
+        .pointer("/event_window/max_lsq_data_latency/lsq_operation")
+        .and_then(Value::as_str);
+    assert_eq!(
+        summary_lsq_data_operation,
+        Some(max_lsq_data_operation),
+        "event-summary max LSQ data latency row should preserve the operation lane: {ordered_summary}"
+    );
+    assert_eq!(
+        ordered_window
+            .pointer("/max_lsq_data_latency/lsq_operation")
+            .and_then(Value::as_str),
+        Some(max_lsq_data_operation),
+        "runtime event-window max LSQ data latency row should preserve the operation lane: {ordered_window}"
+    );
     for (pointer, stat_path, expected) in [
         (
             "/lsq_load_bytes",
