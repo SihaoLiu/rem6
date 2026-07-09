@@ -977,6 +977,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.cpu0.o3.event_summary.rob.max_occupancy",
         "sim.cpu0.o3.event_summary.rename_writes",
         "sim.cpu0.o3.event_summary.rename.map_entries",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rename.map_entries",
         "/debug/o3_trace/0/event_summary/iq/issued_inst_type/mem_read",
         "/debug/o3_trace/0/event_summary/iq/issued_inst_type/mem_write",
         "/debug/o3_trace/0/event_summary/iq/issued_inst_type/int_mul",

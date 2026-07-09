@@ -152,6 +152,15 @@ impl RiscvO3RuntimeEventSummarySnapshot {
         self.sum(O3RuntimeTraceRecord::rename_writes)
     }
 
+    fn rename_map_entries(&self) -> u64 {
+        self.events
+            .values()
+            .copied()
+            .map(|event| event.rename_map_entries())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn branch_event_mispredictions(&self) -> u64 {
         self.events
             .values()
@@ -500,6 +509,7 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     rob_commit_blocked_events: StatId,
     rob_max_commits_at_tick: StatId,
     rename_writes: StatId,
+    rename_map_entries: StatId,
     branch_event_branches: StatId,
     branch_event_taken: StatId,
     branch_event_not_taken: StatId,
@@ -600,6 +610,12 @@ impl RiscvO3RuntimeEventSummaryStats {
                 "Count",
             )?,
             rename_writes: register_o3_counter(registry, &prefix, "rename.writes", "Count")?,
+            rename_map_entries: register_o3_counter(
+                registry,
+                &prefix,
+                "rename.map_entries",
+                "Count",
+            )?,
             branch_event_branches: register_o3_counter(
                 registry,
                 &prefix,
@@ -1002,6 +1018,7 @@ impl RiscvO3RuntimeEventSummaryStats {
                 snapshot.rob_max_commits_at_tick(),
             ),
             (self.rename_writes, snapshot.rename_writes()),
+            (self.rename_map_entries, snapshot.rename_map_entries()),
             (self.branch_event_branches, snapshot.branch_event_branches()),
             (self.branch_event_taken, snapshot.branch_event_taken()),
             (

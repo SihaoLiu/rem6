@@ -2143,6 +2143,37 @@ fn detailed_o3_live_rename_pressure_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_live_rename_dump_stats_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),        // switch cpu0 to detailed
+        i_type(1, 0, 0x0, 1, 0x13), // addi x1, x0, 1
+        i_type(2, 0, 0x0, 2, 0x13), // addi x2, x0, 2
+        i_type(3, 1, 0x0, 3, 0x13), // addi x3, x1, 3
+        i_type(4, 2, 0x0, 4, 0x13), // addi x4, x2, 4
+        i_type(5, 3, 0x0, 5, 0x13), // addi x5, x3, 5
+        i_type(6, 4, 0x0, 6, 0x13), // addi x6, x4, 6
+        i_type(7, 5, 0x0, 7, 0x13), // addi x7, x5, 7
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 12, 0x17),                              // auipc x12, 0
+        i_type(data_start - auipc_pc, 12, 0x0, 12, 0x13), // addi x12, x12, data
+        s_type(0, 7, 12, 0b010),                          // sw x7, 0(x12)
+        m5op(M5_DUMP_STATS),                              // dump live rename pressure
+        i_type(1, 7, 0x0, 8, 0x13),                       // addi x8, x7, 1
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn multicore_hart1_detailed_o3_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = vec![
