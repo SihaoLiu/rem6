@@ -150,6 +150,44 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         Some("0x80000010"),
         "max ROB occupancy should occur when younger independent integer work overlaps the resident multiply: {max_rob_event}"
     );
+    let max_rob_phase_deltas = assert_event_window_phase_deltas(max_rob_event);
+    let max_fu_latency_event = o3_runtime
+        .pointer("/event_window/max_fu_latency")
+        .unwrap_or_else(|| {
+            panic!("O3 runtime event window should expose max FU-latency row: {o3_runtime}")
+        });
+    let max_fu_latency_phase_deltas = assert_event_window_phase_deltas(max_fu_latency_event);
+    assert!(
+        max_fu_latency_phase_deltas.0 > 0,
+        "max FU-latency row should expose a nonzero issue-to-writeback phase: {max_fu_latency_event}"
+    );
+    let debug_event_window = json
+        .pointer("/debug/o3_trace/0/event_summary/event_window")
+        .unwrap_or_else(|| {
+            panic!("O3 debug event summary should expose event-window rows: {json}")
+        });
+    let debug_max_rob_event = debug_event_window
+        .pointer("/max_rob_occupancy")
+        .unwrap_or_else(|| {
+            panic!("O3 debug event summary should expose max ROB row: {debug_event_window}")
+        });
+    let debug_max_fu_latency_event = debug_event_window
+        .pointer("/max_fu_latency")
+        .unwrap_or_else(|| {
+            panic!("O3 debug event summary should expose max FU-latency row: {debug_event_window}")
+        });
+    assert_eq!(
+        assert_event_window_phase_deltas(debug_max_rob_event),
+        max_rob_phase_deltas,
+        "debug and runtime max ROB rows should expose matching phase deltas: runtime={max_rob_event}, debug={debug_max_rob_event}"
+    );
+    assert_eq!(
+        assert_event_window_phase_deltas(debug_max_fu_latency_event),
+        max_fu_latency_phase_deltas,
+        "debug and runtime max FU-latency rows should expose matching phase deltas: runtime={max_fu_latency_event}, debug={debug_max_fu_latency_event}"
+    );
+    assert_event_window_phase_stats(&json, "max_rob_occupancy", max_rob_phase_deltas);
+    assert_event_window_phase_stats(&json, "max_fu_latency", max_fu_latency_phase_deltas);
     let events = json
         .pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
@@ -323,6 +361,60 @@ fn json_u64_field(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing u64 field {pointer}: {json}"))
+}
+
+fn assert_event_window_phase_deltas(json: &Value) -> (u64, u64, u64) {
+    let issue_tick = json_u64_field(json, "/issue_tick");
+    let writeback_tick = json_u64_field(json, "/writeback_tick");
+    let commit_tick = json_u64_field(json, "/commit_tick");
+    let issue_to_writeback_ticks = json_u64_field(json, "/issue_to_writeback_ticks");
+    let writeback_to_commit_ticks = json_u64_field(json, "/writeback_to_commit_ticks");
+    let issue_to_commit_ticks = json_u64_field(json, "/issue_to_commit_ticks");
+    assert_eq!(
+        issue_to_writeback_ticks,
+        writeback_tick.saturating_sub(issue_tick),
+        "issue-to-writeback phase should match event-window ticks: {json}"
+    );
+    assert_eq!(
+        writeback_to_commit_ticks,
+        commit_tick.saturating_sub(writeback_tick),
+        "writeback-to-commit phase should match event-window ticks: {json}"
+    );
+    assert_eq!(
+        issue_to_commit_ticks,
+        commit_tick.saturating_sub(issue_tick),
+        "issue-to-commit phase should match event-window ticks: {json}"
+    );
+    (
+        issue_to_writeback_ticks,
+        writeback_to_commit_ticks,
+        issue_to_commit_ticks,
+    )
+}
+
+fn assert_event_window_phase_stats(json: &Value, row: &str, expected: (u64, u64, u64)) {
+    let prefix = format!("sim.cpu0.o3.event_summary.event_window.{row}");
+    assert_json_stat(
+        json,
+        &format!("{prefix}.issue_to_writeback_ticks"),
+        "Tick",
+        expected.0,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{prefix}.writeback_to_commit_ticks"),
+        "Tick",
+        expected.1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{prefix}.issue_to_commit_ticks"),
+        "Tick",
+        expected.2,
+        "monotonic",
+    );
 }
 
 fn json_bool_field(json: &Value, pointer: &str) -> bool {

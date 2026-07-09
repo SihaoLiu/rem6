@@ -236,6 +236,9 @@ fn emit_o3_runtime_window_row_stats(
     let issue_tick = event.map_or(0, |event| event.issue_tick());
     let writeback_tick = event.map_or(0, |event| event.writeback_tick());
     let commit_tick = event.map_or(0, |event| event.commit_tick());
+    let issue_to_writeback_ticks = event.map_or(0, |event| event.issue_to_writeback_ticks());
+    let writeback_to_commit_ticks = event.map_or(0, |event| event.writeback_to_commit_ticks());
+    let issue_to_commit_ticks = event.map_or(0, |event| event.issue_to_commit_ticks());
     let pc = event.map_or(0, |event| event.pc().get());
     let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
     let rob_commits_at_tick = event.map_or(0, |event| event.rob_commits_at_tick());
@@ -250,6 +253,13 @@ fn emit_o3_runtime_window_row_stats(
         ("issue_tick", "Tick", issue_tick),
         ("writeback_tick", "Tick", writeback_tick),
         ("commit_tick", "Tick", commit_tick),
+        ("issue_to_writeback_ticks", "Tick", issue_to_writeback_ticks),
+        (
+            "writeback_to_commit_ticks",
+            "Tick",
+            writeback_to_commit_ticks,
+        ),
+        ("issue_to_commit_ticks", "Tick", issue_to_commit_ticks),
         ("pc", "Address", pc),
         ("rob_occupancy", "Count", rob_occupancy),
         ("rob_commits_at_tick", "Count", rob_commits_at_tick),

@@ -375,6 +375,18 @@ impl O3RuntimeTraceRecord {
         self.writeback_tick()
     }
 
+    pub fn issue_to_writeback_ticks(self) -> u64 {
+        self.writeback_tick().saturating_sub(self.issue_tick())
+    }
+
+    pub fn writeback_to_commit_ticks(self) -> u64 {
+        self.commit_tick().saturating_sub(self.writeback_tick())
+    }
+
+    pub fn issue_to_commit_ticks(self) -> u64 {
+        self.commit_tick().saturating_sub(self.issue_tick())
+    }
+
     pub const fn pc(self) -> Address {
         self.pc
     }
