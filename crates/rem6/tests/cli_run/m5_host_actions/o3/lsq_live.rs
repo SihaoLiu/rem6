@@ -3,7 +3,31 @@ use super::*;
 #[test]
 fn rem6_run_o3_detailed_mode_exposes_live_lsq_overlap() {
     let path = detailed_o3_live_lsq_overlap_binary("m5-switch-cpu-o3-live-lsq-overlap");
+    let json = o3_live_lsq_overlap_json(&path, "direct", "220");
 
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("direct")
+    );
+    assert_o3_live_lsq_overlap(&json);
+}
+
+#[test]
+fn rem6_run_o3_cache_fabric_dram_preserves_live_lsq_overlap() {
+    let path = detailed_o3_live_lsq_overlap_binary("m5-switch-cpu-o3-live-lsq-cache-fabric-dram");
+    let json = o3_live_lsq_overlap_json(&path, "cache-fabric-dram", "360");
+
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    assert_o3_live_lsq_overlap(&json);
+    assert_cache_fabric_dram_lsq_resources(&json);
+}
+
+fn o3_live_lsq_overlap_json(path: &Path, memory_system: &str, max_tick: &str) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
             "run",
@@ -12,14 +36,14 @@ fn rem6_run_o3_detailed_mode_exposes_live_lsq_overlap() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "220",
+            max_tick,
             "--stats-format",
             "json",
             "--execute",
             "--debug-flags",
             "O3",
             "--memory-system",
-            "direct",
+            memory_system,
             "--dump-memory",
             "0x80000060:8",
         ])
@@ -33,6 +57,10 @@ fn rem6_run_o3_detailed_mode_exposes_live_lsq_overlap() {
     );
     let json: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    json
+}
+
+fn assert_o3_live_lsq_overlap(json: &Value) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host")
@@ -101,4 +129,45 @@ fn rem6_run_o3_detailed_mode_exposes_live_lsq_overlap() {
         Some("0x80000014"),
         "max LSQ occupancy should occur when the load overlaps the older resident store: {max_lsq_event}"
     );
+}
+
+fn assert_cache_fabric_dram_lsq_resources(json: &Value) {
+    for (pointer, label) in [
+        (
+            "/memory_resources/cache/activity",
+            "aggregate cache activity",
+        ),
+        (
+            "/memory_resources/cache/data/activity",
+            "data cache activity",
+        ),
+        (
+            "/memory_resources/cache/data/msi_runs",
+            "data cache MSI runs",
+        ),
+        (
+            "/memory_resources/transport/data/activity",
+            "data transport activity",
+        ),
+        ("/memory_resources/fabric/activity", "fabric activity"),
+        ("/memory_resources/dram/activity", "DRAM activity"),
+    ] {
+        assert!(
+            json.pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "cache-fabric-dram live-LSQ run should expose {label}: {json}"
+        );
+    }
+
+    for path in [
+        "sim.memory.resources.cache.activity",
+        "sim.memory.resources.cache.data.activity",
+        "sim.memory.resources.cache.data.msi.runs",
+        "sim.memory.resources.transport.data.activity",
+        "sim.memory.resources.fabric.activity",
+        "sim.memory.resources.dram.activity",
+    ] {
+        assert_json_stat_at_least(json, path, "Count", 1, "monotonic");
+    }
 }
