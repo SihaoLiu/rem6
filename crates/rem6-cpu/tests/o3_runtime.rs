@@ -315,7 +315,7 @@ fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
     );
     assert_eq!(stats.fu_integer_mul_instructions(), 0);
     assert_eq!(stats.fu_integer_div_instructions(), 0);
-    assert_eq!(stats.max_rob_occupancy(), 1);
+    assert_eq!(stats.max_rob_occupancy(), 2);
     assert_eq!(stats.max_lsq_occupancy(), 0);
     assert_eq!(stats.rename_map_entries(), 0);
     assert_eq!(stats.lsq_operation_count(O3RuntimeLsqOperation::Atomic), 0);

@@ -64,19 +64,15 @@ impl O3ReorderBufferEntry {
         self.ready = ready;
         self
     }
-
     pub const fn sequence(self) -> u64 {
         self.sequence
     }
-
     pub const fn pc(self) -> Address {
         self.pc
     }
-
     pub const fn destination(self) -> Option<O3PhysicalRegisterId> {
         self.destination
     }
-
     pub const fn is_ready(self) -> bool {
         self.ready
     }
@@ -122,15 +118,12 @@ impl O3LoadStoreQueueEntry {
         self.completed = completed;
         self
     }
-
     pub const fn sequence(self) -> u64 {
         self.sequence
     }
-
     pub const fn address(self) -> Option<Address> {
         self.address
     }
-
     pub const fn bytes(self) -> u32 {
         self.bytes
     }
@@ -446,14 +439,17 @@ impl O3RuntimeState {
         let branch_squashed_target = branch_update.and_then(|update| {
             o3_branch_squashed_target(branch_kind, update, branch_fallthrough_target)
         });
-        let rob_start = self.snapshot.reorder_buffer.len();
+        for entry in &mut self.snapshot.reorder_buffer {
+            entry.ready = true;
+        }
+        let fu_latency_cycles =
+            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
-                .with_ready(true),
+                .with_ready(fu_latency_cycles == 0),
         );
         let rob_occupancy = self.snapshot.reorder_buffer.len();
-        self.stats
-            .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
+        self.stats.observe_rob_occupancy(rob_occupancy);
 
         let lsq_start = self.snapshot.load_store_queue.len();
         if let Some(access) = record.memory_access() {
@@ -494,11 +490,15 @@ impl O3RuntimeState {
             branch_resolved_target,
             branch_squashed_target,
             o3_fu_latency_class(execution.instruction()),
-            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction()),
+            fu_latency_cycles,
             record.system_event().is_some(),
         );
 
-        self.snapshot.reorder_buffer.truncate(rob_start);
+        let rob_commits = self
+            .snapshot
+            .reorder_buffer
+            .partition_point(|entry| entry.is_ready());
+        self.snapshot.reorder_buffer.drain(0..rob_commits);
         self.snapshot.load_store_queue.truncate(lsq_start);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
