@@ -116,6 +116,35 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_structural_event_window_snapshot()
                 "resettable",
             );
         }
+
+        let issue_tick = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.issue_tick",
+        );
+        let writeback_tick = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.writeback_tick",
+        );
+        let commit_tick = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.commit_tick",
+        );
+        for (path, value) in [
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.issue_to_writeback_ticks",
+                writeback_tick.saturating_sub(issue_tick),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.writeback_to_commit_ticks",
+                commit_tick.saturating_sub(writeback_tick),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.issue_to_commit_ticks",
+                commit_tick.saturating_sub(issue_tick),
+            ),
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Tick", value, "resettable");
+        }
     }
 
     let pre_reset_records = stats_dump_sample_value(
