@@ -644,15 +644,16 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
                     "missing latest checkpoint O3 runtime field {field}: {latest_checkpoint_o3_runtime}"
                 )
             });
-        assert_json_stat(
-            &json,
-            &format!(
+        for stat_path in [
+            format!(
                 "sim.host_actions.checkpoint.latest_component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
             ),
-            unit,
-            expected,
-            "monotonic",
-        );
+            format!(
+                "sim.debug.host_action_trace.checkpoint.latest_component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+        ] {
+            assert_json_stat(&json, &stat_path, unit, expected, "monotonic");
+        }
     }
     assert_json_stat(
         &json,

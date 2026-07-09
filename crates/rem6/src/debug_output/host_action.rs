@@ -250,6 +250,10 @@ pub(crate) fn host_action_trace_checkpoint_stats(
 ) -> Vec<Rem6HostActionTraceStat> {
     let mut component_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
     let mut chunk_transfers = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
+    let mut latest_component_transfers =
+        BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut latest_chunk_transfers =
+        BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
     for checkpoint in checkpoints {
         for component in &checkpoint.components {
             let component_path = stat_path_segment(&component.component);
@@ -262,6 +266,24 @@ pub(crate) fn host_action_trace_checkpoint_stats(
             for chunk in &component.chunks {
                 let chunk_path = stat_path_segment(&chunk.name);
                 let chunk_stats = chunk_transfers
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                add_host_action_trace_chunk_stats(chunk_stats, chunk);
+            }
+        }
+    }
+    if let Some(checkpoint) = checkpoints.last() {
+        for component in &checkpoint.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = latest_component_transfers
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = latest_chunk_transfers
                     .entry((component_path.clone(), chunk_path))
                     .or_default();
                 add_host_action_trace_chunk_stats(chunk_stats, chunk);
@@ -288,6 +310,27 @@ pub(crate) fn host_action_trace_checkpoint_stats(
         push_host_action_trace_chunk_stats(
             &mut stats,
             format!("checkpoint.component.{component}.chunk.{chunk}"),
+            transfer,
+        );
+    }
+    for (component, transfer) in latest_component_transfers {
+        stats.push(Rem6HostActionTraceStat::count(
+            format!("checkpoint.latest_component.{component}.components"),
+            transfer.components,
+        ));
+        stats.push(Rem6HostActionTraceStat::count(
+            format!("checkpoint.latest_component.{component}.chunks"),
+            transfer.chunks,
+        ));
+        stats.push(Rem6HostActionTraceStat::byte(
+            format!("checkpoint.latest_component.{component}.payload_bytes"),
+            transfer.payload_bytes,
+        ));
+    }
+    for ((component, chunk), transfer) in latest_chunk_transfers {
+        push_host_action_trace_chunk_stats(
+            &mut stats,
+            format!("checkpoint.latest_component.{component}.chunk.{chunk}"),
             transfer,
         );
     }
