@@ -11,6 +11,7 @@ const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
+const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -160,6 +161,31 @@ fn rem6_cpu_o3_runtime_root_keeps_headroom() {
             "{relative_path} should keep headroom for executable O3 evidence, but it has {lines} lines"
         );
     }
+}
+
+#[test]
+fn rem6_system_o3_runtime_stats_modules_stay_focused() {
+    let stats_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../rem6-system/src/riscv_o3_runtime_stats");
+    let mut oversized = Vec::new();
+
+    for path in rust_source_files(&stats_dir) {
+        let lines = line_count(&path);
+        if lines > MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES {
+            oversized.push(format!(
+                "{} has {lines} lines",
+                path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                    .unwrap()
+                    .display()
+            ));
+        }
+    }
+
+    assert!(
+        oversized.is_empty(),
+        "rem6-system O3 runtime stats modules exceed {MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES} lines: {}",
+        oversized.join(", ")
+    );
 }
 
 #[test]
