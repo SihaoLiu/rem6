@@ -16,6 +16,8 @@ mod fu_latency;
 mod lsq;
 #[path = "o3/lsq_live.rs"]
 mod lsq_live;
+#[path = "o3/rename_live.rs"]
+mod rename_live;
 #[path = "o3/restore.rs"]
 mod restore;
 #[path = "o3/rob_live.rs"]

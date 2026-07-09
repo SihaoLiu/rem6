@@ -1366,6 +1366,7 @@ pub(super) fn emit_o3_runtime_stats(
         ("rob.maxOccupancy", o3.max_rob_occupancy()),
         ("rename.renamedInsts", o3.instructions()),
         ("rename.renamedOperands", o3.rename_writes()),
+        ("rename.mapEntries", o3.rename_map_entries()),
         ("iew.dispatchedInsts", o3.instructions()),
         ("iew.dispLoadInsts", o3.lsq_loads()),
         ("iew.dispStoreInsts", o3.lsq_stores()),

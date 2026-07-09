@@ -1067,6 +1067,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.rob.writes",
         "system.cpu.rob.maxOccupancy",
         "system.cpu.rename.renamedOperands",
+        "system.cpu.rename.mapEntries",
         "system.cpu.iew.instsToCommit.total",
         "system.cpu.iew.writebackCount.total",
         "system.cpu.iew.producerInst.total",

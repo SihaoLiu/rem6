@@ -736,6 +736,7 @@ pub(super) struct RiscvO3RuntimeStructuralAliasStats {
     pub(super) rob_max_occupancy: StatId,
     pub(super) rename_renamed_insts: StatId,
     pub(super) rename_renamed_operands: StatId,
+    pub(super) rename_map_entries: StatId,
     pub(super) iew_dispatched_insts: StatId,
     pub(super) iew_disp_load_insts: StatId,
     pub(super) iew_disp_store_insts: StatId,
@@ -913,6 +914,12 @@ impl RiscvO3RuntimeStructuralAliasStats {
                 "rename.renamedOperands",
                 "Count",
             )?,
+            rename_map_entries: register_o3_counter(
+                registry,
+                prefix,
+                "rename.mapEntries",
+                "Count",
+            )?,
             iew_dispatched_insts: register_o3_counter(
                 registry,
                 prefix,
@@ -1072,13 +1079,14 @@ impl RiscvO3RuntimeStructuralAliasStats {
         Ok(())
     }
 
-    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 26] {
+    fn count_values(self, stats: O3RuntimeStats) -> [(StatId, u64); 27] {
         [
             (self.rob_writes, stats.rob_allocations()),
             (self.rob_reads, stats.rob_commits()),
             (self.rob_max_occupancy, stats.max_rob_occupancy()),
             (self.rename_renamed_insts, stats.instructions()),
             (self.rename_renamed_operands, stats.rename_writes()),
+            (self.rename_map_entries, stats.rename_map_entries()),
             (self.iew_dispatched_insts, stats.instructions()),
             (self.iew_disp_load_insts, stats.lsq_loads()),
             (self.iew_disp_store_insts, stats.lsq_stores()),
