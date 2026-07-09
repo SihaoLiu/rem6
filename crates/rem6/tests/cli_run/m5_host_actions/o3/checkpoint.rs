@@ -547,6 +547,9 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
                 "sim.host_actions.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
             ),
             format!(
+                "sim.cpu0.o3.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            format!(
                 "sim.debug.host_action_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
             ),
             format!(

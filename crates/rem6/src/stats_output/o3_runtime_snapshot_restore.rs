@@ -80,7 +80,7 @@ fn add_o3_restore_chunk_stats(
 fn emit_o3_restore_component_stat_set(
     stats: &mut StatsRegistry,
     prefix: &str,
-    component_stats: O3RestoreComponentStats,
+    component_stats: &O3RestoreComponentStats,
 ) -> Result<(), Rem6CliError> {
     for (suffix, unit, value) in [
         ("components", "Count", component_stats.components),
@@ -101,7 +101,7 @@ fn emit_o3_restore_component_stat_set(
 fn emit_o3_restore_chunk_stat_set(
     stats: &mut StatsRegistry,
     prefix: &str,
-    chunk_stats: O3RestoreChunkStats,
+    chunk_stats: &O3RestoreChunkStats,
 ) -> Result<(), Rem6CliError> {
     for (suffix, unit, value) in [
         ("chunks", "Count", chunk_stats.chunks),
@@ -120,13 +120,54 @@ fn emit_o3_restore_chunk_stat_set(
             value,
         )?;
     }
-    for (field, value) in chunk_stats.o3_runtime_numeric {
+    for (field, value) in &chunk_stats.o3_runtime_numeric {
         increment_stat(
             stats,
             &format!("{prefix}.o3_runtime.{field}"),
             value.unit(),
             StatResetPolicy::Monotonic,
             value.value(),
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_o3_restore_target_stat_sets(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+    lane: &str,
+    target_stats: &BTreeMap<String, O3RestoreComponentStats>,
+    target_component_stats: &BTreeMap<(String, String), O3RestoreComponentStats>,
+    target_chunk_stats: &BTreeMap<(String, String, String), O3RestoreChunkStats>,
+) -> Result<(), Rem6CliError> {
+    for (target_path, target_stats) in target_stats {
+        emit_o3_restore_component_stat_set(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.checkpoint_restore.{lane}.{target_path}",
+                core.cpu
+            ),
+            target_stats,
+        )?;
+    }
+    for ((target_path, component_path), component_stats) in target_component_stats {
+        emit_o3_restore_component_stat_set(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.checkpoint_restore.{lane}.{target_path}.component.{component_path}",
+                core.cpu
+            ),
+            component_stats,
+        )?;
+    }
+    for ((target_path, component_path, chunk_path), chunk_stats) in target_chunk_stats {
+        emit_o3_restore_chunk_stat_set(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.checkpoint_restore.{lane}.{target_path}.component.{component_path}.chunk.{chunk_path}",
+                core.cpu
+            ),
+            chunk_stats,
         )?;
     }
     Ok(())
@@ -291,7 +332,7 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
                 "sim.cpu{}.o3.checkpoint_restore.component.{component_path}",
                 core.cpu
             ),
-            component_stats,
+            &component_stats,
         )?;
     }
     for ((component_path, chunk_path), chunk_stats) in chunk_stats {
@@ -301,38 +342,24 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
                 "sim.cpu{}.o3.checkpoint_restore.component.{component_path}.chunk.{chunk_path}",
                 core.cpu
             ),
-            chunk_stats,
+            &chunk_stats,
         )?;
     }
-    for (target_path, target_stats) in target_stats {
-        emit_o3_restore_component_stat_set(
-            stats,
-            &format!(
-                "sim.cpu{}.o3.checkpoint_restore.target.{target_path}",
-                core.cpu
-            ),
-            target_stats,
-        )?;
-    }
-    for ((target_path, component_path), component_stats) in target_component_stats {
-        emit_o3_restore_component_stat_set(
-            stats,
-            &format!(
-                "sim.cpu{}.o3.checkpoint_restore.target.{target_path}.component.{component_path}",
-                core.cpu
-            ),
-            component_stats,
-        )?;
-    }
-    for ((target_path, component_path, chunk_path), chunk_stats) in target_chunk_stats {
-        emit_o3_restore_chunk_stat_set(
-            stats,
-            &format!(
-                "sim.cpu{}.o3.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}",
-                core.cpu
-            ),
-            chunk_stats,
-        )?;
-    }
+    emit_o3_restore_target_stat_sets(
+        stats,
+        core,
+        "target",
+        &target_stats,
+        &target_component_stats,
+        &target_chunk_stats,
+    )?;
+    emit_o3_restore_target_stat_sets(
+        stats,
+        core,
+        "latest_target",
+        &target_stats,
+        &target_component_stats,
+        &target_chunk_stats,
+    )?;
     Ok(())
 }
