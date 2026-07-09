@@ -290,19 +290,11 @@ pub(super) fn emit_run_host_action_stats(
                 let chunk_stats = switch_state_transfer_chunk_stats
                     .entry((component_path.clone(), chunk_path.clone()))
                     .or_default();
-                chunk_stats.chunks += 1;
-                chunk_stats.payload_bytes += chunk.payload_bytes;
-                chunk_stats.payload_checksum_accumulator = chunk_stats
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
+                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
                 let target_chunk_stats = switch_state_transfer_target_chunk_stats
                     .entry((target_path.clone(), component_path.clone(), chunk_path))
                     .or_default();
-                target_chunk_stats.chunks += 1;
-                target_chunk_stats.payload_bytes += chunk.payload_bytes;
-                target_chunk_stats.payload_checksum_accumulator = target_chunk_stats
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
+                add_host_checkpoint_chunk_stats(target_chunk_stats, chunk);
             }
         }
     }
@@ -658,11 +650,7 @@ pub(super) fn emit_run_host_action_stats(
                 let chunk_stats = latest_transfer_chunk_stats
                     .entry((component_path.clone(), chunk_path))
                     .or_default();
-                chunk_stats.chunks += 1;
-                chunk_stats.payload_bytes += chunk.payload_bytes;
-                chunk_stats.payload_checksum_accumulator = chunk_stats
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
+                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
             }
         }
         for (component_path, component_stats) in latest_transfer_component_stats {
@@ -700,6 +688,17 @@ pub(super) fn emit_run_host_action_stats(
                     unit,
                     StatResetPolicy::Monotonic,
                     value,
+                )?;
+            }
+            for (field, value) in chunk_stats.o3_runtime_numeric {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{latest_transfer_target}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                    ),
+                    value.unit(),
+                    StatResetPolicy::Monotonic,
+                    value.value(),
                 )?;
             }
         }
@@ -1224,6 +1223,17 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
+        for (field, value) in chunk_stats.o3_runtime_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch_state_transfer.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
     }
     for (target_path, target_stats) in switch_state_transfer_target_stats {
         increment_stat(
@@ -1315,6 +1325,17 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
+        for (field, value) in chunk_stats.o3_runtime_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
     }
     for (work_id, buckets) in roi_duration_histograms(summary) {
         let buckets = buckets.into_iter().collect::<Vec<_>>();

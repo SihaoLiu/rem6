@@ -78,6 +78,7 @@ pub struct ExecutionModeSwitchStateTransferComponent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionModeSwitchStateTransferChunk {
     name: String,
+    o3_runtime_payload: Option<Vec<u8>>,
     payload_bytes: u64,
     payload_checksum: u64,
 }
@@ -115,27 +116,21 @@ impl ExecutionModeSwitchStateTransfer {
     pub fn manifest_label(&self) -> &str {
         &self.manifest_label
     }
-
     pub const fn manifest_tick(&self) -> Tick {
         self.manifest_tick
     }
-
     pub const fn component_count(&self) -> u64 {
         self.component_count
     }
-
     pub const fn chunk_count(&self) -> u64 {
         self.chunk_count
     }
-
     pub const fn payload_bytes(&self) -> u64 {
         self.payload_bytes
     }
-
     pub fn components(&self) -> &[ExecutionModeSwitchStateTransferComponent] {
         &self.components
     }
-
     pub const fn quiescence_gate(&self) -> &ExecutionModeSwitchQuiescenceGate {
         &self.quiescence_gate
     }
@@ -222,6 +217,8 @@ impl ExecutionModeSwitchStateTransferChunk {
     fn from_chunk(chunk: &rem6_checkpoint::CheckpointChunk) -> Self {
         Self {
             name: chunk.name().to_string(),
+            o3_runtime_payload: (chunk.name() == "o3-runtime-state")
+                .then(|| chunk.payload().to_vec()),
             payload_bytes: chunk.payload().len() as u64,
             payload_checksum: checkpoint_payload_checksum(chunk.payload()),
         }
@@ -229,6 +226,10 @@ impl ExecutionModeSwitchStateTransferChunk {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn o3_runtime_payload(&self) -> Option<&[u8]> {
+        self.o3_runtime_payload.as_deref()
     }
 
     pub const fn payload_bytes(&self) -> u64 {

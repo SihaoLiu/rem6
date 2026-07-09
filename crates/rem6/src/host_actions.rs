@@ -1279,7 +1279,9 @@ impl Rem6HostCheckpointComponentSummary {
                     name: chunk.name().to_string(),
                     payload_bytes: chunk.payload_bytes(),
                     payload_checksum: chunk.payload_checksum(),
-                    o3_runtime: None,
+                    o3_runtime: chunk.o3_runtime_payload().and_then(|payload| {
+                        decode_o3_runtime_checkpoint_chunk(chunk.name(), payload)
+                    }),
                 })
                 .collect(),
         }

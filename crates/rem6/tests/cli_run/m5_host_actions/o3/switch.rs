@@ -420,6 +420,53 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
         parse_hex_u64(&o3_checksum),
         "monotonic",
     );
+    let o3_runtime = latest_transfer_o3_runtime_chunk(latest_transfer, "cpu1");
+    assert_eq!(
+        o3_runtime.pointer("/decode_error").and_then(Value::as_bool),
+        Some(false),
+        "O3 switch transfer runtime chunk should decode cleanly: {o3_runtime}"
+    );
+    for (field, unit) in [
+        ("stats_lsq_operation_load", "Count"),
+        ("stats_lsq_operation_store", "Count"),
+        ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_lsq_data_latency_max_ticks", "Tick"),
+        ("stats_lsq_data_latency_min_ticks", "Tick"),
+    ] {
+        let value = o3_runtime
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("missing decoded switch transfer field {field}: {o3_runtime}")
+            });
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.component.cpu1.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu1.component.cpu1.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
+    }
     assert_json_stat_absent(
         &json,
         "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.component.cpu0.components",
@@ -714,4 +761,24 @@ fn assert_trace_switch_component_chunk(switch: &Value, component: &str, chunk: &
             .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
         "trace chunk should expose payload checksum: {chunk}"
     );
+}
+
+fn latest_transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+    let components = transfer
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer components: {transfer}"));
+    let component = components
+        .iter()
+        .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing switch transfer component {component}: {transfer}"));
+    let chunks = component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer chunks: {component}"));
+    chunks
+        .iter()
+        .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state"))
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .unwrap_or_else(|| panic!("missing decoded O3 switch transfer chunk: {component}"))
 }
