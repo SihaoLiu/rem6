@@ -280,6 +280,7 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
     let mut target_quiescence_validated = BTreeMap::<String, u64>::new();
     let mut target_quiescence_captured =
         BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut latest_checker = None;
     let mut target_checkers = BTreeMap::new();
     for switch in execution_mode_switches {
         let Some(transfer) = switch.state_transfer.as_ref() else {
@@ -331,6 +332,7 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         let Some(checker) = transfer.quiescence_gate.checker else {
             continue;
         };
+        latest_checker = Some(checker);
         target_checkers.insert(quiescence_target, checker);
     }
 
@@ -418,6 +420,16 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         ));
         stats.push(Rem6HostActionTraceStat::count(
             format!("execution_mode_switch.quiescence.target.{target}.checker.mismatches"),
+            checker.mismatches,
+        ));
+    }
+    if let Some(checker) = latest_checker {
+        stats.push(Rem6HostActionTraceStat::count(
+            "execution_mode_switch.quiescence.checker.checked_instructions".to_string(),
+            checker.checked_instructions,
+        ));
+        stats.push(Rem6HostActionTraceStat::count(
+            "execution_mode_switch.quiescence.checker.mismatches".to_string(),
             checker.mismatches,
         ));
     }

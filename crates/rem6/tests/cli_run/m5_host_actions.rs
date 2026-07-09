@@ -1265,6 +1265,8 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
             "--checker-cpu",
             "--m5-switch-cpu-mode",
             "timing",
+            "--debug-flags",
+            "HostAction",
         ])
         .output()
         .unwrap();
@@ -1381,6 +1383,20 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
     assert_json_stat(
         &json,
         "sim.host_actions.execution_mode_switch.quiescence.target.cpu0.checker.mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.checker.checked_instructions",
+        "Count",
+        second_checked_at_switch,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.quiescence.checker.mismatches",
         "Count",
         0,
         "monotonic",
