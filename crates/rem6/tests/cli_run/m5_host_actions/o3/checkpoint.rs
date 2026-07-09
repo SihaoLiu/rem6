@@ -730,6 +730,98 @@ fn rem6_run_m5_dump_stats_restores_o3_fu_class_snapshot_after_scheduled_restore(
         first_dump_tick < restore_tick && restore_tick < restored_dump_tick,
         "expected first dump before restore before restored dump, first={first_dump_tick}, restore={restore_tick}, restored={restored_dump_tick}"
     );
+    let checkpoint_o3_runtime =
+        checkpoint_chunk_summary(host_actions, 0, "cpu0", "o3-runtime-state")
+            .pointer("/o3_runtime")
+            .unwrap_or_else(|| {
+                panic!("missing decoded O3 checkpoint chunk summary: {host_actions}")
+            });
+    assert_eq!(
+        checkpoint_o3_runtime
+            .pointer("/decode_error")
+            .and_then(Value::as_bool),
+        Some(false),
+        "FU checkpoint chunk should decode cleanly: {checkpoint_o3_runtime}"
+    );
+    for (field, stat_path) in [
+        (
+            "stats_fu_latency_instructions",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_instructions",
+        ),
+        (
+            "stats_fu_latency_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_mul_instructions",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.instructions",
+        ),
+        (
+            "stats_fu_latency_class_integer_mul_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_mul_max_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.max_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_mul_min_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.min_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_mul_avg_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.avg_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_div_instructions",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.instructions",
+        ),
+        (
+            "stats_fu_latency_class_integer_div_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_div_max_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.max_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_div_min_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.min_cycles",
+        ),
+        (
+            "stats_fu_latency_class_integer_div_avg_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.avg_cycles",
+        ),
+        (
+            "stats_fu_latency_class_float_misc_instructions",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.instructions",
+        ),
+        (
+            "stats_fu_latency_class_float_misc_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.cycles",
+        ),
+        (
+            "stats_fu_latency_class_float_misc_max_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.max_cycles",
+        ),
+        (
+            "stats_fu_latency_class_float_misc_min_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.min_cycles",
+        ),
+        (
+            "stats_fu_latency_class_float_misc_avg_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.avg_cycles",
+        ),
+    ] {
+        let expected = stats_dump_sample_value(first_dump, stat_path);
+        assert_eq!(
+            checkpoint_o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(expected),
+            "FU checkpoint chunk should decode {field} from {stat_path}: {checkpoint_o3_runtime}"
+        );
+    }
     for dump in [first_dump, restored_dump] {
         assert_stats_dump_sample(
             dump,

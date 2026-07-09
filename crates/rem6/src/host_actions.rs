@@ -1,4 +1,6 @@
-use rem6_cpu::{BranchTargetKind, O3RuntimeCheckpointPayload, O3RuntimeLsqOperation};
+use rem6_cpu::{
+    BranchTargetKind, O3RuntimeCheckpointPayload, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
+};
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
@@ -1312,6 +1314,23 @@ pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) stats_lsq_operation_load_latency_ticks: Option<u64>,
     pub(crate) stats_lsq_operation_store_latency_samples: Option<u64>,
     pub(crate) stats_lsq_operation_store_latency_ticks: Option<u64>,
+    pub(crate) stats_fu_latency_instructions: Option<u64>,
+    pub(crate) stats_fu_latency_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_mul_instructions: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_mul_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_mul_max_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_mul_min_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_mul_avg_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_div_instructions: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_div_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_div_max_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_div_min_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_integer_div_avg_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_float_misc_instructions: Option<u64>,
+    pub(crate) stats_fu_latency_class_float_misc_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_float_misc_max_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_float_misc_min_cycles: Option<u64>,
+    pub(crate) stats_fu_latency_class_float_misc_avg_cycles: Option<u64>,
 }
 
 impl Rem6HostO3RuntimeCheckpointChunkSummary {
@@ -1335,7 +1354,141 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
             stats_lsq_operation_load_latency_ticks: None,
             stats_lsq_operation_store_latency_samples: None,
             stats_lsq_operation_store_latency_ticks: None,
+            stats_fu_latency_instructions: None,
+            stats_fu_latency_cycles: None,
+            stats_fu_latency_class_integer_mul_instructions: None,
+            stats_fu_latency_class_integer_mul_cycles: None,
+            stats_fu_latency_class_integer_mul_max_cycles: None,
+            stats_fu_latency_class_integer_mul_min_cycles: None,
+            stats_fu_latency_class_integer_mul_avg_cycles: None,
+            stats_fu_latency_class_integer_div_instructions: None,
+            stats_fu_latency_class_integer_div_cycles: None,
+            stats_fu_latency_class_integer_div_max_cycles: None,
+            stats_fu_latency_class_integer_div_min_cycles: None,
+            stats_fu_latency_class_integer_div_avg_cycles: None,
+            stats_fu_latency_class_float_misc_instructions: None,
+            stats_fu_latency_class_float_misc_cycles: None,
+            stats_fu_latency_class_float_misc_max_cycles: None,
+            stats_fu_latency_class_float_misc_min_cycles: None,
+            stats_fu_latency_class_float_misc_avg_cycles: None,
         }
+    }
+
+    pub(crate) fn numeric_fields(&self) -> Vec<(&'static str, Option<u64>)> {
+        vec![
+            ("snapshot_rob_entries", self.snapshot_rob_entries),
+            ("snapshot_lsq_entries", self.snapshot_lsq_entries),
+            (
+                "snapshot_rename_map_entries",
+                self.snapshot_rename_map_entries,
+            ),
+            ("stats_max_rob_occupancy", self.stats_max_rob_occupancy),
+            ("stats_max_lsq_occupancy", self.stats_max_lsq_occupancy),
+            ("stats_rename_map_entries", self.stats_rename_map_entries),
+            ("stats_lsq_operation_load", self.stats_lsq_operation_load),
+            ("stats_lsq_operation_store", self.stats_lsq_operation_store),
+            (
+                "stats_lsq_data_latency_samples",
+                self.stats_lsq_data_latency_samples,
+            ),
+            (
+                "stats_lsq_data_latency_ticks",
+                self.stats_lsq_data_latency_ticks,
+            ),
+            (
+                "stats_lsq_data_latency_max_ticks",
+                self.stats_lsq_data_latency_max_ticks,
+            ),
+            (
+                "stats_lsq_data_latency_min_ticks",
+                self.stats_lsq_data_latency_min_ticks,
+            ),
+            (
+                "stats_lsq_data_latency_avg_ticks",
+                self.stats_lsq_data_latency_avg_ticks,
+            ),
+            (
+                "stats_lsq_operation_load_latency_samples",
+                self.stats_lsq_operation_load_latency_samples,
+            ),
+            (
+                "stats_lsq_operation_load_latency_ticks",
+                self.stats_lsq_operation_load_latency_ticks,
+            ),
+            (
+                "stats_lsq_operation_store_latency_samples",
+                self.stats_lsq_operation_store_latency_samples,
+            ),
+            (
+                "stats_lsq_operation_store_latency_ticks",
+                self.stats_lsq_operation_store_latency_ticks,
+            ),
+            (
+                "stats_fu_latency_instructions",
+                self.stats_fu_latency_instructions,
+            ),
+            ("stats_fu_latency_cycles", self.stats_fu_latency_cycles),
+            (
+                "stats_fu_latency_class_integer_mul_instructions",
+                self.stats_fu_latency_class_integer_mul_instructions,
+            ),
+            (
+                "stats_fu_latency_class_integer_mul_cycles",
+                self.stats_fu_latency_class_integer_mul_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_mul_max_cycles",
+                self.stats_fu_latency_class_integer_mul_max_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_mul_min_cycles",
+                self.stats_fu_latency_class_integer_mul_min_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_mul_avg_cycles",
+                self.stats_fu_latency_class_integer_mul_avg_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_div_instructions",
+                self.stats_fu_latency_class_integer_div_instructions,
+            ),
+            (
+                "stats_fu_latency_class_integer_div_cycles",
+                self.stats_fu_latency_class_integer_div_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_div_max_cycles",
+                self.stats_fu_latency_class_integer_div_max_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_div_min_cycles",
+                self.stats_fu_latency_class_integer_div_min_cycles,
+            ),
+            (
+                "stats_fu_latency_class_integer_div_avg_cycles",
+                self.stats_fu_latency_class_integer_div_avg_cycles,
+            ),
+            (
+                "stats_fu_latency_class_float_misc_instructions",
+                self.stats_fu_latency_class_float_misc_instructions,
+            ),
+            (
+                "stats_fu_latency_class_float_misc_cycles",
+                self.stats_fu_latency_class_float_misc_cycles,
+            ),
+            (
+                "stats_fu_latency_class_float_misc_max_cycles",
+                self.stats_fu_latency_class_float_misc_max_cycles,
+            ),
+            (
+                "stats_fu_latency_class_float_misc_min_cycles",
+                self.stats_fu_latency_class_float_misc_min_cycles,
+            ),
+            (
+                "stats_fu_latency_class_float_misc_avg_cycles",
+                self.stats_fu_latency_class_float_misc_avg_cycles,
+            ),
+        ]
     }
 }
 
@@ -1357,6 +1510,9 @@ fn decode_o3_runtime_checkpoint_chunk(
     };
     let snapshot = decoded.snapshot();
     let stats = decoded.stats();
+    let integer_mul = O3RuntimeFuLatencyClass::ScalarIntegerMul;
+    let integer_div = O3RuntimeFuLatencyClass::ScalarIntegerDiv;
+    let float_misc = O3RuntimeFuLatencyClass::ScalarFloatMisc;
     Some(Rem6HostO3RuntimeCheckpointChunkSummary {
         decode_error: false,
         snapshot_rob_entries: Some(snapshot.reorder_buffer().len() as u64),
@@ -1383,6 +1539,47 @@ fn decode_o3_runtime_checkpoint_chunk(
         ),
         stats_lsq_operation_store_latency_ticks: Some(
             stats.lsq_operation_latency_ticks(O3RuntimeLsqOperation::Store),
+        ),
+        stats_fu_latency_instructions: Some(stats.fu_latency_instructions()),
+        stats_fu_latency_cycles: Some(stats.fu_latency_cycles()),
+        stats_fu_latency_class_integer_mul_instructions: Some(
+            stats.fu_latency_class_instructions(integer_mul),
+        ),
+        stats_fu_latency_class_integer_mul_cycles: Some(stats.fu_latency_class_cycles(integer_mul)),
+        stats_fu_latency_class_integer_mul_max_cycles: Some(
+            stats.fu_latency_class_max_cycles(integer_mul),
+        ),
+        stats_fu_latency_class_integer_mul_min_cycles: Some(
+            stats.fu_latency_class_min_cycles(integer_mul),
+        ),
+        stats_fu_latency_class_integer_mul_avg_cycles: Some(
+            stats.fu_latency_class_avg_cycles(integer_mul),
+        ),
+        stats_fu_latency_class_integer_div_instructions: Some(
+            stats.fu_latency_class_instructions(integer_div),
+        ),
+        stats_fu_latency_class_integer_div_cycles: Some(stats.fu_latency_class_cycles(integer_div)),
+        stats_fu_latency_class_integer_div_max_cycles: Some(
+            stats.fu_latency_class_max_cycles(integer_div),
+        ),
+        stats_fu_latency_class_integer_div_min_cycles: Some(
+            stats.fu_latency_class_min_cycles(integer_div),
+        ),
+        stats_fu_latency_class_integer_div_avg_cycles: Some(
+            stats.fu_latency_class_avg_cycles(integer_div),
+        ),
+        stats_fu_latency_class_float_misc_instructions: Some(
+            stats.fu_latency_class_instructions(float_misc),
+        ),
+        stats_fu_latency_class_float_misc_cycles: Some(stats.fu_latency_class_cycles(float_misc)),
+        stats_fu_latency_class_float_misc_max_cycles: Some(
+            stats.fu_latency_class_max_cycles(float_misc),
+        ),
+        stats_fu_latency_class_float_misc_min_cycles: Some(
+            stats.fu_latency_class_min_cycles(float_misc),
+        ),
+        stats_fu_latency_class_float_misc_avg_cycles: Some(
+            stats.fu_latency_class_avg_cycles(float_misc),
         ),
     })
 }
