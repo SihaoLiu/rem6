@@ -529,6 +529,15 @@ fn emit_o3_runtime_event_summary_stats(
     let first_tick = events.first().map_or(0, |event| event.tick());
     let last_tick = events.last().map_or(0, |event| event.tick());
     let span_ticks = last_tick.saturating_sub(first_tick);
+    let issue_to_writeback_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.issue_to_writeback_ticks())
+    });
+    let writeback_to_commit_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.writeback_to_commit_ticks())
+    });
+    let issue_to_commit_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.issue_to_commit_ticks())
+    });
     let rob_allocations = events.iter().filter(|event| event.rob_allocated()).count() as u64;
     let rob_commits = events.iter().filter(|event| event.rob_committed()).count() as u64;
     let rename_writes = events
@@ -713,6 +722,9 @@ fn emit_o3_runtime_event_summary_stats(
         ("first_tick", first_tick),
         ("last_tick", last_tick),
         ("span_ticks", span_ticks),
+        ("issue_to_writeback_ticks", issue_to_writeback_ticks),
+        ("writeback_to_commit_ticks", writeback_to_commit_ticks),
+        ("issue_to_commit_ticks", issue_to_commit_ticks),
     ] {
         increment_stat(
             stats,

@@ -161,8 +161,11 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         max_fu_latency_phase_deltas.0 > 0,
         "max FU-latency row should expose a nonzero issue-to-writeback phase: {max_fu_latency_event}"
     );
-    let debug_event_window = json
-        .pointer("/debug/o3_trace/0/event_summary/event_window")
+    let debug_event_summary = json
+        .pointer("/debug/o3_trace/0/event_summary")
+        .unwrap_or_else(|| panic!("O3 debug trace should expose event summary JSON: {json}"));
+    let debug_event_window = debug_event_summary
+        .pointer("/event_window")
         .unwrap_or_else(|| {
             panic!("O3 debug event summary should expose event-window rows: {json}")
         });
@@ -225,6 +228,12 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         event_phase_totals.0 > 0,
         "O3 debug events should include nonzero aggregate issue-to-writeback time: {events:?}"
     );
+    let runtime_event_summary = o3_runtime
+        .pointer("/event_summary")
+        .unwrap_or_else(|| panic!("O3 runtime JSON should expose event summary: {o3_runtime}"));
+    assert_event_summary_phase_json(runtime_event_summary, event_phase_totals);
+    assert_event_summary_phase_json(debug_event_summary, event_phase_totals);
+    assert_event_phase_stat_prefix(&json, "sim.cpu0.o3.event_summary", event_phase_totals);
     assert_debug_event_phase_stats(&json, event_phase_totals);
     let multiply_issue = json_u64_field(multiply, "/issue_tick");
     let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
@@ -439,6 +448,24 @@ fn assert_debug_event_phase_stats(json: &Value, expected: (u64, u64, u64)) {
     ] {
         assert_event_phase_stat_prefix(json, prefix, expected);
     }
+}
+
+fn assert_event_summary_phase_json(json: &Value, expected: (u64, u64, u64)) {
+    assert_eq!(
+        json_u64_field(json, "/issue_to_writeback_ticks"),
+        expected.0,
+        "event summary JSON should aggregate raw issue-to-writeback phases: {json}"
+    );
+    assert_eq!(
+        json_u64_field(json, "/writeback_to_commit_ticks"),
+        expected.1,
+        "event summary JSON should aggregate raw writeback-to-commit phases: {json}"
+    );
+    assert_eq!(
+        json_u64_field(json, "/issue_to_commit_ticks"),
+        expected.2,
+        "event summary JSON should aggregate raw issue-to-commit phases: {json}"
+    );
 }
 
 fn assert_event_phase_stat_prefix(json: &Value, prefix: &str, expected: (u64, u64, u64)) {

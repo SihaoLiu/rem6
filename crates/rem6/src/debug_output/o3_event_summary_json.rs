@@ -326,6 +326,15 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(events);
     let branch_target_mismatch = o3_branch_target_mismatch_to_json(events);
     let span_ticks = last_tick.saturating_sub(first_tick);
+    let issue_to_writeback_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.issue_to_writeback_ticks())
+    });
+    let writeback_to_commit_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.writeback_to_commit_ticks())
+    });
+    let issue_to_commit_ticks = events.iter().fold(0_u64, |total, event| {
+        total.saturating_add(event.issue_to_commit_ticks())
+    });
     let event_window = event_summary_window_json(events, records, span_ticks);
     let iq = event_summary_iq_json(events);
     let iew = event_summary_iew_json(events, span_ticks);
@@ -336,7 +345,7 @@ pub(crate) fn o3_event_summary_to_json(events: &[O3RuntimeTraceRecord]) -> Strin
     let rename = format!("{{\"writes\":{rename_writes},\"map_entries\":{max_rename_map_entries}}}");
 
     format!(
-        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"event_window\":{event_window},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_load_bytes\":{lsq_load_bytes},\"lsq_store_bytes\":{lsq_store_bytes},\"lsq_store_conditional_failures\":{lsq_store_conditional_failures},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"branch_direction_mismatch\":{branch_direction_mismatch},\"branch_target_mismatch\":{branch_target_mismatch},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
+        "{{\"records\":{records},\"first_tick\":{first_tick},\"last_tick\":{last_tick},\"span_ticks\":{},\"issue_to_writeback_ticks\":{issue_to_writeback_ticks},\"writeback_to_commit_ticks\":{writeback_to_commit_ticks},\"issue_to_commit_ticks\":{issue_to_commit_ticks},\"event_window\":{event_window},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"system_events\":{system_events},\"rob_allocations\":{rob_allocations},\"rob_commits\":{rob_commits},\"rename_writes\":{rename_writes},\"rob\":{rob},\"rename\":{rename},\"lsq_loads\":{lsq_loads},\"lsq_stores\":{lsq_stores},\"lsq_load_bytes\":{lsq_load_bytes},\"lsq_store_bytes\":{lsq_store_bytes},\"lsq_store_conditional_failures\":{lsq_store_conditional_failures},\"lsq_operation_load\":{lsq_operation_load},\"lsq_operation_store\":{lsq_operation_store},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"lsq_data_latency\":{lsq_data_latency},\"lsq_operation\":{lsq_operation},\"lsq_ordering\":{lsq_ordering},\"iq\":{iq},\"iew\":{iew},\"commit\":{commit},\"branch_event\":{branch_event},\"branch_repair\":{branch_repair},\"branch_direction_mismatch\":{branch_direction_mismatch},\"branch_target_mismatch\":{branch_target_mismatch},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_latency_max_cycles\":{},\"fu_latency_min_cycles\":{},\"fu_latency_avg_cycles\":{},\"fu_latency_class\":{fu_latency_class}}}",
         span_ticks,
         lsq_forwarding.candidates,
         lsq_forwarding.matches,
