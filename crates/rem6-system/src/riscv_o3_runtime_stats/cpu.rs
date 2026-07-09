@@ -80,6 +80,7 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
+    nested_fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     iq_insts_issued: StatId,
     iq_mem_insts_issued: StatId,
     iq_branch_insts_issued: StatId,
@@ -451,6 +452,9 @@ impl RiscvO3RuntimeCpuStats {
                 "Cycle",
             )?,
             fu_latency_classes: register_o3_fu_latency_class_counters(registry, &prefix)?,
+            nested_fu_latency_classes: register_o3_nested_fu_latency_class_counters(
+                registry, &prefix,
+            )?,
             iq_insts_issued: register_o3_counter(registry, &prefix, "iq.insts_issued", "Count")?,
             iq_mem_insts_issued: register_o3_counter(
                 registry,
@@ -1165,6 +1169,7 @@ impl RiscvO3RuntimeCpuStats {
         }
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
+            let nested_class_stats = self.nested_fu_latency_classes[class.index()];
             for (stat, previous, current) in [
                 (
                     class_stats.instructions,
@@ -1173,6 +1178,16 @@ impl RiscvO3RuntimeCpuStats {
                 ),
                 (
                     class_stats.latency_cycles,
+                    previous.fu_latency_class_cycles(class),
+                    current.fu_latency_class_cycles(class),
+                ),
+                (
+                    nested_class_stats.instructions,
+                    previous.fu_latency_class_instructions(class),
+                    current.fu_latency_class_instructions(class),
+                ),
+                (
+                    nested_class_stats.latency_cycles,
                     previous.fu_latency_class_cycles(class),
                     current.fu_latency_class_cycles(class),
                 ),
@@ -1541,6 +1556,7 @@ impl RiscvO3RuntimeCpuStats {
         }
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
+            let nested_class_stats = self.nested_fu_latency_classes[class.index()];
             for (stat, value) in [
                 (
                     class_stats.instructions,
@@ -1548,6 +1564,14 @@ impl RiscvO3RuntimeCpuStats {
                 ),
                 (
                     class_stats.latency_cycles,
+                    snapshot.fu_latency_class_cycles(class),
+                ),
+                (
+                    nested_class_stats.instructions,
+                    snapshot.fu_latency_class_instructions(class),
+                ),
+                (
+                    nested_class_stats.latency_cycles,
                     snapshot.fu_latency_class_cycles(class),
                 ),
             ] {

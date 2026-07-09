@@ -1,0 +1,112 @@
+use super::*;
+
+#[test]
+fn rem6_run_m5_dump_reset_stats_snapshots_nested_o3_fu_latency_classes() {
+    let path = detailed_o3_dump_reset_fu_stats_binary(
+        "m5-switch-cpu-o3-dump-reset-nested-fu-latency-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {host_actions}"));
+    assert_eq!(
+        dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0),
+        "dump-reset should snapshot the old epoch before resetting: {dump}"
+    );
+
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.instructions",
+            "Count",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.float_misc.cycles",
+            "Cycle",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.vector_float_misc.instructions",
+            "Count",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.vector_float_misc.cycles",
+            "Cycle",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_mul.instructions",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.fu_latency_class.integer_div.cycles",
+            "Cycle",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", unit, value, "resettable");
+    }
+
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_class.integer_mul.instructions",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.fu_latency_class.integer_div.cycles",
+        "Cycle",
+        19,
+        "monotonic",
+    );
+}

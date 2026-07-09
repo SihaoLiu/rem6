@@ -8,6 +8,8 @@ mod branch_mismatch;
 mod branch_multicore;
 #[path = "o3/checkpoint.rs"]
 mod checkpoint;
+#[path = "o3/fu_latency.rs"]
+mod fu_latency;
 #[path = "o3/lsq.rs"]
 mod lsq;
 #[path = "o3/restore.rs"]

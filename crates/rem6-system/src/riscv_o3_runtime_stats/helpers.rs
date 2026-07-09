@@ -469,6 +469,34 @@ pub(super) fn register_o3_fu_latency_class_counters(
     Ok(stats)
 }
 
+pub(super) fn register_o3_nested_fu_latency_class_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT], StatsError> {
+    let mut stats = [RiscvO3RuntimeFuLatencyClassStats {
+        instructions: StatId::new(0),
+        latency_cycles: StatId::new(0),
+    }; O3RuntimeFuLatencyClass::COUNT];
+    for class in O3RuntimeFuLatencyClass::ALL {
+        let stat_stem = class.stat_stem();
+        stats[class.index()] = RiscvO3RuntimeFuLatencyClassStats {
+            instructions: register_o3_counter(
+                registry,
+                prefix,
+                &format!("fu_latency_class.{stat_stem}.instructions"),
+                "Count",
+            )?,
+            latency_cycles: register_o3_counter(
+                registry,
+                prefix,
+                &format!("fu_latency_class.{stat_stem}.cycles"),
+                "Cycle",
+            )?,
+        };
+    }
+    Ok(stats)
+}
+
 pub(super) fn register_o3_iq_fu_latency_class_counters(
     registry: &mut StatsRegistry,
     prefix: &str,

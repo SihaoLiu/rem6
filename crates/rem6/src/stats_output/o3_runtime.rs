@@ -1023,6 +1023,7 @@ pub(super) fn emit_o3_runtime_stats(
         }
     }
     for class in O3RuntimeFuLatencyClass::ALL {
+        let instructions = o3.fu_latency_class_instructions(class);
         increment_count_stat(
             stats,
             format!(
@@ -1030,7 +1031,16 @@ pub(super) fn emit_o3_runtime_stats(
                 core.cpu,
                 class.stat_stem()
             ),
-            o3.fu_latency_class_instructions(class),
+            instructions,
+        )?;
+        increment_count_stat(
+            stats,
+            format!(
+                "sim.cpu{}.o3.fu_latency_class.{}.instructions",
+                core.cpu,
+                class.stat_stem()
+            ),
+            instructions,
         )?;
     }
     for (name, unit, value) in [
@@ -1217,6 +1227,7 @@ pub(super) fn emit_o3_runtime_stats(
         o3.fu_latency_cycles(),
     )?;
     for class in O3RuntimeFuLatencyClass::ALL {
+        let cycles = o3.fu_latency_class_cycles(class);
         increment_stat(
             stats,
             &format!(
@@ -1226,7 +1237,18 @@ pub(super) fn emit_o3_runtime_stats(
             ),
             "Cycle",
             StatResetPolicy::Monotonic,
-            o3.fu_latency_class_cycles(class),
+            cycles,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.o3.fu_latency_class.{}.cycles",
+                core.cpu,
+                class.stat_stem()
+            ),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            cycles,
         )?;
     }
     for (name, value) in [
