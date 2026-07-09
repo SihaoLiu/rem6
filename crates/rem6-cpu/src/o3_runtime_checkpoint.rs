@@ -19,12 +19,13 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS: u8 = 18;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS: u8 = 17;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -109,6 +110,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -170,325 +172,30 @@ impl O3RuntimeCheckpointPayload {
             rename_map.push(entry);
         }
 
-        let stats = match version {
-            O3_RUNTIME_CHECKPOINT_VERSION => read_o3_runtime_stats(
+        let stats = if version == O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS {
+            O3RuntimeStats::default()
+        } else {
+            read_o3_runtime_stats(
                 payload,
                 &mut offset,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    false,
-                    true,
-                    false,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    true,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => {
-                read_o3_runtime_stats(
-                    payload,
-                    &mut offset,
-                    true,
-                    true,
-                    false,
-                    true,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                )?
-            }
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => read_o3_runtime_stats(
-                payload,
-                &mut offset,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-            )?,
-            O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => O3RuntimeStats::default(),
-            _ => unreachable!("version was validated"),
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS,
+                version
+                    >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS,
+            )?
         };
 
         if offset != payload.len() {
@@ -656,6 +363,12 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     }
     for class in O3RuntimeFuLatencyClass::ALL {
         payload.extend_from_slice(&stats.fu_latency_class_cycles(class).to_le_bytes());
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        payload.extend_from_slice(&stats.fu_latency_class_max_cycles(class).to_le_bytes());
+    }
+    for class in O3RuntimeFuLatencyClass::ALL {
+        payload.extend_from_slice(&stats.fu_latency_class_min_cycles(class).to_le_bytes());
     }
     for operation in O3RuntimeLsqOperation::TRACKED {
         payload.extend_from_slice(&stats.lsq_operation_count(operation).to_le_bytes());
@@ -898,9 +611,12 @@ fn read_o3_runtime_stats(
     has_lsq_forwarding_suppression_stats: bool,
     has_lsq_forwarding_suppression_reason_stats: bool,
     has_branch_mismatch_stats: bool,
+    has_fu_latency_class_extrema_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
+    let mut fu_latency_class_max_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
+    let mut fu_latency_class_min_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut lsq_operation_counts = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_operation_load_bytes = [0; O3RuntimeLsqOperation::COUNT];
     let mut lsq_operation_store_bytes = [0; O3RuntimeLsqOperation::COUNT];
@@ -957,6 +673,14 @@ fn read_o3_runtime_stats(
         }
         for class in O3RuntimeFuLatencyClass::ALL {
             fu_latency_class_cycles[class.index()] = read_u64(payload, offset)?;
+        }
+        if has_fu_latency_class_extrema_stats {
+            for class in O3RuntimeFuLatencyClass::ALL {
+                fu_latency_class_max_cycles[class.index()] = read_u64(payload, offset)?;
+            }
+            for class in O3RuntimeFuLatencyClass::ALL {
+                fu_latency_class_min_cycles[class.index()] = read_u64(payload, offset)?;
+            }
         }
     } else {
         fu_latency_class_instructions[O3RuntimeFuLatencyClass::ScalarIntegerMul.index()] =
@@ -1202,6 +926,8 @@ fn read_o3_runtime_stats(
         fu_latency_cycles,
         fu_latency_class_instructions,
         fu_latency_class_cycles,
+        fu_latency_class_max_cycles,
+        fu_latency_class_min_cycles,
         iq_branch_insts_issued,
         max_rob_occupancy,
         max_lsq_occupancy,

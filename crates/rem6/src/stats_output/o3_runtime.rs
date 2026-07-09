@@ -1228,28 +1228,56 @@ pub(super) fn emit_o3_runtime_stats(
     )?;
     for class in O3RuntimeFuLatencyClass::ALL {
         let cycles = o3.fu_latency_class_cycles(class);
+        let stem = class.stat_stem();
         increment_stat(
             stats,
-            &format!(
-                "sim.cpu{}.o3.fu_{}_latency_cycles",
-                core.cpu,
-                class.stat_stem()
-            ),
+            &format!("sim.cpu{}.o3.fu_{stem}_latency_cycles", core.cpu),
             "Cycle",
             StatResetPolicy::Monotonic,
             cycles,
         )?;
         increment_stat(
             stats,
-            &format!(
-                "sim.cpu{}.o3.fu_latency_class.{}.cycles",
-                core.cpu,
-                class.stat_stem()
-            ),
+            &format!("sim.cpu{}.o3.fu_latency_class.{stem}.cycles", core.cpu),
             "Cycle",
             StatResetPolicy::Monotonic,
             cycles,
         )?;
+        for (flat_suffix, nested_suffix, value) in [
+            (
+                "latency_max_cycles",
+                "max_cycles",
+                o3.fu_latency_class_max_cycles(class),
+            ),
+            (
+                "latency_min_cycles",
+                "min_cycles",
+                o3.fu_latency_class_min_cycles(class),
+            ),
+            (
+                "latency_avg_cycles",
+                "avg_cycles",
+                o3.fu_latency_class_avg_cycles(class),
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.cpu{}.o3.fu_{stem}_{flat_suffix}", core.cpu),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.o3.fu_latency_class.{stem}.{nested_suffix}",
+                    core.cpu
+                ),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for (name, value) in [
         ("insts_issued", o3.instructions()),

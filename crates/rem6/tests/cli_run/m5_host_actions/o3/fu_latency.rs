@@ -195,3 +195,114 @@ fn rem6_run_restore_exposes_nested_o3_fu_latency_class_runtime_summary() {
         "legacy flat runtime summary should remain available: {json}"
     );
 }
+
+#[test]
+fn rem6_run_restore_exposes_o3_fu_latency_class_min_max_avg_runtime_summary() {
+    let path =
+        detailed_o3_restore_fu_dump_stats_binary("m5-switch-cpu-o3-restore-fu-latency-extrema");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "1000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-restore-checkpoint",
+            "150:gem5-m5-checkpoint",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    for (path, unit, value) in [
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_mul.max_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_mul.min_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_mul.avg_cycles",
+            "Cycle",
+            2,
+        ),
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_div.max_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_div.min_cycles",
+            "Cycle",
+            19,
+        ),
+        (
+            "sim.cpu0.o3.fu_latency_class.integer_div.avg_cycles",
+            "Cycle",
+            19,
+        ),
+    ] {
+        assert_json_stat(&json, path, unit, value, "monotonic");
+    }
+
+    for (pointer, value) in [
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_mul/max_cycles",
+            2,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_mul/min_cycles",
+            2,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_mul/avg_cycles",
+            2,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_div/max_cycles",
+            19,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_div/min_cycles",
+            19,
+        ),
+        (
+            "/cores/0/o3_runtime/fu_latency_class/integer_div/avg_cycles",
+            19,
+        ),
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64),
+            Some(value),
+            "missing restored FU latency class runtime summary {pointer}: {json}"
+        );
+    }
+}

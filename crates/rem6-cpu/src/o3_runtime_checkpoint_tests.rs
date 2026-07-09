@@ -2,6 +2,7 @@ use super::*;
 
 const BASE_AND_FU_STATS_BYTES: usize = (12 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES;
 const CURRENT_BASE_AND_FU_STATS_BYTES: usize = BASE_AND_FU_STATS_BYTES + U64_BYTES;
+const FU_LATENCY_CLASS_EXTREMA_STATS_BYTES: usize = O3RuntimeFuLatencyClass::COUNT * 2 * U64_BYTES;
 const LSQ_OPERATION_STATS_BYTES: usize = O3RuntimeLsqOperation::TRACKED.len() * U64_BYTES;
 const LSQ_OPERATION_BYTE_STATS_BYTES: usize = O3RuntimeLsqOperation::TRACKED.len() * 2 * U64_BYTES;
 const LSQ_OPERATION_FORWARDING_STATS_BYTES: usize =
@@ -23,6 +24,7 @@ const BRANCH_EVENT_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 6 * U64
 const BRANCH_EVENT_PREDICTION_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 4 * U64_BYTES;
 const BRANCH_MISMATCH_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 16 * U64_BYTES;
 const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
+    + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
     + LSQ_OPERATION_STATS_BYTES
     + LSQ_OPERATION_BYTE_STATS_BYTES
     + LSQ_OPERATION_FORWARDING_STATS_BYTES
@@ -39,7 +41,7 @@ const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U
     + BRANCH_EVENT_PREDICTION_STATS_BYTES
     + BRANCH_MISMATCH_STATS_BYTES;
 const STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize =
-    CURRENT_STATS_BYTES - BRANCH_MISMATCH_STATS_BYTES;
+    CURRENT_STATS_BYTES - FU_LATENCY_CLASS_EXTREMA_STATS_BYTES - BRANCH_MISMATCH_STATS_BYTES;
 const STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION: usize = STATS_BYTES_WITHOUT_BRANCH_MISMATCH
     - BRANCH_EVENT_PREDICTION_STATS_BYTES
     - LSQ_OPERATION_BYTE_STATS_BYTES;
@@ -69,7 +71,18 @@ fn encoded_without_lsq_operation_byte_stats(
     .concat()
 }
 
+fn encoded_without_fu_latency_class_extrema_stats(encoded: &[u8]) -> Vec<u8> {
+    let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+    let extrema_offset = stats_offset + CURRENT_BASE_AND_FU_STATS_BYTES;
+    [
+        &encoded[..extrema_offset],
+        &encoded[extrema_offset + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES..],
+    ]
+    .concat()
+}
+
 fn encoded_without_branch_mismatch_stats(encoded: &[u8]) -> Vec<u8> {
+    let encoded = encoded_without_fu_latency_class_extrema_stats(encoded);
     let mismatch_offset = encoded
         .len()
         .checked_sub(BRANCH_MISMATCH_STATS_BYTES)
@@ -612,7 +625,10 @@ fn checkpoint_v17_payloads_round_trip_branch_mismatch_stats() {
     )
     .unwrap();
 
-    let decoded = O3RuntimeCheckpointPayload::decode(&payload.encode()).unwrap();
+    let mut encoded = encoded_without_fu_latency_class_extrema_stats(&payload.encode());
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS;
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
     let stats = decoded.stats();
 
     assert_eq!(stats.branch_direction_mismatches(), 2);

@@ -35,6 +35,8 @@ const O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES: usize =
     (12 + O3RuntimeFuLatencyClass::COUNT * 2) * 8;
 const O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_BASE_AND_FU_STATS_BYTES + 8;
+const O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES: usize =
+    O3RuntimeFuLatencyClass::COUNT * 2 * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_STATS_BYTES: usize =
     O3RuntimeLsqOperation::TRACKED.len() * 8;
 const O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_BYTE_STATS_BYTES: usize =
@@ -79,10 +81,13 @@ const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES: usize = O3_RUNTIME_CHECKPOINT_STATS_BYTES
+    + O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize =
-    O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES - O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
+    O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES
+        - O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
+        - O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
     O3_RUNTIME_CHECKPOINT_STATS_BYTES
         - O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_BYTE_STATS_BYTES
@@ -1276,11 +1281,25 @@ fn strip_current_branch_event_prediction_stats(payload: &[u8]) -> Vec<u8> {
 }
 
 fn strip_current_branch_mismatch_stats(payload: &[u8]) -> Vec<u8> {
+    let payload = strip_current_fu_latency_class_extrema_stats(payload);
     let mismatch_offset = payload
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES)
         .unwrap();
     payload[..mismatch_offset].to_vec()
+}
+
+fn strip_current_fu_latency_class_extrema_stats(payload: &[u8]) -> Vec<u8> {
+    let stats_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
+        .unwrap();
+    let extrema_offset = stats_offset + O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES;
+    [
+        &payload[..extrema_offset],
+        &payload[extrema_offset + O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES..],
+    ]
+    .concat()
 }
 
 fn strip_current_lsq_operation_byte_stats(

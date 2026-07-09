@@ -97,6 +97,8 @@ pub struct O3RuntimeStats {
     pub(crate) fu_latency_cycles: u64,
     pub(crate) fu_latency_class_instructions: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) fu_latency_class_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
+    pub(crate) fu_latency_class_max_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
+    pub(crate) fu_latency_class_min_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) iq_branch_insts_issued: u64,
     pub(crate) max_rob_occupancy: u64,
     pub(crate) max_lsq_occupancy: u64,
@@ -659,6 +661,23 @@ impl O3RuntimeStats {
         self.fu_latency_class_cycles[class.index()]
     }
 
+    pub fn fu_latency_class_max_cycles(self, class: O3RuntimeFuLatencyClass) -> u64 {
+        self.fu_latency_class_max_cycles[class.index()]
+    }
+
+    pub fn fu_latency_class_min_cycles(self, class: O3RuntimeFuLatencyClass) -> u64 {
+        self.fu_latency_class_min_cycles[class.index()]
+    }
+
+    pub fn fu_latency_class_avg_cycles(self, class: O3RuntimeFuLatencyClass) -> u64 {
+        let instructions = self.fu_latency_class_instructions(class);
+        if instructions == 0 {
+            0
+        } else {
+            self.fu_latency_class_cycles(class) / instructions
+        }
+    }
+
     pub fn fu_integer_mul_instructions(self) -> u64 {
         self.fu_latency_class_instructions(O3RuntimeFuLatencyClass::ScalarIntegerMul)
     }
@@ -778,6 +797,13 @@ impl O3RuntimeStats {
                     self.fu_latency_class_instructions[index].saturating_add(1);
                 self.fu_latency_class_cycles[index] =
                     self.fu_latency_class_cycles[index].saturating_add(fu_latency_cycles);
+                self.fu_latency_class_max_cycles[index] =
+                    self.fu_latency_class_max_cycles[index].max(fu_latency_cycles);
+                if self.fu_latency_class_min_cycles[index] == 0
+                    || fu_latency_cycles < self.fu_latency_class_min_cycles[index]
+                {
+                    self.fu_latency_class_min_cycles[index] = fu_latency_cycles;
+                }
             }
         }
 

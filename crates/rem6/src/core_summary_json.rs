@@ -113,6 +113,21 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
                     class.stat_stem(),
                     summary.o3_runtime.fu_latency_class_cycles(class)
                 ),
+                format!(
+                    "\"fu_{}_latency_max_cycles\":{}",
+                    class.stat_stem(),
+                    summary.o3_runtime.fu_latency_class_max_cycles(class)
+                ),
+                format!(
+                    "\"fu_{}_latency_min_cycles\":{}",
+                    class.stat_stem(),
+                    summary.o3_runtime.fu_latency_class_min_cycles(class)
+                ),
+                format!(
+                    "\"fu_{}_latency_avg_cycles\":{}",
+                    class.stat_stem(),
+                    summary.o3_runtime.fu_latency_class_avg_cycles(class)
+                ),
             ]
         })
         .collect::<Vec<_>>();
@@ -120,10 +135,13 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
         .into_iter()
         .map(|class| {
             format!(
-                "\"{}\":{{\"instructions\":{},\"cycles\":{}}}",
+                "\"{}\":{{\"instructions\":{},\"cycles\":{},\"max_cycles\":{},\"min_cycles\":{},\"avg_cycles\":{}}}",
                 class.stat_stem(),
                 summary.o3_runtime.fu_latency_class_instructions(class),
-                summary.o3_runtime.fu_latency_class_cycles(class)
+                summary.o3_runtime.fu_latency_class_cycles(class),
+                summary.o3_runtime.fu_latency_class_max_cycles(class),
+                summary.o3_runtime.fu_latency_class_min_cycles(class),
+                summary.o3_runtime.fu_latency_class_avg_cycles(class)
             )
         })
         .collect::<Vec<_>>()
