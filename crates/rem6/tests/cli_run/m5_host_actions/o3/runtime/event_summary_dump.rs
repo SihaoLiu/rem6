@@ -120,6 +120,110 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_trace_rows() {
         1,
         "resettable",
     );
+    for (path, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.branches",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.taken",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.not_taken",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_taken",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_not_taken",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_targets",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_target_mismatches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.resolved_targets",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squashes",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squashed_targets",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squashed_targets_without_link_writes",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.not_taken_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_taken_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_not_taken_kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_target_mismatch_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squash_kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squashed_target_without_link_write_kind.direct_unconditional",
+            2,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.wrong_targets",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.targetless_mismatch_kind.direct_conditional",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.direction_only_kind.direct_unconditional",
+            2,
+        ),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", "Count", value, "resettable");
+    }
     assert_stats_dump_sample_at_least(
         post_reset_dump,
         "sim.host_actions.stats_dump.cpu0.o3.event_summary.fu_latency.instructions",
@@ -128,6 +232,22 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_trace_rows() {
         1,
         "resettable",
     );
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.branches",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_targets",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.predicted_target_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.squashes",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.misprediction_kind.direct_unconditional",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.targetless_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.wrong_targets",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.targetless_mismatch_kind.direct_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_repair.direction_only_kind.direct_unconditional",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
 
     let pre_reset_records = stats_dump_sample_value(
         pre_reset_dump,

@@ -1,13 +1,19 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
+use rem6_cpu::{
+    BranchTargetKind, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
-use super::groups::RiscvO3RuntimeLsqLatencyStats;
+use super::groups::{
+    RiscvO3RuntimeBranchEventKindStats, RiscvO3RuntimeBranchRepairStats,
+    RiscvO3RuntimeLsqLatencyStats,
+};
 use super::helpers::{
-    register_o3_counter, register_o3_lsq_operation_counters,
-    register_o3_lsq_operation_nested_counters, register_o3_lsq_operation_nested_latency_counters,
-    register_o3_lsq_ordering_counters, set_o3_lsq_latency_counters,
+    register_o3_branch_event_kind_counters, register_o3_counter,
+    register_o3_lsq_operation_counters, register_o3_lsq_operation_nested_counters,
+    register_o3_lsq_operation_nested_latency_counters, register_o3_lsq_ordering_counters,
+    set_o3_lsq_latency_counters,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -86,6 +92,89 @@ impl RiscvO3RuntimeEventSummarySnapshot {
             .count() as u64
     }
 
+    fn branch_event_branches(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::branch_event)
+    }
+
+    fn branch_event_taken(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_resolved_taken())
+    }
+
+    fn branch_event_not_taken(&self) -> u64 {
+        self.count(|event| event.branch_event() && !event.branch_resolved_taken())
+    }
+
+    fn branch_event_predicted_taken(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_predicted_taken())
+    }
+
+    fn branch_event_predicted_not_taken(&self) -> u64 {
+        self.count(|event| event.branch_event() && !event.branch_predicted_taken())
+    }
+
+    fn branch_event_predicted_targets(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_predicted_target().is_some())
+    }
+
+    fn branch_event_predicted_target_matches(&self) -> u64 {
+        self.count(branch_predicted_target_match)
+    }
+
+    fn branch_event_predicted_target_mismatches(&self) -> u64 {
+        self.count(branch_predicted_target_mismatch)
+    }
+
+    fn branch_event_resolved_targets(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_resolved_target().is_some())
+    }
+
+    fn branch_event_link_writes(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_link_register_write())
+    }
+
+    fn branch_event_without_link_writes(&self) -> u64 {
+        self.count(|event| event.branch_event() && !event.branch_link_register_write())
+    }
+
+    fn branch_event_squashes(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_squash())
+    }
+
+    fn branch_event_squashed_targets(&self) -> u64 {
+        self.count(|event| event.branch_event() && event.branch_squashed_target().is_some())
+    }
+
+    fn branch_event_squashed_targets_with_link_writes(&self) -> u64 {
+        self.count(|event| {
+            event.branch_event()
+                && event.branch_squashed_target().is_some()
+                && event.branch_link_register_write()
+        })
+    }
+
+    fn branch_event_squashed_targets_without_link_writes(&self) -> u64 {
+        self.count(|event| {
+            event.branch_event()
+                && event.branch_squashed_target().is_some()
+                && !event.branch_link_register_write()
+        })
+    }
+
+    fn branch_event_kind<F>(&self, kind: BranchTargetKind, matches: F) -> u64
+    where
+        F: Fn(O3RuntimeTraceRecord) -> bool,
+    {
+        self.count(|event| event.branch_kind() == kind && matches(event))
+    }
+
+    fn branch_repair_targetless_mismatches(&self) -> u64 {
+        self.count(|event| branch_targetless_mismatch(&event))
+    }
+
+    fn branch_repair_wrong_targets(&self) -> u64 {
+        self.count(|event| branch_wrong_target(&event))
+    }
+
     fn branch_repair_direction_only_mismatches(&self) -> u64 {
         self.events
             .values()
@@ -96,6 +185,24 @@ impl RiscvO3RuntimeEventSummarySnapshot {
                     && event.branch_predicted_taken() != event.branch_resolved_taken()
             })
             .count() as u64
+    }
+
+    fn branch_repair_targetless_mismatch_kind(&self, kind: BranchTargetKind) -> u64 {
+        self.count(|event| event.branch_kind() == kind && branch_targetless_mismatch(&event))
+    }
+
+    fn branch_repair_wrong_target_kind(&self, kind: BranchTargetKind) -> u64 {
+        self.count(|event| event.branch_kind() == kind && branch_wrong_target(&event))
+    }
+
+    fn branch_repair_direction_only_kind(&self, kind: BranchTargetKind) -> u64 {
+        self.count(|event| {
+            event.branch_kind() == kind
+                && event.branch_event()
+                && !branch_targetless_mismatch(&event)
+                && !branch_wrong_target(&event)
+                && event.branch_predicted_taken() != event.branch_resolved_taken()
+        })
     }
 
     fn fu_latency_instructions(&self) -> u64 {
@@ -248,8 +355,27 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     span_ticks: StatId,
     rob_allocations: StatId,
     rename_writes: StatId,
+    branch_event_branches: StatId,
+    branch_event_taken: StatId,
+    branch_event_not_taken: StatId,
+    branch_event_predicted_taken: StatId,
+    branch_event_predicted_not_taken: StatId,
+    branch_event_predicted_targets: StatId,
+    branch_event_predicted_target_matches: StatId,
+    branch_event_predicted_target_mismatches: StatId,
+    branch_event_resolved_targets: StatId,
     branch_event_mispredictions: StatId,
+    branch_event_link_writes: StatId,
+    branch_event_without_link_writes: StatId,
+    branch_event_squashes: StatId,
+    branch_event_squashed_targets: StatId,
+    branch_event_squashed_targets_with_link_writes: StatId,
+    branch_event_squashed_targets_without_link_writes: StatId,
+    branch_event_kinds: [RiscvO3RuntimeBranchEventKindStats; BranchTargetKind::COUNT],
+    branch_repair_targetless_mismatches: StatId,
+    branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
+    branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
     iew_branch_mispredicts: StatId,
     fu_latency_instructions: StatId,
     lsq_load_bytes: StatId,
@@ -282,10 +408,113 @@ impl RiscvO3RuntimeEventSummaryStats {
             span_ticks: register_o3_counter(registry, &prefix, "span_ticks", "Tick")?,
             rob_allocations: register_o3_counter(registry, &prefix, "rob.allocations", "Count")?,
             rename_writes: register_o3_counter(registry, &prefix, "rename.writes", "Count")?,
+            branch_event_branches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.branches",
+                "Count",
+            )?,
+            branch_event_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.taken",
+                "Count",
+            )?,
+            branch_event_not_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.not_taken",
+                "Count",
+            )?,
+            branch_event_predicted_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_taken",
+                "Count",
+            )?,
+            branch_event_predicted_not_taken: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_not_taken",
+                "Count",
+            )?,
+            branch_event_predicted_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_targets",
+                "Count",
+            )?,
+            branch_event_predicted_target_matches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_target_matches",
+                "Count",
+            )?,
+            branch_event_predicted_target_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.predicted_target_mismatches",
+                "Count",
+            )?,
+            branch_event_resolved_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.resolved_targets",
+                "Count",
+            )?,
             branch_event_mispredictions: register_o3_counter(
                 registry,
                 &prefix,
                 "branch_event.mispredictions",
+                "Count",
+            )?,
+            branch_event_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.link_writes",
+                "Count",
+            )?,
+            branch_event_without_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.without_link_writes",
+                "Count",
+            )?,
+            branch_event_squashes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashes",
+                "Count",
+            )?,
+            branch_event_squashed_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets",
+                "Count",
+            )?,
+            branch_event_squashed_targets_with_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets_with_link_writes",
+                "Count",
+            )?,
+            branch_event_squashed_targets_without_link_writes: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_event.squashed_targets_without_link_writes",
+                "Count",
+            )?,
+            branch_event_kinds: register_o3_branch_event_kind_counters(registry, &prefix)?,
+            branch_repair_targetless_mismatches: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_repair.targetless_mismatches",
+                "Count",
+            )?,
+            branch_repair_wrong_targets: register_o3_counter(
+                registry,
+                &prefix,
+                "branch_repair.wrong_targets",
                 "Count",
             )?,
             branch_repair_direction_only_mismatches: register_o3_counter(
@@ -293,6 +522,9 @@ impl RiscvO3RuntimeEventSummaryStats {
                 &prefix,
                 "branch_repair.direction_only_mismatches",
                 "Count",
+            )?,
+            branch_repair_kinds: register_event_summary_branch_repair_kind_counters(
+                registry, &prefix,
             )?,
             iew_branch_mispredicts: register_o3_counter(
                 registry,
@@ -416,7 +648,66 @@ impl RiscvO3RuntimeEventSummaryStats {
             (self.span_ticks, snapshot.span_ticks()),
             (self.rob_allocations, snapshot.rob_allocations()),
             (self.rename_writes, snapshot.rename_writes()),
+            (self.branch_event_branches, snapshot.branch_event_branches()),
+            (self.branch_event_taken, snapshot.branch_event_taken()),
+            (
+                self.branch_event_not_taken,
+                snapshot.branch_event_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_taken,
+                snapshot.branch_event_predicted_taken(),
+            ),
+            (
+                self.branch_event_predicted_not_taken,
+                snapshot.branch_event_predicted_not_taken(),
+            ),
+            (
+                self.branch_event_predicted_targets,
+                snapshot.branch_event_predicted_targets(),
+            ),
+            (
+                self.branch_event_predicted_target_matches,
+                snapshot.branch_event_predicted_target_matches(),
+            ),
+            (
+                self.branch_event_predicted_target_mismatches,
+                snapshot.branch_event_predicted_target_mismatches(),
+            ),
+            (
+                self.branch_event_resolved_targets,
+                snapshot.branch_event_resolved_targets(),
+            ),
             (self.branch_event_mispredictions, branch_mispredicts),
+            (
+                self.branch_event_link_writes,
+                snapshot.branch_event_link_writes(),
+            ),
+            (
+                self.branch_event_without_link_writes,
+                snapshot.branch_event_without_link_writes(),
+            ),
+            (self.branch_event_squashes, snapshot.branch_event_squashes()),
+            (
+                self.branch_event_squashed_targets,
+                snapshot.branch_event_squashed_targets(),
+            ),
+            (
+                self.branch_event_squashed_targets_with_link_writes,
+                snapshot.branch_event_squashed_targets_with_link_writes(),
+            ),
+            (
+                self.branch_event_squashed_targets_without_link_writes,
+                snapshot.branch_event_squashed_targets_without_link_writes(),
+            ),
+            (
+                self.branch_repair_targetless_mismatches,
+                snapshot.branch_repair_targetless_mismatches(),
+            ),
+            (
+                self.branch_repair_wrong_targets,
+                snapshot.branch_repair_wrong_targets(),
+            ),
             (
                 self.branch_repair_direction_only_mismatches,
                 snapshot.branch_repair_direction_only_mismatches(),
@@ -454,6 +745,124 @@ impl RiscvO3RuntimeEventSummaryStats {
             ),
         ] {
             registry.set_resettable_counter(stat, value)?;
+        }
+        for kind in BranchTargetKind::ALL {
+            let branch_event_stats = self.branch_event_kinds[kind.index()];
+            for (stat, value) in [
+                (
+                    branch_event_stats.kind,
+                    snapshot.branch_event_kind(kind, O3RuntimeTraceRecord::branch_event),
+                ),
+                (
+                    branch_event_stats.taken,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_resolved_taken()
+                    }),
+                ),
+                (
+                    branch_event_stats.not_taken,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && !event.branch_resolved_taken()
+                    }),
+                ),
+                (
+                    branch_event_stats.predicted_taken,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_predicted_taken()
+                    }),
+                ),
+                (
+                    branch_event_stats.predicted_not_taken,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && !event.branch_predicted_taken()
+                    }),
+                ),
+                (
+                    branch_event_stats.predicted_target,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_predicted_target().is_some()
+                    }),
+                ),
+                (
+                    branch_event_stats.predicted_target_match,
+                    snapshot.branch_event_kind(kind, branch_predicted_target_match),
+                ),
+                (
+                    branch_event_stats.predicted_target_mismatch,
+                    snapshot.branch_event_kind(kind, branch_predicted_target_mismatch),
+                ),
+                (
+                    branch_event_stats.resolved_target,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_resolved_target().is_some()
+                    }),
+                ),
+                (
+                    branch_event_stats.misprediction,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_mispredicted()
+                    }),
+                ),
+                (
+                    branch_event_stats.link_write,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_link_register_write()
+                    }),
+                ),
+                (
+                    branch_event_stats.without_link_write,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && !event.branch_link_register_write()
+                    }),
+                ),
+                (
+                    branch_event_stats.squash,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_squash()
+                    }),
+                ),
+                (
+                    branch_event_stats.squashed_target,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event() && event.branch_squashed_target().is_some()
+                    }),
+                ),
+                (
+                    branch_event_stats.squashed_target_link_write,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event()
+                            && event.branch_squashed_target().is_some()
+                            && event.branch_link_register_write()
+                    }),
+                ),
+                (
+                    branch_event_stats.squashed_target_without_link_write,
+                    snapshot.branch_event_kind(kind, |event| {
+                        event.branch_event()
+                            && event.branch_squashed_target().is_some()
+                            && !event.branch_link_register_write()
+                    }),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
+            let branch_repair_stats = self.branch_repair_kinds[kind.index()];
+            for (stat, value) in [
+                (
+                    branch_repair_stats.targetless_mismatch,
+                    snapshot.branch_repair_targetless_mismatch_kind(kind),
+                ),
+                (
+                    branch_repair_stats.wrong_target,
+                    snapshot.branch_repair_wrong_target_kind(kind),
+                ),
+                (
+                    branch_repair_stats.direction_only,
+                    snapshot.branch_repair_direction_only_kind(kind),
+                ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
         }
         set_lsq_latency_summary(registry, self.lsq_data_latency, snapshot.lsq_data_latency())?;
         for operation in O3RuntimeLsqOperation::TRACKED {
@@ -523,6 +932,41 @@ fn register_event_summary_lsq_latency_counters(
     })
 }
 
+fn register_event_summary_branch_repair_kind_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+) -> Result<[RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT], StatsError> {
+    let mut stats = [RiscvO3RuntimeBranchRepairStats {
+        targetless_mismatch: StatId::new(0),
+        wrong_target: StatId::new(0),
+        direction_only: StatId::new(0),
+    }; BranchTargetKind::COUNT];
+    for kind in BranchTargetKind::ALL {
+        let stat_name = kind.canonical_stat_name();
+        stats[kind.index()] = RiscvO3RuntimeBranchRepairStats {
+            targetless_mismatch: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair.targetless_mismatch_kind.{stat_name}"),
+                "Count",
+            )?,
+            wrong_target: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair.wrong_target_kind.{stat_name}"),
+                "Count",
+            )?,
+            direction_only: register_o3_counter(
+                registry,
+                prefix,
+                &format!("branch_repair.direction_only_kind.{stat_name}"),
+                "Count",
+            )?,
+        };
+    }
+    Ok(stats)
+}
+
 fn set_lsq_latency_summary(
     registry: &mut StatsRegistry,
     stats: RiscvO3RuntimeLsqLatencyStats,
@@ -539,13 +983,30 @@ fn set_lsq_latency_summary(
     )
 }
 
+fn branch_predicted_target_match(event: O3RuntimeTraceRecord) -> bool {
+    event.branch_event()
+        && event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) == event.branch_resolved_target())
+}
+
+fn branch_predicted_target_mismatch(event: O3RuntimeTraceRecord) -> bool {
+    event.branch_event()
+        && event
+            .branch_predicted_target()
+            .is_some_and(|target| Some(target) != event.branch_resolved_target())
+}
+
 fn branch_targetless_mismatch(event: &O3RuntimeTraceRecord) -> bool {
-    event.branch_predicted_target().is_some() && event.branch_resolved_target().is_none()
+    event.branch_event()
+        && event.branch_predicted_target().is_some()
+        && event.branch_resolved_target().is_none()
 }
 
 fn branch_wrong_target(event: &O3RuntimeTraceRecord) -> bool {
-    event
-        .branch_predicted_target()
-        .zip(event.branch_resolved_target())
-        .is_some_and(|(predicted, resolved)| predicted != resolved)
+    event.branch_event()
+        && event
+            .branch_predicted_target()
+            .zip(event.branch_resolved_target())
+            .is_some_and(|(predicted, resolved)| predicted != resolved)
 }
