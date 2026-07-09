@@ -51,6 +51,8 @@ fn assert_event_window_row_matches_event(row: &Value, event: &Value, label: &str
         "commit_tick",
         "pc",
         "rob_occupancy",
+        "rob_commits_at_tick",
+        "rob_commit_blocked",
         "lsq_occupancy",
         "rename_map_entries",
         "lsq_data_latency_ticks",
@@ -273,6 +275,27 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         assert!(
             pc > 0,
             "representative runtime event-summary lane {pointer} should be a positive PC: {runtime_summary}"
+        );
+    }
+
+    for pointer in [
+        "/event_window/max_rob_occupancy/rob_commits_at_tick",
+        "/event_window/max_rob_occupancy/rob_commit_blocked",
+        "/event_window/max_structural_pressure/rob_commits_at_tick",
+        "/event_window/max_structural_pressure/rob_commit_blocked",
+        "/event_window/max_fu_latency/rob_commits_at_tick",
+        "/event_window/max_fu_latency/rob_commit_blocked",
+        "/event_window/max_lsq_data_latency/rob_commits_at_tick",
+        "/event_window/max_lsq_data_latency/rob_commit_blocked",
+    ] {
+        assert_eq!(
+            runtime_summary.pointer(pointer),
+            debug_summary.pointer(pointer),
+            "runtime event-summary lane {pointer} should mirror debug trace event summary"
+        );
+        assert!(
+            runtime_summary.pointer(pointer).is_some(),
+            "runtime event-summary lane {pointer} should be present: {runtime_summary}"
         );
     }
 

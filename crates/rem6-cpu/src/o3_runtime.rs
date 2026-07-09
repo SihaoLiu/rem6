@@ -29,8 +29,8 @@ mod o3_source_operands;
 
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_helpers::{
-    default_o3_runtime_snapshot, encode_register_class, encode_u32, validate_runtime_snapshot,
-    validate_unique, O3RuntimeUniqueKey,
+    default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
+    validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
 use o3_source_operands::o3_scalar_integer_source_registers;
@@ -45,7 +45,6 @@ pub struct O3ReorderBufferEntry {
     destination: Option<O3PhysicalRegisterId>,
     ready: bool,
 }
-
 impl O3ReorderBufferEntry {
     pub const fn new(
         sequence: u64,
@@ -91,7 +90,6 @@ pub struct O3LoadStoreQueueEntry {
     kind: O3LoadStoreQueueKind,
     completed: bool,
 }
-
 impl O3LoadStoreQueueEntry {
     pub const fn load(sequence: u64, address: Option<Address>, bytes: u32) -> Self {
         Self {
@@ -137,7 +135,6 @@ pub struct O3RenameMapEntry {
     architectural: u32,
     physical: O3PhysicalRegisterId,
 }
-
 impl O3RenameMapEntry {
     pub const fn new(
         register_class: O3RegisterClass,
@@ -460,11 +457,14 @@ impl O3RuntimeState {
         }
         let lsq_occupancy = self.snapshot.load_store_queue.len();
         let rename_map_entries = self.snapshot.rename_map.len();
+        let (rob_commits, rob_commit_blocked) = rob_commit_boundary(&self.snapshot);
         let trace_record = O3RuntimeTraceRecord::new(
             sequence,
             execution.fetch().tick(),
             Address::new(record.pc()),
             rob_occupancy,
+            rob_commits,
+            rob_commit_blocked,
             o3_rename_write_count(record),
             lsq_loads,
             lsq_stores,
@@ -493,10 +493,6 @@ impl O3RuntimeState {
             record.system_event().is_some(),
         );
 
-        let rob_commits = self
-            .snapshot
-            .reorder_buffer
-            .partition_point(|entry| entry.is_ready());
         self.snapshot.reorder_buffer.drain(0..rob_commits);
         let lsq_commits = self
             .snapshot

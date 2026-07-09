@@ -138,6 +138,10 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
     let multiply_commit = json_u64_field(multiply, "/commit_tick");
     let younger_issue = json_u64_field(younger_add, "/issue_tick");
+    let multiply_rob_commits = json_u64_field(multiply, "/rob_commits_at_tick");
+    let younger_rob_commits = json_u64_field(younger_add, "/rob_commits_at_tick");
+    let multiply_commit_blocked = json_bool_field(multiply, "/rob_commit_blocked");
+    let younger_commit_blocked = json_bool_field(younger_add, "/rob_commit_blocked");
     assert!(
         multiply_writeback > multiply_issue,
         "multiply should occupy the FU after issue: {multiply}"
@@ -157,10 +161,32 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         multiply_commit >= multiply_writeback,
         "multiply commit timing should not precede writeback: {multiply}"
     );
+    assert_eq!(
+        multiply_rob_commits, 0,
+        "resident multiply should not commit while its FU latency is outstanding: {multiply}"
+    );
+    assert!(
+        multiply_commit_blocked,
+        "resident multiply should block the ROB head until writeback: {multiply}"
+    );
+    assert!(
+        younger_rob_commits >= 2,
+        "younger event should drain the older multiply and itself at the writeback boundary: {younger_add}"
+    );
+    assert!(
+        !younger_commit_blocked,
+        "ROB should no longer be commit-blocked when the younger event drains the resident multiply: {younger_add}"
+    );
 }
 
 fn json_u64_field(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing u64 field {pointer}: {json}"))
+}
+
+fn json_bool_field(json: &Value, pointer: &str) -> bool {
+    json.pointer(pointer)
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("missing bool field {pointer}: {json}"))
 }

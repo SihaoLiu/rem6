@@ -10,6 +10,8 @@ pub struct O3RuntimeTraceRecord {
     rob_allocated: bool,
     rob_committed: bool,
     rob_occupancy: u64,
+    rob_commits_at_tick: u64,
+    rob_commit_blocked: bool,
     rename_writes: u64,
     lsq_loads: u64,
     lsq_stores: u64,
@@ -271,6 +273,8 @@ impl O3RuntimeTraceRecord {
         tick: u64,
         pc: Address,
         rob_occupancy: usize,
+        rob_commits_at_tick: usize,
+        rob_commit_blocked: bool,
         rename_writes: u64,
         lsq_loads: u64,
         lsq_stores: u64,
@@ -305,6 +309,8 @@ impl O3RuntimeTraceRecord {
             rob_allocated: true,
             rob_committed: true,
             rob_occupancy: u64::try_from(rob_occupancy).unwrap_or(u64::MAX),
+            rob_commits_at_tick: u64::try_from(rob_commits_at_tick).unwrap_or(u64::MAX),
+            rob_commit_blocked,
             rename_writes,
             lsq_loads,
             lsq_stores,
@@ -383,6 +389,14 @@ impl O3RuntimeTraceRecord {
 
     pub const fn rob_occupancy(self) -> u64 {
         self.rob_occupancy
+    }
+
+    pub const fn rob_commits_at_tick(self) -> u64 {
+        self.rob_commits_at_tick
+    }
+
+    pub const fn rob_commit_blocked(self) -> bool {
+        self.rob_commit_blocked
     }
 
     pub const fn rename_writes(self) -> u64 {

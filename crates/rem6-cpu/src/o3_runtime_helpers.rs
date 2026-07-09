@@ -47,6 +47,13 @@ pub(super) fn validate_runtime_snapshot(
     Ok(())
 }
 
+pub(super) fn rob_commit_boundary(snapshot: &O3RuntimeSnapshot) -> (usize, bool) {
+    let commits = snapshot
+        .reorder_buffer
+        .partition_point(|entry| entry.is_ready());
+    (commits, commits < snapshot.reorder_buffer.len())
+}
+
 pub(super) fn validate_unique<I>(kind: &'static str, keys: I) -> Result<(), O3RuntimeError>
 where
     I: IntoIterator<Item = O3RuntimeUniqueKey>,

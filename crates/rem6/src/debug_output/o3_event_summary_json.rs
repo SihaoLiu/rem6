@@ -377,7 +377,7 @@ fn event_summary_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String
         || "null".to_string(),
         |event| {
             format!(
-                "{{\"sequence\":{},\"tick\":{},\"issue_tick\":{},\"writeback_tick\":{},\"commit_tick\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"lsq_occupancy\":{},\"rename_map_entries\":{},\"lsq_data_latency_ticks\":{},\"fu_latency_cycles\":{}}}",
+                "{{\"sequence\":{},\"tick\":{},\"issue_tick\":{},\"writeback_tick\":{},\"commit_tick\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"rob_commits_at_tick\":{},\"rob_commit_blocked\":{},\"lsq_occupancy\":{},\"rename_map_entries\":{},\"lsq_data_latency_ticks\":{},\"fu_latency_cycles\":{}}}",
                 event.sequence(),
                 event.tick(),
                 event.issue_tick(),
@@ -385,6 +385,8 @@ fn event_summary_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String
                 event.commit_tick(),
                 event.pc().get(),
                 event.rob_occupancy(),
+                event.rob_commits_at_tick(),
+                event.rob_commit_blocked(),
                 event.lsq_occupancy(),
                 event.rename_map_entries(),
                 event.lsq_data_latency_ticks(),

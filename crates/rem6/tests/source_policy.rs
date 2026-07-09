@@ -801,6 +801,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "issue_tick",
         "writeback_tick",
         "commit_tick",
+        "rob_commits_at_tick",
+        "rob_commit_blocked",
         "/cores/1/o3_runtime/execution_mode",
         "/cores/1/o3_runtime/stats_reset_tick",
         "/cores/0/o3_runtime/checkpoint_restore/components",
