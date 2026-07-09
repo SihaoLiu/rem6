@@ -66,6 +66,35 @@ fn assert_event_window_row_matches_event(row: &Value, event: &Value, label: &str
     }
 }
 
+fn assert_event_window_timing_stat_rows(
+    json: &Value,
+    window: &Value,
+    pointer_prefix: &str,
+    stat_prefix: &str,
+) {
+    for row in [
+        "max_rob_occupancy",
+        "max_structural_pressure",
+        "max_fu_latency",
+        "max_lsq_data_latency",
+    ] {
+        for lane in ["issue_tick", "writeback_tick", "commit_tick"] {
+            let pointer = format!("{pointer_prefix}/{row}/{lane}");
+            let expected = window
+                .pointer(&pointer)
+                .and_then(Value::as_u64)
+                .expect("event window timing lane");
+            assert_json_stat(
+                json,
+                &format!("{stat_prefix}.{row}.{lane}"),
+                "Tick",
+                expected,
+                "monotonic",
+            );
+        }
+    }
+}
+
 #[test]
 fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     let path =
@@ -567,6 +596,12 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             });
         assert_json_stat(&json, stat_path, unit, expected, "monotonic");
     }
+    assert_event_window_timing_stat_rows(
+        &json,
+        runtime_summary,
+        "/event_window",
+        "sim.cpu0.o3.event_summary.event_window",
+    );
 
     for (pointer, stat_path) in [
         (
@@ -651,7 +686,6 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             });
         assert_json_stat(&json, stat_path, unit, expected, "monotonic");
     }
-
     for (pointer, stat_path) in [
         ("/first/pc", "sim.cpu0.o3.event_window.first.pc"),
         ("/last/pc", "sim.cpu0.o3.event_window.last.pc"),
@@ -745,6 +779,7 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 "monotonic",
             );
         }
+        assert_event_window_timing_stat_rows(&json, runtime_window, "", debug_prefix);
 
         for (pointer, stat_tail) in [
             ("/first/pc", "first.pc"),

@@ -33,6 +33,9 @@ fn add_bool_counter(counter: &mut u64, value: bool) {
 struct Rem6O3TraceWindowRow {
     sequence: u64,
     tick: u64,
+    issue_tick: u64,
+    writeback_tick: u64,
+    commit_tick: u64,
     pc: u64,
     rob_occupancy: u64,
     lsq_occupancy: u64,
@@ -46,6 +49,9 @@ impl Rem6O3TraceWindowRow {
         Self {
             sequence: event.sequence(),
             tick: event.tick(),
+            issue_tick: event.issue_tick(),
+            writeback_tick: event.writeback_tick(),
+            commit_tick: event.commit_tick(),
             pc: event.pc().get(),
             rob_occupancy: event.rob_occupancy(),
             lsq_occupancy: event.lsq_occupancy(),
@@ -76,6 +82,9 @@ impl Rem6O3TraceWindowRow {
 struct Rem6O3TraceWindowRowSuffixes {
     sequence: &'static str,
     tick: &'static str,
+    issue_tick: &'static str,
+    writeback_tick: &'static str,
+    commit_tick: &'static str,
     pc: &'static str,
     rob_occupancy: &'static str,
     lsq_occupancy: &'static str,
@@ -1571,6 +1580,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.first.sequence",
                 tick: "event_window.first.tick",
+                issue_tick: "event_window.first.issue_tick",
+                writeback_tick: "event_window.first.writeback_tick",
+                commit_tick: "event_window.first.commit_tick",
                 pc: "event_window.first.pc",
                 rob_occupancy: "event_window.first.rob_occupancy",
                 lsq_occupancy: "event_window.first.lsq_occupancy",
@@ -1585,6 +1597,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.last.sequence",
                 tick: "event_window.last.tick",
+                issue_tick: "event_window.last.issue_tick",
+                writeback_tick: "event_window.last.writeback_tick",
+                commit_tick: "event_window.last.commit_tick",
                 pc: "event_window.last.pc",
                 rob_occupancy: "event_window.last.rob_occupancy",
                 lsq_occupancy: "event_window.last.lsq_occupancy",
@@ -1599,6 +1614,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_rob_occupancy.sequence",
                 tick: "event_window.max_rob_occupancy.tick",
+                issue_tick: "event_window.max_rob_occupancy.issue_tick",
+                writeback_tick: "event_window.max_rob_occupancy.writeback_tick",
+                commit_tick: "event_window.max_rob_occupancy.commit_tick",
                 pc: "event_window.max_rob_occupancy.pc",
                 rob_occupancy: "event_window.max_rob_occupancy.rob_occupancy",
                 lsq_occupancy: "event_window.max_rob_occupancy.lsq_occupancy",
@@ -1613,6 +1631,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_lsq_occupancy.sequence",
                 tick: "event_window.max_lsq_occupancy.tick",
+                issue_tick: "event_window.max_lsq_occupancy.issue_tick",
+                writeback_tick: "event_window.max_lsq_occupancy.writeback_tick",
+                commit_tick: "event_window.max_lsq_occupancy.commit_tick",
                 pc: "event_window.max_lsq_occupancy.pc",
                 rob_occupancy: "event_window.max_lsq_occupancy.rob_occupancy",
                 lsq_occupancy: "event_window.max_lsq_occupancy.lsq_occupancy",
@@ -1627,6 +1648,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_rename_map_entries.sequence",
                 tick: "event_window.max_rename_map_entries.tick",
+                issue_tick: "event_window.max_rename_map_entries.issue_tick",
+                writeback_tick: "event_window.max_rename_map_entries.writeback_tick",
+                commit_tick: "event_window.max_rename_map_entries.commit_tick",
                 pc: "event_window.max_rename_map_entries.pc",
                 rob_occupancy: "event_window.max_rename_map_entries.rob_occupancy",
                 lsq_occupancy: "event_window.max_rename_map_entries.lsq_occupancy",
@@ -1642,6 +1666,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_structural_pressure.sequence",
                 tick: "event_window.max_structural_pressure.tick",
+                issue_tick: "event_window.max_structural_pressure.issue_tick",
+                writeback_tick: "event_window.max_structural_pressure.writeback_tick",
+                commit_tick: "event_window.max_structural_pressure.commit_tick",
                 pc: "event_window.max_structural_pressure.pc",
                 rob_occupancy: "event_window.max_structural_pressure.rob_occupancy",
                 lsq_occupancy: "event_window.max_structural_pressure.lsq_occupancy",
@@ -1657,6 +1684,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_lsq_data_latency.sequence",
                 tick: "event_window.max_lsq_data_latency.tick",
+                issue_tick: "event_window.max_lsq_data_latency.issue_tick",
+                writeback_tick: "event_window.max_lsq_data_latency.writeback_tick",
+                commit_tick: "event_window.max_lsq_data_latency.commit_tick",
                 pc: "event_window.max_lsq_data_latency.pc",
                 rob_occupancy: "event_window.max_lsq_data_latency.rob_occupancy",
                 lsq_occupancy: "event_window.max_lsq_data_latency.lsq_occupancy",
@@ -1671,6 +1701,9 @@ impl Rem6O3TraceTotals {
             Rem6O3TraceWindowRowSuffixes {
                 sequence: "event_window.max_fu_latency.sequence",
                 tick: "event_window.max_fu_latency.tick",
+                issue_tick: "event_window.max_fu_latency.issue_tick",
+                writeback_tick: "event_window.max_fu_latency.writeback_tick",
+                commit_tick: "event_window.max_fu_latency.commit_tick",
                 pc: "event_window.max_fu_latency.pc",
                 rob_occupancy: "event_window.max_fu_latency.rob_occupancy",
                 lsq_occupancy: "event_window.max_fu_latency.lsq_occupancy",
@@ -1691,6 +1724,9 @@ fn push_event_window_row_stats(
     for (suffix, unit, value) in [
         (suffixes.sequence, "Count", row.sequence),
         (suffixes.tick, "Tick", row.tick),
+        (suffixes.issue_tick, "Tick", row.issue_tick),
+        (suffixes.writeback_tick, "Tick", row.writeback_tick),
+        (suffixes.commit_tick, "Tick", row.commit_tick),
         (suffixes.pc, "Address", row.pc),
         (suffixes.rob_occupancy, "Count", row.rob_occupancy),
         (suffixes.lsq_occupancy, "Count", row.lsq_occupancy),

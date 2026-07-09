@@ -233,6 +233,9 @@ fn emit_o3_runtime_window_row_stats(
 ) -> Result<(), Rem6CliError> {
     let sequence = event.map_or(0, |event| event.sequence());
     let tick = event.map_or(0, |event| event.tick());
+    let issue_tick = event.map_or(0, |event| event.issue_tick());
+    let writeback_tick = event.map_or(0, |event| event.writeback_tick());
+    let commit_tick = event.map_or(0, |event| event.commit_tick());
     let pc = event.map_or(0, |event| event.pc().get());
     let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
     let lsq_occupancy = event.map_or(0, |event| event.lsq_occupancy());
@@ -242,6 +245,9 @@ fn emit_o3_runtime_window_row_stats(
     for (name, unit, value) in [
         ("sequence", "Count", sequence),
         ("tick", "Tick", tick),
+        ("issue_tick", "Tick", issue_tick),
+        ("writeback_tick", "Tick", writeback_tick),
+        ("commit_tick", "Tick", commit_tick),
         ("pc", "Address", pc),
         ("rob_occupancy", "Count", rob_occupancy),
         ("lsq_occupancy", "Count", lsq_occupancy),
