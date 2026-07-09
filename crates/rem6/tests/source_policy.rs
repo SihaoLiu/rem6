@@ -1072,6 +1072,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.float_misc",
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.lsq_occupancy",
+        "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rename_map_entries",
         "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional",
         "system.cpu.rob.writes",
         "system.cpu.rob.maxOccupancy",

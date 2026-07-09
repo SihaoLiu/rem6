@@ -28,6 +28,22 @@ impl O3EventWindowRow {
             fu_latency_cycles: event.fu_latency_cycles(),
         }
     }
+
+    fn structural_pressure_key(self) -> (u64, u64, u64, u64, u64, u64) {
+        let active_structures = u64::from(self.rob_occupancy != 0)
+            + u64::from(self.lsq_occupancy != 0)
+            + u64::from(self.rename_map_entries != 0);
+        (
+            active_structures,
+            self.rob_occupancy
+                .saturating_add(self.lsq_occupancy)
+                .saturating_add(self.rename_map_entries),
+            self.rob_occupancy,
+            self.lsq_occupancy,
+            self.rename_map_entries,
+            self.sequence,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -38,6 +54,7 @@ pub(super) struct RiscvO3RuntimeEventWindowSnapshot {
     max_rob_occupancy: O3EventWindowRow,
     max_lsq_occupancy: O3EventWindowRow,
     max_rename_map_entries: O3EventWindowRow,
+    max_structural_pressure: O3EventWindowRow,
     max_lsq_data_latency: O3EventWindowRow,
     max_fu_latency: O3EventWindowRow,
 }
@@ -51,6 +68,7 @@ impl RiscvO3RuntimeEventWindowSnapshot {
             self.max_rob_occupancy = row;
             self.max_lsq_occupancy = row;
             self.max_rename_map_entries = row;
+            self.max_structural_pressure = row;
             self.max_lsq_data_latency = row;
             self.max_fu_latency = row;
             self.records = 1;
@@ -77,6 +95,9 @@ impl RiscvO3RuntimeEventWindowSnapshot {
         if row.rename_map_entries >= self.max_rename_map_entries.rename_map_entries {
             self.max_rename_map_entries = row;
         }
+        if row.structural_pressure_key() >= self.max_structural_pressure.structural_pressure_key() {
+            self.max_structural_pressure = row;
+        }
         if row.lsq_data_latency_ticks >= self.max_lsq_data_latency.lsq_data_latency_ticks {
             self.max_lsq_data_latency = row;
         }
@@ -100,6 +121,12 @@ impl RiscvO3RuntimeEventWindowSnapshot {
         }
         if row.sequence == self.max_rename_map_entries.sequence {
             self.max_rename_map_entries = row;
+        }
+        if row.sequence == self.max_structural_pressure.sequence
+            || row.structural_pressure_key()
+                > self.max_structural_pressure.structural_pressure_key()
+        {
+            self.max_structural_pressure = row;
         }
         if row.sequence == self.max_lsq_data_latency.sequence
             || row.lsq_data_latency_ticks > self.max_lsq_data_latency.lsq_data_latency_ticks
@@ -188,6 +215,7 @@ pub(super) struct RiscvO3RuntimeEventWindowStats {
     max_rob_occupancy: RiscvO3RuntimeEventWindowRowStats,
     max_lsq_occupancy: RiscvO3RuntimeEventWindowRowStats,
     max_rename_map_entries: RiscvO3RuntimeEventWindowRowStats,
+    max_structural_pressure: RiscvO3RuntimeEventWindowRowStats,
     max_lsq_data_latency: RiscvO3RuntimeEventWindowRowStats,
     max_fu_latency: RiscvO3RuntimeEventWindowRowStats,
 }
@@ -214,6 +242,11 @@ impl RiscvO3RuntimeEventWindowStats {
                 registry,
                 prefix,
                 "max_rename_map_entries",
+            )?,
+            max_structural_pressure: RiscvO3RuntimeEventWindowRowStats::register(
+                registry,
+                prefix,
+                "max_structural_pressure",
             )?,
             max_lsq_data_latency: RiscvO3RuntimeEventWindowRowStats::register(
                 registry,
@@ -243,6 +276,8 @@ impl RiscvO3RuntimeEventWindowStats {
             .set_snapshot(registry, snapshot.max_lsq_occupancy)?;
         self.max_rename_map_entries
             .set_snapshot(registry, snapshot.max_rename_map_entries)?;
+        self.max_structural_pressure
+            .set_snapshot(registry, snapshot.max_structural_pressure)?;
         self.max_lsq_data_latency
             .set_snapshot(registry, snapshot.max_lsq_data_latency)?;
         self.max_fu_latency

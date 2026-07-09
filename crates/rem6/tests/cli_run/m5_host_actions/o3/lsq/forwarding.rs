@@ -1,6 +1,234 @@
 use super::*;
 
 #[test]
+fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
+    let path = detailed_o3_lsq_forwarding_dump_reset_stats_binary(
+        "m5-switch-cpu-o3-lsq-forwarding-dump-reset-stats",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000080:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("5a00000033000000")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let pre_reset_dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing pre-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        pre_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(0)
+    );
+    for (path, value) in [
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_matches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_matches",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_suppressed",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_candidates",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_matches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_suppressed",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_address_mismatches",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_byte_mismatches",
+            0,
+        ),
+        ("system.cpu.lsq0.storeLoadForwardingSuppressed", 0),
+        ("system.cpu.lsq0.storeLoadForwardingAddressMismatches", 0),
+        ("system.cpu.lsq0.storeLoadForwardingByteMismatches", 0),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
+            1,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
+            1,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingCandidates",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingMatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingSuppressed",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingAddressMismatches",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.store.storeLoadForwardingByteMismatches",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+
+    let post_reset_dump = host_actions
+        .pointer("/stats_dumps/1")
+        .unwrap_or_else(|| panic!("missing post-reset stats dump action: {host_actions}"));
+    assert_eq!(
+        post_reset_dump.pointer("/epoch").and_then(Value::as_u64),
+        Some(1)
+    );
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_candidates",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_candidates",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_matches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_suppressed",
+        "system.cpu.lsq0.storeLoadForwardingSuppressed",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 2, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
+        "system.cpu.lsq0.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.storeLoadForwardingByteMismatches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 1, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_suppressed",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_address_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_byte_mismatches",
+        "system.cpu.lsq0.operation.store.storeLoadForwardingSuppressed",
+        "system.cpu.lsq0.operation.store.storeLoadForwardingAddressMismatches",
+        "system.cpu.lsq0.operation.store.storeLoadForwardingByteMismatches",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+    }
+}
+
+#[test]
 fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_hart() {
     let path = multicore_hart1_detailed_o3_lsq_forwarding_dump_reset_stats_binary(
         "m5-switch-cpu-hart1-o3-lsq-forwarding-dump-reset-stats",
