@@ -471,6 +471,7 @@ impl Rem6HostStatsDumpSummary {
             .map(Rem6HostStatsDumpSampleSummary::from_sample)
             .collect();
         append_o3_stats_dump_rate_alias_samples(snapshot.samples(), active_o3_cpus, &mut samples);
+        append_o3_stats_dump_phase_alias_samples(snapshot.samples(), active_o3_cpus, &mut samples);
         append_o3_stats_dump_iew_total_bucket_alias_samples(
             snapshot.samples(),
             active_o3_cpus,
@@ -577,6 +578,46 @@ fn o3_stats_dump_rate_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
     let suffix = match suffix {
         "writeback_rate_ppm" => "wbRate",
         "producer_consumer_fanout_ppm" => "wbFanout",
+        _ => return None,
+    };
+    Some((cpu, suffix))
+}
+
+fn append_o3_stats_dump_phase_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+) {
+    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
+    for sample in record_samples
+        .iter()
+        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
+    {
+        let Some((cpu, suffix)) = o3_stats_dump_phase_alias_suffix(sample.path()) else {
+            continue;
+        };
+        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
+        let alias_path = format!("{alias_prefix}.iew.{suffix}");
+        if samples.iter().any(|sample| sample.path == alias_path) {
+            continue;
+        }
+        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+            sample, alias_path,
+        ));
+    }
+}
+
+fn o3_stats_dump_phase_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
+    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
+    let (cpu, suffix) = rest.split_once(".o3.event_summary.")?;
+    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let cpu = cpu.parse().ok()?;
+    let suffix = match suffix {
+        "issue_to_writeback_ticks" => "issueToWritebackTicks",
+        "writeback_to_commit_ticks" => "writebackToCommitTicks",
+        "issue_to_commit_ticks" => "issueToCommitTicks",
         _ => return None,
     };
     Some((cpu, suffix))

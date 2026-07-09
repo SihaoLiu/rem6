@@ -118,6 +118,18 @@ impl RiscvO3RuntimeEventSummarySnapshot {
         last.saturating_sub(first)
     }
 
+    fn issue_to_writeback_ticks(&self) -> u64 {
+        self.saturating_sum(O3RuntimeTraceRecord::issue_to_writeback_ticks)
+    }
+
+    fn writeback_to_commit_ticks(&self) -> u64 {
+        self.saturating_sum(O3RuntimeTraceRecord::writeback_to_commit_ticks)
+    }
+
+    fn issue_to_commit_ticks(&self) -> u64 {
+        self.saturating_sum(O3RuntimeTraceRecord::issue_to_commit_ticks)
+    }
+
     fn rob_allocations(&self) -> u64 {
         self.count(O3RuntimeTraceRecord::rob_allocated)
     }
@@ -497,12 +509,29 @@ impl RiscvO3RuntimeEventSummarySnapshot {
     {
         self.events.values().copied().map(value).sum()
     }
+
+    fn saturating_sum<F>(&self, value: F) -> u64
+    where
+        F: Fn(O3RuntimeTraceRecord) -> u64,
+    {
+        saturating_sum_u64(self.events.values().copied().map(value))
+    }
+}
+
+fn saturating_sum_u64<I>(values: I) -> u64
+where
+    I: IntoIterator<Item = u64>,
+{
+    values.into_iter().fold(0, u64::saturating_add)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RiscvO3RuntimeEventSummaryStats {
     records: StatId,
     span_ticks: StatId,
+    issue_to_writeback_ticks: StatId,
+    writeback_to_commit_ticks: StatId,
+    issue_to_commit_ticks: StatId,
     rob_allocations: StatId,
     rob_commits: StatId,
     rob_max_occupancy: StatId,
@@ -589,6 +618,24 @@ impl RiscvO3RuntimeEventSummaryStats {
         Ok(Self {
             records: register_o3_counter(registry, &prefix, "records", "Count")?,
             span_ticks: register_o3_counter(registry, &prefix, "span_ticks", "Tick")?,
+            issue_to_writeback_ticks: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_to_writeback_ticks",
+                "Tick",
+            )?,
+            writeback_to_commit_ticks: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_to_commit_ticks",
+                "Tick",
+            )?,
+            issue_to_commit_ticks: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_to_commit_ticks",
+                "Tick",
+            )?,
             rob_allocations: register_o3_counter(registry, &prefix, "rob.allocations", "Count")?,
             rob_commits: register_o3_counter(registry, &prefix, "rob.commits", "Count")?,
             rob_max_occupancy: register_o3_counter(
@@ -1006,6 +1053,15 @@ impl RiscvO3RuntimeEventSummaryStats {
         for (stat, value) in [
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
+            (
+                self.issue_to_writeback_ticks,
+                snapshot.issue_to_writeback_ticks(),
+            ),
+            (
+                self.writeback_to_commit_ticks,
+                snapshot.writeback_to_commit_ticks(),
+            ),
+            (self.issue_to_commit_ticks, snapshot.issue_to_commit_ticks()),
             (self.rob_allocations, snapshot.rob_allocations()),
             (self.rob_commits, snapshot.rob_commits()),
             (self.rob_max_occupancy, snapshot.rob_max_occupancy()),
@@ -1695,4 +1751,14 @@ fn branch_wrong_target(event: &O3RuntimeTraceRecord) -> bool {
             .branch_predicted_target()
             .zip(event.branch_resolved_target())
             .is_some_and(|(predicted, resolved)| predicted != resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::saturating_sum_u64;
+
+    #[test]
+    fn event_summary_phase_total_sum_saturates_on_overflow() {
+        assert_eq!(saturating_sum_u64([u64::MAX - 1, 2]), u64::MAX);
+    }
 }

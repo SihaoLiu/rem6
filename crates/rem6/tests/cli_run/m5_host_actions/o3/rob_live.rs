@@ -391,6 +391,7 @@ fn rem6_run_o3_detailed_mode_delivers_live_rob_dump_before_exit() {
         2,
         "resettable",
     );
+    assert_dump_gem5_iew_phase_alias_stats(dump);
 }
 
 fn json_u64_field(json: &Value, pointer: &str) -> u64 {
@@ -514,6 +515,40 @@ fn assert_gem5_iew_phase_alias_stats(json: &Value, expected: (u64, u64, u64)) {
         "Tick",
         expected.2,
         "monotonic",
+    );
+}
+
+fn assert_dump_gem5_iew_phase_alias_stats(dump: &Value) {
+    let mut phase_totals = [0_u64; 3];
+    for (index, source, alias) in [
+        (
+            0,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.issue_to_writeback_ticks",
+            "system.cpu.iew.issueToWritebackTicks",
+        ),
+        (
+            1,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.writeback_to_commit_ticks",
+            "system.cpu.iew.writebackToCommitTicks",
+        ),
+        (
+            2,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.issue_to_commit_ticks",
+            "system.cpu.iew.issueToCommitTicks",
+        ),
+    ] {
+        let value = stats_dump_sample_value(dump, source);
+        phase_totals[index] = value;
+        assert_stats_dump_sample(dump, alias, "counter", "Tick", value, "resettable");
+    }
+    assert!(
+        phase_totals[0] > 0,
+        "live-ROB dump fixture should expose nonzero issue-to-writeback timing: {dump}"
+    );
+    assert_eq!(
+        phase_totals[2],
+        phase_totals[0].saturating_add(phase_totals[1]),
+        "dumped O3 phase totals should preserve issue-to-commit identity: {dump}"
     );
 }
 
