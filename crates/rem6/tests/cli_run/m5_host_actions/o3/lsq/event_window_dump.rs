@@ -67,6 +67,21 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_structural_event_window_snapshot()
                 0x8000_0000,
             ),
             (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.issue_tick",
+                "Tick",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.writeback_tick",
+                "Tick",
+                1,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.commit_tick",
+                "Tick",
+                1,
+            ),
+            (
                 "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rob_occupancy",
                 "Count",
                 1,

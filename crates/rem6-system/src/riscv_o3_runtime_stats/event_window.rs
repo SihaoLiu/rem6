@@ -7,6 +7,9 @@ use super::helpers::register_o3_counter;
 struct O3EventWindowRow {
     sequence: u64,
     tick: u64,
+    issue_tick: u64,
+    writeback_tick: u64,
+    commit_tick: u64,
     pc: u64,
     rob_occupancy: u64,
     rob_commits_at_tick: u64,
@@ -22,6 +25,9 @@ impl O3EventWindowRow {
         Self {
             sequence: event.sequence(),
             tick: event.tick(),
+            issue_tick: event.issue_tick(),
+            writeback_tick: event.writeback_tick(),
+            commit_tick: event.commit_tick(),
             pc: event.pc().get(),
             rob_occupancy: event.rob_occupancy(),
             rob_commits_at_tick: event.rob_commits_at_tick(),
@@ -151,6 +157,9 @@ impl RiscvO3RuntimeEventWindowSnapshot {
 struct RiscvO3RuntimeEventWindowRowStats {
     sequence: StatId,
     tick: StatId,
+    issue_tick: StatId,
+    writeback_tick: StatId,
+    commit_tick: StatId,
     pc: StatId,
     rob_occupancy: StatId,
     rob_commits_at_tick: StatId,
@@ -167,6 +176,9 @@ impl RiscvO3RuntimeEventWindowRowStats {
         Ok(Self {
             sequence: register_o3_counter(registry, &prefix, "sequence", "Count")?,
             tick: register_o3_counter(registry, &prefix, "tick", "Tick")?,
+            issue_tick: register_o3_counter(registry, &prefix, "issue_tick", "Tick")?,
+            writeback_tick: register_o3_counter(registry, &prefix, "writeback_tick", "Tick")?,
+            commit_tick: register_o3_counter(registry, &prefix, "commit_tick", "Tick")?,
             pc: register_o3_counter(registry, &prefix, "pc", "Address")?,
             rob_occupancy: register_o3_counter(registry, &prefix, "rob_occupancy", "Count")?,
             rob_commits_at_tick: register_o3_counter(
@@ -211,6 +223,9 @@ impl RiscvO3RuntimeEventWindowRowStats {
         for (stat, value) in [
             (self.sequence, row.sequence),
             (self.tick, row.tick),
+            (self.issue_tick, row.issue_tick),
+            (self.writeback_tick, row.writeback_tick),
+            (self.commit_tick, row.commit_tick),
             (self.pc, row.pc),
             (self.rob_occupancy, row.rob_occupancy),
             (self.rob_commits_at_tick, row.rob_commits_at_tick),
