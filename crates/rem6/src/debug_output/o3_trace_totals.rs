@@ -30,6 +30,45 @@ fn add_bool_counter(counter: &mut u64, value: bool) {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6O3TraceWindowRow {
+    sequence: u64,
+    tick: u64,
+    pc: u64,
+    rob_occupancy: u64,
+    lsq_occupancy: u64,
+    rename_map_entries: u64,
+    lsq_data_latency_ticks: u64,
+    fu_latency_cycles: u64,
+}
+
+impl Rem6O3TraceWindowRow {
+    fn from_event(event: &O3RuntimeTraceRecord) -> Self {
+        Self {
+            sequence: event.sequence(),
+            tick: event.tick(),
+            pc: event.pc().get(),
+            rob_occupancy: event.rob_occupancy(),
+            lsq_occupancy: event.lsq_occupancy(),
+            rename_map_entries: event.rename_map_entries(),
+            lsq_data_latency_ticks: event.lsq_data_latency_ticks(),
+            fu_latency_cycles: event.fu_latency_cycles(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Rem6O3TraceWindowRowSuffixes {
+    sequence: &'static str,
+    tick: &'static str,
+    pc: &'static str,
+    rob_occupancy: &'static str,
+    lsq_occupancy: &'static str,
+    rename_map_entries: &'static str,
+    lsq_data_latency_ticks: &'static str,
+    fu_latency_cycles: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct Rem6O3TraceTotals {
     records: u64,
     execution_modes: Rem6O3ExecutionModeTraceTotals,
@@ -94,6 +133,13 @@ pub(super) struct Rem6O3TraceTotals {
     event_lsq_data_latency_ticks: u64,
     event_lsq_data_latency_max_ticks: u64,
     event_lsq_data_latency_min_ticks: Option<u64>,
+    event_window_first: Option<Rem6O3TraceWindowRow>,
+    event_window_last: Option<Rem6O3TraceWindowRow>,
+    event_window_max_rob_occupancy: Option<Rem6O3TraceWindowRow>,
+    event_window_max_lsq_occupancy: Option<Rem6O3TraceWindowRow>,
+    event_window_max_rename_map_entries: Option<Rem6O3TraceWindowRow>,
+    event_window_max_lsq_data_latency: Option<Rem6O3TraceWindowRow>,
+    event_window_max_fu_latency: Option<Rem6O3TraceWindowRow>,
     event_lsq_operation_load_latency_ticks: u64,
     event_lsq_operation_store_latency_ticks: u64,
     event_lsq_operation_load_reserved_latency_ticks: u64,
@@ -253,6 +299,7 @@ impl Rem6O3TraceTotals {
         add_counter(&mut self.rename_map_entries, stats.rename_map_entries());
         for event in record.events() {
             let event_tick = event.tick();
+            let event_window_row = Rem6O3TraceWindowRow::from_event(event);
             add_counter(&mut self.event_records, 1);
             self.event_first_tick = Some(
                 self.event_first_tick
@@ -262,6 +309,7 @@ impl Rem6O3TraceTotals {
                 self.event_last_tick
                     .map_or(event_tick, |tick| tick.max(event_tick)),
             );
+            self.add_event_window_row(event_window_row);
             self.event_max_rob_occupancy = self.event_max_rob_occupancy.max(event.rob_occupancy());
             self.event_max_lsq_occupancy = self.event_max_lsq_occupancy.max(event.lsq_occupancy());
             self.event_max_rename_map_entries = self
@@ -334,6 +382,51 @@ impl Rem6O3TraceTotals {
                     self.event_fu_latency_classes[class.index()].add(fu_latency_cycles);
                 }
             }
+        }
+    }
+
+    fn add_event_window_row(&mut self, row: Rem6O3TraceWindowRow) {
+        if self
+            .event_window_first
+            .is_none_or(|current| row.tick < current.tick)
+        {
+            self.event_window_first = Some(row);
+        }
+        if self
+            .event_window_last
+            .is_none_or(|current| row.tick >= current.tick)
+        {
+            self.event_window_last = Some(row);
+        }
+        if self
+            .event_window_max_rob_occupancy
+            .is_none_or(|current| row.rob_occupancy >= current.rob_occupancy)
+        {
+            self.event_window_max_rob_occupancy = Some(row);
+        }
+        if self
+            .event_window_max_lsq_occupancy
+            .is_none_or(|current| row.lsq_occupancy >= current.lsq_occupancy)
+        {
+            self.event_window_max_lsq_occupancy = Some(row);
+        }
+        if self
+            .event_window_max_rename_map_entries
+            .is_none_or(|current| row.rename_map_entries >= current.rename_map_entries)
+        {
+            self.event_window_max_rename_map_entries = Some(row);
+        }
+        if self
+            .event_window_max_lsq_data_latency
+            .is_none_or(|current| row.lsq_data_latency_ticks >= current.lsq_data_latency_ticks)
+        {
+            self.event_window_max_lsq_data_latency = Some(row);
+        }
+        if self
+            .event_window_max_fu_latency
+            .is_none_or(|current| row.fu_latency_cycles >= current.fu_latency_cycles)
+        {
+            self.event_window_max_fu_latency = Some(row);
         }
     }
 
@@ -914,6 +1007,7 @@ impl Rem6O3TraceTotals {
             unit: "Ppm",
             value: self.event_iew.writeback_rate_ppm(event_tick_span),
         });
+        self.push_event_window_stats(&mut stats, event_tick_span);
         for (suffix, value) in [
             ("event.iq_insts_issued", self.event_records),
             (
@@ -1424,5 +1518,145 @@ impl Rem6O3TraceTotals {
             }
         }
         stats
+    }
+
+    fn push_event_window_stats(&self, stats: &mut Vec<Rem6O3TraceStat>, event_tick_span: u64) {
+        for (suffix, unit, value) in [
+            ("event_window.records", "Count", self.event_records),
+            ("event_window.span_ticks", "Tick", event_tick_span),
+        ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit,
+                value,
+            });
+        }
+        push_event_window_row_stats(
+            stats,
+            self.event_window_first,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.first.sequence",
+                tick: "event_window.first.tick",
+                pc: "event_window.first.pc",
+                rob_occupancy: "event_window.first.rob_occupancy",
+                lsq_occupancy: "event_window.first.lsq_occupancy",
+                rename_map_entries: "event_window.first.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.first.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.first.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_last,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.last.sequence",
+                tick: "event_window.last.tick",
+                pc: "event_window.last.pc",
+                rob_occupancy: "event_window.last.rob_occupancy",
+                lsq_occupancy: "event_window.last.lsq_occupancy",
+                rename_map_entries: "event_window.last.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.last.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.last.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_rob_occupancy,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_rob_occupancy.sequence",
+                tick: "event_window.max_rob_occupancy.tick",
+                pc: "event_window.max_rob_occupancy.pc",
+                rob_occupancy: "event_window.max_rob_occupancy.rob_occupancy",
+                lsq_occupancy: "event_window.max_rob_occupancy.lsq_occupancy",
+                rename_map_entries: "event_window.max_rob_occupancy.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.max_rob_occupancy.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_rob_occupancy.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_lsq_occupancy,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_lsq_occupancy.sequence",
+                tick: "event_window.max_lsq_occupancy.tick",
+                pc: "event_window.max_lsq_occupancy.pc",
+                rob_occupancy: "event_window.max_lsq_occupancy.rob_occupancy",
+                lsq_occupancy: "event_window.max_lsq_occupancy.lsq_occupancy",
+                rename_map_entries: "event_window.max_lsq_occupancy.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.max_lsq_occupancy.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_lsq_occupancy.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_rename_map_entries,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_rename_map_entries.sequence",
+                tick: "event_window.max_rename_map_entries.tick",
+                pc: "event_window.max_rename_map_entries.pc",
+                rob_occupancy: "event_window.max_rename_map_entries.rob_occupancy",
+                lsq_occupancy: "event_window.max_rename_map_entries.lsq_occupancy",
+                rename_map_entries: "event_window.max_rename_map_entries.rename_map_entries",
+                lsq_data_latency_ticks:
+                    "event_window.max_rename_map_entries.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_rename_map_entries.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_lsq_data_latency,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_lsq_data_latency.sequence",
+                tick: "event_window.max_lsq_data_latency.tick",
+                pc: "event_window.max_lsq_data_latency.pc",
+                rob_occupancy: "event_window.max_lsq_data_latency.rob_occupancy",
+                lsq_occupancy: "event_window.max_lsq_data_latency.lsq_occupancy",
+                rename_map_entries: "event_window.max_lsq_data_latency.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_lsq_data_latency.fu_latency_cycles",
+            },
+        );
+        push_event_window_row_stats(
+            stats,
+            self.event_window_max_fu_latency,
+            Rem6O3TraceWindowRowSuffixes {
+                sequence: "event_window.max_fu_latency.sequence",
+                tick: "event_window.max_fu_latency.tick",
+                pc: "event_window.max_fu_latency.pc",
+                rob_occupancy: "event_window.max_fu_latency.rob_occupancy",
+                lsq_occupancy: "event_window.max_fu_latency.lsq_occupancy",
+                rename_map_entries: "event_window.max_fu_latency.rename_map_entries",
+                lsq_data_latency_ticks: "event_window.max_fu_latency.lsq_data_latency_ticks",
+                fu_latency_cycles: "event_window.max_fu_latency.fu_latency_cycles",
+            },
+        );
+    }
+}
+
+fn push_event_window_row_stats(
+    stats: &mut Vec<Rem6O3TraceStat>,
+    row: Option<Rem6O3TraceWindowRow>,
+    suffixes: Rem6O3TraceWindowRowSuffixes,
+) {
+    let row = row.unwrap_or_default();
+    for (suffix, unit, value) in [
+        (suffixes.sequence, "Count", row.sequence),
+        (suffixes.tick, "Tick", row.tick),
+        (suffixes.pc, "Address", row.pc),
+        (suffixes.rob_occupancy, "Count", row.rob_occupancy),
+        (suffixes.lsq_occupancy, "Count", row.lsq_occupancy),
+        (suffixes.rename_map_entries, "Count", row.rename_map_entries),
+        (
+            suffixes.lsq_data_latency_ticks,
+            "Tick",
+            row.lsq_data_latency_ticks,
+        ),
+        (suffixes.fu_latency_cycles, "Cycle", row.fu_latency_cycles),
+    ] {
+        stats.push(Rem6O3TraceStat {
+            suffix,
+            unit,
+            value,
+        });
     }
 }

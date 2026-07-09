@@ -588,6 +588,77 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "monotonic",
         );
     }
+
+    for debug_prefix in [
+        "sim.debug.o3_trace.event_window",
+        "sim.debug.o3_trace.cpu.cpu0.event_window",
+    ] {
+        for (pointer, stat_tail, unit) in [
+            ("/records", "records", "Count"),
+            ("/span_ticks", "span_ticks", "Tick"),
+            ("/first/tick", "first.tick", "Tick"),
+            ("/last/sequence", "last.sequence", "Count"),
+            (
+                "/max_rob_occupancy/rob_occupancy",
+                "max_rob_occupancy.rob_occupancy",
+                "Count",
+            ),
+            (
+                "/max_lsq_occupancy/lsq_occupancy",
+                "max_lsq_occupancy.lsq_occupancy",
+                "Count",
+            ),
+            (
+                "/max_rename_map_entries/rename_map_entries",
+                "max_rename_map_entries.rename_map_entries",
+                "Count",
+            ),
+            (
+                "/max_fu_latency/fu_latency_cycles",
+                "max_fu_latency.fu_latency_cycles",
+                "Cycle",
+            ),
+            (
+                "/max_lsq_data_latency/lsq_data_latency_ticks",
+                "max_lsq_data_latency.lsq_data_latency_ticks",
+                "Tick",
+            ),
+        ] {
+            let expected = runtime_window
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "runtime event window should expose u64 lane {pointer}: {runtime_window}"
+                    )
+                });
+            assert_json_stat(
+                &json,
+                &format!("{debug_prefix}.{stat_tail}"),
+                unit,
+                expected,
+                "monotonic",
+            );
+        }
+
+        for (pointer, stat_tail) in [
+            ("/first/pc", "first.pc"),
+            ("/last/pc", "last.pc"),
+            ("/max_rob_occupancy/pc", "max_rob_occupancy.pc"),
+            ("/max_lsq_occupancy/pc", "max_lsq_occupancy.pc"),
+            ("/max_rename_map_entries/pc", "max_rename_map_entries.pc"),
+            ("/max_fu_latency/pc", "max_fu_latency.pc"),
+            ("/max_lsq_data_latency/pc", "max_lsq_data_latency.pc"),
+        ] {
+            assert_json_stat(
+                &json,
+                &format!("{debug_prefix}.{stat_tail}"),
+                "Address",
+                event_summary_hex_u64(runtime_window, pointer),
+                "monotonic",
+            );
+        }
+    }
 }
 
 #[test]
