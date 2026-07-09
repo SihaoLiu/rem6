@@ -7,6 +7,7 @@ const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
 const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
 const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
 const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
+const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
@@ -345,6 +346,18 @@ fn cli_m5_host_actions_o3_modules_stay_focused() {
         oversized.is_empty(),
         "O3 host-action child modules exceed {MAX_M5_HOST_ACTIONS_O3_MODULE_LINES} lines: {}",
         oversized.join(", ")
+    );
+}
+
+#[test]
+fn cli_m5_host_actions_o3_runtime_keeps_headroom() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/m5_host_actions/o3/runtime.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES,
+        "tests/cli_run/m5_host_actions/o3/runtime.rs should split large runtime evidence helpers before reaching the child-module ceiling, but it has {lines} lines"
     );
 }
 
