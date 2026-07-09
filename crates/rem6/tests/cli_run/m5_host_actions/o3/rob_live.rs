@@ -207,6 +207,118 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     );
 }
 
+#[test]
+fn rem6_run_o3_detailed_mode_delivers_live_rob_dump_before_exit() {
+    let path = detailed_o3_live_rob_dump_stats_binary("m5-switch-cpu-o3-live-rob-dump-before-exit");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--dump-memory",
+            "0x80000040:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a00000010000000"),
+        "O3 live-ROB dump fixture should preserve ordered multiply and younger integer stores"
+    );
+
+    let events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("O3 debug trace should expose per-event timing rows: {json}"));
+    let system_event_count = events
+        .iter()
+        .filter(|event| event.pointer("/system_event").and_then(Value::as_bool) == Some(true))
+        .count();
+    assert!(
+        system_event_count >= 2,
+        "fixture should execute dump and exit system events in detailed mode: {events:?}"
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "O3 detailed dump should be delivered before the later m5_exit stop: {host_actions}"
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1),
+        "fixture should still stop through the later m5_exit: {host_actions}"
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing O3 live ROB stats dump action: {host_actions}"));
+    let event_summary_records = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.commits",
+        "counter",
+        "Count",
+        event_summary_records,
+        "resettable",
+    );
+    assert_stats_dump_sample_at_least(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.max_occupancy",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.commit_blocked_events",
+        "counter",
+        "Count",
+        1,
+        "resettable",
+    );
+    assert_stats_dump_sample_at_least(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.max_commits_at_tick",
+        "counter",
+        "Count",
+        2,
+        "resettable",
+    );
+}
+
 fn json_u64_field(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)

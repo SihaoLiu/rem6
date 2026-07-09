@@ -126,6 +126,15 @@ impl RiscvO3RuntimeEventSummarySnapshot {
         self.count(O3RuntimeTraceRecord::rob_committed)
     }
 
+    fn rob_max_occupancy(&self) -> u64 {
+        self.events
+            .values()
+            .copied()
+            .map(|event| event.rob_occupancy())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn rob_commit_blocked_events(&self) -> u64 {
         self.count(O3RuntimeTraceRecord::rob_commit_blocked)
     }
@@ -486,6 +495,8 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     records: StatId,
     span_ticks: StatId,
     rob_allocations: StatId,
+    rob_commits: StatId,
+    rob_max_occupancy: StatId,
     rob_commit_blocked_events: StatId,
     rob_max_commits_at_tick: StatId,
     rename_writes: StatId,
@@ -569,6 +580,13 @@ impl RiscvO3RuntimeEventSummaryStats {
             records: register_o3_counter(registry, &prefix, "records", "Count")?,
             span_ticks: register_o3_counter(registry, &prefix, "span_ticks", "Tick")?,
             rob_allocations: register_o3_counter(registry, &prefix, "rob.allocations", "Count")?,
+            rob_commits: register_o3_counter(registry, &prefix, "rob.commits", "Count")?,
+            rob_max_occupancy: register_o3_counter(
+                registry,
+                &prefix,
+                "rob.max_occupancy",
+                "Count",
+            )?,
             rob_commit_blocked_events: register_o3_counter(
                 registry,
                 &prefix,
@@ -973,6 +991,8 @@ impl RiscvO3RuntimeEventSummaryStats {
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
             (self.rob_allocations, snapshot.rob_allocations()),
+            (self.rob_commits, snapshot.rob_commits()),
+            (self.rob_max_occupancy, snapshot.rob_max_occupancy()),
             (
                 self.rob_commit_blocked_events,
                 snapshot.rob_commit_blocked_events(),

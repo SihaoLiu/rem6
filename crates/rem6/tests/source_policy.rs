@@ -825,6 +825,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "commit_tick",
         "rob_commits_at_tick",
         "rob_commit_blocked",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.commits",
+        "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.max_occupancy",
         "commit_blocked_events",
         "max_commits_at_tick",
         "/cores/1/o3_runtime/execution_mode",
