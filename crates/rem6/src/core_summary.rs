@@ -157,4 +157,5 @@ pub struct Rem6CoreSummary {
 pub struct Rem6CheckerSummary {
     pub(crate) checked_instructions: u64,
     pub(crate) mismatches: u64,
+    pub(crate) execution_mode: Option<&'static str>,
 }

@@ -1,13 +1,15 @@
 use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use super::increment_stat;
 use super::o3_runtime::emit_o3_runtime_stats;
 use super::pipeline::{
     emit_in_order_cause_stage_stats, emit_in_order_cause_stat, emit_in_order_stage_stats,
     emit_in_order_stall_cause_stage_stats, emit_in_order_stall_cause_stat,
 };
-use crate::{Rem6CliError, Rem6CoreSummary};
+use super::{increment_stat, stat_path_segment};
+use crate::{Rem6CheckerSummary, Rem6CliError, Rem6CoreSummary};
+
+const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 pub(super) fn emit_cpu_run_stats(
     stats: &mut StatsRegistry,
@@ -1148,6 +1150,7 @@ pub(super) fn emit_cpu_run_stats(
                 StatResetPolicy::Monotonic,
                 checker.mismatches,
             )?;
+            emit_checker_execution_mode_stats(stats, core.cpu, checker)?;
         }
         increment_stat(
             stats,
@@ -1190,6 +1193,55 @@ pub(super) fn emit_cpu_run_stats(
             "Byte",
             StatResetPolicy::Monotonic,
             core.data_atomic_bytes,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_checker_execution_mode_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    checker: &Rem6CheckerSummary,
+) -> Result<(), Rem6CliError> {
+    let Some(execution_mode) = checker.execution_mode else {
+        return Ok(());
+    };
+    for mode in EXECUTION_MODE_STAT_LANES {
+        let (checked_instructions, mismatches) = if execution_mode == mode {
+            (checker.checked_instructions, checker.mismatches)
+        } else {
+            (0, 0)
+        };
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.checker.execution_mode.{mode}.checked_instructions"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checked_instructions,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.checker.execution_mode.{mode}.mismatches"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            mismatches,
+        )?;
+    }
+    if !EXECUTION_MODE_STAT_LANES.contains(&execution_mode) {
+        let mode = stat_path_segment(execution_mode);
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.checker.execution_mode.{mode}.checked_instructions"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.checked_instructions,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{cpu}.checker.execution_mode.{mode}.mismatches"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            checker.mismatches,
         )?;
     }
     Ok(())

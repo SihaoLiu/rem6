@@ -326,6 +326,7 @@ pub(super) fn execution_summary(
             .map(|snapshot| Rem6CheckerSummary {
                 checked_instructions: snapshot.checked_instructions(),
                 mismatches: snapshot.mismatches().len() as u64,
+                execution_mode: checker_execution_mode_for_cpu(&inputs.host_actions, cpu),
             });
         cores.push(Rem6CoreSummary {
             cpu: cpu_index,
@@ -686,6 +687,21 @@ fn execution_mode_for_cpu(
         .iter()
         .find(|mode| mode.target.as_str() == target.as_str())
         .map(|mode| mode.mode)
+}
+
+fn checker_execution_mode_for_cpu(
+    host_actions: &Rem6HostActionSummary,
+    cpu: CpuId,
+) -> Option<&'static str> {
+    let target = riscv_execution_mode_target_for_cpu(cpu);
+    if host_actions
+        .execution_mode_switches
+        .iter()
+        .any(|switch| switch.target.as_str() == target.as_str())
+    {
+        return None;
+    }
+    execution_mode_for_cpu(host_actions, cpu).or(Some("functional"))
 }
 
 fn o3_runtime_stats_reset_for_run(host_actions: &Rem6HostActionSummary) -> (u64, u64) {

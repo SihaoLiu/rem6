@@ -8439,6 +8439,23 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
         0,
         "monotonic",
     );
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    for (mode, checked_instructions) in [("functional", 2), ("timing", 0), ("detailed", 0)] {
+        assert_eq!(
+            json_stat_value(
+                &json,
+                &format!("sim.cpu0.checker.execution_mode.{mode}.checked_instructions")
+            ),
+            checked_instructions
+        );
+        assert_eq!(
+            json_stat_value(
+                &json,
+                &format!("sim.cpu0.checker.execution_mode.{mode}.mismatches")
+            ),
+            0
+        );
+    }
 }
 
 fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {

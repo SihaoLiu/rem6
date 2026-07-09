@@ -1380,6 +1380,16 @@ fn rem6_run_executes_checker_cpu_across_m5_timing_mode_switch() {
         0,
         "monotonic",
     );
+    for mode in ["functional", "timing", "detailed"] {
+        assert_json_stat_absent(
+            &json,
+            &format!("sim.cpu0.checker.execution_mode.{mode}.checked_instructions"),
+        );
+        assert_json_stat_absent(
+            &json,
+            &format!("sim.cpu0.checker.execution_mode.{mode}.mismatches"),
+        );
+    }
 }
 
 #[test]
