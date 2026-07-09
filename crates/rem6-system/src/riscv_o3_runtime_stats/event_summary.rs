@@ -126,6 +126,19 @@ impl RiscvO3RuntimeEventSummarySnapshot {
         self.count(O3RuntimeTraceRecord::rob_committed)
     }
 
+    fn rob_commit_blocked_events(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::rob_commit_blocked)
+    }
+
+    fn rob_max_commits_at_tick(&self) -> u64 {
+        self.events
+            .values()
+            .copied()
+            .map(|event| event.rob_commits_at_tick())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn rename_writes(&self) -> u64 {
         self.sum(O3RuntimeTraceRecord::rename_writes)
     }
@@ -473,6 +486,8 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     records: StatId,
     span_ticks: StatId,
     rob_allocations: StatId,
+    rob_commit_blocked_events: StatId,
+    rob_max_commits_at_tick: StatId,
     rename_writes: StatId,
     branch_event_branches: StatId,
     branch_event_taken: StatId,
@@ -554,6 +569,18 @@ impl RiscvO3RuntimeEventSummaryStats {
             records: register_o3_counter(registry, &prefix, "records", "Count")?,
             span_ticks: register_o3_counter(registry, &prefix, "span_ticks", "Tick")?,
             rob_allocations: register_o3_counter(registry, &prefix, "rob.allocations", "Count")?,
+            rob_commit_blocked_events: register_o3_counter(
+                registry,
+                &prefix,
+                "rob.commit_blocked_events",
+                "Count",
+            )?,
+            rob_max_commits_at_tick: register_o3_counter(
+                registry,
+                &prefix,
+                "rob.max_commits_at_tick",
+                "Count",
+            )?,
             rename_writes: register_o3_counter(registry, &prefix, "rename.writes", "Count")?,
             branch_event_branches: register_o3_counter(
                 registry,
@@ -946,6 +973,14 @@ impl RiscvO3RuntimeEventSummaryStats {
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
             (self.rob_allocations, snapshot.rob_allocations()),
+            (
+                self.rob_commit_blocked_events,
+                snapshot.rob_commit_blocked_events(),
+            ),
+            (
+                self.rob_max_commits_at_tick,
+                snapshot.rob_max_commits_at_tick(),
+            ),
             (self.rename_writes, snapshot.rename_writes()),
             (self.branch_event_branches, snapshot.branch_event_branches()),
             (self.branch_event_taken, snapshot.branch_event_taken()),
