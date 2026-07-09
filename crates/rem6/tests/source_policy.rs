@@ -1349,6 +1349,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/cores/0/o3_runtime/lsq_operation_atomic_store_bytes",
         "/cores/0/o3_runtime/lsq/operation/load/load_bytes",
         "/cores/0/o3_runtime/lsq/operation/atomic/store_bytes",
+        "system.cpu.lsq0.operation.load.loadBytes",
+        "system.cpu.lsq0.operation.store.storeBytes",
         "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
         "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
         "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",

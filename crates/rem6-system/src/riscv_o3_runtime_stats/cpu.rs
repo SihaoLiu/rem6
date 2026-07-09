@@ -30,6 +30,8 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     lsq_operation_alias_total: StatId,
     lsq_operation_load_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_store_bytes: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_load_byte_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_store_byte_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_store_conditional_failures: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_candidates: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_matches: [StatId; O3RuntimeLsqOperation::COUNT],
@@ -195,6 +197,18 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "store_bytes",
+                "Byte",
+            )?,
+            lsq_operation_load_byte_aliases: register_o3_lsq_operation_alias_suffix_unit_counters(
+                registry,
+                &gem5_cpu_alias_prefix,
+                "loadBytes",
+                "Byte",
+            )?,
+            lsq_operation_store_byte_aliases: register_o3_lsq_operation_alias_suffix_unit_counters(
+                registry,
+                &gem5_cpu_alias_prefix,
+                "storeBytes",
                 "Byte",
             )?,
             lsq_operation_store_conditional_failures: register_o3_lsq_operation_suffix_counters(
@@ -1104,7 +1118,17 @@ impl RiscvO3RuntimeCpuStats {
                     current.lsq_operation_load_bytes(operation),
                 ),
                 (
+                    self.lsq_operation_load_byte_aliases[operation.index()],
+                    previous.lsq_operation_load_bytes(operation),
+                    current.lsq_operation_load_bytes(operation),
+                ),
+                (
                     self.lsq_operation_store_bytes[operation.index()],
+                    previous.lsq_operation_store_bytes(operation),
+                    current.lsq_operation_store_bytes(operation),
+                ),
+                (
+                    self.lsq_operation_store_byte_aliases[operation.index()],
                     previous.lsq_operation_store_bytes(operation),
                     current.lsq_operation_store_bytes(operation),
                 ),
@@ -1471,7 +1495,15 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.lsq_operation_load_bytes(operation),
             )?;
             registry.set_resettable_counter(
+                self.lsq_operation_load_byte_aliases[operation.index()],
+                snapshot.lsq_operation_load_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
                 self.lsq_operation_store_bytes[operation.index()],
+                snapshot.lsq_operation_store_bytes(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_store_byte_aliases[operation.index()],
                 snapshot.lsq_operation_store_bytes(operation),
             )?;
             registry.set_resettable_counter(

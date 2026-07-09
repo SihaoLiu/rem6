@@ -4,6 +4,77 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
     pre_reset_dump: &Value,
     post_reset_dump: &Value,
 ) {
+    for (dump, prefix, samples, total, max, min, avg) in [
+        (
+            pre_reset_dump,
+            "system.cpu.lsq0.dataResponse",
+            7,
+            14,
+            2,
+            2,
+            2,
+        ),
+        (
+            pre_reset_dump,
+            "system.cpu.lsq0.operation.total.dataResponse",
+            7,
+            14,
+            2,
+            2,
+            2,
+        ),
+        (
+            post_reset_dump,
+            "system.cpu.lsq0.dataResponse",
+            2,
+            2,
+            2,
+            0,
+            1,
+        ),
+        (
+            post_reset_dump,
+            "system.cpu.lsq0.operation.total.dataResponse",
+            2,
+            2,
+            2,
+            0,
+            1,
+        ),
+    ] {
+        assert_lsq_data_response_dump_alias(dump, prefix, samples, total, max, min, avg);
+    }
+    for (dump, operation, samples, total, max, min, avg) in [
+        (pre_reset_dump, "load", 1, 2, 2, 2, 2),
+        (pre_reset_dump, "store", 3, 6, 2, 2, 2),
+        (pre_reset_dump, "loadReserved", 1, 2, 2, 2, 2),
+        (pre_reset_dump, "storeConditional", 1, 2, 2, 2, 2),
+        (pre_reset_dump, "atomic", 1, 2, 2, 2, 2),
+        (post_reset_dump, "load", 0, 0, 0, 0, 0),
+        (post_reset_dump, "store", 1, 2, 2, 2, 2),
+        (post_reset_dump, "loadReserved", 0, 0, 0, 0, 0),
+        (post_reset_dump, "storeConditional", 1, 0, 0, 0, 0),
+        (post_reset_dump, "atomic", 0, 0, 0, 0, 0),
+    ] {
+        assert_lsq_data_response_dump_alias(
+            dump,
+            &format!("system.cpu.lsq0.dataResponse.{operation}"),
+            samples,
+            total,
+            max,
+            min,
+            avg,
+        );
+        assert_lsq_data_response_dump_alias(
+            dump,
+            &format!("system.cpu.lsq0.operation.{operation}.dataResponse"),
+            samples,
+            total,
+            max,
+            min,
+            avg,
+        );
+    }
     for (path, value) in [
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load.load_bytes",
@@ -35,6 +106,41 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
         ),
     ] {
         assert_stats_dump_sample(pre_reset_dump, path, "counter", "Byte", value, "resettable");
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load.loadBytes", 8),
+        ("system.cpu.lsq0.operation.load.storeBytes", 0),
+        ("system.cpu.lsq0.operation.store.loadBytes", 0),
+        ("system.cpu.lsq0.operation.store.storeBytes", 24),
+        ("system.cpu.lsq0.operation.loadReserved.loadBytes", 8),
+        ("system.cpu.lsq0.operation.loadReserved.storeBytes", 0),
+        ("system.cpu.lsq0.operation.storeConditional.loadBytes", 0),
+        ("system.cpu.lsq0.operation.storeConditional.storeBytes", 8),
+        ("system.cpu.lsq0.operation.atomic.loadBytes", 8),
+        ("system.cpu.lsq0.operation.atomic.storeBytes", 8),
+    ] {
+        assert_stats_dump_sample(pre_reset_dump, path, "counter", "Byte", value, "resettable");
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load.loadBytes", 0),
+        ("system.cpu.lsq0.operation.load.storeBytes", 0),
+        ("system.cpu.lsq0.operation.store.loadBytes", 0),
+        ("system.cpu.lsq0.operation.store.storeBytes", 8),
+        ("system.cpu.lsq0.operation.loadReserved.loadBytes", 0),
+        ("system.cpu.lsq0.operation.loadReserved.storeBytes", 0),
+        ("system.cpu.lsq0.operation.storeConditional.loadBytes", 0),
+        ("system.cpu.lsq0.operation.storeConditional.storeBytes", 8),
+        ("system.cpu.lsq0.operation.atomic.loadBytes", 0),
+        ("system.cpu.lsq0.operation.atomic.storeBytes", 0),
+    ] {
+        assert_stats_dump_sample(
+            post_reset_dump,
+            path,
+            "counter",
+            "Byte",
+            value,
+            "resettable",
+        );
     }
     for (dump, path, unit, value) in [
         (
@@ -105,6 +211,33 @@ pub(super) fn assert_o3_lsq_matrix_dump_nested_aliases(
         ),
     ] {
         assert_stats_dump_sample(dump, path, "counter", unit, value, "resettable");
+    }
+}
+
+fn assert_lsq_data_response_dump_alias(
+    dump: &Value,
+    prefix: &str,
+    samples: u64,
+    total: u64,
+    max: u64,
+    min: u64,
+    avg: u64,
+) {
+    for (suffix, unit, value) in [
+        ("samples", "Count", samples),
+        ("totalLatency", "Tick", total),
+        ("maxLatency", "Tick", max),
+        ("minLatency", "Tick", min),
+        ("avgLatency", "Tick", avg),
+    ] {
+        assert_stats_dump_sample(
+            dump,
+            &format!("{prefix}.{suffix}"),
+            "counter",
+            unit,
+            value,
+            "resettable",
+        );
     }
 }
 

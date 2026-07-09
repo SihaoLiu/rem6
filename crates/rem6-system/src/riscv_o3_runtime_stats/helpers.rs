@@ -133,6 +133,15 @@ pub(super) fn register_o3_lsq_operation_alias_suffix_counters(
     prefix: &str,
     suffix: &str,
 ) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
+    register_o3_lsq_operation_alias_suffix_unit_counters(registry, prefix, suffix, "Count")
+}
+
+pub(super) fn register_o3_lsq_operation_alias_suffix_unit_counters(
+    registry: &mut StatsRegistry,
+    prefix: &str,
+    suffix: &str,
+    unit: &str,
+) -> Result<[StatId; O3RuntimeLsqOperation::COUNT], StatsError> {
     let mut stats = [StatId::new(0); O3RuntimeLsqOperation::COUNT];
     for operation in O3RuntimeLsqOperation::TRACKED {
         stats[operation.index()] = register_o3_counter(
@@ -143,7 +152,7 @@ pub(super) fn register_o3_lsq_operation_alias_suffix_counters(
                 o3_lsq_operation_alias(operation),
                 suffix
             ),
-            "Count",
+            unit,
         )?;
     }
     Ok(stats)
