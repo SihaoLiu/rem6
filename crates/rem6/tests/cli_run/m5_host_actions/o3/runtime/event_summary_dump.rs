@@ -180,6 +180,90 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_trace_rows() {
         );
     }
 
+    for dump in [pre_reset_dump, post_reset_dump] {
+        let event_summary_records = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+        );
+        let event_summary_lsq_loads = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.load",
+        );
+        let event_summary_lsq_stores = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store",
+        );
+        let event_summary_branch_mispredicts = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.branch_mispredicts",
+        );
+        for (path, value) in [
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.insts_issued",
+                event_summary_records,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.mem_insts_issued",
+                event_summary_lsq_loads.saturating_add(event_summary_lsq_stores),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.branch_insts_issued",
+                stats_dump_sample_value(
+                    dump,
+                    "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.branches",
+                ),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_read",
+                event_summary_lsq_loads,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_write",
+                event_summary_lsq_stores,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.branch_mispredicts",
+                event_summary_branch_mispredicts,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_read",
+                event_summary_lsq_loads,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_write",
+                event_summary_lsq_stores,
+            ),
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+        }
+        for (inst_type, class) in [
+            ("int_mul", "integer_mul"),
+            ("int_div", "integer_div"),
+            ("float_misc", "float_misc"),
+            ("vector_float_misc", "vector_float_misc"),
+        ] {
+            let instructions = stats_dump_sample_value(
+                dump,
+                &format!(
+                    "sim.host_actions.stats_dump.cpu0.o3.event_summary.fu_latency_class.{class}.instructions"
+                ),
+            );
+            for prefix in [
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type",
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type",
+            ] {
+                assert_stats_dump_sample(
+                    dump,
+                    &format!("{prefix}.{inst_type}"),
+                    "counter",
+                    "Count",
+                    instructions,
+                    "resettable",
+                );
+            }
+        }
+    }
+
     assert_stats_dump_sample_at_least(
         pre_reset_dump,
         "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.mispredictions",

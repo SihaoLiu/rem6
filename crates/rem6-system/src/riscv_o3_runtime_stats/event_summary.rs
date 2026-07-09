@@ -11,10 +11,12 @@ use super::groups::{
     RiscvO3RuntimeFuLatencyClassStats, RiscvO3RuntimeLsqLatencyStats,
 };
 use super::helpers::{
-    ratio_ppm, register_o3_branch_event_kind_counters, register_o3_counter,
-    register_o3_lsq_operation_counters, register_o3_lsq_operation_nested_counters,
-    register_o3_lsq_operation_nested_latency_counters, register_o3_lsq_ordering_counters,
-    register_o3_nested_fu_latency_class_counters, set_o3_lsq_latency_counters,
+    ratio_ppm, register_o3_branch_event_kind_counters,
+    register_o3_commit_fu_latency_class_counters, register_o3_counter,
+    register_o3_iq_fu_latency_class_counters, register_o3_lsq_operation_counters,
+    register_o3_lsq_operation_nested_counters, register_o3_lsq_operation_nested_latency_counters,
+    register_o3_lsq_ordering_counters, register_o3_nested_fu_latency_class_counters,
+    set_o3_lsq_latency_counters,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -291,6 +293,19 @@ impl RiscvO3RuntimeEventSummarySnapshot {
             .saturating_add(self.iew_predicted_not_taken_incorrect())
     }
 
+    fn iq_insts_issued(&self) -> u64 {
+        self.records()
+    }
+
+    fn iq_mem_insts_issued(&self) -> u64 {
+        self.lsq_operation_count(O3RuntimeLsqOperation::Load)
+            .saturating_add(self.lsq_operation_count(O3RuntimeLsqOperation::Store))
+    }
+
+    fn iq_branch_insts_issued(&self) -> u64 {
+        self.branch_event_branches()
+    }
+
     fn fu_latency(&self) -> FuLatencySummary {
         self.fu_latency_summary(|event| event.fu_latency_cycles() != 0)
     }
@@ -479,6 +494,12 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    iq_insts_issued: StatId,
+    iq_mem_insts_issued: StatId,
+    iq_branch_insts_issued: StatId,
+    iq_issued_inst_type_mem_read: StatId,
+    iq_issued_inst_type_mem_write: StatId,
+    iq_issued_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
     iew_dispatched_insts: StatId,
     iew_insts_to_commit: StatId,
     iew_writeback_count: StatId,
@@ -491,6 +512,10 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     iew_branch_mispredicts: StatId,
     iew_dependency_producer: StatId,
     iew_dependency_consumer: StatId,
+    commit_branch_mispredicts: StatId,
+    commit_committed_inst_type_mem_read: StatId,
+    commit_committed_inst_type_mem_write: StatId,
+    commit_committed_inst_type_fu_classes: [StatId; O3RuntimeFuLatencyClass::COUNT],
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_max_cycles: StatId,
@@ -645,6 +670,34 @@ impl RiscvO3RuntimeEventSummaryStats {
             branch_repair_kinds: register_event_summary_branch_repair_kind_counters(
                 registry, &prefix,
             )?,
+            iq_insts_issued: register_o3_counter(registry, &prefix, "iq.insts_issued", "Count")?,
+            iq_mem_insts_issued: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.mem_insts_issued",
+                "Count",
+            )?,
+            iq_branch_insts_issued: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.branch_insts_issued",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_read: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.issued_inst_type.mem_read",
+                "Count",
+            )?,
+            iq_issued_inst_type_mem_write: register_o3_counter(
+                registry,
+                &prefix,
+                "iq.issued_inst_type.mem_write",
+                "Count",
+            )?,
+            iq_issued_inst_type_fu_classes: register_o3_iq_fu_latency_class_counters(
+                registry, &prefix,
+            )?,
             iew_dispatched_insts: register_o3_counter(
                 registry,
                 &prefix,
@@ -716,6 +769,27 @@ impl RiscvO3RuntimeEventSummaryStats {
                 &prefix,
                 "iew.dependency.consumer",
                 "Count",
+            )?,
+            commit_branch_mispredicts: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.branch_mispredicts",
+                "Count",
+            )?,
+            commit_committed_inst_type_mem_read: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.committed_inst_type.mem_read",
+                "Count",
+            )?,
+            commit_committed_inst_type_mem_write: register_o3_counter(
+                registry,
+                &prefix,
+                "commit.committed_inst_type.mem_write",
+                "Count",
+            )?,
+            commit_committed_inst_type_fu_classes: register_o3_commit_fu_latency_class_counters(
+                registry, &prefix,
             )?,
             fu_latency_instructions: register_o3_counter(
                 registry,
@@ -856,6 +930,9 @@ impl RiscvO3RuntimeEventSummaryStats {
         let fu_latency = snapshot.fu_latency();
         let iew_producer_inst = snapshot.iew_dependency_producers();
         let iew_consumer_inst = snapshot.iew_dependency_consumers();
+        let iew_branch_mispredicts = snapshot.iew_branch_mispredicts();
+        let lsq_operation_loads = snapshot.lsq_operation_count(O3RuntimeLsqOperation::Load);
+        let lsq_operation_stores = snapshot.lsq_operation_count(O3RuntimeLsqOperation::Store);
         for (stat, value) in [
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
@@ -925,6 +1002,14 @@ impl RiscvO3RuntimeEventSummaryStats {
                 self.branch_repair_direction_only_mismatches,
                 snapshot.branch_repair_direction_only_mismatches(),
             ),
+            (self.iq_insts_issued, snapshot.iq_insts_issued()),
+            (self.iq_mem_insts_issued, snapshot.iq_mem_insts_issued()),
+            (
+                self.iq_branch_insts_issued,
+                snapshot.iq_branch_insts_issued(),
+            ),
+            (self.iq_issued_inst_type_mem_read, lsq_operation_loads),
+            (self.iq_issued_inst_type_mem_write, lsq_operation_stores),
             (self.iew_dispatched_insts, snapshot.iew_dispatched_insts()),
             (self.iew_insts_to_commit, snapshot.iew_insts_to_commit()),
             (self.iew_writeback_count, snapshot.iew_writeback_count()),
@@ -946,12 +1031,18 @@ impl RiscvO3RuntimeEventSummaryStats {
                 self.iew_predicted_not_taken_incorrect,
                 snapshot.iew_predicted_not_taken_incorrect(),
             ),
-            (
-                self.iew_branch_mispredicts,
-                snapshot.iew_branch_mispredicts(),
-            ),
+            (self.iew_branch_mispredicts, iew_branch_mispredicts),
             (self.iew_dependency_producer, iew_producer_inst),
             (self.iew_dependency_consumer, iew_consumer_inst),
+            (self.commit_branch_mispredicts, iew_branch_mispredicts),
+            (
+                self.commit_committed_inst_type_mem_read,
+                lsq_operation_loads,
+            ),
+            (
+                self.commit_committed_inst_type_mem_write,
+                lsq_operation_stores,
+            ),
             (self.fu_latency_instructions, fu_latency.instructions),
             (self.fu_latency_cycles, fu_latency.cycles),
             (self.fu_latency_max_cycles, fu_latency.max_cycles),
@@ -1107,6 +1198,14 @@ impl RiscvO3RuntimeEventSummaryStats {
         for class in O3RuntimeFuLatencyClass::ALL {
             let class_stats = self.fu_latency_classes[class.index()];
             let class_latency = snapshot.fu_latency_class(class);
+            registry.set_resettable_counter(
+                self.iq_issued_inst_type_fu_classes[class.index()],
+                class_latency.instructions,
+            )?;
+            registry.set_resettable_counter(
+                self.commit_committed_inst_type_fu_classes[class.index()],
+                class_latency.instructions,
+            )?;
             for (stat, value) in [
                 (class_stats.instructions, class_latency.instructions),
                 (class_stats.latency_cycles, class_latency.cycles),

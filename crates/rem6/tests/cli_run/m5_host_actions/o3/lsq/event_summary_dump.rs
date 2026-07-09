@@ -205,6 +205,31 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_lsq_matrix_rows() {
             "Tick",
             2,
         ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.mem_insts_issued",
+            "Count",
+            4,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_read",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_write",
+            "Count",
+            3,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_read",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_write",
+            "Count",
+            3,
+        ),
     ] {
         assert_stats_dump_sample(pre_reset_dump, path, "counter", unit, value, "resettable");
     }
@@ -277,6 +302,31 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_lsq_matrix_rows() {
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.event_summary.lsq_operation.store_conditional.store_conditional_failures",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.mem_insts_issued",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_read",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iq.issued_inst_type.mem_write",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_read",
+            "Count",
+            0,
+        ),
+        (
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.commit.committed_inst_type.mem_write",
             "Count",
             1,
         ),
