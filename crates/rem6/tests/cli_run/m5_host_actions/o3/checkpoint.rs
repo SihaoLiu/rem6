@@ -134,6 +134,66 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
             "post-detailed O3 runtime checkpoint should expose decoded {field} matching {stat_path}: {after_detailed_chunk}"
         );
     }
+    let decoded_checkpoint_field = |chunk: &Value, field: &str| {
+        chunk
+            .pointer(&format!("/o3_runtime/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing decoded checkpoint field {field}: {chunk}"))
+    };
+    let min_nonzero = |left: u64, right: u64| {
+        if left == 0 {
+            right
+        } else if right == 0 {
+            left
+        } else {
+            left.min(right)
+        }
+    };
+    for (field, unit, expected) in [
+        (
+            "stats_lsq_operation_load",
+            "Count",
+            decoded_checkpoint_field(baseline_chunk, "stats_lsq_operation_load")
+                + decoded_checkpoint_field(after_detailed_chunk, "stats_lsq_operation_load"),
+        ),
+        (
+            "stats_lsq_operation_store",
+            "Count",
+            decoded_checkpoint_field(baseline_chunk, "stats_lsq_operation_store")
+                + decoded_checkpoint_field(after_detailed_chunk, "stats_lsq_operation_store"),
+        ),
+        (
+            "stats_lsq_data_latency_ticks",
+            "Tick",
+            decoded_checkpoint_field(baseline_chunk, "stats_lsq_data_latency_ticks")
+                + decoded_checkpoint_field(after_detailed_chunk, "stats_lsq_data_latency_ticks"),
+        ),
+        (
+            "stats_lsq_data_latency_max_ticks",
+            "Tick",
+            decoded_checkpoint_field(baseline_chunk, "stats_lsq_data_latency_max_ticks").max(
+                decoded_checkpoint_field(after_detailed_chunk, "stats_lsq_data_latency_max_ticks"),
+            ),
+        ),
+        (
+            "stats_lsq_data_latency_min_ticks",
+            "Tick",
+            min_nonzero(
+                decoded_checkpoint_field(baseline_chunk, "stats_lsq_data_latency_min_ticks"),
+                decoded_checkpoint_field(after_detailed_chunk, "stats_lsq_data_latency_min_ticks"),
+            ),
+        ),
+    ] {
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.checkpoint.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            expected,
+            "monotonic",
+        );
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.max_rob_occupancy",
@@ -630,6 +690,25 @@ fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
             "sim.host_actions.stats_dump.cpu0.o3.rename_map_entries",
             "Count",
         ),
+    ] {
+        assert_stats_dump_sample(
+            restored_dump,
+            path,
+            "counter",
+            unit,
+            stats_dump_sample_value(first_dump, path),
+            "resettable",
+        );
+    }
+    for (path, unit) in [
+        ("system.cpu.rob.writes", "Count"),
+        ("system.cpu.rob.maxOccupancy", "Count"),
+        ("system.cpu.rename.mapEntries", "Count"),
+        ("system.cpu.iq.instsIssued", "Count"),
+        ("system.cpu.iew.dispatchedInsts", "Count"),
+        ("system.cpu.commit.committedInstType.MemWrite", "Count"),
+        ("system.cpu.lsq0.storeBytes", "Byte"),
+        ("system.cpu.lsq0.operation.store", "Count"),
     ] {
         assert_stats_dump_sample(
             restored_dump,

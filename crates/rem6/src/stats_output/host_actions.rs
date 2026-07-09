@@ -75,6 +75,27 @@ pub(super) fn emit_run_host_action_stats(
             .or_default() += 1;
     }
 
+    let mut checkpoint_component_stats = BTreeMap::<String, HostCheckpointComponentStats>::new();
+    let mut checkpoint_chunk_stats = BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
+    for checkpoint in &summary.checkpoints {
+        for component in &checkpoint.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = checkpoint_component_stats
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = checkpoint_chunk_stats
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
+            }
+        }
+    }
+
     let mut checkpoint_restore_execution_mode_authority_manifests = 0;
     let mut checkpoint_restore_execution_mode_authority_cleared_manifests = 0;
     let mut checkpoint_restore_execution_mode_authority_decode_errors = 0;
@@ -922,6 +943,69 @@ pub(super) fn emit_run_host_action_stats(
         StatResetPolicy::Monotonic,
         switch_quiescence_captured_payload_bytes,
     )?;
+    for (component_path, component_stats) in checkpoint_component_stats {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint.component.{component_path}.components"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.components,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint.component.{component_path}.chunks"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            component_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.checkpoint.component.{component_path}.payload_bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            component_stats.payload_bytes,
+        )?;
+    }
+    for ((component_path, chunk_path), chunk_stats) in checkpoint_chunk_stats {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint.component.{component_path}.chunk.{chunk_path}.chunks"
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            chunk_stats.chunks,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint.component.{component_path}.chunk.{chunk_path}.payload_bytes"
+            ),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_bytes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.host_actions.checkpoint.component.{component_path}.chunk.{chunk_path}.payload_checksum_accumulator"
+            ),
+            "Unspecified",
+            StatResetPolicy::Monotonic,
+            chunk_stats.payload_checksum_accumulator,
+        )?;
+        for (field, value) in chunk_stats.o3_runtime_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
+    }
     for (component_path, component_stats) in checkpoint_restore_component_stats {
         increment_stat(
             stats,
