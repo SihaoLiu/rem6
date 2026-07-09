@@ -148,6 +148,30 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
             "resettable",
         );
     }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load.storeConditionalFailures", 0),
+        (
+            "system.cpu.lsq0.operation.store.storeConditionalFailures",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.storeConditional.storeConditionalFailures",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.atomic.storeConditionalFailures",
+            0,
+        ),
+    ] {
+        assert_stats_dump_sample(
+            pre_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
     for (path, unit, value) in [
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_samples",
@@ -291,6 +315,30 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
         ("system.cpu.lsq0.operation.total", 2),
         ("system.cpu.lsq0.ordering.acquireRelease", 0),
         ("system.cpu.lsq0.ordering.total", 0),
+    ] {
+        assert_stats_dump_sample(
+            post_reset_dump,
+            path,
+            "counter",
+            "Count",
+            value,
+            "resettable",
+        );
+    }
+    for (path, value) in [
+        ("system.cpu.lsq0.operation.load.storeConditionalFailures", 0),
+        (
+            "system.cpu.lsq0.operation.store.storeConditionalFailures",
+            0,
+        ),
+        (
+            "system.cpu.lsq0.operation.storeConditional.storeConditionalFailures",
+            1,
+        ),
+        (
+            "system.cpu.lsq0.operation.atomic.storeConditionalFailures",
+            0,
+        ),
     ] {
         assert_stats_dump_sample(
             post_reset_dump,

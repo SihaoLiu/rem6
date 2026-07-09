@@ -1093,6 +1093,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.host_actions.stats_dump.cpu1.o3.snapshot.lsq.entries",
         "sim.host_actions.stats_dump.cpu1.o3.snapshot.rename_map.entries",
         "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_conditional.store_conditional_failures",
+        "system.cpu.lsq0.operation.storeConditional.storeConditionalFailures",
         "system.cpu.rob.writes",
         "system.cpu.rob.maxOccupancy",
         "system.cpu.rename.renamedOperands",

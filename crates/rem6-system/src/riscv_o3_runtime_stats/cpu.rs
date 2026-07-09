@@ -47,6 +47,7 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     lsq_operation_forwarding_suppressed_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_address_mismatch_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_operation_forwarding_byte_mismatch_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
+    lsq_operation_store_conditional_failure_aliases: [StatId; O3RuntimeLsqOperation::COUNT],
     lsq_data_latency: RiscvO3RuntimeLsqLatencyStats,
     lsq_operation_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
     lsq_operation_nested_latency: [RiscvO3RuntimeLsqLatencyStats; O3RuntimeLsqOperation::COUNT],
@@ -294,6 +295,12 @@ impl RiscvO3RuntimeCpuStats {
                     registry,
                     &gem5_cpu_alias_prefix,
                     "storeLoadForwardingByteMismatches",
+                )?,
+            lsq_operation_store_conditional_failure_aliases:
+                register_o3_lsq_operation_alias_suffix_counters(
+                    registry,
+                    &gem5_cpu_alias_prefix,
+                    "storeConditionalFailures",
                 )?,
             lsq_data_latency: register_o3_lsq_latency_counters(
                 registry,
@@ -1111,6 +1118,11 @@ impl RiscvO3RuntimeCpuStats {
                     previous.lsq_operation_store_conditional_failures(operation),
                     current.lsq_operation_store_conditional_failures(operation),
                 ),
+                (
+                    self.lsq_operation_store_conditional_failure_aliases[operation.index()],
+                    previous.lsq_operation_store_conditional_failures(operation),
+                    current.lsq_operation_store_conditional_failures(operation),
+                ),
             ] {
                 let delta = current.saturating_sub(previous);
                 if delta != 0 {
@@ -1468,6 +1480,10 @@ impl RiscvO3RuntimeCpuStats {
             )?;
             registry.set_resettable_counter(
                 self.lsq_operation_nested_store_conditional_failures[operation.index()],
+                snapshot.lsq_operation_store_conditional_failures(operation),
+            )?;
+            registry.set_resettable_counter(
+                self.lsq_operation_store_conditional_failure_aliases[operation.index()],
                 snapshot.lsq_operation_store_conditional_failures(operation),
             )?;
             registry.set_resettable_counter(
