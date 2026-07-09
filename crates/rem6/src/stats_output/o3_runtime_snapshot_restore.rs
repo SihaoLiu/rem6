@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{increment_count_stat, increment_stat, stat_path_segment, EXECUTION_MODE_STAT_LANES};
-use crate::{Rem6CliError, Rem6CoreSummary};
+use crate::{Rem6CliError, Rem6CoreSummary, Rem6HostCheckpointChunkSummary};
 
 pub(super) fn emit_o3_runtime_snapshot_stats(
     stats: &mut StatsRegistry,
@@ -50,6 +50,28 @@ struct O3RestoreChunkStats {
     chunks: u64,
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
+    o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
+}
+
+fn add_o3_restore_chunk_stats(
+    stats: &mut O3RestoreChunkStats,
+    chunk: &Rem6HostCheckpointChunkSummary,
+) {
+    stats.chunks = stats.chunks.saturating_add(1);
+    stats.payload_bytes = stats.payload_bytes.saturating_add(chunk.payload_bytes);
+    stats.payload_checksum_accumulator = stats
+        .payload_checksum_accumulator
+        .wrapping_add(chunk.payload_checksum);
+    let Some(o3_runtime) = &chunk.o3_runtime else {
+        return;
+    };
+    for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+        stats
+            .o3_runtime_numeric
+            .entry(field.to_string())
+            .and_modify(|(_, total)| *total = total.saturating_add(value))
+            .or_insert((unit, value));
+    }
 }
 
 fn emit_o3_restore_component_stat_set(
@@ -90,6 +112,15 @@ fn emit_o3_restore_chunk_stat_set(
         increment_stat(
             stats,
             &format!("{prefix}.{suffix}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+        increment_stat(
+            stats,
+            &format!("{prefix}.o3_runtime.{field}"),
             unit,
             StatResetPolicy::Monotonic,
             value,
@@ -241,24 +272,12 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
             let chunk_entry = chunk_stats
                 .entry((component_path.clone(), chunk_path.clone()))
                 .or_default();
-            chunk_entry.chunks = chunk_entry.chunks.saturating_add(1);
-            chunk_entry.payload_bytes = chunk_entry
-                .payload_bytes
-                .saturating_add(chunk.payload_bytes);
-            chunk_entry.payload_checksum_accumulator = chunk_entry
-                .payload_checksum_accumulator
-                .wrapping_add(chunk.payload_checksum);
+            add_o3_restore_chunk_stats(chunk_entry, chunk);
             if is_target_component {
                 let target_chunk_entry = target_chunk_stats
                     .entry((component_path.clone(), component_path.clone(), chunk_path))
                     .or_default();
-                target_chunk_entry.chunks = target_chunk_entry.chunks.saturating_add(1);
-                target_chunk_entry.payload_bytes = target_chunk_entry
-                    .payload_bytes
-                    .saturating_add(chunk.payload_bytes);
-                target_chunk_entry.payload_checksum_accumulator = target_chunk_entry
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
+                add_o3_restore_chunk_stats(target_chunk_entry, chunk);
             }
         }
     }

@@ -1490,6 +1490,48 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
             ),
         ]
     }
+
+    pub(crate) fn numeric_stat_fields(&self) -> Vec<(&'static str, &'static str, u64)> {
+        self.numeric_fields()
+            .into_iter()
+            .filter(|(name, _)| o3_runtime_checkpoint_stat_is_additive(name))
+            .filter_map(|(name, value)| {
+                value.map(|value| (name, o3_runtime_checkpoint_unit(name), value))
+            })
+            .collect()
+    }
+}
+
+fn o3_runtime_checkpoint_stat_is_additive(name: &str) -> bool {
+    matches!(
+        name,
+        "stats_lsq_operation_load"
+            | "stats_lsq_operation_store"
+            | "stats_lsq_data_latency_samples"
+            | "stats_lsq_data_latency_ticks"
+            | "stats_lsq_operation_load_latency_samples"
+            | "stats_lsq_operation_load_latency_ticks"
+            | "stats_lsq_operation_store_latency_samples"
+            | "stats_lsq_operation_store_latency_ticks"
+            | "stats_fu_latency_instructions"
+            | "stats_fu_latency_cycles"
+            | "stats_fu_latency_class_integer_mul_instructions"
+            | "stats_fu_latency_class_integer_mul_cycles"
+            | "stats_fu_latency_class_integer_div_instructions"
+            | "stats_fu_latency_class_integer_div_cycles"
+            | "stats_fu_latency_class_float_misc_instructions"
+            | "stats_fu_latency_class_float_misc_cycles"
+    )
+}
+
+fn o3_runtime_checkpoint_unit(name: &str) -> &'static str {
+    if name.ends_with("_cycles") {
+        "Cycle"
+    } else if name.ends_with("_ticks") {
+        "Tick"
+    } else {
+        "Count"
+    }
 }
 
 fn payload_checksum(payload: &[u8]) -> u64 {

@@ -1242,6 +1242,13 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
         "o3_runtime_state",
         "cpu1",
     );
+    assert_restore_o3_runtime_chunk_stats(
+        &json,
+        host_restore,
+        "sim.host_actions.checkpoint_restore",
+        "cpu1",
+        "o3-runtime-state",
+    );
     assert_json_stat_absent(
         &json,
         "sim.host_actions.checkpoint_restore.execution_mode_authority.target.cpu0.mode.detailed",
@@ -1383,6 +1390,13 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
         "o3_runtime_state",
         "cpu1",
     );
+    assert_restore_o3_runtime_chunk_stats(
+        &json,
+        runtime_restore,
+        "sim.cpu1.o3.checkpoint_restore",
+        "cpu1",
+        "o3-runtime-state",
+    );
     assert_json_stat_prefix_absent(&json, "sim.cpu0.o3.checkpoint_restore.component.");
     assert_json_stat_prefix_absent(
         &json,
@@ -1421,6 +1435,13 @@ fn rem6_run_restore_multicore_o3_checkpoint_component_stats_by_active_hart() {
         "cpu1",
         "o3_runtime_state",
         "cpu1",
+    );
+    assert_restore_o3_runtime_chunk_stats(
+        &json,
+        o3_restore,
+        "sim.debug.o3_trace.cpu.cpu1.checkpoint_restore",
+        "cpu1",
+        "o3-runtime-state",
     );
     assert_json_stat(
         &json,
@@ -1687,6 +1708,74 @@ fn assert_restore_component_chunk_stat(
         chunk_payload_checksum,
         "monotonic",
     );
+}
+
+fn assert_restore_o3_runtime_chunk_stats(
+    json: &Value,
+    restore: &Value,
+    stat_prefix: &str,
+    component: &str,
+    chunk_name: &str,
+) {
+    let chunk = restore
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|entry| {
+                entry.pointer("/component").and_then(Value::as_str) == Some(component)
+            })
+        })
+        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
+        .and_then(|chunks| {
+            chunks
+                .iter()
+                .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk_name))
+        })
+        .unwrap_or_else(|| panic!("missing restore chunk {component}/{chunk_name}: {restore}"));
+    let o3_runtime = chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing decoded O3 restore chunk summary: {chunk}"));
+    let component_path = component.replace('-', "_");
+    let chunk_path = chunk_name.replace('-', "_");
+    for (field, unit) in [
+        ("stats_fu_latency_instructions", "Count"),
+        ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_fu_latency_class_integer_div_cycles", "Cycle"),
+        ("stats_fu_latency_class_float_misc_cycles", "Cycle"),
+    ] {
+        let expected = o3_runtime
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing decoded O3 restore field {field}: {o3_runtime}"));
+        assert_json_stat(
+            json,
+            &format!(
+                "{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+            ),
+            unit,
+            expected,
+            "monotonic",
+        );
+        assert_json_stat(
+            json,
+            &format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+            unit,
+            expected,
+            "monotonic",
+        );
+    }
+    for field in ["stats_lsq_data_latency_max_ticks"] {
+        assert_json_stat_absent(
+            json,
+            &format!(
+                "{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+            ),
+        );
+        assert_json_stat_absent(
+            json,
+            &format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+        );
+    }
 }
 
 fn assert_json_stat_prefix_absent(json: &Value, path_prefix: &str) {

@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
-use crate::{host_actions::Rem6ExecutionModeSwitchCheckerSummary, Rem6HostActionSummary};
+use crate::{
+    host_actions::Rem6ExecutionModeSwitchCheckerSummary, Rem6HostActionSummary,
+    Rem6HostCheckpointChunkSummary,
+};
 
 const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
@@ -23,6 +26,28 @@ pub(super) fn emit_run_host_action_stats(
         chunks: u64,
         payload_bytes: u64,
         payload_checksum_accumulator: u64,
+        o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
+    }
+
+    fn add_host_checkpoint_chunk_stats(
+        stats: &mut HostCheckpointChunkStats,
+        chunk: &Rem6HostCheckpointChunkSummary,
+    ) {
+        stats.chunks += 1;
+        stats.payload_bytes += chunk.payload_bytes;
+        stats.payload_checksum_accumulator = stats
+            .payload_checksum_accumulator
+            .wrapping_add(chunk.payload_checksum);
+        let Some(o3_runtime) = &chunk.o3_runtime else {
+            return;
+        };
+        for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+            stats
+                .o3_runtime_numeric
+                .entry(field.to_string())
+                .and_modify(|(_, total)| *total = total.saturating_add(value))
+                .or_insert((unit, value));
+        }
     }
 
     let mut guest_host_call_arguments = 0;
@@ -122,20 +147,12 @@ pub(super) fn emit_run_host_action_stats(
                 let chunk_stats = checkpoint_restore_chunk_stats
                     .entry((component_path.clone(), chunk_path.clone()))
                     .or_default();
-                chunk_stats.chunks += 1;
-                chunk_stats.payload_bytes += chunk.payload_bytes;
-                chunk_stats.payload_checksum_accumulator = chunk_stats
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
+                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
                 if restore_target_paths.contains(&component_path) {
                     let target_chunk_stats = checkpoint_restore_target_chunk_stats
                         .entry((component_path.clone(), component_path.clone(), chunk_path))
                         .or_default();
-                    target_chunk_stats.chunks += 1;
-                    target_chunk_stats.payload_bytes += chunk.payload_bytes;
-                    target_chunk_stats.payload_checksum_accumulator = target_chunk_stats
-                        .payload_checksum_accumulator
-                        .wrapping_add(chunk.payload_checksum);
+                    add_host_checkpoint_chunk_stats(target_chunk_stats, chunk);
                 }
             }
         }
@@ -958,6 +975,17 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
+        for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for (target_path, target_stats) in checkpoint_restore_target_stats {
         increment_stat(
@@ -1043,6 +1071,17 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
+        for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     for (component_path, component_stats) in switch_state_transfer_component_stats {
         increment_stat(

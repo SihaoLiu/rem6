@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    formatting::json_escape, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSummary,
+    formatting::json_escape, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
+    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
 };
 
 use super::{Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord, Rem6O3TraceStat};
@@ -54,11 +54,12 @@ struct Rem6O3CheckpointRestoreComponentTotals {
     payload_bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Rem6O3CheckpointRestoreChunkTotals {
     chunks: u64,
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
+    o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -139,12 +140,21 @@ impl Rem6O3CheckpointRestoreComponentTotals {
 }
 
 impl Rem6O3CheckpointRestoreChunkTotals {
-    fn add_chunk(&mut self, payload_bytes: u64, payload_checksum: u64) {
+    fn add_chunk(&mut self, chunk: &Rem6HostCheckpointChunkSummary) {
         self.chunks = self.chunks.saturating_add(1);
-        self.payload_bytes = self.payload_bytes.saturating_add(payload_bytes);
+        self.payload_bytes = self.payload_bytes.saturating_add(chunk.payload_bytes);
         self.payload_checksum_accumulator = self
             .payload_checksum_accumulator
-            .wrapping_add(payload_checksum);
+            .wrapping_add(chunk.payload_checksum);
+        let Some(o3_runtime) = &chunk.o3_runtime else {
+            return;
+        };
+        for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+            self.o3_runtime_numeric
+                .entry(field.to_string())
+                .and_modify(|(_, total)| *total = total.saturating_add(value))
+                .or_insert((unit, value));
+        }
     }
 
     fn merge_max(&mut self, other: Self) {
@@ -153,6 +163,12 @@ impl Rem6O3CheckpointRestoreChunkTotals {
         self.payload_checksum_accumulator = self
             .payload_checksum_accumulator
             .max(other.payload_checksum_accumulator);
+        for (field, (unit, value)) in other.o3_runtime_numeric {
+            self.o3_runtime_numeric
+                .entry(field)
+                .and_modify(|(_, current)| *current = (*current).max(value))
+                .or_insert((unit, value));
+        }
     }
 }
 
@@ -193,13 +209,13 @@ impl Rem6O3CheckpointRestoreComponentStatTotals {
                     .chunks
                     .entry((component_path.clone(), chunk_path.clone()))
                     .or_default()
-                    .add_chunk(chunk.payload_bytes, chunk.payload_checksum);
+                    .add_chunk(chunk);
                 if is_target_component {
                     totals
                         .target_chunks
                         .entry((component_path.clone(), component_path.clone(), chunk_path))
                         .or_default()
-                        .add_chunk(chunk.payload_bytes, chunk.payload_checksum);
+                        .add_chunk(chunk);
                 }
             }
         }
@@ -507,6 +523,13 @@ fn push_chunk_stats(
         "Unspecified",
         chunk_stats.payload_checksum_accumulator,
     ));
+    for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+        stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
+            format!("{prefix}.o3_runtime.{field}"),
+            unit,
+            value,
+        ));
+    }
 }
 
 fn execution_mode_authority_to_json(
