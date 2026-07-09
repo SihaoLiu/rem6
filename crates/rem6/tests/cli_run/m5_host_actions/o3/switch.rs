@@ -466,6 +466,15 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
             value,
             "monotonic",
         );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu1.component.cpu1.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
     }
     assert_json_stat_absent(
         &json,
@@ -490,6 +499,10 @@ fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     assert_json_stat_absent(
         &json,
         "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
+    );
+    assert_json_stat_absent(
+        &json,
+        "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.stats_lsq_operation_load",
     );
     assert_json_stat_absent(
         &json,

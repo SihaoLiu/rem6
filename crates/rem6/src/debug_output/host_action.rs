@@ -5,8 +5,8 @@ use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
     Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
-    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
-    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6HostInjectedCommandSummary, Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSummary,
+    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
@@ -42,6 +42,7 @@ struct Rem6HostActionTraceChunkStats {
     chunks: u64,
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
+    o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -311,6 +312,16 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
                 chunk_stats.payload_checksum_accumulator = chunk_stats
                     .payload_checksum_accumulator
                     .wrapping_add(chunk.payload_checksum);
+                let Some(o3_runtime) = &chunk.o3_runtime else {
+                    continue;
+                };
+                for (field, value) in o3_runtime.numeric_stat_fields() {
+                    chunk_stats
+                        .o3_runtime_numeric
+                        .entry(field.to_string())
+                        .and_modify(|current| current.merge_restore_value(value))
+                        .or_insert(value);
+                }
             }
         }
 
@@ -396,6 +407,15 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
             ),
             transfer.payload_checksum_accumulator,
         ));
+        for (field, value) in transfer.o3_runtime_numeric {
+            stats.push(Rem6HostActionTraceStat::new(
+                format!(
+                    "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                value.value(),
+            ));
+        }
     }
     stats.push(Rem6HostActionTraceStat::count(
         "execution_mode_switch.quiescence.validated".to_string(),
