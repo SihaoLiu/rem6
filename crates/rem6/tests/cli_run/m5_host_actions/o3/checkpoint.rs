@@ -612,6 +612,48 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "monotonic",
         );
     }
+    let latest_checkpoint_o3_runtime = latest_checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|component| {
+                component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
+            })
+        })
+        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
+            })
+        })
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .unwrap_or_else(|| {
+            panic!("missing decoded latest checkpoint O3 runtime chunk: {latest_checkpoint}")
+        });
+    for (field, unit) in [
+        ("stats_lsq_operation_load", "Count"),
+        ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_lsq_data_latency_max_ticks", "Tick"),
+        ("stats_lsq_data_latency_min_ticks", "Tick"),
+    ] {
+        let expected = latest_checkpoint_o3_runtime
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing latest checkpoint O3 runtime field {field}: {latest_checkpoint_o3_runtime}"
+                )
+            });
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.checkpoint.latest_component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            expected,
+            "monotonic",
+        );
+    }
     assert_json_stat(
         &json,
         "sim.host_actions.checkpoints",

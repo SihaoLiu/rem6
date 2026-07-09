@@ -437,6 +437,75 @@ pub(super) fn emit_run_host_action_stats(
                 value,
             )?;
         }
+        let mut latest_checkpoint_component_stats =
+            BTreeMap::<String, HostCheckpointComponentStats>::new();
+        let mut latest_checkpoint_chunk_stats =
+            BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
+        for component in &checkpoint.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = latest_checkpoint_component_stats
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = latest_checkpoint_chunk_stats
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
+            }
+        }
+        for (component_path, component_stats) in latest_checkpoint_component_stats {
+            for (name, unit, value) in [
+                ("components", "Count", component_stats.components),
+                ("chunks", "Count", component_stats.chunks),
+                ("payload_bytes", "Byte", component_stats.payload_bytes),
+            ] {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.checkpoint.latest_component.{component_path}.{name}"
+                    ),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+        }
+        for ((component_path, chunk_path), chunk_stats) in latest_checkpoint_chunk_stats {
+            for (name, unit, value) in [
+                ("chunks", "Count", chunk_stats.chunks),
+                ("payload_bytes", "Byte", chunk_stats.payload_bytes),
+                (
+                    "payload_checksum_accumulator",
+                    "Unspecified",
+                    chunk_stats.payload_checksum_accumulator,
+                ),
+            ] {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.checkpoint.latest_component.{component_path}.chunk.{chunk_path}.{name}"
+                    ),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+            for (field, value) in chunk_stats.o3_runtime_numeric {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.checkpoint.latest_component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                    ),
+                    value.unit(),
+                    StatResetPolicy::Monotonic,
+                    value.value(),
+                )?;
+            }
+        }
     }
     if let Some(restore) = summary.checkpoint_restores.last() {
         for (name, unit, value) in [
