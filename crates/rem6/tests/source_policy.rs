@@ -1220,6 +1220,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "/debug/o3_trace/0/fu_latency_class/vector_integer_mul/instructions",
         "/debug/o3_trace/0/checkpoint_restore/execution_mode_authority/mode/detailed",
         "/debug/o3_trace/0/checkpoint_restore/execution_mode_authority/target/cpu0/mode/detailed",
+        "sim.debug.o3_trace.checkpoint_restore_manifest_tick",
+        "sim.debug.o3_trace.cpu.cpu0.checkpoint_restore_manifest_tick",
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.mode.detailed",
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.functional",
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.target.cpu0.mode.timing",

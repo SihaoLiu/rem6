@@ -353,6 +353,10 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
         .pointer("/tick")
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing restore tick: {restore}"));
+    let restore_manifest_tick = restore
+        .pointer("/manifest_tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing restore manifest tick: {restore}"));
     let restored_modes = restore
         .pointer("/execution_modes")
         .and_then(Value::as_array)
@@ -561,6 +565,13 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
     );
     assert_json_stat(
         &json,
+        "sim.debug.o3_trace.checkpoint_restore_manifest_tick",
+        "Tick",
+        restore_manifest_tick,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
         "sim.debug.o3_trace.checkpoint_restore.execution_mode_authority.targets",
         "Count",
         2,
@@ -588,6 +599,19 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
             );
         }
     }
+    for cpu in ["cpu0", "cpu2"] {
+        assert_json_stat(
+            &json,
+            &format!("sim.debug.o3_trace.cpu.{cpu}.checkpoint_restore_manifest_tick"),
+            "Tick",
+            restore_manifest_tick,
+            "monotonic",
+        );
+    }
+    assert_json_stat_absent(
+        &json,
+        "sim.debug.o3_trace.cpu.cpu1.checkpoint_restore_manifest_tick",
+    );
     assert_json_stat_absent(&json, "sim.debug.o3_trace.cpu.cpu1.records");
 }
 

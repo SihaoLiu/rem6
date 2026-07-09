@@ -93,6 +93,7 @@ pub(super) struct Rem6O3TraceTotals {
     checkpoint_restores: u64,
     checkpoint_restore_records: u64,
     checkpoint_restore_tick: u64,
+    checkpoint_restore_manifest_tick: u64,
     checkpoint_restore_payload_bytes: u64,
     checkpoint_restore_authority: Rem6O3CheckpointRestoreAuthorityTotals,
     instructions: u64,
@@ -257,6 +258,9 @@ impl Rem6O3TraceTotals {
             self.checkpoint_restores = self.checkpoint_restores.max(restore.count);
             self.checkpoint_restore_records = self.checkpoint_restore_records.saturating_add(1);
             self.checkpoint_restore_tick = self.checkpoint_restore_tick.max(restore.tick);
+            self.checkpoint_restore_manifest_tick = self
+                .checkpoint_restore_manifest_tick
+                .max(restore.manifest_tick);
             self.checkpoint_restore_payload_bytes = self
                 .checkpoint_restore_payload_bytes
                 .max(restore.payload_bytes);
@@ -1239,6 +1243,11 @@ impl Rem6O3TraceTotals {
             suffix: "checkpoint_restore_tick",
             unit: "Tick",
             value: self.checkpoint_restore_tick,
+        });
+        stats.push(Rem6O3TraceStat {
+            suffix: "checkpoint_restore_manifest_tick",
+            unit: "Tick",
+            value: self.checkpoint_restore_manifest_tick,
         });
         stats.push(Rem6O3TraceStat {
             suffix: "checkpoint_restore_payload_bytes",
