@@ -421,6 +421,24 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
     );
     assert_eq!(
         o3_runtime
+            .pointer("/checkpoint_restore_count")
+            .and_then(Value::as_u64),
+        Some(0),
+        "O3 runtime JSON without a restore should expose a zero restore count"
+    );
+    for field in [
+        "/checkpoint_restore_label",
+        "/checkpoint_restore_tick",
+        "/checkpoint_restore_manifest_tick",
+        "/checkpoint_restore_payload_bytes",
+    ] {
+        assert!(
+            o3_runtime.pointer(field).is_some_and(Value::is_null),
+            "O3 runtime JSON without a restore should expose explicit null {field}"
+        );
+    }
+    assert_eq!(
+        o3_runtime
             .pointer("/iew_producer_insts")
             .and_then(Value::as_u64),
         Some(3)

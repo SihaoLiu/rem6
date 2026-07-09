@@ -132,6 +132,38 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
     let restored_checkpoint = host_actions
         .pointer("/checkpoint_restores/0")
         .unwrap_or_else(|| panic!("missing restored checkpoint detail: {host_actions}"));
+    let core_o3 = json
+        .pointer("/cores/0/o3_runtime")
+        .unwrap_or_else(|| panic!("missing restored O3 runtime summary: {json}"));
+    assert_eq!(
+        core_o3
+            .pointer("/checkpoint_restore_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "restored O3 runtime should count the CPU-scoped restore"
+    );
+    assert_eq!(
+        core_o3
+            .pointer("/checkpoint_restore_label")
+            .and_then(Value::as_str),
+        restored_checkpoint
+            .pointer("/label")
+            .and_then(Value::as_str),
+        "restored O3 runtime should expose the restored checkpoint label"
+    );
+    for (core_pointer, host_pointer) in [
+        ("/checkpoint_restore_tick", "/tick"),
+        ("/checkpoint_restore_manifest_tick", "/manifest_tick"),
+        ("/checkpoint_restore_payload_bytes", "/payload_bytes"),
+    ] {
+        assert_eq!(
+            core_o3.pointer(core_pointer).and_then(Value::as_u64),
+            restored_checkpoint
+                .pointer(host_pointer)
+                .and_then(Value::as_u64),
+            "restored O3 runtime should mirror restore metadata {core_pointer} from {host_pointer}"
+        );
+    }
     assert_eq!(
         restored_checkpoint
             .pointer("/label")
