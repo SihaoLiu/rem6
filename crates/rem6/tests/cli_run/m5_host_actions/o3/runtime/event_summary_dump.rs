@@ -96,6 +96,90 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_trace_rows() {
         );
     }
 
+    for dump in [pre_reset_dump, post_reset_dump] {
+        let event_summary_records = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+        );
+        let event_summary_span_ticks = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.span_ticks",
+        );
+        let event_summary_producers = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.iew.producer_inst",
+        );
+        let event_summary_consumers = stats_dump_sample_value(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.iew.consumer_inst",
+        );
+        for (path, value) in [
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.dispatched_insts",
+                event_summary_records,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.insts_to_commit",
+                stats_dump_sample_value(
+                    dump,
+                    "sim.host_actions.stats_dump.cpu0.o3.rob_commits",
+                ),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.writeback_count",
+                event_summary_records,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.producer_inst",
+                event_summary_producers,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.consumer_inst",
+                event_summary_consumers,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.dependency.producer",
+                event_summary_producers,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.dependency.consumer",
+                event_summary_consumers,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.predicted_taken_incorrect",
+                stats_dump_sample_value(
+                    dump,
+                    "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_taken_incorrect",
+                ),
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.predicted_not_taken_incorrect",
+                stats_dump_sample_value(
+                    dump,
+                    "sim.host_actions.stats_dump.cpu0.o3.iew.predicted_not_taken_incorrect",
+                ),
+            ),
+        ] {
+            assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
+        }
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.writeback_rate_ppm",
+            "counter",
+            "Ppm",
+            ratio_ppm(event_summary_records, event_summary_span_ticks),
+            "resettable",
+        );
+        assert_stats_dump_sample(
+            dump,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.iew.producer_consumer_fanout_ppm",
+            "counter",
+            "Ppm",
+            ratio_ppm(event_summary_producers, event_summary_consumers),
+            "resettable",
+        );
+    }
+
     assert_stats_dump_sample_at_least(
         pre_reset_dump,
         "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.mispredictions",

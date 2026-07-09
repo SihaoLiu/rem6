@@ -11,7 +11,7 @@ use super::groups::{
     RiscvO3RuntimeFuLatencyClassStats, RiscvO3RuntimeLsqLatencyStats,
 };
 use super::helpers::{
-    register_o3_branch_event_kind_counters, register_o3_counter,
+    ratio_ppm, register_o3_branch_event_kind_counters, register_o3_counter,
     register_o3_lsq_operation_counters, register_o3_lsq_operation_nested_counters,
     register_o3_lsq_operation_nested_latency_counters, register_o3_lsq_ordering_counters,
     register_o3_nested_fu_latency_class_counters, set_o3_lsq_latency_counters,
@@ -117,6 +117,10 @@ impl RiscvO3RuntimeEventSummarySnapshot {
 
     fn rob_allocations(&self) -> u64 {
         self.count(O3RuntimeTraceRecord::rob_allocated)
+    }
+
+    fn rob_commits(&self) -> u64 {
+        self.count(O3RuntimeTraceRecord::rob_committed)
     }
 
     fn rename_writes(&self) -> u64 {
@@ -241,6 +245,50 @@ impl RiscvO3RuntimeEventSummarySnapshot {
                 && !branch_wrong_target(&event)
                 && event.branch_predicted_taken() != event.branch_resolved_taken()
         })
+    }
+
+    fn iew_dispatched_insts(&self) -> u64 {
+        self.records()
+    }
+
+    fn iew_insts_to_commit(&self) -> u64 {
+        self.rob_commits()
+    }
+
+    fn iew_writeback_count(&self) -> u64 {
+        self.records()
+    }
+
+    fn iew_writeback_rate_ppm(&self) -> u64 {
+        ratio_ppm(self.iew_writeback_count(), self.span_ticks())
+    }
+
+    fn iew_dependency_producers(&self) -> u64 {
+        self.sum(O3RuntimeTraceRecord::iew_dependency_producers)
+    }
+
+    fn iew_dependency_consumers(&self) -> u64 {
+        self.sum(O3RuntimeTraceRecord::iew_dependency_consumers)
+    }
+
+    fn iew_producer_consumer_fanout_ppm(&self) -> u64 {
+        ratio_ppm(
+            self.iew_dependency_producers(),
+            self.iew_dependency_consumers(),
+        )
+    }
+
+    fn iew_predicted_taken_incorrect(&self) -> u64 {
+        self.count(|event| event.branch_mispredicted() && event.branch_predicted_taken())
+    }
+
+    fn iew_predicted_not_taken_incorrect(&self) -> u64 {
+        self.count(|event| event.branch_mispredicted() && !event.branch_predicted_taken())
+    }
+
+    fn iew_branch_mispredicts(&self) -> u64 {
+        self.iew_predicted_taken_incorrect()
+            .saturating_add(self.iew_predicted_not_taken_incorrect())
     }
 
     fn fu_latency(&self) -> FuLatencySummary {
@@ -431,7 +479,18 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    iew_dispatched_insts: StatId,
+    iew_insts_to_commit: StatId,
+    iew_writeback_count: StatId,
+    iew_writeback_rate_ppm: StatId,
+    iew_producer_inst: StatId,
+    iew_consumer_inst: StatId,
+    iew_producer_consumer_fanout_ppm: StatId,
+    iew_predicted_taken_incorrect: StatId,
+    iew_predicted_not_taken_incorrect: StatId,
     iew_branch_mispredicts: StatId,
+    iew_dependency_producer: StatId,
+    iew_dependency_consumer: StatId,
     fu_latency_instructions: StatId,
     fu_latency_cycles: StatId,
     fu_latency_max_cycles: StatId,
@@ -586,10 +645,76 @@ impl RiscvO3RuntimeEventSummaryStats {
             branch_repair_kinds: register_event_summary_branch_repair_kind_counters(
                 registry, &prefix,
             )?,
+            iew_dispatched_insts: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.dispatched_insts",
+                "Count",
+            )?,
+            iew_insts_to_commit: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.insts_to_commit",
+                "Count",
+            )?,
+            iew_writeback_count: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.writeback_count",
+                "Count",
+            )?,
+            iew_writeback_rate_ppm: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.writeback_rate_ppm",
+                "Ppm",
+            )?,
+            iew_producer_inst: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.producer_inst",
+                "Count",
+            )?,
+            iew_consumer_inst: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.consumer_inst",
+                "Count",
+            )?,
+            iew_producer_consumer_fanout_ppm: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.producer_consumer_fanout_ppm",
+                "Ppm",
+            )?,
+            iew_predicted_taken_incorrect: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.predicted_taken_incorrect",
+                "Count",
+            )?,
+            iew_predicted_not_taken_incorrect: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.predicted_not_taken_incorrect",
+                "Count",
+            )?,
             iew_branch_mispredicts: register_o3_counter(
                 registry,
                 &prefix,
                 "iew.branch_mispredicts",
+                "Count",
+            )?,
+            iew_dependency_producer: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.dependency.producer",
+                "Count",
+            )?,
+            iew_dependency_consumer: register_o3_counter(
+                registry,
+                &prefix,
+                "iew.dependency.consumer",
                 "Count",
             )?,
             fu_latency_instructions: register_o3_counter(
@@ -729,6 +854,8 @@ impl RiscvO3RuntimeEventSummaryStats {
     ) -> Result<(), StatsError> {
         let branch_mispredicts = snapshot.branch_event_mispredictions();
         let fu_latency = snapshot.fu_latency();
+        let iew_producer_inst = snapshot.iew_dependency_producers();
+        let iew_consumer_inst = snapshot.iew_dependency_consumers();
         for (stat, value) in [
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
@@ -798,7 +925,33 @@ impl RiscvO3RuntimeEventSummaryStats {
                 self.branch_repair_direction_only_mismatches,
                 snapshot.branch_repair_direction_only_mismatches(),
             ),
-            (self.iew_branch_mispredicts, branch_mispredicts),
+            (self.iew_dispatched_insts, snapshot.iew_dispatched_insts()),
+            (self.iew_insts_to_commit, snapshot.iew_insts_to_commit()),
+            (self.iew_writeback_count, snapshot.iew_writeback_count()),
+            (
+                self.iew_writeback_rate_ppm,
+                snapshot.iew_writeback_rate_ppm(),
+            ),
+            (self.iew_producer_inst, iew_producer_inst),
+            (self.iew_consumer_inst, iew_consumer_inst),
+            (
+                self.iew_producer_consumer_fanout_ppm,
+                snapshot.iew_producer_consumer_fanout_ppm(),
+            ),
+            (
+                self.iew_predicted_taken_incorrect,
+                snapshot.iew_predicted_taken_incorrect(),
+            ),
+            (
+                self.iew_predicted_not_taken_incorrect,
+                snapshot.iew_predicted_not_taken_incorrect(),
+            ),
+            (
+                self.iew_branch_mispredicts,
+                snapshot.iew_branch_mispredicts(),
+            ),
+            (self.iew_dependency_producer, iew_producer_inst),
+            (self.iew_dependency_consumer, iew_consumer_inst),
             (self.fu_latency_instructions, fu_latency.instructions),
             (self.fu_latency_cycles, fu_latency.cycles),
             (self.fu_latency_max_cycles, fu_latency.max_cycles),
