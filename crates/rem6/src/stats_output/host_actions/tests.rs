@@ -390,6 +390,7 @@ fn restore_with_component_chunk(
                 name: chunk.to_string(),
                 payload_bytes,
                 payload_checksum,
+                o3_runtime: None,
             }],
         }],
     }
@@ -432,6 +433,7 @@ fn switch_with_transfer_component_chunk(
                     name: chunk.to_string(),
                     payload_bytes,
                     payload_checksum,
+                    o3_runtime: None,
                 }],
             }],
         }),
@@ -473,6 +475,7 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
                             name: chunk.to_string(),
                             payload_bytes,
                             payload_checksum,
+                            o3_runtime: None,
                         }],
                     }
                 })

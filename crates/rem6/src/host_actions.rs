@@ -1,4 +1,4 @@
-use rem6_cpu::BranchTargetKind;
+use rem6_cpu::{BranchTargetKind, O3RuntimeCheckpointPayload};
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
@@ -1045,6 +1045,7 @@ fn o3_stats_dump_lsq_operation_alias(operation: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn lsq_data_response_dump_aliases_accept_nested_operation_latency_sources() {
@@ -1060,6 +1061,46 @@ mod tests {
                 "system.cpu1.lsq0.dataResponse.vectorStore.avgLatency",
                 "system.cpu1.lsq0.operation.vectorStore.dataResponse.avgLatency",
             ]
+        );
+    }
+
+    #[test]
+    fn malformed_o3_runtime_checkpoint_chunks_report_decode_error() {
+        let manifest = rem6_checkpoint::CheckpointManifest::new(
+            "bad-o3",
+            17,
+            vec![rem6_checkpoint::CheckpointState::new(
+                rem6_checkpoint::CheckpointComponentId::new("cpu0").unwrap(),
+                vec![rem6_checkpoint::CheckpointChunk::new(
+                    "o3-runtime-state",
+                    b"not-o3-runtime".to_vec(),
+                )],
+            )],
+        );
+
+        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, false);
+        let chunk = &summary.components[0].chunks[0];
+        let o3_runtime = chunk
+            .o3_runtime
+            .as_ref()
+            .expect("o3-runtime-state chunk should have O3 decode summary");
+        assert!(o3_runtime.decode_error);
+        assert_eq!(o3_runtime.snapshot_rob_entries, None);
+        assert_eq!(o3_runtime.stats_max_rob_occupancy, None);
+
+        let json: Value = serde_json::from_str(&summary.to_json()).unwrap();
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_runtime/decode_error")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_runtime/snapshot_rob_entries"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_runtime/stats_max_rob_occupancy"),
+            Some(&Value::Null)
         );
     }
 }
@@ -1168,6 +1209,7 @@ impl Rem6HostCheckpointComponentSummary {
                 name: chunk.name().to_string(),
                 payload_bytes: chunk.payload().len() as u64,
                 payload_checksum: payload_checksum(chunk.payload()),
+                o3_runtime: decode_o3_runtime_checkpoint_chunk(chunk.name(), chunk.payload()),
             })
             .collect::<Vec<_>>();
         chunks.sort_by(|left, right| left.name.cmp(&right.name));
@@ -1194,6 +1236,7 @@ impl Rem6HostCheckpointComponentSummary {
                     name: chunk.name().to_string(),
                     payload_bytes: chunk.payload_bytes(),
                     payload_checksum: chunk.payload_checksum(),
+                    o3_runtime: None,
                 })
                 .collect(),
         }
@@ -1205,11 +1248,60 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
     pub(crate) name: String,
     pub(crate) payload_bytes: u64,
     pub(crate) payload_checksum: u64,
+    pub(crate) o3_runtime: Option<Rem6HostO3RuntimeCheckpointChunkSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
+    pub(crate) decode_error: bool,
+    pub(crate) snapshot_rob_entries: Option<u64>,
+    pub(crate) snapshot_lsq_entries: Option<u64>,
+    pub(crate) snapshot_rename_map_entries: Option<u64>,
+    pub(crate) stats_max_rob_occupancy: Option<u64>,
+    pub(crate) stats_max_lsq_occupancy: Option<u64>,
+    pub(crate) stats_rename_map_entries: Option<u64>,
+}
+
+impl Rem6HostO3RuntimeCheckpointChunkSummary {
+    fn decode_error() -> Self {
+        Self {
+            decode_error: true,
+            snapshot_rob_entries: None,
+            snapshot_lsq_entries: None,
+            snapshot_rename_map_entries: None,
+            stats_max_rob_occupancy: None,
+            stats_max_lsq_occupancy: None,
+            stats_rename_map_entries: None,
+        }
+    }
 }
 
 fn payload_checksum(payload: &[u8]) -> u64 {
     payload.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+fn decode_o3_runtime_checkpoint_chunk(
+    name: &str,
+    payload: &[u8],
+) -> Option<Rem6HostO3RuntimeCheckpointChunkSummary> {
+    if name != "o3-runtime-state" {
+        return None;
+    }
+    let Ok(decoded) = O3RuntimeCheckpointPayload::decode(payload) else {
+        return Some(Rem6HostO3RuntimeCheckpointChunkSummary::decode_error());
+    };
+    let snapshot = decoded.snapshot();
+    let stats = decoded.stats();
+    Some(Rem6HostO3RuntimeCheckpointChunkSummary {
+        decode_error: false,
+        snapshot_rob_entries: Some(snapshot.reorder_buffer().len() as u64),
+        snapshot_lsq_entries: Some(snapshot.load_store_queue().len() as u64),
+        snapshot_rename_map_entries: Some(snapshot.rename_map().len() as u64),
+        stats_max_rob_occupancy: Some(stats.max_rob_occupancy()),
+        stats_max_lsq_occupancy: Some(stats.max_lsq_occupancy()),
+        stats_rename_map_entries: Some(stats.rename_map_entries()),
     })
 }
 

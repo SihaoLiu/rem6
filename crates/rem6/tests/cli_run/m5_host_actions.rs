@@ -4500,6 +4500,19 @@ fn checkpoint_chunk_checksum(
     component: &str,
     chunk: &str,
 ) -> String {
+    checkpoint_chunk_summary(host_actions, checkpoint_index, component, chunk)
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing checkpoint chunk checksum {component}/{chunk}"))
+        .to_string()
+}
+
+fn checkpoint_chunk_summary<'a>(
+    host_actions: &'a Value,
+    checkpoint_index: usize,
+    component: &str,
+    chunk: &str,
+) -> &'a Value {
     let components = host_actions
         .pointer(&format!("/checkpoints/{checkpoint_index}/components"))
         .and_then(Value::as_array)
@@ -4515,10 +4528,7 @@ fn checkpoint_chunk_checksum(
     chunks
         .iter()
         .find(|summary| summary.pointer("/name").and_then(Value::as_str) == Some(chunk))
-        .and_then(|summary| summary.pointer("/payload_checksum"))
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("missing checkpoint chunk checksum {component}/{chunk}"))
-        .to_string()
+        .unwrap_or_else(|| panic!("missing checkpoint chunk summary {component}/{chunk}"))
 }
 
 fn assert_checkpoint_counts_match_nested_details(host_actions: &Value, checkpoint_index: usize) {

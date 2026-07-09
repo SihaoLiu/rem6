@@ -3,18 +3,18 @@ use super::{
     CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary,
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
     Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact,
-    Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
-    Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
-    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
-    Rem6MemoryDump, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary,
-    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
-    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
+    Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointComponentSummary,
+    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary,
+    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6InstructionProbeSummary, Rem6MemoryDump, Rem6ParallelFrontierSummary,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
+    Rem6PcCountTrackerSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
+    Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
+    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
 use gups::gups_response_stats_json;
@@ -24,6 +24,7 @@ use self::fabric::{
     fabric_wait_for_json_fields,
 };
 
+mod checkpoint;
 mod dram;
 mod fabric;
 mod gups;
@@ -1525,68 +1526,6 @@ impl Rem6HostStatsDumpSampleSummary {
             json_escape(&self.unit),
             self.value,
             json_escape(&self.reset_policy)
-        )
-    }
-}
-
-impl Rem6HostCheckpointSummary {
-    pub(crate) fn to_json(&self) -> String {
-        let components = self
-            .components
-            .iter()
-            .map(Rem6HostCheckpointComponentSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        let execution_modes = self
-            .execution_modes
-            .iter()
-            .map(Rem6HostExecutionModeSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{\"tick\":{},\"event\":{},\"source\":{},\"label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"execution_mode_authority_present\":{},\"execution_mode_authority_cleared\":{},\"execution_mode_authority_decode_error\":{},\"execution_modes\":[{}],\"components\":[{}]}}",
-            self.tick,
-            self.event,
-            self.source,
-            json_escape(&self.label),
-            self.manifest_tick,
-            self.component_count,
-            self.chunk_count,
-            self.payload_bytes,
-            self.execution_mode_authority_present,
-            self.execution_mode_authority_cleared,
-            self.execution_mode_authority_decode_error,
-            execution_modes,
-            components,
-        )
-    }
-}
-
-impl Rem6HostCheckpointComponentSummary {
-    fn to_json(&self) -> String {
-        let chunks = self
-            .chunks
-            .iter()
-            .map(Rem6HostCheckpointChunkSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
-            json_escape(&self.component),
-            self.chunk_count,
-            self.payload_bytes,
-            chunks,
-        )
-    }
-}
-
-impl Rem6HostCheckpointChunkSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"}}",
-            json_escape(&self.name),
-            self.payload_bytes,
-            self.payload_checksum,
         )
     }
 }

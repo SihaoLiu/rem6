@@ -43,12 +43,45 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
             .and_then(Value::as_u64),
         Some(2)
     );
+    let baseline_chunk = checkpoint_chunk_summary(host_actions, 0, "cpu0", "o3-runtime-state");
+    let after_detailed_chunk =
+        checkpoint_chunk_summary(host_actions, 1, "cpu0", "o3-runtime-state");
     let baseline = checkpoint_chunk_checksum(host_actions, 0, "cpu0", "o3-runtime-state");
     let after_detailed = checkpoint_chunk_checksum(host_actions, 1, "cpu0", "o3-runtime-state");
     assert_ne!(
         after_detailed, baseline,
         "detailed O3 runtime checkpoint chunk should change after retired rename and LSQ work"
     );
+    assert_eq!(
+        baseline_chunk
+            .pointer("/o3_runtime/decode_error")
+            .and_then(Value::as_bool),
+        Some(false),
+        "baseline O3 runtime checkpoint chunk should decode cleanly: {baseline_chunk}"
+    );
+    assert_eq!(
+        after_detailed_chunk
+            .pointer("/o3_runtime/decode_error")
+            .and_then(Value::as_bool),
+        Some(false),
+        "post-detailed O3 runtime checkpoint chunk should decode cleanly: {after_detailed_chunk}"
+    );
+    for (field, expected) in [
+        ("snapshot_rob_entries", 0),
+        ("snapshot_lsq_entries", 0),
+        ("snapshot_rename_map_entries", 3),
+        ("stats_max_rob_occupancy", 1),
+        ("stats_max_lsq_occupancy", 2),
+        ("stats_rename_map_entries", 3),
+    ] {
+        assert_eq!(
+            after_detailed_chunk
+                .pointer(&format!("/o3_runtime/{field}"))
+                .and_then(Value::as_u64),
+            Some(expected),
+            "post-detailed O3 runtime checkpoint should expose decoded {field}: {after_detailed_chunk}"
+        );
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.max_rob_occupancy",
