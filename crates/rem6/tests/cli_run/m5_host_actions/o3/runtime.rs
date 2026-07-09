@@ -11,6 +11,25 @@ fn event_summary_hex_u64(value: &Value, pointer: &str) -> u64 {
         .unwrap_or_else(|error| panic!("invalid hex lane {pointer}={hex}: {error}"))
 }
 
+fn assert_event_window_row_matches_event(row: &Value, event: &Value, label: &str) {
+    for field in [
+        "sequence",
+        "tick",
+        "pc",
+        "rob_occupancy",
+        "lsq_occupancy",
+        "rename_map_entries",
+        "lsq_data_latency_ticks",
+        "fu_latency_cycles",
+    ] {
+        assert_eq!(
+            row.get(field),
+            event.get(field),
+            "event-window row {label}.{field} should be selected from the raw trace event"
+        );
+    }
+}
+
 #[test]
 fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     let path =
@@ -60,6 +79,42 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
     let debug_summary = json
         .pointer("/debug/o3_trace/0/event_summary")
         .unwrap_or_else(|| panic!("O3 debug trace should expose event summary: {json}"));
+    let events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("O3 debug trace should expose raw events: {json}"));
+    let max_fu_latency_event = events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .get("fu_latency_cycles")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .expect("O3 trace should include events");
+    let max_lsq_data_latency_event = events
+        .iter()
+        .max_by_key(|event| {
+            event
+                .get("lsq_data_latency_ticks")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .expect("O3 trace should include events");
+    assert_event_window_row_matches_event(
+        runtime_window
+            .pointer("/max_fu_latency")
+            .expect("runtime event window max FU latency row"),
+        max_fu_latency_event,
+        "max_fu_latency",
+    );
+    assert_event_window_row_matches_event(
+        runtime_window
+            .pointer("/max_lsq_data_latency")
+            .expect("runtime event window max LSQ data latency row"),
+        max_lsq_data_latency_event,
+        "max_lsq_data_latency",
+    );
     assert_eq!(
         runtime_window,
         runtime_summary
@@ -113,6 +168,8 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/commit/committed_inst_type/int_div",
         "/fu_latency_instructions",
         "/fu_latency_cycles",
+        "/event_window/max_fu_latency/fu_latency_cycles",
+        "/event_window/max_lsq_data_latency/lsq_data_latency_ticks",
         "/fu_latency_max_cycles",
         "/fu_latency_min_cycles",
         "/fu_latency_avg_cycles",
@@ -145,6 +202,8 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         "/event_window/max_rob_occupancy/pc",
         "/event_window/max_lsq_occupancy/pc",
         "/event_window/max_rename_map_entries/pc",
+        "/event_window/max_fu_latency/pc",
+        "/event_window/max_lsq_data_latency/pc",
     ] {
         assert_eq!(
             runtime_summary.pointer(pointer),
@@ -205,6 +264,16 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "/event_window/max_rename_map_entries/rename_map_entries",
             "sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.rename_map_entries",
             "Count",
+        ),
+        (
+            "/event_window/max_fu_latency/fu_latency_cycles",
+            "sim.cpu0.o3.event_summary.event_window.max_fu_latency.fu_latency_cycles",
+            "Cycle",
+        ),
+        (
+            "/event_window/max_lsq_data_latency/lsq_data_latency_ticks",
+            "sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+            "Tick",
         ),
         (
             "/rob_allocations",
@@ -467,6 +536,16 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             "sim.cpu0.o3.event_window.max_rename_map_entries.rename_map_entries",
             "Count",
         ),
+        (
+            "/max_fu_latency/fu_latency_cycles",
+            "sim.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
+            "Cycle",
+        ),
+        (
+            "/max_lsq_data_latency/lsq_data_latency_ticks",
+            "sim.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+            "Tick",
+        ),
     ] {
         let expected = runtime_window
             .pointer(pointer)
@@ -491,6 +570,14 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
         (
             "/max_rename_map_entries/pc",
             "sim.cpu0.o3.event_window.max_rename_map_entries.pc",
+        ),
+        (
+            "/max_fu_latency/pc",
+            "sim.cpu0.o3.event_window.max_fu_latency.pc",
+        ),
+        (
+            "/max_lsq_data_latency/pc",
+            "sim.cpu0.o3.event_window.max_lsq_data_latency.pc",
         ),
     ] {
         assert_json_stat(
@@ -1076,11 +1163,15 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.event_window.span_ticks",
         "sim.cpu0.o3.event_summary.event_window.max_rob_occupancy.tick",
         "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
+        "sim.cpu0.o3.event_summary.event_window.max_fu_latency.fu_latency_cycles",
+        "sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
         "sim.cpu0.o3.event_summary.span_ticks",
         "sim.cpu0.o3.event_window.records",
         "sim.cpu0.o3.event_window.span_ticks",
         "sim.cpu0.o3.event_window.max_rob_occupancy.tick",
         "sim.cpu0.o3.event_window.max_lsq_occupancy.pc",
+        "sim.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
+        "sim.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
         "sim.cpu0.o3.event_summary.rob_allocations",
         "sim.cpu0.o3.event_summary.rob_commits",
         "sim.cpu0.o3.event_summary.rename_writes",

@@ -237,6 +237,8 @@ fn emit_o3_runtime_window_row_stats(
     let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
     let lsq_occupancy = event.map_or(0, |event| event.lsq_occupancy());
     let rename_map_entries = event.map_or(0, |event| event.rename_map_entries());
+    let lsq_data_latency_ticks = event.map_or(0, |event| event.lsq_data_latency_ticks());
+    let fu_latency_cycles = event.map_or(0, |event| event.fu_latency_cycles());
     for (name, unit, value) in [
         ("sequence", "Count", sequence),
         ("tick", "Tick", tick),
@@ -244,6 +246,8 @@ fn emit_o3_runtime_window_row_stats(
         ("rob_occupancy", "Count", rob_occupancy),
         ("lsq_occupancy", "Count", lsq_occupancy),
         ("rename_map_entries", "Count", rename_map_entries),
+        ("lsq_data_latency_ticks", "Tick", lsq_data_latency_ticks),
+        ("fu_latency_cycles", "Cycle", fu_latency_cycles),
     ] {
         increment_stat(
             stats,
@@ -303,6 +307,22 @@ fn emit_o3_runtime_window_stats(
         family,
         "max_rename_map_entries",
         events.iter().max_by_key(|event| event.rename_map_entries()),
+    )?;
+    emit_o3_runtime_window_row_stats(
+        stats,
+        cpu,
+        family,
+        "max_lsq_data_latency",
+        events
+            .iter()
+            .max_by_key(|event| event.lsq_data_latency_ticks()),
+    )?;
+    emit_o3_runtime_window_row_stats(
+        stats,
+        cpu,
+        family,
+        "max_fu_latency",
+        events.iter().max_by_key(|event| event.fu_latency_cycles()),
     )?;
     Ok(())
 }

@@ -355,8 +355,15 @@ fn event_summary_window_json(
         event_summary_window_row_json(events.iter().max_by_key(|event| event.lsq_occupancy()));
     let max_rename_map_entries =
         event_summary_window_row_json(events.iter().max_by_key(|event| event.rename_map_entries()));
+    let max_lsq_data_latency = event_summary_window_row_json(
+        events
+            .iter()
+            .max_by_key(|event| event.lsq_data_latency_ticks()),
+    );
+    let max_fu_latency =
+        event_summary_window_row_json(events.iter().max_by_key(|event| event.fu_latency_cycles()));
     format!(
-        "{{\"records\":{records},\"span_ticks\":{span_ticks},\"first\":{first},\"last\":{last},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries}}}"
+        "{{\"records\":{records},\"span_ticks\":{span_ticks},\"first\":{first},\"last\":{last},\"max_rob_occupancy\":{max_rob_occupancy},\"max_lsq_occupancy\":{max_lsq_occupancy},\"max_rename_map_entries\":{max_rename_map_entries},\"max_lsq_data_latency\":{max_lsq_data_latency},\"max_fu_latency\":{max_fu_latency}}}"
     )
 }
 
@@ -365,13 +372,15 @@ fn event_summary_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String
         || "null".to_string(),
         |event| {
             format!(
-                "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                "{{\"sequence\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"lsq_occupancy\":{},\"rename_map_entries\":{},\"lsq_data_latency_ticks\":{},\"fu_latency_cycles\":{}}}",
                 event.sequence(),
                 event.tick(),
                 event.pc().get(),
                 event.rob_occupancy(),
                 event.lsq_occupancy(),
-                event.rename_map_entries()
+                event.rename_map_entries(),
+                event.lsq_data_latency_ticks(),
+                event.fu_latency_cycles()
             )
         },
     )
