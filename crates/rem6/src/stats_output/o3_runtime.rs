@@ -238,6 +238,8 @@ fn emit_o3_runtime_window_row_stats(
     let commit_tick = event.map_or(0, |event| event.commit_tick());
     let pc = event.map_or(0, |event| event.pc().get());
     let rob_occupancy = event.map_or(0, |event| event.rob_occupancy());
+    let rob_commits_at_tick = event.map_or(0, |event| event.rob_commits_at_tick());
+    let rob_commit_blocked = event.map_or(0, |event| u64::from(event.rob_commit_blocked()));
     let lsq_occupancy = event.map_or(0, |event| event.lsq_occupancy());
     let rename_map_entries = event.map_or(0, |event| event.rename_map_entries());
     let lsq_data_latency_ticks = event.map_or(0, |event| event.lsq_data_latency_ticks());
@@ -250,6 +252,8 @@ fn emit_o3_runtime_window_row_stats(
         ("commit_tick", "Tick", commit_tick),
         ("pc", "Address", pc),
         ("rob_occupancy", "Count", rob_occupancy),
+        ("rob_commits_at_tick", "Count", rob_commits_at_tick),
+        ("rob_commit_blocked", "Count", rob_commit_blocked),
         ("lsq_occupancy", "Count", lsq_occupancy),
         ("rename_map_entries", "Count", rename_map_entries),
         ("lsq_data_latency_ticks", "Tick", lsq_data_latency_ticks),

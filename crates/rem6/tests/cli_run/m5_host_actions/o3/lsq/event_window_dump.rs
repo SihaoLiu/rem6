@@ -81,6 +81,16 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_structural_event_window_snapshot()
                 "Count",
                 1,
             ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rob_commits_at_tick",
+                "Count",
+                0,
+            ),
+            (
+                "sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rob_commit_blocked",
+                "Count",
+                0,
+            ),
         ] {
             assert_stats_dump_sample_at_least(
                 dump,
@@ -104,5 +114,31 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_structural_event_window_snapshot()
     assert!(
         pre_reset_records > post_reset_records,
         "m5_dump_reset_stats should scope LSQ structural-pressure event windows by reset epoch: pre={pre_reset_records}, post={post_reset_records}"
+    );
+
+    let debug_window = json
+        .pointer("/debug/o3_trace/0/event_summary/event_window/max_structural_pressure")
+        .unwrap_or_else(|| panic!("missing debug event-window structural-pressure row: {json}"));
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.event_window.max_structural_pressure.rob_commits_at_tick",
+        "Count",
+        debug_window
+            .pointer("/rob_commits_at_tick")
+            .and_then(Value::as_u64)
+            .expect("debug event-window row should expose rob_commits_at_tick"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.cpu.cpu0.event_window.max_structural_pressure.rob_commit_blocked",
+        "Count",
+        u64::from(
+            debug_window
+                .pointer("/rob_commit_blocked")
+                .and_then(Value::as_bool)
+                .expect("debug event-window row should expose rob_commit_blocked"),
+        ),
+        "monotonic",
     );
 }
