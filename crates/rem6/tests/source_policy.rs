@@ -6,6 +6,7 @@ const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
 const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
 const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
+const MAX_M5_HOST_ACTIONS_O3_BRANCH_LINES: usize = 1600;
 const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
@@ -348,6 +349,18 @@ fn cli_m5_host_actions_o3_lsq_root_stays_focused() {
     assert!(
         lines <= MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES,
         "tests/cli_run/m5_host_actions/o3/lsq.rs should delegate detailed LSQ families to focused modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_m5_host_actions_o3_branch_keeps_headroom() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/m5_host_actions/o3/branch.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_M5_HOST_ACTIONS_O3_BRANCH_LINES,
+        "tests/cli_run/m5_host_actions/o3/branch.rs should split large branch evidence helpers before reaching the child-module ceiling, but it has {lines} lines"
     );
 }
 
