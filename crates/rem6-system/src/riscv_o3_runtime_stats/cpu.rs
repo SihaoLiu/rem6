@@ -4,6 +4,7 @@ use rem6_cpu::{
 };
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
+use super::event_summary::{RiscvO3RuntimeEventSummarySnapshot, RiscvO3RuntimeEventSummaryStats};
 use super::event_window::{RiscvO3RuntimeEventWindowSnapshot, RiscvO3RuntimeEventWindowStats};
 use super::groups::*;
 use super::helpers::*;
@@ -107,6 +108,7 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
     event_window: Option<RiscvO3RuntimeEventWindowStats>,
+    event_summary: Option<RiscvO3RuntimeEventSummaryStats>,
 }
 
 impl RiscvO3RuntimeCpuStats {
@@ -593,6 +595,13 @@ impl RiscvO3RuntimeCpuStats {
             )?,
             event_window: if trace_enabled {
                 Some(RiscvO3RuntimeEventWindowStats::register(registry, &prefix)?)
+            } else {
+                None
+            },
+            event_summary: if trace_enabled {
+                Some(RiscvO3RuntimeEventSummaryStats::register(
+                    registry, &prefix,
+                )?)
             } else {
                 None
             },
@@ -1213,6 +1222,17 @@ impl RiscvO3RuntimeCpuStats {
         Ok(())
     }
 
+    pub(super) fn set_event_summary_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: &RiscvO3RuntimeEventSummarySnapshot,
+    ) -> Result<(), StatsError> {
+        if let Some(event_summary) = self.event_summary {
+            event_summary.set_snapshot(registry, snapshot)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn set_snapshot(
         self,
         registry: &mut StatsRegistry,
@@ -1375,6 +1395,7 @@ impl RiscvO3RuntimeCpuStats {
             .set_snapshot(registry, snapshot)?;
         self.set_iew_rate_snapshots(registry, snapshot, in_order_pipeline_cycles)?;
         self.set_event_window_snapshot(registry, RiscvO3RuntimeEventWindowSnapshot::default())?;
+        self.set_event_summary_snapshot(registry, &RiscvO3RuntimeEventSummarySnapshot::default())?;
         let mut lsq_operation_total = 0_u64;
         for operation in O3RuntimeLsqOperation::TRACKED {
             let value = snapshot.lsq_operation_count(operation);

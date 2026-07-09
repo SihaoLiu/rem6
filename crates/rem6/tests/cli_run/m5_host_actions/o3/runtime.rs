@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "runtime/event_summary_dump.rs"]
+mod event_summary_dump;
+
 fn event_summary_hex_u64(value: &Value, pointer: &str) -> u64 {
     let hex = value
         .pointer(pointer)
@@ -1376,6 +1379,9 @@ fn rem6_run_m5_dump_reset_stats_suppresses_o3_event_window_without_debug_trace()
             "sim.host_actions.stats_dump.cpu0.o3.event_window.first.pc",
             "sim.host_actions.stats_dump.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
             "sim.host_actions.stats_dump.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.branch_event.mispredictions",
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.fu_latency.instructions",
         ] {
             assert_stats_dump_sample_absent(dump, path);
         }

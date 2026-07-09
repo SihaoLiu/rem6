@@ -5,11 +5,13 @@ use rem6_cpu::{CpuId, O3RuntimeStats, O3RuntimeTraceRecord};
 use rem6_stats::{StatsError, StatsRegistry};
 
 mod cpu;
+mod event_summary;
 mod event_window;
 mod groups;
 mod helpers;
 
 use self::cpu::RiscvO3RuntimeCpuStats;
+use self::event_summary::RiscvO3RuntimeEventSummarySnapshot;
 use self::event_window::RiscvO3RuntimeEventWindowSnapshot;
 
 #[derive(Clone, Debug)]
@@ -21,6 +23,7 @@ pub struct RiscvO3RuntimeStats {
     cycle_baselines: Arc<Mutex<BTreeMap<CpuId, u64>>>,
     trace_offsets: Arc<Mutex<BTreeMap<CpuId, usize>>>,
     event_windows: Arc<Mutex<BTreeMap<CpuId, RiscvO3RuntimeEventWindowSnapshot>>>,
+    event_summaries: Arc<Mutex<BTreeMap<CpuId, RiscvO3RuntimeEventSummarySnapshot>>>,
     host_reset_applied: Arc<Mutex<bool>>,
 }
 
@@ -59,6 +62,12 @@ impl RiscvO3RuntimeStats {
                     .map(|cpu| (cpu, RiscvO3RuntimeEventWindowSnapshot::default()))
                     .collect(),
             )),
+            event_summaries: Arc::new(Mutex::new(
+                cpus.iter()
+                    .copied()
+                    .map(|cpu| (cpu, RiscvO3RuntimeEventSummarySnapshot::default()))
+                    .collect(),
+            )),
             host_reset_applied: Arc::new(Mutex::new(false)),
         })
     }
@@ -91,6 +100,7 @@ impl RiscvO3RuntimeStats {
         );
         self.reset_trace_offsets();
         self.reset_event_window_snapshots();
+        self.reset_event_summary_snapshots();
         self.clear_host_reset_applied();
     }
 
@@ -117,6 +127,8 @@ impl RiscvO3RuntimeStats {
         )?;
         let event_window_snapshot = self.observe_event_window_records(cpu, trace_records);
         stats.set_event_window_snapshot(registry, event_window_snapshot)?;
+        let event_summary_snapshot = self.observe_event_summary_records(cpu, trace_records);
+        stats.set_event_summary_snapshot(registry, &event_summary_snapshot)?;
         *previous_snapshot = snapshot;
         self.sync_active_cpu(cpu, snapshot);
         Ok(())
@@ -136,6 +148,7 @@ impl RiscvO3RuntimeStats {
             self.resettable_pipeline_cycles(cpu, in_order_pipeline_cycles);
         self.reset_trace_offset(cpu);
         self.reset_event_window_snapshot(cpu);
+        self.reset_event_summary_snapshot(cpu);
         stats.set_snapshot(registry, snapshot, resettable_pipeline_cycles)?;
         self.previous
             .lock()
@@ -226,6 +239,19 @@ impl RiscvO3RuntimeStats {
         *snapshot
     }
 
+    fn observe_event_summary_records(
+        &self,
+        cpu: CpuId,
+        trace_records: &[O3RuntimeTraceRecord],
+    ) -> RiscvO3RuntimeEventSummarySnapshot {
+        let mut event_summaries = self.event_summaries.lock().expect("O3 runtime stats lock");
+        let snapshot = event_summaries.entry(cpu).or_default();
+        for record in trace_records {
+            snapshot.observe(record);
+        }
+        snapshot.clone()
+    }
+
     fn reset_event_window_snapshots(&self) {
         let mut event_windows = self.event_windows.lock().expect("O3 runtime stats lock");
         event_windows.clear();
@@ -243,6 +269,26 @@ impl RiscvO3RuntimeStats {
                 .lock()
                 .expect("O3 runtime stats lock")
                 .insert(cpu, RiscvO3RuntimeEventWindowSnapshot::default());
+        }
+    }
+
+    fn reset_event_summary_snapshots(&self) {
+        let mut event_summaries = self.event_summaries.lock().expect("O3 runtime stats lock");
+        event_summaries.clear();
+        event_summaries.extend(
+            self.cpus
+                .iter()
+                .copied()
+                .map(|cpu| (cpu, RiscvO3RuntimeEventSummarySnapshot::default())),
+        );
+    }
+
+    fn reset_event_summary_snapshot(&self, cpu: CpuId) {
+        if self.cpus.contains(&cpu) {
+            self.event_summaries
+                .lock()
+                .expect("O3 runtime stats lock")
+                .insert(cpu, RiscvO3RuntimeEventSummarySnapshot::default());
         }
     }
 
@@ -272,6 +318,7 @@ impl Default for RiscvO3RuntimeStats {
             cycle_baselines: Arc::new(Mutex::new(BTreeMap::new())),
             trace_offsets: Arc::new(Mutex::new(BTreeMap::new())),
             event_windows: Arc::new(Mutex::new(BTreeMap::new())),
+            event_summaries: Arc::new(Mutex::new(BTreeMap::new())),
             host_reset_applied: Arc::new(Mutex::new(false)),
         }
     }
@@ -355,6 +402,51 @@ mod tests {
     }
 
     #[test]
+    fn sync_cpu_snapshot_clears_o3_event_summary_dump_rows() {
+        let cpu = CpuId::new(0);
+        let mut registry = StatsRegistry::new();
+        let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], true).unwrap();
+        let core = active_o3_trace_core(cpu);
+        let trace_records = core.o3_runtime_trace_records();
+        assert!(
+            !trace_records.is_empty(),
+            "active O3 fixture should emit trace records"
+        );
+
+        o3_stats
+            .record_cpu_snapshot(
+                &mut registry,
+                cpu,
+                core.o3_runtime_stats(),
+                &trace_records,
+                core.in_order_pipeline_snapshot().cycle(),
+            )
+            .unwrap();
+        let sample = stat_sample(
+            &registry,
+            1,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+        );
+        assert_eq!(sample.reset_policy(), StatResetPolicy::Resettable);
+        assert!(sample.value() > 0);
+
+        o3_stats
+            .sync_cpu_snapshot(&mut registry, cpu, O3RuntimeStats::default(), 0)
+            .unwrap();
+
+        let sample = stat_sample(
+            &registry,
+            2,
+            "sim.host_actions.stats_dump.cpu0.o3.event_summary.records",
+        );
+        assert_eq!(
+            sample.value(),
+            0,
+            "syncing an inactive O3 snapshot must clear stale resettable event-summary rows"
+        );
+    }
+
+    #[test]
     fn reset_snapshots_rebases_o3_writeback_rate_cycles() {
         let cpu = CpuId::new(0);
         let mut registry = StatsRegistry::new();
@@ -416,6 +508,14 @@ mod tests {
     }
 
     fn active_o3_core(cpu: CpuId) -> RiscvCore {
+        active_o3_core_with_trace(cpu, false)
+    }
+
+    fn active_o3_trace_core(cpu: CpuId) -> RiscvCore {
+        active_o3_core_with_trace(cpu, true)
+    }
+
+    fn active_o3_core_with_trace(cpu: CpuId, trace_enabled: bool) -> RiscvCore {
         let reset = CpuResetState::new(
             cpu,
             PartitionId::new(cpu.get()),
@@ -429,7 +529,7 @@ mod tests {
             AccessSize::new(4).unwrap(),
         );
         let core = RiscvCore::new(CpuCore::new(reset, fetch).unwrap());
-        core.record_o3_retired_instruction(&addi_event(cpu));
+        core.record_o3_retired_instruction_with_trace(&addi_event(cpu), trace_enabled);
         core
     }
 
