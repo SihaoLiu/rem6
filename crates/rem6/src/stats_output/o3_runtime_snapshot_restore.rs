@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{increment_count_stat, increment_stat, stat_path_segment, EXECUTION_MODE_STAT_LANES};
-use crate::{Rem6CliError, Rem6CoreSummary, Rem6HostCheckpointChunkSummary};
+use crate::{
+    Rem6CliError, Rem6CoreSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostO3RuntimeCheckpointStatValue,
+};
 
 pub(super) fn emit_o3_runtime_snapshot_stats(
     stats: &mut StatsRegistry,
@@ -50,7 +53,7 @@ struct O3RestoreChunkStats {
     chunks: u64,
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
-    o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
+    o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
 }
 
 fn add_o3_restore_chunk_stats(
@@ -65,12 +68,12 @@ fn add_o3_restore_chunk_stats(
     let Some(o3_runtime) = &chunk.o3_runtime else {
         return;
     };
-    for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+    for (field, value) in o3_runtime.numeric_stat_fields() {
         stats
             .o3_runtime_numeric
             .entry(field.to_string())
-            .and_modify(|(_, total)| *total = total.saturating_add(value))
-            .or_insert((unit, value));
+            .and_modify(|current| current.merge_restore_value(value))
+            .or_insert(value);
     }
 }
 
@@ -117,13 +120,13 @@ fn emit_o3_restore_chunk_stat_set(
             value,
         )?;
     }
-    for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+    for (field, value) in chunk_stats.o3_runtime_numeric {
         increment_stat(
             stats,
             &format!("{prefix}.o3_runtime.{field}"),
-            unit,
+            value.unit(),
             StatResetPolicy::Monotonic,
-            value,
+            value.value(),
         )?;
     }
     Ok(())

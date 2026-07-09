@@ -536,6 +536,13 @@ fn rem6_run_host_restore_scopes_sparse_three_core_o3_trace_authority() {
             "o3_runtime_state",
             target,
         );
+        assert_restore_o3_runtime_chunk_stats(
+            &json,
+            restore,
+            "sim.debug.o3_trace.checkpoint_restore",
+            target,
+            "o3-runtime-state",
+        );
         assert_restore_component_chunk_stat(
             &json,
             restore,
@@ -1740,41 +1747,28 @@ fn assert_restore_o3_runtime_chunk_stats(
     for (field, unit) in [
         ("stats_fu_latency_instructions", "Count"),
         ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_lsq_data_latency_max_ticks", "Tick"),
+        ("stats_lsq_data_latency_min_ticks", "Tick"),
         ("stats_fu_latency_class_integer_div_cycles", "Cycle"),
-        ("stats_fu_latency_class_float_misc_cycles", "Cycle"),
     ] {
         let expected = o3_runtime
             .pointer(&format!("/{field}"))
             .and_then(Value::as_u64)
             .unwrap_or_else(|| panic!("missing decoded O3 restore field {field}: {o3_runtime}"));
-        assert_json_stat(
-            json,
-            &format!(
-                "{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
-            ),
-            unit,
-            expected,
-            "monotonic",
-        );
-        assert_json_stat(
-            json,
-            &format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
-            unit,
-            expected,
-            "monotonic",
-        );
+        for path in [
+            format!("{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+            format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+        ] {
+            assert_json_stat(json, &path, unit, expected, "monotonic");
+        }
     }
-    for field in ["stats_lsq_data_latency_max_ticks"] {
-        assert_json_stat_absent(
-            json,
-            &format!(
-                "{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
-            ),
-        );
-        assert_json_stat_absent(
-            json,
-            &format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
-        );
+    for field in ["stats_lsq_data_latency_avg_ticks"] {
+        for path in [
+            format!("{stat_prefix}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+            format!("{stat_prefix}.target.{component_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"),
+        ] {
+            assert_json_stat_absent(json, &path);
+        }
     }
 }
 

@@ -1333,6 +1333,68 @@ pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) stats_fu_latency_class_float_misc_avg_cycles: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Rem6HostO3RuntimeCheckpointStatAggregation {
+    Sum,
+    Max,
+    MinNonZero,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostO3RuntimeCheckpointStatValue {
+    aggregation: Rem6HostO3RuntimeCheckpointStatAggregation,
+    unit: &'static str,
+    value: u64,
+}
+
+impl Rem6HostO3RuntimeCheckpointStatValue {
+    fn new(
+        name: &str,
+        aggregation: Rem6HostO3RuntimeCheckpointStatAggregation,
+        value: u64,
+    ) -> Self {
+        Self {
+            aggregation,
+            unit: o3_runtime_checkpoint_unit(name),
+            value,
+        }
+    }
+
+    pub(crate) const fn unit(self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(self) -> u64 {
+        self.value
+    }
+
+    pub(crate) fn merge_restore_value(&mut self, other: Self) {
+        match self.aggregation {
+            Rem6HostO3RuntimeCheckpointStatAggregation::Sum => {
+                self.value = self.value.saturating_add(other.value);
+            }
+            Rem6HostO3RuntimeCheckpointStatAggregation::Max => {
+                self.value = self.value.max(other.value);
+            }
+            Rem6HostO3RuntimeCheckpointStatAggregation::MinNonZero => {
+                self.value = min_nonzero(self.value, other.value);
+            }
+        }
+    }
+
+    pub(crate) fn merge_trace_duplicate(&mut self, other: Self) {
+        match self.aggregation {
+            Rem6HostO3RuntimeCheckpointStatAggregation::Sum
+            | Rem6HostO3RuntimeCheckpointStatAggregation::Max => {
+                self.value = self.value.max(other.value);
+            }
+            Rem6HostO3RuntimeCheckpointStatAggregation::MinNonZero => {
+                self.value = min_nonzero(self.value, other.value);
+            }
+        }
+    }
+}
+
 impl Rem6HostO3RuntimeCheckpointChunkSummary {
     fn decode_error() -> Self {
         Self {
@@ -1491,19 +1553,28 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
         ]
     }
 
-    pub(crate) fn numeric_stat_fields(&self) -> Vec<(&'static str, &'static str, u64)> {
+    pub(crate) fn numeric_stat_fields(
+        &self,
+    ) -> Vec<(&'static str, Rem6HostO3RuntimeCheckpointStatValue)> {
         self.numeric_fields()
             .into_iter()
-            .filter(|(name, _)| o3_runtime_checkpoint_stat_is_additive(name))
             .filter_map(|(name, value)| {
-                value.map(|value| (name, o3_runtime_checkpoint_unit(name), value))
+                let aggregation = o3_runtime_checkpoint_stat_aggregation(name)?;
+                value.map(|value| {
+                    (
+                        name,
+                        Rem6HostO3RuntimeCheckpointStatValue::new(name, aggregation, value),
+                    )
+                })
             })
             .collect()
     }
 }
 
-fn o3_runtime_checkpoint_stat_is_additive(name: &str) -> bool {
-    matches!(
+fn o3_runtime_checkpoint_stat_aggregation(
+    name: &str,
+) -> Option<Rem6HostO3RuntimeCheckpointStatAggregation> {
+    if matches!(
         name,
         "stats_lsq_operation_load"
             | "stats_lsq_operation_store"
@@ -1521,7 +1592,18 @@ fn o3_runtime_checkpoint_stat_is_additive(name: &str) -> bool {
             | "stats_fu_latency_class_integer_div_cycles"
             | "stats_fu_latency_class_float_misc_instructions"
             | "stats_fu_latency_class_float_misc_cycles"
-    )
+    ) {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::Sum)
+    } else if name.starts_with("stats_max_")
+        || name.ends_with("_max_ticks")
+        || name.ends_with("_max_cycles")
+    {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::Max)
+    } else if name.ends_with("_min_ticks") || name.ends_with("_min_cycles") {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::MinNonZero)
+    } else {
+        None
+    }
 }
 
 fn o3_runtime_checkpoint_unit(name: &str) -> &'static str {
@@ -1531,6 +1613,18 @@ fn o3_runtime_checkpoint_unit(name: &str) -> &'static str {
         "Tick"
     } else {
         "Count"
+    }
+}
+
+const fn min_nonzero(left: u64, right: u64) -> u64 {
+    if left == 0 {
+        right
+    } else if right == 0 {
+        left
+    } else if left < right {
+        left
+    } else {
+        right
     }
 }
 

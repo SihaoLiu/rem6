@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     formatting::json_escape, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
+    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary, Rem6HostO3RuntimeCheckpointStatValue,
 };
 
 use super::{Rem6O3ExecutionModeAuthorityStat, Rem6O3TraceRecord, Rem6O3TraceStat};
@@ -59,7 +59,7 @@ struct Rem6O3CheckpointRestoreChunkTotals {
     chunks: u64,
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
-    o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
+    o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -149,11 +149,11 @@ impl Rem6O3CheckpointRestoreChunkTotals {
         let Some(o3_runtime) = &chunk.o3_runtime else {
             return;
         };
-        for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+        for (field, value) in o3_runtime.numeric_stat_fields() {
             self.o3_runtime_numeric
                 .entry(field.to_string())
-                .and_modify(|(_, total)| *total = total.saturating_add(value))
-                .or_insert((unit, value));
+                .and_modify(|current| current.merge_restore_value(value))
+                .or_insert(value);
         }
     }
 
@@ -163,11 +163,11 @@ impl Rem6O3CheckpointRestoreChunkTotals {
         self.payload_checksum_accumulator = self
             .payload_checksum_accumulator
             .max(other.payload_checksum_accumulator);
-        for (field, (unit, value)) in other.o3_runtime_numeric {
+        for (field, value) in other.o3_runtime_numeric {
             self.o3_runtime_numeric
                 .entry(field)
-                .and_modify(|(_, current)| *current = (*current).max(value))
-                .or_insert((unit, value));
+                .and_modify(|current| current.merge_trace_duplicate(value))
+                .or_insert(value);
         }
     }
 }
@@ -523,11 +523,11 @@ fn push_chunk_stats(
         "Unspecified",
         chunk_stats.payload_checksum_accumulator,
     ));
-    for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+    for (field, value) in chunk_stats.o3_runtime_numeric {
         stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
             format!("{prefix}.o3_runtime.{field}"),
-            unit,
-            value,
+            value.unit(),
+            value.value(),
         ));
     }
 }

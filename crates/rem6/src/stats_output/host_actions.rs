@@ -5,7 +5,7 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
 use crate::{
     host_actions::Rem6ExecutionModeSwitchCheckerSummary, Rem6HostActionSummary,
-    Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointChunkSummary, Rem6HostO3RuntimeCheckpointStatValue,
 };
 
 const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
@@ -26,7 +26,7 @@ pub(super) fn emit_run_host_action_stats(
         chunks: u64,
         payload_bytes: u64,
         payload_checksum_accumulator: u64,
-        o3_runtime_numeric: BTreeMap<String, (&'static str, u64)>,
+        o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
     }
 
     fn add_host_checkpoint_chunk_stats(
@@ -41,12 +41,12 @@ pub(super) fn emit_run_host_action_stats(
         let Some(o3_runtime) = &chunk.o3_runtime else {
             return;
         };
-        for (field, unit, value) in o3_runtime.numeric_stat_fields() {
+        for (field, value) in o3_runtime.numeric_stat_fields() {
             stats
                 .o3_runtime_numeric
                 .entry(field.to_string())
-                .and_modify(|(_, total)| *total = total.saturating_add(value))
-                .or_insert((unit, value));
+                .and_modify(|current| current.merge_restore_value(value))
+                .or_insert(value);
         }
     }
 
@@ -975,15 +975,15 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
-        for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+        for (field, value) in chunk_stats.o3_runtime_numeric {
             increment_stat(
                 stats,
                 &format!(
                     "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
                 ),
-                unit,
+                value.unit(),
                 StatResetPolicy::Monotonic,
-                value,
+                value.value(),
             )?;
         }
     }
@@ -1071,15 +1071,15 @@ pub(super) fn emit_run_host_action_stats(
             StatResetPolicy::Monotonic,
             chunk_stats.payload_checksum_accumulator,
         )?;
-        for (field, (unit, value)) in chunk_stats.o3_runtime_numeric {
+        for (field, value) in chunk_stats.o3_runtime_numeric {
             increment_stat(
                 stats,
                 &format!(
                     "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
                 ),
-                unit,
+                value.unit(),
                 StatResetPolicy::Monotonic,
-                value,
+                value.value(),
             )?;
         }
     }
