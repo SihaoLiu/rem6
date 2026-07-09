@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    BranchTargetKind, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+    BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
+    O3RuntimeTraceRecord,
 };
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 use super::groups::{
     RiscvO3RuntimeBranchEventKindStats, RiscvO3RuntimeBranchRepairStats,
-    RiscvO3RuntimeLsqLatencyStats,
+    RiscvO3RuntimeFuLatencyClassStats, RiscvO3RuntimeLsqLatencyStats,
 };
 use super::helpers::{
     register_o3_branch_event_kind_counters, register_o3_counter,
     register_o3_lsq_operation_counters, register_o3_lsq_operation_nested_counters,
     register_o3_lsq_operation_nested_latency_counters, register_o3_lsq_ordering_counters,
-    set_o3_lsq_latency_counters,
+    register_o3_nested_fu_latency_class_counters, set_o3_lsq_latency_counters,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -49,6 +50,43 @@ impl LsqLatencySummary {
             0
         } else {
             self.ticks / self.samples
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FuLatencySummary {
+    instructions: u64,
+    cycles: u64,
+    max_cycles: u64,
+    min_cycles: u64,
+}
+
+impl FuLatencySummary {
+    fn observe(&mut self, cycles: u64) {
+        if self.instructions == 0 {
+            self.min_cycles = cycles;
+        } else {
+            self.min_cycles = self.min_cycles.min(cycles);
+        }
+        self.instructions = self.instructions.saturating_add(1);
+        self.cycles = self.cycles.saturating_add(cycles);
+        self.max_cycles = self.max_cycles.max(cycles);
+    }
+
+    fn min_cycles(self) -> u64 {
+        if self.instructions == 0 {
+            0
+        } else {
+            self.min_cycles
+        }
+    }
+
+    fn avg_cycles(self) -> u64 {
+        if self.instructions == 0 {
+            0
+        } else {
+            self.cycles / self.instructions
         }
     }
 }
@@ -205,11 +243,28 @@ impl RiscvO3RuntimeEventSummarySnapshot {
         })
     }
 
-    fn fu_latency_instructions(&self) -> u64 {
-        self.events
+    fn fu_latency(&self) -> FuLatencySummary {
+        self.fu_latency_summary(|event| event.fu_latency_cycles() != 0)
+    }
+
+    fn fu_latency_class(&self, class: O3RuntimeFuLatencyClass) -> FuLatencySummary {
+        self.fu_latency_summary(|event| event.fu_latency_class() == Some(class))
+    }
+
+    fn fu_latency_summary<F>(&self, matches: F) -> FuLatencySummary
+    where
+        F: Fn(O3RuntimeTraceRecord) -> bool,
+    {
+        let mut latency = FuLatencySummary::default();
+        for event in self
+            .events
             .values()
-            .filter(|event| event.fu_latency_cycles() != 0)
-            .count() as u64
+            .copied()
+            .filter(|event| matches(*event) && event.fu_latency_cycles() != 0)
+        {
+            latency.observe(event.fu_latency_cycles());
+        }
+        latency
     }
 
     fn lsq_load_bytes(&self) -> u64 {
@@ -378,6 +433,11 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
     iew_branch_mispredicts: StatId,
     fu_latency_instructions: StatId,
+    fu_latency_cycles: StatId,
+    fu_latency_max_cycles: StatId,
+    fu_latency_min_cycles: StatId,
+    fu_latency_avg_cycles: StatId,
+    fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     lsq_load_bytes: StatId,
     lsq_store_bytes: StatId,
     lsq_store_conditional_failures: StatId,
@@ -538,6 +598,31 @@ impl RiscvO3RuntimeEventSummaryStats {
                 "fu_latency.instructions",
                 "Count",
             )?,
+            fu_latency_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "fu_latency.cycles",
+                "Cycle",
+            )?,
+            fu_latency_max_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "fu_latency.max_cycles",
+                "Cycle",
+            )?,
+            fu_latency_min_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "fu_latency.min_cycles",
+                "Cycle",
+            )?,
+            fu_latency_avg_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "fu_latency.avg_cycles",
+                "Cycle",
+            )?,
+            fu_latency_classes: register_o3_nested_fu_latency_class_counters(registry, &prefix)?,
             lsq_load_bytes: register_o3_counter(registry, &prefix, "lsq_load_bytes", "Byte")?,
             lsq_store_bytes: register_o3_counter(registry, &prefix, "lsq_store_bytes", "Byte")?,
             lsq_store_conditional_failures: register_o3_counter(
@@ -643,6 +728,7 @@ impl RiscvO3RuntimeEventSummaryStats {
         snapshot: &RiscvO3RuntimeEventSummarySnapshot,
     ) -> Result<(), StatsError> {
         let branch_mispredicts = snapshot.branch_event_mispredictions();
+        let fu_latency = snapshot.fu_latency();
         for (stat, value) in [
             (self.records, snapshot.records()),
             (self.span_ticks, snapshot.span_ticks()),
@@ -713,10 +799,11 @@ impl RiscvO3RuntimeEventSummaryStats {
                 snapshot.branch_repair_direction_only_mismatches(),
             ),
             (self.iew_branch_mispredicts, branch_mispredicts),
-            (
-                self.fu_latency_instructions,
-                snapshot.fu_latency_instructions(),
-            ),
+            (self.fu_latency_instructions, fu_latency.instructions),
+            (self.fu_latency_cycles, fu_latency.cycles),
+            (self.fu_latency_max_cycles, fu_latency.max_cycles),
+            (self.fu_latency_min_cycles, fu_latency.min_cycles()),
+            (self.fu_latency_avg_cycles, fu_latency.avg_cycles()),
             (self.lsq_load_bytes, snapshot.lsq_load_bytes()),
             (self.lsq_store_bytes, snapshot.lsq_store_bytes()),
             (
@@ -860,6 +947,19 @@ impl RiscvO3RuntimeEventSummaryStats {
                     branch_repair_stats.direction_only,
                     snapshot.branch_repair_direction_only_kind(kind),
                 ),
+            ] {
+                registry.set_resettable_counter(stat, value)?;
+            }
+        }
+        for class in O3RuntimeFuLatencyClass::ALL {
+            let class_stats = self.fu_latency_classes[class.index()];
+            let class_latency = snapshot.fu_latency_class(class);
+            for (stat, value) in [
+                (class_stats.instructions, class_latency.instructions),
+                (class_stats.latency_cycles, class_latency.cycles),
+                (class_stats.latency_max_cycles, class_latency.max_cycles),
+                (class_stats.latency_min_cycles, class_latency.min_cycles()),
+                (class_stats.latency_avg_cycles, class_latency.avg_cycles()),
             ] {
                 registry.set_resettable_counter(stat, value)?;
             }
