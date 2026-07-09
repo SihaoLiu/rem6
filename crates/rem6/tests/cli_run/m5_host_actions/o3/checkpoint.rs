@@ -60,7 +60,7 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
         &json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        2,
         "monotonic",
     );
     assert_json_stat(

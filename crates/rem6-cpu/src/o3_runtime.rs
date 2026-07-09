@@ -59,7 +59,6 @@ impl O3ReorderBufferEntry {
             ready: false,
         }
     }
-
     pub const fn with_ready(mut self, ready: bool) -> Self {
         self.ready = ready;
         self
@@ -103,7 +102,6 @@ impl O3LoadStoreQueueEntry {
             completed: false,
         }
     }
-
     pub const fn store(sequence: u64, address: Option<Address>, bytes: u32) -> Self {
         Self {
             sequence,
@@ -113,7 +111,6 @@ impl O3LoadStoreQueueEntry {
             completed: false,
         }
     }
-
     pub const fn with_completed(mut self, completed: bool) -> Self {
         self.completed = completed;
         self
@@ -127,16 +124,13 @@ impl O3LoadStoreQueueEntry {
     pub const fn bytes(self) -> u32 {
         self.bytes
     }
-
     pub const fn kind(self) -> O3LoadStoreQueueKind {
         self.kind
     }
-
     pub const fn is_completed(self) -> bool {
         self.completed
     }
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct O3RenameMapEntry {
     register_class: O3RegisterClass,
@@ -156,15 +150,12 @@ impl O3RenameMapEntry {
             physical,
         }
     }
-
     pub const fn register_class(self) -> O3RegisterClass {
         self.register_class
     }
-
     pub const fn architectural(self) -> u32 {
         self.architectural
     }
-
     pub const fn physical(self) -> O3PhysicalRegisterId {
         self.physical
     }
@@ -398,6 +389,12 @@ impl O3RuntimeState {
     fn record_runtime_state(&mut self, execution: &RiscvCpuExecutionEvent) -> O3RuntimeTraceRecord {
         let sequence = self.allocate_sequence();
         let record = execution.execution();
+        if matches!(
+            record.memory_access(),
+            Some(MemoryAccessKind::AtomicMemory { .. })
+        ) {
+            self.next_sequence = self.next_sequence.saturating_add(1);
+        }
         let (iew_dependency_producers, iew_dependency_consumers) =
             self.record_scalar_integer_dependencies(&record.instruction());
         let destination = self.record_rename_map_entries(record);
@@ -451,7 +448,9 @@ impl O3RuntimeState {
         let rob_occupancy = self.snapshot.reorder_buffer.len();
         self.stats.observe_rob_occupancy(rob_occupancy);
 
-        let lsq_start = self.snapshot.load_store_queue.len();
+        for entry in &mut self.snapshot.load_store_queue {
+            entry.completed = true;
+        }
         if let Some(access) = record.memory_access() {
             for entry in o3_lsq_entries(sequence, access) {
                 self.snapshot.load_store_queue.push(entry);
@@ -499,7 +498,11 @@ impl O3RuntimeState {
             .reorder_buffer
             .partition_point(|entry| entry.is_ready());
         self.snapshot.reorder_buffer.drain(0..rob_commits);
-        self.snapshot.load_store_queue.truncate(lsq_start);
+        let lsq_commits = self
+            .snapshot
+            .load_store_queue
+            .partition_point(|entry| entry.is_completed());
+        self.snapshot.load_store_queue.drain(0..lsq_commits);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
         trace_record
@@ -512,7 +515,6 @@ impl O3RuntimeState {
         if record.system_event().is_some() {
             return None;
         }
-
         let mut first_destination = None;
         for write in record.register_writes() {
             if !write.register().is_zero() {
@@ -1073,12 +1075,10 @@ fn o3_lsq_entries(sequence: u64, access: &MemoryAccessKind) -> Vec<O3LoadStoreQu
 
 fn o3_lsq_load(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
     O3LoadStoreQueueEntry::load(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
-        .with_completed(true)
 }
 
 fn o3_lsq_store(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
     O3LoadStoreQueueEntry::store(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
-        .with_completed(true)
 }
 
 fn o3_lsq_bytes(bytes: usize) -> u32 {

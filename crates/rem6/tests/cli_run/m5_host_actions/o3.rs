@@ -14,6 +14,8 @@ mod checkpoint;
 mod fu_latency;
 #[path = "o3/lsq.rs"]
 mod lsq;
+#[path = "o3/lsq_live.rs"]
+mod lsq_live;
 #[path = "o3/restore.rs"]
 mod restore;
 #[path = "o3/rob_live.rs"]
@@ -333,7 +335,7 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         &json,
         "system.cpu.lsq0.maxOccupancy",
         "Count",
-        1,
+        2,
         "monotonic",
     );
     assert_json_stat(&json, "system.cpu.lsq0.loadBytes", "Byte", 4, "monotonic");
@@ -407,7 +409,7 @@ fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {
         o3_runtime
             .pointer("/max_lsq_occupancy")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         o3_runtime
@@ -1244,7 +1246,7 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         "sim.host_actions.stats_dump.cpu0.o3.max_lsq_occupancy",
         "counter",
         "Count",
-        1,
+        2,
         "resettable",
     );
     assert_stats_dump_sample(
@@ -1308,7 +1310,7 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         ("system.cpu.commit.committedInstType.MemRead", 1),
         ("system.cpu.commit.committedInstType.MemWrite", 1),
         ("system.cpu.rob.maxOccupancy", 1),
-        ("system.cpu.lsq0.maxOccupancy", 1),
+        ("system.cpu.lsq0.maxOccupancy", 2),
     ] {
         assert_stats_dump_sample(dump, path, "counter", "Count", value, "resettable");
     }
@@ -3313,7 +3315,7 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     );
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbFanout");
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
-    assert_text_count_stat(&stdout, "system.cpu.lsq0.maxOccupancy", 1);
+    assert_text_count_stat(&stdout, "system.cpu.lsq0.maxOccupancy", 2);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.loadBytes", 4);
     assert_text_byte_stat(&stdout, "system.cpu.lsq0.storeBytes", 4);
     let forwarding_matches =

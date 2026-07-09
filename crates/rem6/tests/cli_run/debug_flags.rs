@@ -6411,7 +6411,7 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("fu_latency_instructions", 0),
         ("fu_latency_cycles", 0),
         ("max_rob_occupancy", 1),
-        ("max_lsq_occupancy", 1),
+        ("max_lsq_occupancy", 2),
         ("rename_map_entries", 3),
     ] {
         assert_eq!(
@@ -6431,7 +6431,7 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
     );
     assert_eq!(
         o3_event_u64s(events, "lsq_occupancy"),
-        vec![0, 0, 0, 1, 1, 0]
+        vec![0, 0, 0, 1, 2, 1]
     );
     assert_eq!(
         o3_event_u64s(events, "rename_map_entries"),
@@ -6771,11 +6771,11 @@ fn rem6_run_o3_debug_flag_emits_detailed_runtime_trace() {
         ("sim.debug.o3_trace.fu_latency_instructions", "Count", 0),
         ("sim.debug.o3_trace.fu_latency_cycles", "Cycle", 0),
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
-        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 2),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 3),
         ("sim.debug.o3_trace.event.records", "Count", 6),
         ("sim.debug.o3_trace.event.max_rob_occupancy", "Count", 1),
-        ("sim.debug.o3_trace.event.max_lsq_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.event.max_lsq_occupancy", "Count", 2),
         (
             "sim.debug.o3_trace.event.max_rename_map_entries",
             "Count",
@@ -8429,7 +8429,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         ("lsq_stores", 5),
         ("lsq_load_bytes", 24),
         ("lsq_store_bytes", 40),
-        ("max_lsq_occupancy", 2),
+        ("max_lsq_occupancy", 3),
     ] {
         assert_eq!(
             json_record_u64(record, field),
@@ -8464,6 +8464,11 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         assert_eq!(json_record_bool(event, "lsq_acquire"), acquire);
         assert_eq!(json_record_bool(event, "lsq_release"), release);
     }
+    assert_eq!(
+        json_record_u64(by_pc("0x80000028"), "sequence"),
+        json_record_u64(by_pc("0x80000024"), "sequence") + 2,
+        "post-atomic memory event should not reuse the atomic store sub-entry sequence"
+    );
     let load_reserved_latency = json_record_u64(by_pc("0x80000014"), "lsq_data_latency_ticks");
     let store_conditional_latency = json_record_u64(by_pc("0x8000001c"), "lsq_data_latency_ticks");
     let atomic_latency = json_record_u64(by_pc("0x80000024"), "lsq_data_latency_ticks");
@@ -8507,7 +8512,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         ("/load_bytes", 24),
         ("/store_bytes", 40),
         ("/store_conditional_failures", 0),
-        ("/max_occupancy", 2),
+        ("/max_occupancy", 3),
         ("/operation/load/count", 1),
         ("/operation/store/count", 3),
         ("/operation/load_reserved/count", 1),
@@ -12260,7 +12265,7 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         ("fu_integer_mul_latency_cycles", 2),
         ("fu_integer_div_instructions", 1),
         ("fu_integer_div_latency_cycles", 19),
-        ("max_rob_occupancy", 1),
+        ("max_rob_occupancy", 2),
         ("max_lsq_occupancy", 0),
         ("rename_map_entries", 3),
     ] {
@@ -14064,7 +14069,7 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
         ("fu_latency_instructions", 0),
         ("fu_latency_cycles", 0),
         ("max_rob_occupancy", 1),
-        ("max_lsq_occupancy", 1),
+        ("max_lsq_occupancy", 2),
         ("rename_map_entries", 3),
     ] {
         assert_eq!(
@@ -14517,7 +14522,7 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         assert_eq!(json_record_u64(record, "lsq_loads"), 1);
         assert_eq!(json_record_u64(record, "lsq_stores"), 1);
         assert_eq!(json_record_u64(record, "max_rob_occupancy"), 1);
-        assert_eq!(json_record_u64(record, "max_lsq_occupancy"), 1);
+        assert_eq!(json_record_u64(record, "max_lsq_occupancy"), 2);
         assert_eq!(json_record_u64(record, "rename_map_entries"), 3);
         let events = record
             .pointer("/events")
@@ -14573,7 +14578,7 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
         ("sim.debug.o3_trace.lsq_loads", "Count", 2),
         ("sim.debug.o3_trace.lsq_stores", "Count", 2),
         ("sim.debug.o3_trace.max_rob_occupancy", "Count", 1),
-        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 1),
+        ("sim.debug.o3_trace.max_lsq_occupancy", "Count", 2),
         ("sim.debug.o3_trace.rename_map_entries", "Count", 6),
         ("sim.debug.o3_trace.event.records", "Count", 12),
         ("sim.debug.o3_trace.event.first_tick", "Tick", first_tick),

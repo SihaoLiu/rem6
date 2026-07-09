@@ -1992,6 +1992,29 @@ fn detailed_o3_live_rob_overlap_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_live_lsq_overlap_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),                              // auipc x10, 0
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13), // addi x10, x10, data
+        i_type(42, 0, 0x0, 11, 0x13),                     // addi x11, x0, 42
+        s_type(0, 11, 10, 0b010),                         // sw x11, 0(x10)
+        i_type(0, 10, 0b010, 12, 0x03),                   // lw x12, 0(x10)
+        i_type(1, 12, 0x0, 13, 0x13),                     // addi x13, x12, 1
+        s_type(4, 13, 10, 0b010),                         // sw x13, 4(x10)
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn multicore_hart1_detailed_o3_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = vec![
