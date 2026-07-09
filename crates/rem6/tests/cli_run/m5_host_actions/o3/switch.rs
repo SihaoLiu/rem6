@@ -505,6 +505,94 @@ fn rem6_run_traces_sparse_multicore_o3_switch_transfer_components_by_target() {
         host_switches.len(),
         "trace switches: {trace_switches:?}"
     );
+    let latest_switch = host_switch_by_target(host_switches, "cpu2");
+    let latest_transfer = latest_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing latest switch transfer: {latest_switch}"));
+    let latest_transfer_component = latest_transfer
+        .pointer("/components/0")
+        .unwrap_or_else(|| panic!("missing latest transfer component: {latest_transfer}"));
+    let latest_o3_chunk = latest_transfer_component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing latest O3 runtime chunk: {latest_transfer_component}"));
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.components",
+        "Count",
+        latest_transfer
+            .pointer("/component_count")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.chunks",
+        "Count",
+        latest_transfer
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.payload_bytes",
+        "Byte",
+        latest_transfer
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.components",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.chunks",
+        "Count",
+        latest_transfer_component
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.payload_bytes",
+        "Byte",
+        latest_transfer_component
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    for (suffix, unit) in [
+        ("components", "Count"),
+        ("chunks", "Count"),
+        ("payload_bytes", "Byte"),
+    ] {
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu0.{suffix}"
+            ),
+            unit,
+            0,
+            "monotonic",
+        );
+    }
 
     for target in ["cpu0", "cpu2"] {
         let trace_switch = trace_switch_by_target(&trace_switches, target);
@@ -532,6 +620,35 @@ fn rem6_run_traces_sparse_multicore_o3_switch_transfer_components_by_target() {
             "monotonic",
         );
     }
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.chunk.o3_runtime_state.chunks",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.chunk.o3_runtime_state.payload_bytes",
+        "Byte",
+        latest_o3_chunk
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap(),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu2.component.cpu2.chunk.o3_runtime_state.payload_checksum_accumulator",
+        "Unspecified",
+        parse_hex_u64(&execution_mode_switch_transfer_component_chunk_checksum(
+            json.pointer("/host_actions").expect("host actions"),
+            host_switch_index(host_switches, "cpu2"),
+            "cpu2",
+            "o3-runtime-state",
+        )),
+        "monotonic",
+    );
     assert!(
         trace_switches
             .iter()

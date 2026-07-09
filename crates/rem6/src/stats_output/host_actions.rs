@@ -508,16 +508,17 @@ pub(super) fn emit_run_host_action_stats(
             1,
         )?;
     }
-    if let Some((_, transfer)) = summary
-        .execution_mode_switches
-        .iter()
-        .rev()
-        .find_map(|switch| {
-            switch
-                .state_transfer
-                .as_ref()
-                .map(|transfer| (switch, transfer))
-        })
+    if let Some((switch, transfer)) =
+        summary
+            .execution_mode_switches
+            .iter()
+            .rev()
+            .find_map(|switch| {
+                switch
+                    .state_transfer
+                    .as_ref()
+                    .map(|transfer| (switch, transfer))
+            })
     {
         for (name, unit, value) in [
             ("latest_manifest_tick", "Tick", transfer.manifest_tick),
@@ -559,6 +560,103 @@ pub(super) fn emit_run_host_action_stats(
                 0
             },
         )?;
+        let latest_transfer_target = stat_path_segment(&switch.target);
+        for target_path in switch_state_transfer_target_stats.keys() {
+            let is_latest = target_path == &latest_transfer_target;
+            for (name, unit, value) in [
+                (
+                    "components",
+                    "Count",
+                    if is_latest {
+                        transfer.component_count
+                    } else {
+                        0
+                    },
+                ),
+                (
+                    "chunks",
+                    "Count",
+                    if is_latest { transfer.chunk_count } else { 0 },
+                ),
+                (
+                    "payload_bytes",
+                    "Byte",
+                    if is_latest { transfer.payload_bytes } else { 0 },
+                ),
+            ] {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{target_path}.{name}"
+                    ),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+        }
+        let mut latest_transfer_component_stats =
+            BTreeMap::<String, HostCheckpointComponentStats>::new();
+        let mut latest_transfer_chunk_stats =
+            BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
+        for component in &transfer.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = latest_transfer_component_stats
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = latest_transfer_chunk_stats
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                chunk_stats.chunks += 1;
+                chunk_stats.payload_bytes += chunk.payload_bytes;
+                chunk_stats.payload_checksum_accumulator = chunk_stats
+                    .payload_checksum_accumulator
+                    .wrapping_add(chunk.payload_checksum);
+            }
+        }
+        for (component_path, component_stats) in latest_transfer_component_stats {
+            for (name, unit, value) in [
+                ("components", "Count", component_stats.components),
+                ("chunks", "Count", component_stats.chunks),
+                ("payload_bytes", "Byte", component_stats.payload_bytes),
+            ] {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{latest_transfer_target}.component.{component_path}.{name}"
+                    ),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+        }
+        for ((component_path, chunk_path), chunk_stats) in latest_transfer_chunk_stats {
+            for (name, unit, value) in [
+                ("chunks", "Count", chunk_stats.chunks),
+                ("payload_bytes", "Byte", chunk_stats.payload_bytes),
+                (
+                    "payload_checksum_accumulator",
+                    "Unspecified",
+                    chunk_stats.payload_checksum_accumulator,
+                ),
+            ] {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{latest_transfer_target}.component.{component_path}.chunk.{chunk_path}.{name}"
+                    ),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+        }
     }
     for mode in EXECUTION_MODE_STAT_LANES {
         increment_stat(
@@ -1430,6 +1528,42 @@ mod tests {
     }
 
     #[test]
+    fn host_action_latest_transfer_stats_merge_normalized_path_collisions() {
+        let mut stats = StatsRegistry::new();
+        let summary = Rem6HostActionSummary {
+            total_action_count: 1,
+            execution_mode_switch_count: 1,
+            execution_mode_switches: vec![switch_with_colliding_latest_transfer()],
+            ..Rem6HostActionSummary::default()
+        };
+
+        emit_run_host_action_stats(&mut stats, &summary).unwrap();
+        let snapshot = stats.snapshot(0);
+
+        let target_prefix =
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_target.cpu0";
+        let component_prefix = format!("{target_prefix}.component.cpu_0");
+        let chunk_prefix = format!("{component_prefix}.chunk.pipe_0");
+        for (path, unit, value) in [
+            (format!("{target_prefix}.components"), "Count", 2),
+            (format!("{target_prefix}.chunks"), "Count", 2),
+            (format!("{target_prefix}.payload_bytes"), "Byte", 24),
+            (format!("{component_prefix}.components"), "Count", 2),
+            (format!("{component_prefix}.chunks"), "Count", 2),
+            (format!("{component_prefix}.payload_bytes"), "Byte", 24),
+            (format!("{chunk_prefix}.chunks"), "Count", 2),
+            (format!("{chunk_prefix}.payload_bytes"), "Byte", 24),
+            (
+                format!("{chunk_prefix}.payload_checksum_accumulator"),
+                "Unspecified",
+                36,
+            ),
+        ] {
+            assert_snapshot_stat(&snapshot, &path, unit, StatResetPolicy::Monotonic, value);
+        }
+    }
+
+    #[test]
     fn host_action_quiescence_target_capture_stats_skip_uncaptured_transfers() {
         let mut stats = StatsRegistry::new();
         let summary = Rem6HostActionSummary {
@@ -1537,6 +1671,49 @@ mod tests {
                         payload_checksum,
                     }],
                 }],
+            }),
+        }
+    }
+
+    fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary {
+        Rem6HostExecutionModeSwitchSummary {
+            tick: 0,
+            event: 0,
+            source: 0,
+            target: "cpu0".to_string(),
+            previous_mode: Some("atomic"),
+            mode: "timing",
+            stats_epoch: 0,
+            stats_reset_tick: 0,
+            state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
+                manifest_label: "switch-colliding-latest".to_string(),
+                manifest_tick: 0,
+                component_count: 2,
+                chunk_count: 2,
+                payload_bytes: 24,
+                quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
+                    validated: true,
+                    target: "cpu0".to_string(),
+                    captured_component_count: 2,
+                    captured_chunk_count: 2,
+                    captured_payload_bytes: 24,
+                    checker: None,
+                },
+                components: [("cpu-0", "pipe-0", 11, 17), ("cpu_0", "pipe_0", 13, 19)]
+                    .into_iter()
+                    .map(|(component, chunk, payload_bytes, payload_checksum)| {
+                        Rem6HostCheckpointComponentSummary {
+                            component: component.to_string(),
+                            chunk_count: 1,
+                            payload_bytes,
+                            chunks: vec![Rem6HostCheckpointChunkSummary {
+                                name: chunk.to_string(),
+                                payload_bytes,
+                                payload_checksum,
+                            }],
+                        }
+                    })
+                    .collect(),
             }),
         }
     }
