@@ -5,6 +5,18 @@ mod event_summary_dump;
 #[path = "runtime/event_window_dump.rs"]
 mod event_window_dump;
 
+const TRACKED_LSQ_OPERATIONS: [&str; 9] = [
+    "load",
+    "store",
+    "load_reserved",
+    "store_conditional",
+    "atomic",
+    "float_load",
+    "float_store",
+    "vector_load",
+    "vector_store",
+];
+
 fn event_summary_hex_u64(value: &Value, pointer: &str) -> u64 {
     let hex = value
         .pointer(pointer)
@@ -56,6 +68,7 @@ fn assert_event_window_row_matches_event(row: &Value, event: &Value, label: &str
         "rob_commits_at_tick",
         "rob_commit_blocked",
         "lsq_occupancy",
+        "lsq_operation",
         "rename_map_entries",
         "lsq_data_latency_ticks",
         "fu_latency_cycles",
@@ -94,6 +107,22 @@ fn assert_event_window_timing_stat_rows(
                 "monotonic",
             );
         }
+    }
+}
+
+fn assert_event_window_lsq_operation_stat_buckets(
+    json: &Value,
+    stat_prefix: &str,
+    selected_operation: &str,
+) {
+    for operation in TRACKED_LSQ_OPERATIONS {
+        assert_json_stat(
+            json,
+            &format!("{stat_prefix}.lsq_operation.{operation}"),
+            "Count",
+            u64::from(operation == selected_operation),
+            "monotonic",
+        );
     }
 }
 
@@ -168,6 +197,14 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 .unwrap_or(0)
         })
         .expect("O3 trace should include events");
+    let max_lsq_data_latency_operation = max_lsq_data_latency_event
+        .pointer("/lsq_operation")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("max LSQ latency event should expose operation"));
+    assert!(
+        TRACKED_LSQ_OPERATIONS.contains(&max_lsq_data_latency_operation),
+        "max LSQ latency row should use a tracked LSQ operation: {max_lsq_data_latency_event}"
+    );
     let max_structural_pressure_event = events
         .iter()
         .max_by_key(|event| event_structural_pressure_key(event))
@@ -199,6 +236,13 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
             .pointer("/event_window")
             .unwrap_or_else(|| panic!("runtime event summary should expose event window: {runtime_summary}")),
         "top-level O3 runtime event window should be the same trace-window state as the event summary"
+    );
+    assert_eq!(
+        runtime_window
+            .pointer("/max_lsq_data_latency/lsq_operation")
+            .and_then(Value::as_str),
+        Some(max_lsq_data_latency_operation),
+        "runtime max LSQ data latency row should keep the operation from the selected raw event"
     );
 
     assert_eq!(
@@ -801,6 +845,19 @@ fn rem6_run_o3_runtime_json_exposes_trace_event_summary() {
                 "monotonic",
             );
         }
+    }
+
+    for stat_prefix in [
+        "sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency",
+        "sim.cpu0.o3.event_window.max_lsq_data_latency",
+        "sim.debug.o3_trace.event_window.max_lsq_data_latency",
+        "sim.debug.o3_trace.cpu.cpu0.event_window.max_lsq_data_latency",
+    ] {
+        assert_event_window_lsq_operation_stat_buckets(
+            &json,
+            stat_prefix,
+            max_lsq_data_latency_operation,
+        );
     }
 }
 

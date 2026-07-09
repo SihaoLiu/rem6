@@ -100,10 +100,54 @@ macro_rules! push_event_window_row_stats {
                 value,
             });
         }
+        for (suffix, value) in [
+            (
+                concat!($prefix, ".lsq_operation.load"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::Load),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.store"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::Store),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.load_reserved"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::LoadReserved),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.store_conditional"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::StoreConditional),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.atomic"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::Atomic),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.float_load"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::FloatLoad),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.float_store"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::FloatStore),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.vector_load"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::VectorLoad),
+            ),
+            (
+                concat!($prefix, ".lsq_operation.vector_store"),
+                u64::from(row.lsq_operation == O3RuntimeLsqOperation::VectorStore),
+            ),
+        ] {
+            $stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Count",
+                value,
+            });
+        }
     }};
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Rem6O3TraceWindowRow {
     sequence: u64,
     tick: u64,
@@ -118,9 +162,34 @@ struct Rem6O3TraceWindowRow {
     rob_commits_at_tick: u64,
     rob_commit_blocked: u64,
     lsq_occupancy: u64,
+    lsq_operation: O3RuntimeLsqOperation,
     rename_map_entries: u64,
     lsq_data_latency_ticks: u64,
     fu_latency_cycles: u64,
+}
+
+impl Default for Rem6O3TraceWindowRow {
+    fn default() -> Self {
+        Self {
+            sequence: 0,
+            tick: 0,
+            issue_tick: 0,
+            writeback_tick: 0,
+            commit_tick: 0,
+            issue_to_writeback_ticks: 0,
+            writeback_to_commit_ticks: 0,
+            issue_to_commit_ticks: 0,
+            pc: 0,
+            rob_occupancy: 0,
+            rob_commits_at_tick: 0,
+            rob_commit_blocked: 0,
+            lsq_occupancy: 0,
+            lsq_operation: O3RuntimeLsqOperation::None,
+            rename_map_entries: 0,
+            lsq_data_latency_ticks: 0,
+            fu_latency_cycles: 0,
+        }
+    }
 }
 
 impl Rem6O3TraceWindowRow {
@@ -139,6 +208,7 @@ impl Rem6O3TraceWindowRow {
             rob_commits_at_tick: event.rob_commits_at_tick(),
             rob_commit_blocked: u64::from(event.rob_commit_blocked()),
             lsq_occupancy: event.lsq_occupancy(),
+            lsq_operation: event.lsq_operation(),
             rename_map_entries: event.rename_map_entries(),
             lsq_data_latency_ticks: event.lsq_data_latency_ticks(),
             fu_latency_cycles: event.fu_latency_cycles(),

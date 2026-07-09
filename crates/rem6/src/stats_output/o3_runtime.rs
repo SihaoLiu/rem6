@@ -277,6 +277,19 @@ fn emit_o3_runtime_window_row_stats(
             value,
         )?;
     }
+    let lsq_operation = event.map_or(O3RuntimeLsqOperation::None, |event| event.lsq_operation());
+    for operation in O3RuntimeLsqOperation::TRACKED {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{cpu}.o3.{family}.{row}.lsq_operation.{}",
+                operation.as_str()
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            u64::from(lsq_operation == operation),
+        )?;
+    }
     Ok(())
 }
 
