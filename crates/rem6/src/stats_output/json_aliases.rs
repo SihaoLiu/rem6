@@ -308,6 +308,30 @@ fn append_gem5_o3_json_alias_stats(
                 alias_suffix,
             );
         }
+        for (source_suffix, alias_suffix) in [
+            (
+                "event_summary.issue_to_writeback_ticks",
+                "iew.issueToWritebackTicks",
+            ),
+            (
+                "event_summary.writeback_to_commit_ticks",
+                "iew.writebackToCommitTicks",
+            ),
+            (
+                "event_summary.issue_to_commit_ticks",
+                "iew.issueToCommitTicks",
+            ),
+        ] {
+            append_gem5_o3_json_alias_from_sample(
+                snapshot,
+                records,
+                next_id,
+                cpu,
+                source_suffix,
+                &alias_prefix,
+                alias_suffix,
+            );
+        }
         append_gem5_o3_branch_repair_json_alias_stats(snapshot, records, next_id, &alias_prefix);
         append_gem5_o3_branch_mismatch_json_alias_stats(
             snapshot,

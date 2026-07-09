@@ -234,6 +234,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     assert_event_summary_phase_json(runtime_event_summary, event_phase_totals);
     assert_event_summary_phase_json(debug_event_summary, event_phase_totals);
     assert_event_phase_stat_prefix(&json, "sim.cpu0.o3.event_summary", event_phase_totals);
+    assert_gem5_iew_phase_alias_stats(&json, event_phase_totals);
     assert_debug_event_phase_stats(&json, event_phase_totals);
     let multiply_issue = json_u64_field(multiply, "/issue_tick");
     let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
@@ -486,6 +487,30 @@ fn assert_event_phase_stat_prefix(json: &Value, prefix: &str, expected: (u64, u6
     assert_json_stat(
         json,
         &format!("{prefix}.issue_to_commit_ticks"),
+        "Tick",
+        expected.2,
+        "monotonic",
+    );
+}
+
+fn assert_gem5_iew_phase_alias_stats(json: &Value, expected: (u64, u64, u64)) {
+    assert_json_stat(
+        json,
+        "system.cpu.iew.issueToWritebackTicks",
+        "Tick",
+        expected.0,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        "system.cpu.iew.writebackToCommitTicks",
+        "Tick",
+        expected.1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        "system.cpu.iew.issueToCommitTicks",
         "Tick",
         expected.2,
         "monotonic",

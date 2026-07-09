@@ -230,6 +230,19 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 consumer_inst,
             );
         }
+        for (source_suffix, alias_suffix) in [
+            ("issue_to_writeback_ticks", "issueToWritebackTicks"),
+            ("writeback_to_commit_ticks", "writebackToCommitTicks"),
+            ("issue_to_commit_ticks", "issueToCommitTicks"),
+        ] {
+            append_derived_stat_from_snapshot_if_absent(
+                output,
+                snapshot,
+                &format!("sim.cpu{cpu}.o3.event_summary.{source_suffix}"),
+                &format!("{alias_prefix}.iew.{alias_suffix}"),
+                "Tick",
+            );
+        }
     }
 }
 

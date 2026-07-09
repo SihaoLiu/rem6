@@ -1492,6 +1492,32 @@ mod tests {
         };
     }
 
+    fn assert_derived_text_stat(
+        text: &str,
+        path: &str,
+        value: u64,
+        unit: &str,
+        reset_policy: &str,
+    ) {
+        let line = text
+            .lines()
+            .find(|line| line.split_whitespace().next() == Some(path))
+            .unwrap_or_else(|| panic!("missing text stat {path}: {text}"));
+        let value = value.to_string();
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(
+            fields.get(1).copied(),
+            Some(value.as_str()),
+            "text stat should carry expected value for {path}: {line}"
+        );
+        assert!(
+            line.contains(&format!(
+                "# kind=derived unit={unit} reset_policy={reset_policy}"
+            )),
+            "text stat should carry expected derived metadata for {path}: {line}"
+        );
+    }
+
     #[test]
     fn stats_output_renders_gem5_sim_seconds_without_float_rounding() {
         let mut stats = StatsRegistry::new();
@@ -1557,6 +1583,55 @@ mod tests {
         assert!(text.contains("system.cpu.iew.writebackCount::total"));
         assert!(text.contains("system.cpu.iew.wbRate"));
         assert!(text.contains("0.000000 # kind=derived unit=(Count/Cycle)"));
+    }
+
+    #[test]
+    fn stats_output_renders_o3_event_summary_phase_aliases() {
+        let mut stats = StatsRegistry::new();
+        let cores = counter!(&mut stats, "sim.cores", "Count");
+        let issue_to_writeback = counter!(
+            &mut stats,
+            "sim.cpu0.o3.event_summary.issue_to_writeback_ticks",
+            "Tick"
+        );
+        let writeback_to_commit = counter!(
+            &mut stats,
+            "sim.cpu0.o3.event_summary.writeback_to_commit_ticks",
+            "Tick"
+        );
+        let issue_to_commit = counter!(
+            &mut stats,
+            "sim.cpu0.o3.event_summary.issue_to_commit_ticks",
+            "Tick"
+        );
+        stats.increment(cores, 1).unwrap();
+        stats.increment(issue_to_writeback, 7).unwrap();
+        stats.increment(writeback_to_commit, 3).unwrap();
+        stats.increment(issue_to_commit, 10).unwrap();
+
+        let text = stats_snapshot_text(&stats.snapshot(0));
+
+        assert_derived_text_stat(
+            &text,
+            "system.cpu.iew.issueToWritebackTicks",
+            7,
+            "Tick",
+            "resettable",
+        );
+        assert_derived_text_stat(
+            &text,
+            "system.cpu.iew.writebackToCommitTicks",
+            3,
+            "Tick",
+            "resettable",
+        );
+        assert_derived_text_stat(
+            &text,
+            "system.cpu.iew.issueToCommitTicks",
+            10,
+            "Tick",
+            "resettable",
+        );
     }
 
     #[test]
