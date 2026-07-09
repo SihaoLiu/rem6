@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::formatting::json_escape;
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
     Rem6HostInjectedCommandSummary, Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
@@ -147,6 +147,53 @@ impl Rem6HostActionTraceStat {
     }
 }
 
+fn add_host_action_trace_chunk_stats(
+    stats: &mut Rem6HostActionTraceChunkStats,
+    chunk: &Rem6HostCheckpointChunkSummary,
+) {
+    stats.chunks += 1;
+    stats.payload_bytes += chunk.payload_bytes;
+    stats.payload_checksum_accumulator = stats
+        .payload_checksum_accumulator
+        .wrapping_add(chunk.payload_checksum);
+    let Some(o3_runtime) = &chunk.o3_runtime else {
+        return;
+    };
+    for (field, value) in o3_runtime.numeric_stat_fields() {
+        stats
+            .o3_runtime_numeric
+            .entry(field.to_string())
+            .and_modify(|current| current.merge_restore_value(value))
+            .or_insert(value);
+    }
+}
+
+fn push_host_action_trace_chunk_stats(
+    stats: &mut Vec<Rem6HostActionTraceStat>,
+    prefix: String,
+    chunk_stats: Rem6HostActionTraceChunkStats,
+) {
+    stats.push(Rem6HostActionTraceStat::count(
+        format!("{prefix}.chunks"),
+        chunk_stats.chunks,
+    ));
+    stats.push(Rem6HostActionTraceStat::byte(
+        format!("{prefix}.payload_bytes"),
+        chunk_stats.payload_bytes,
+    ));
+    stats.push(Rem6HostActionTraceStat::unspecified(
+        format!("{prefix}.payload_checksum_accumulator"),
+        chunk_stats.payload_checksum_accumulator,
+    ));
+    for (field, value) in chunk_stats.o3_runtime_numeric {
+        stats.push(Rem6HostActionTraceStat::new(
+            format!("{prefix}.o3_runtime.{field}"),
+            value.unit(),
+            value.value(),
+        ));
+    }
+}
+
 pub(crate) fn host_action_trace_records(
     actions: &Rem6HostActionSummary,
 ) -> Vec<Rem6HostActionTraceRecord> {
@@ -195,6 +242,56 @@ pub(crate) fn host_action_trace_records(
         )
     });
     records
+}
+
+pub(crate) fn host_action_trace_checkpoint_stats(
+    checkpoints: &[Rem6HostCheckpointSummary],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6HostActionTraceStat> {
+    let mut component_transfers = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut chunk_transfers = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
+    for checkpoint in checkpoints {
+        for component in &checkpoint.components {
+            let component_path = stat_path_segment(&component.component);
+            let component_stats = component_transfers
+                .entry(component_path.clone())
+                .or_default();
+            component_stats.components += 1;
+            component_stats.chunks += component.chunk_count;
+            component_stats.payload_bytes += component.payload_bytes;
+            for chunk in &component.chunks {
+                let chunk_path = stat_path_segment(&chunk.name);
+                let chunk_stats = chunk_transfers
+                    .entry((component_path.clone(), chunk_path))
+                    .or_default();
+                add_host_action_trace_chunk_stats(chunk_stats, chunk);
+            }
+        }
+    }
+
+    let mut stats = Vec::new();
+    for (component, transfer) in component_transfers {
+        stats.push(Rem6HostActionTraceStat::count(
+            format!("checkpoint.component.{component}.components"),
+            transfer.components,
+        ));
+        stats.push(Rem6HostActionTraceStat::count(
+            format!("checkpoint.component.{component}.chunks"),
+            transfer.chunks,
+        ));
+        stats.push(Rem6HostActionTraceStat::byte(
+            format!("checkpoint.component.{component}.payload_bytes"),
+            transfer.payload_bytes,
+        ));
+    }
+    for ((component, chunk), transfer) in chunk_transfers {
+        push_host_action_trace_chunk_stats(
+            &mut stats,
+            format!("checkpoint.component.{component}.chunk.{chunk}"),
+            transfer,
+        );
+    }
+    stats
 }
 
 pub(crate) fn host_action_trace_checkpoint_restore_authority_stats(
@@ -307,21 +404,7 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
                 let chunk_stats = target_chunk_transfers
                     .entry((target.clone(), component_path.clone(), chunk_path))
                     .or_default();
-                chunk_stats.chunks += 1;
-                chunk_stats.payload_bytes += chunk.payload_bytes;
-                chunk_stats.payload_checksum_accumulator = chunk_stats
-                    .payload_checksum_accumulator
-                    .wrapping_add(chunk.payload_checksum);
-                let Some(o3_runtime) = &chunk.o3_runtime else {
-                    continue;
-                };
-                for (field, value) in o3_runtime.numeric_stat_fields() {
-                    chunk_stats
-                        .o3_runtime_numeric
-                        .entry(field.to_string())
-                        .and_modify(|current| current.merge_restore_value(value))
-                        .or_insert(value);
-                }
+                add_host_action_trace_chunk_stats(chunk_stats, chunk);
             }
         }
 
@@ -389,33 +472,11 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
         ));
     }
     for ((target, component, chunk), transfer) in target_chunk_transfers {
-        stats.push(Rem6HostActionTraceStat::count(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.chunks"
-            ),
-            transfer.chunks,
-        ));
-        stats.push(Rem6HostActionTraceStat::byte(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.payload_bytes"
-            ),
-            transfer.payload_bytes,
-        ));
-        stats.push(Rem6HostActionTraceStat::unspecified(
-            format!(
-                "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.payload_checksum_accumulator"
-            ),
-            transfer.payload_checksum_accumulator,
-        ));
-        for (field, value) in transfer.o3_runtime_numeric {
-            stats.push(Rem6HostActionTraceStat::new(
-                format!(
-                    "execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}.o3_runtime.{field}"
-                ),
-                value.unit(),
-                value.value(),
-            ));
-        }
+        push_host_action_trace_chunk_stats(
+            &mut stats,
+            format!("execution_mode_switch.state_transfer.target.{target}.component.{component}.chunk.{chunk}"),
+            transfer,
+        );
     }
     stats.push(Rem6HostActionTraceStat::count(
         "execution_mode_switch.quiescence.validated".to_string(),

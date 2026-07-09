@@ -18,6 +18,8 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
             "--execute",
             "--memory-system",
             "direct",
+            "--debug-flags",
+            "HostAction",
         ])
         .output()
         .unwrap();
@@ -188,6 +190,15 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
             &json,
             &format!(
                 "sim.host_actions.checkpoint.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            unit,
+            expected,
+            "monotonic",
+        );
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.host_action_trace.checkpoint.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
             ),
             unit,
             expected,

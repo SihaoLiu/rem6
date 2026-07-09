@@ -35,7 +35,7 @@ use fabric::{
     Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
 use host_action::{
-    host_action_trace_checkpoint_restore_authority_stats,
+    host_action_trace_checkpoint_restore_authority_stats, host_action_trace_checkpoint_stats,
     host_action_trace_execution_mode_switch_stats, host_action_trace_records,
     Rem6HostActionTraceRecord, Rem6HostActionTraceStat,
 };
@@ -73,6 +73,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     host_action_trace: Vec<Rem6HostActionTraceRecord>,
+    host_action_checkpoints: Vec<Rem6HostCheckpointSummary>,
     host_action_checkpoint_restores: Vec<Rem6HostCheckpointSummary>,
     host_action_execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
     data_trace: Vec<Rem6DataTraceRecord>,
@@ -222,6 +223,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let host_action_checkpoints = if config.debug_host_action_enabled() {
+            host_actions.checkpoints.clone()
+        } else {
+            Vec::new()
+        };
         let host_action_checkpoint_restores = if config.debug_host_action_enabled() {
             host_actions.checkpoint_restores.clone()
         } else {
@@ -280,6 +286,7 @@ impl Rem6DebugSummary {
             exec_trace,
             fetch_trace,
             host_action_trace,
+            host_action_checkpoints,
             host_action_checkpoint_restores,
             host_action_execution_mode_switches,
             data_trace,
@@ -614,10 +621,12 @@ impl Rem6DebugSummary {
         &self,
         stat_path_segment: impl Fn(&str) -> String,
     ) -> Vec<Rem6HostActionTraceStat> {
-        let mut stats = host_action_trace_checkpoint_restore_authority_stats(
+        let mut stats =
+            host_action_trace_checkpoint_stats(&self.host_action_checkpoints, &stat_path_segment);
+        stats.extend(host_action_trace_checkpoint_restore_authority_stats(
             &self.host_action_checkpoint_restores,
             &stat_path_segment,
-        );
+        ));
         stats.extend(host_action_trace_execution_mode_switch_stats(
             &self.host_action_execution_mode_switches,
             stat_path_segment,
