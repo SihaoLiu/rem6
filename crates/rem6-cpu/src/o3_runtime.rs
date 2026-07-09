@@ -1704,6 +1704,10 @@ impl crate::RiscvCore {
         self.with_o3_runtime(|runtime| runtime.stats())
     }
 
+    pub fn o3_runtime_snapshot(&self) -> O3RuntimeSnapshot {
+        self.with_o3_runtime(|runtime| runtime.snapshot())
+    }
+
     pub fn o3_runtime_trace_records(&self) -> Vec<O3RuntimeTraceRecord> {
         self.with_o3_runtime(|runtime| runtime.trace_records().to_vec())
     }

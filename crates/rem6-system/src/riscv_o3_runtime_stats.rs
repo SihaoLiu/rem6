@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, O3RuntimeStats, O3RuntimeTraceRecord};
+use rem6_cpu::{CpuId, O3RuntimeSnapshot, O3RuntimeStats, O3RuntimeTraceRecord};
 use rem6_stats::{StatsError, StatsRegistry};
 
 mod cpu;
@@ -109,6 +109,7 @@ impl RiscvO3RuntimeStats {
         registry: &mut StatsRegistry,
         cpu: CpuId,
         snapshot: O3RuntimeStats,
+        runtime_snapshot: &O3RuntimeSnapshot,
         trace_records: &[O3RuntimeTraceRecord],
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
@@ -123,6 +124,7 @@ impl RiscvO3RuntimeStats {
             registry,
             *previous_snapshot,
             snapshot,
+            runtime_snapshot,
             resettable_pipeline_cycles,
         )?;
         let event_window_snapshot = self.observe_event_window_records(cpu, trace_records);
@@ -139,6 +141,7 @@ impl RiscvO3RuntimeStats {
         registry: &mut StatsRegistry,
         cpu: CpuId,
         snapshot: O3RuntimeStats,
+        runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
         let Some(stats) = self.stats.get(&cpu) else {
@@ -149,7 +152,12 @@ impl RiscvO3RuntimeStats {
         self.reset_trace_offset(cpu);
         self.reset_event_window_snapshot(cpu);
         self.reset_event_summary_snapshot(cpu);
-        stats.set_snapshot(registry, snapshot, resettable_pipeline_cycles)?;
+        stats.set_snapshot(
+            registry,
+            snapshot,
+            runtime_snapshot,
+            resettable_pipeline_cycles,
+        )?;
         self.previous
             .lock()
             .expect("O3 runtime stats lock")
@@ -342,12 +350,14 @@ mod tests {
         let mut registry = StatsRegistry::new();
         let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], false).unwrap();
         let core = active_o3_core(cpu);
+        let runtime_snapshot = core.o3_runtime_snapshot();
 
         o3_stats
             .record_cpu_snapshot(
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
             )
@@ -366,6 +376,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
             )
@@ -379,20 +390,31 @@ mod tests {
         let mut registry = StatsRegistry::new();
         let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], false).unwrap();
         let core = active_o3_core(cpu);
+        let runtime_snapshot = core.o3_runtime_snapshot();
 
         o3_stats
             .record_cpu_snapshot(
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
             )
             .unwrap();
         assert_eq!(o3_stats.active_cpu_indices(), vec![0]);
 
+        let empty_snapshot = RiscvCore::default_o3_runtime_checkpoint_payload()
+            .snapshot()
+            .clone();
         o3_stats
-            .sync_cpu_snapshot(&mut registry, cpu, O3RuntimeStats::default(), 0)
+            .sync_cpu_snapshot(
+                &mut registry,
+                cpu,
+                O3RuntimeStats::default(),
+                &empty_snapshot,
+                0,
+            )
             .unwrap();
 
         assert!(
@@ -407,6 +429,7 @@ mod tests {
         let mut registry = StatsRegistry::new();
         let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], true).unwrap();
         let core = active_o3_trace_core(cpu);
+        let runtime_snapshot = core.o3_runtime_snapshot();
         let trace_records = core.o3_runtime_trace_records();
         assert!(
             !trace_records.is_empty(),
@@ -418,6 +441,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                &runtime_snapshot,
                 &trace_records,
                 core.in_order_pipeline_snapshot().cycle(),
             )
@@ -430,8 +454,17 @@ mod tests {
         assert_eq!(sample.reset_policy(), StatResetPolicy::Resettable);
         assert!(sample.value() > 0);
 
+        let empty_snapshot = RiscvCore::default_o3_runtime_checkpoint_payload()
+            .snapshot()
+            .clone();
         o3_stats
-            .sync_cpu_snapshot(&mut registry, cpu, O3RuntimeStats::default(), 0)
+            .sync_cpu_snapshot(
+                &mut registry,
+                cpu,
+                O3RuntimeStats::default(),
+                &empty_snapshot,
+                0,
+            )
             .unwrap();
 
         let sample = stat_sample(
@@ -451,13 +484,16 @@ mod tests {
         let cpu = CpuId::new(0);
         let mut registry = StatsRegistry::new();
         let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], false).unwrap();
+        let core = active_o3_core(cpu);
+        let runtime_snapshot = core.o3_runtime_snapshot();
 
         o3_stats.reset_snapshots([(cpu, 100)]);
         o3_stats
             .record_cpu_snapshot(
                 &mut registry,
                 cpu,
-                active_o3_core(cpu).o3_runtime_stats(),
+                core.o3_runtime_stats(),
+                &runtime_snapshot,
                 &[],
                 105,
             )
@@ -478,13 +514,16 @@ mod tests {
         let cpu = CpuId::new(0);
         let mut registry = StatsRegistry::new();
         let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], false).unwrap();
+        let core = active_o3_core(cpu);
+        let runtime_snapshot = core.o3_runtime_snapshot();
 
         o3_stats.reset_snapshots([(cpu, 100)]);
         o3_stats
             .sync_cpu_snapshot(
                 &mut registry,
                 cpu,
-                active_o3_core(cpu).o3_runtime_stats(),
+                core.o3_runtime_stats(),
+                &runtime_snapshot,
                 50,
             )
             .unwrap();

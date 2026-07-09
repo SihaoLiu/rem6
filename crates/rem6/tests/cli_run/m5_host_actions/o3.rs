@@ -1277,6 +1277,20 @@ fn rem6_run_m5_dump_stats_snapshots_detailed_o3_runtime_stats() {
         3,
         "resettable",
     );
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.rob.count",
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.rob.entries",
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.lsq.count",
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.lsq.entries",
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", 0, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.rename_map.count",
+        "sim.host_actions.stats_dump.cpu0.o3.snapshot.rename_map.entries",
+    ] {
+        assert_stats_dump_sample(dump, path, "counter", "Count", 3, "resettable");
+    }
     for (path, value) in [
         ("sim.host_actions.stats_dump.cpu0.o3.iq.insts_issued", 6),
         ("sim.host_actions.stats_dump.cpu0.o3.iq.mem_insts_issued", 2),

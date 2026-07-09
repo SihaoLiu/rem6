@@ -732,14 +732,18 @@ impl RiscvCoreCheckpointBank {
             })
     }
 
-    pub(crate) fn o3_runtime_snapshots(&self) -> Vec<(CpuId, O3RuntimeStats, u64)> {
+    pub(crate) fn o3_runtime_snapshots(
+        &self,
+    ) -> Vec<(CpuId, O3RuntimeStats, O3RuntimeSnapshot, u64)> {
         self.ports
             .values()
             .map(|port| {
                 let core = port.core();
+                let runtime_payload = core.o3_runtime_checkpoint_payload();
                 (
                     core.id(),
-                    core.o3_runtime_stats(),
+                    runtime_payload.stats(),
+                    runtime_payload.snapshot().clone(),
                     core.in_order_pipeline_snapshot().cycle(),
                 )
             })

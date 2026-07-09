@@ -1465,9 +1465,17 @@ impl SystemActionExecutor {
             return Ok(());
         };
 
-        for (cpu, snapshot, in_order_pipeline_cycles) in riscv_checkpoints.o3_runtime_snapshots() {
+        for (cpu, snapshot, runtime_snapshot, in_order_pipeline_cycles) in
+            riscv_checkpoints.o3_runtime_snapshots()
+        {
             o3_runtime_stats
-                .sync_cpu_snapshot(&mut self.stats, cpu, snapshot, in_order_pipeline_cycles)
+                .sync_cpu_snapshot(
+                    &mut self.stats,
+                    cpu,
+                    snapshot,
+                    &runtime_snapshot,
+                    in_order_pipeline_cycles,
+                )
                 .map_err(SystemError::Stats)?;
         }
         Ok(())

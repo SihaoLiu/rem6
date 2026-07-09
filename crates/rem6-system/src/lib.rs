@@ -857,6 +857,7 @@ impl RiscvSystemRunDriver {
         for cpu in cpus {
             let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
             let snapshot = core.o3_runtime_stats();
+            let runtime_snapshot = core.o3_runtime_snapshot();
             let trace_records = if trace_enabled {
                 let trace_offset = o3_runtime_stats.trace_record_offset(cpu);
                 let (next_trace_offset, trace_records) =
@@ -872,6 +873,7 @@ impl RiscvSystemRunDriver {
                     registry,
                     cpu,
                     snapshot,
+                    &runtime_snapshot,
                     &trace_records,
                     in_order_pipeline_cycles,
                 )

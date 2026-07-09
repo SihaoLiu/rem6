@@ -1,6 +1,6 @@
 use rem6_cpu::{
     BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeStats,
+    O3RuntimeSnapshot, O3RuntimeStats,
 };
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
@@ -107,6 +107,12 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     max_rob_occupancy: StatId,
     max_lsq_occupancy: StatId,
     rename_map_entries: StatId,
+    snapshot_rob_count: StatId,
+    snapshot_lsq_count: StatId,
+    snapshot_rename_map_count: StatId,
+    snapshot_rob_entries: StatId,
+    snapshot_lsq_entries: StatId,
+    snapshot_rename_map_entries: StatId,
     event_window: Option<RiscvO3RuntimeEventWindowStats>,
     event_summary: Option<RiscvO3RuntimeEventSummaryStats>,
 }
@@ -593,6 +599,42 @@ impl RiscvO3RuntimeCpuStats {
                 "rename_map_entries",
                 "Count",
             )?,
+            snapshot_rob_count: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.rob.count",
+                "Count",
+            )?,
+            snapshot_lsq_count: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.lsq.count",
+                "Count",
+            )?,
+            snapshot_rename_map_count: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.rename_map.count",
+                "Count",
+            )?,
+            snapshot_rob_entries: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.rob.entries",
+                "Count",
+            )?,
+            snapshot_lsq_entries: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.lsq.entries",
+                "Count",
+            )?,
+            snapshot_rename_map_entries: register_o3_counter(
+                registry,
+                &prefix,
+                "snapshot.rename_map.entries",
+                "Count",
+            )?,
             event_window: if trace_enabled {
                 Some(RiscvO3RuntimeEventWindowStats::register(registry, &prefix)?)
             } else {
@@ -613,6 +655,7 @@ impl RiscvO3RuntimeCpuStats {
         registry: &mut StatsRegistry,
         previous: O3RuntimeStats,
         current: O3RuntimeStats,
+        runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
         for (stat, previous, current) in [
@@ -884,6 +927,7 @@ impl RiscvO3RuntimeCpuStats {
                 registry.increment(stat, delta)?;
             }
         }
+        self.set_runtime_snapshot_counts(registry, runtime_snapshot)?;
         self.structural_aliases
             .increment_delta(registry, previous, current)?;
         self.branch_aliases
@@ -1237,6 +1281,7 @@ impl RiscvO3RuntimeCpuStats {
         self,
         registry: &mut StatsRegistry,
         snapshot: O3RuntimeStats,
+        runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
         for (stat, value) in [
@@ -1387,6 +1432,7 @@ impl RiscvO3RuntimeCpuStats {
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        self.set_runtime_snapshot_counts(registry, runtime_snapshot)?;
         self.structural_aliases.set_snapshot(registry, snapshot)?;
         self.branch_aliases.set_snapshot(registry, snapshot)?;
         self.branch_direction_mismatch
@@ -1618,6 +1664,27 @@ impl RiscvO3RuntimeCpuStats {
                 self.commit_committed_inst_type_fu_aliases[class.index()],
                 snapshot.fu_latency_class_instructions(class),
             )?;
+        }
+        Ok(())
+    }
+
+    fn set_runtime_snapshot_counts(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: &O3RuntimeSnapshot,
+    ) -> Result<(), StatsError> {
+        let rob_entries = snapshot.reorder_buffer().len() as u64;
+        let lsq_entries = snapshot.load_store_queue().len() as u64;
+        let rename_map_entries = snapshot.rename_map().len() as u64;
+        for (stat, value) in [
+            (self.snapshot_rob_count, rob_entries),
+            (self.snapshot_lsq_count, lsq_entries),
+            (self.snapshot_rename_map_count, rename_map_entries),
+            (self.snapshot_rob_entries, rob_entries),
+            (self.snapshot_lsq_entries, lsq_entries),
+            (self.snapshot_rename_map_entries, rename_map_entries),
+        ] {
+            registry.set_resettable_counter(stat, value)?;
         }
         Ok(())
     }
