@@ -7,7 +7,8 @@ use rem6_cpu::{
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 use super::groups::{
-    RiscvO3RuntimeBranchEventKindStats, RiscvO3RuntimeBranchRepairStats,
+    RiscvO3RuntimeBranchDirectionMismatchStats, RiscvO3RuntimeBranchEventKindStats,
+    RiscvO3RuntimeBranchRepairStats, RiscvO3RuntimeBranchTargetMismatchStats,
     RiscvO3RuntimeFuLatencyClassStats, RiscvO3RuntimeLsqLatencyStats,
 };
 use super::helpers::{
@@ -494,6 +495,8 @@ pub(super) struct RiscvO3RuntimeEventSummaryStats {
     branch_repair_wrong_targets: StatId,
     branch_repair_direction_only_mismatches: StatId,
     branch_repair_kinds: [RiscvO3RuntimeBranchRepairStats; BranchTargetKind::COUNT],
+    branch_direction_mismatch: RiscvO3RuntimeBranchDirectionMismatchStats,
+    branch_target_mismatch: RiscvO3RuntimeBranchTargetMismatchStats,
     iq_insts_issued: StatId,
     iq_mem_insts_issued: StatId,
     iq_branch_insts_issued: StatId,
@@ -668,6 +671,12 @@ impl RiscvO3RuntimeEventSummaryStats {
                 "Count",
             )?,
             branch_repair_kinds: register_event_summary_branch_repair_kind_counters(
+                registry, &prefix,
+            )?,
+            branch_direction_mismatch: RiscvO3RuntimeBranchDirectionMismatchStats::register(
+                registry, &prefix,
+            )?,
+            branch_target_mismatch: RiscvO3RuntimeBranchTargetMismatchStats::register(
                 registry, &prefix,
             )?,
             iq_insts_issued: register_o3_counter(registry, &prefix, "iq.insts_issued", "Count")?,
@@ -1077,6 +1086,16 @@ impl RiscvO3RuntimeEventSummaryStats {
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        set_event_summary_branch_direction_mismatch_stats(
+            registry,
+            self.branch_direction_mismatch,
+            snapshot,
+        )?;
+        set_event_summary_branch_target_mismatch_stats(
+            registry,
+            self.branch_target_mismatch,
+            snapshot,
+        )?;
         for kind in BranchTargetKind::ALL {
             let branch_event_stats = self.branch_event_kinds[kind.index()];
             for (stat, value) in [
@@ -1319,6 +1338,245 @@ fn register_event_summary_branch_repair_kind_counters(
     Ok(stats)
 }
 
+fn set_event_summary_branch_direction_mismatch_stats(
+    registry: &mut StatsRegistry,
+    stats: RiscvO3RuntimeBranchDirectionMismatchStats,
+    snapshot: &RiscvO3RuntimeEventSummarySnapshot,
+) -> Result<(), StatsError> {
+    for (stat, value) in [
+        (stats.mismatches, snapshot.count(branch_direction_mismatch)),
+        (
+            stats.without_link_writes,
+            snapshot.count(|event| {
+                branch_direction_mismatch(event) && !event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.squashed_targets,
+            snapshot.count(|event| {
+                branch_direction_mismatch(event) && event.branch_squashed_target().is_some()
+            }),
+        ),
+        (
+            stats.squashed_target_without_link_writes,
+            snapshot.count(|event| {
+                branch_direction_mismatch(event)
+                    && event.branch_squashed_target().is_some()
+                    && !event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.squashed_target_link_writes,
+            snapshot.count(|event| {
+                branch_direction_mismatch(event)
+                    && event.branch_squashed_target().is_some()
+                    && event.branch_link_register_write()
+            }),
+        ),
+    ] {
+        registry.set_resettable_counter(stat, value)?;
+    }
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.kinds,
+        snapshot,
+        branch_direction_mismatch,
+    )?;
+    set_event_summary_branch_kind_counters(registry, stats.link_write_kinds, snapshot, |event| {
+        branch_direction_mismatch(event) && event.branch_link_register_write()
+    })?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.without_link_write_kinds,
+        snapshot,
+        |event| branch_direction_mismatch(event) && !event.branch_link_register_write(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.squashed_target_kinds,
+        snapshot,
+        |event| branch_direction_mismatch(event) && event.branch_squashed_target().is_some(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.squashed_target_link_write_kinds,
+        snapshot,
+        |event| {
+            branch_direction_mismatch(event)
+                && event.branch_squashed_target().is_some()
+                && event.branch_link_register_write()
+        },
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.squashed_target_without_link_write_kinds,
+        snapshot,
+        |event| {
+            branch_direction_mismatch(event)
+                && event.branch_squashed_target().is_some()
+                && !event.branch_link_register_write()
+        },
+    )
+}
+
+fn set_event_summary_branch_target_mismatch_stats(
+    registry: &mut StatsRegistry,
+    stats: RiscvO3RuntimeBranchTargetMismatchStats,
+    snapshot: &RiscvO3RuntimeEventSummarySnapshot,
+) -> Result<(), StatsError> {
+    for (stat, value) in [
+        (
+            stats.targetless_mismatches,
+            snapshot.count(|event| branch_targetless_mismatch(&event)),
+        ),
+        (
+            stats.targetless_without_link_writes,
+            snapshot.count(|event| {
+                branch_targetless_mismatch(&event) && !event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.targetless_squashed_targets,
+            snapshot.count(|event| {
+                branch_targetless_mismatch(&event) && event.branch_squashed_target().is_some()
+            }),
+        ),
+        (
+            stats.targetless_squashed_target_without_link_writes,
+            snapshot.count(|event| {
+                branch_targetless_mismatch(&event)
+                    && event.branch_squashed_target().is_some()
+                    && !event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.wrong_targets,
+            snapshot.count(|event| branch_wrong_target(&event)),
+        ),
+        (
+            stats.wrong_target_squashed_targets,
+            snapshot.count(|event| {
+                branch_wrong_target(&event) && event.branch_squashed_target().is_some()
+            }),
+        ),
+        (
+            stats.wrong_target_squashed_target_without_link_writes,
+            snapshot.count(|event| {
+                branch_wrong_target(&event)
+                    && event.branch_squashed_target().is_some()
+                    && !event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.wrong_target_squashed_target_link_writes,
+            snapshot.count(|event| {
+                branch_wrong_target(&event)
+                    && event.branch_squashed_target().is_some()
+                    && event.branch_link_register_write()
+            }),
+        ),
+        (
+            stats.wrong_target_link_writes,
+            snapshot
+                .count(|event| branch_wrong_target(&event) && event.branch_link_register_write()),
+        ),
+        (
+            stats.wrong_target_without_link_writes,
+            snapshot
+                .count(|event| branch_wrong_target(&event) && !event.branch_link_register_write()),
+        ),
+    ] {
+        registry.set_resettable_counter(stat, value)?;
+    }
+    set_event_summary_branch_kind_counters(registry, stats.targetless_kinds, snapshot, |event| {
+        branch_targetless_mismatch(&event)
+    })?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.targetless_without_link_write_kinds,
+        snapshot,
+        |event| branch_targetless_mismatch(&event) && !event.branch_link_register_write(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.targetless_squashed_target_kinds,
+        snapshot,
+        |event| branch_targetless_mismatch(&event) && event.branch_squashed_target().is_some(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.targetless_squashed_target_without_link_write_kinds,
+        snapshot,
+        |event| {
+            branch_targetless_mismatch(&event)
+                && event.branch_squashed_target().is_some()
+                && !event.branch_link_register_write()
+        },
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_kinds,
+        snapshot,
+        |event| branch_wrong_target(&event),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_squashed_target_kinds,
+        snapshot,
+        |event| branch_wrong_target(&event) && event.branch_squashed_target().is_some(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_squashed_target_without_link_write_kinds,
+        snapshot,
+        |event| {
+            branch_wrong_target(&event)
+                && event.branch_squashed_target().is_some()
+                && !event.branch_link_register_write()
+        },
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_squashed_target_link_write_kinds,
+        snapshot,
+        |event| {
+            branch_wrong_target(&event)
+                && event.branch_squashed_target().is_some()
+                && event.branch_link_register_write()
+        },
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_link_write_kinds,
+        snapshot,
+        |event| branch_wrong_target(&event) && event.branch_link_register_write(),
+    )?;
+    set_event_summary_branch_kind_counters(
+        registry,
+        stats.wrong_target_without_link_write_kinds,
+        snapshot,
+        |event| branch_wrong_target(&event) && !event.branch_link_register_write(),
+    )
+}
+
+fn set_event_summary_branch_kind_counters<F>(
+    registry: &mut StatsRegistry,
+    stats: [StatId; BranchTargetKind::COUNT],
+    snapshot: &RiscvO3RuntimeEventSummarySnapshot,
+    matches: F,
+) -> Result<(), StatsError>
+where
+    F: Fn(O3RuntimeTraceRecord) -> bool + Copy,
+{
+    for kind in BranchTargetKind::ALL {
+        registry.set_resettable_counter(
+            stats[kind.index()],
+            snapshot.count(|event| event.branch_kind() == kind && matches(event)),
+        )?;
+    }
+    Ok(())
+}
+
 fn set_lsq_latency_summary(
     registry: &mut StatsRegistry,
     stats: RiscvO3RuntimeLsqLatencyStats,
@@ -1347,6 +1605,10 @@ fn branch_predicted_target_mismatch(event: O3RuntimeTraceRecord) -> bool {
         && event
             .branch_predicted_target()
             .is_some_and(|target| Some(target) != event.branch_resolved_target())
+}
+
+fn branch_direction_mismatch(event: O3RuntimeTraceRecord) -> bool {
+    event.branch_event() && event.branch_predicted_taken() != event.branch_resolved_taken()
 }
 
 fn branch_targetless_mismatch(event: &O3RuntimeTraceRecord) -> bool {
