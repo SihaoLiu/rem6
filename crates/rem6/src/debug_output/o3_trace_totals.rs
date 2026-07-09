@@ -29,6 +29,80 @@ fn add_bool_counter(counter: &mut u64, value: bool) {
     add_counter(counter, u64::from(value));
 }
 
+macro_rules! push_event_window_row_stats {
+    ($stats:expr, $row:expr, $prefix:literal) => {{
+        let row = $row.unwrap_or_default();
+        for (suffix, unit, value) in [
+            (concat!($prefix, ".sequence"), "Count", row.sequence),
+            (concat!($prefix, ".tick"), "Tick", row.tick),
+            (concat!($prefix, ".issue_tick"), "Tick", row.issue_tick),
+            (
+                concat!($prefix, ".writeback_tick"),
+                "Tick",
+                row.writeback_tick,
+            ),
+            (concat!($prefix, ".commit_tick"), "Tick", row.commit_tick),
+            (
+                concat!($prefix, ".issue_to_writeback_ticks"),
+                "Tick",
+                row.issue_to_writeback_ticks,
+            ),
+            (
+                concat!($prefix, ".writeback_to_commit_ticks"),
+                "Tick",
+                row.writeback_to_commit_ticks,
+            ),
+            (
+                concat!($prefix, ".issue_to_commit_ticks"),
+                "Tick",
+                row.issue_to_commit_ticks,
+            ),
+            (concat!($prefix, ".pc"), "Address", row.pc),
+            (
+                concat!($prefix, ".rob_occupancy"),
+                "Count",
+                row.rob_occupancy,
+            ),
+            (
+                concat!($prefix, ".rob_commits_at_tick"),
+                "Count",
+                row.rob_commits_at_tick,
+            ),
+            (
+                concat!($prefix, ".rob_commit_blocked"),
+                "Count",
+                row.rob_commit_blocked,
+            ),
+            (
+                concat!($prefix, ".lsq_occupancy"),
+                "Count",
+                row.lsq_occupancy,
+            ),
+            (
+                concat!($prefix, ".rename_map_entries"),
+                "Count",
+                row.rename_map_entries,
+            ),
+            (
+                concat!($prefix, ".lsq_data_latency_ticks"),
+                "Tick",
+                row.lsq_data_latency_ticks,
+            ),
+            (
+                concat!($prefix, ".fu_latency_cycles"),
+                "Cycle",
+                row.fu_latency_cycles,
+            ),
+        ] {
+            $stats.push(Rem6O3TraceStat {
+                suffix,
+                unit,
+                value,
+            });
+        }
+    }};
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Rem6O3TraceWindowRow {
     sequence: u64,
@@ -36,6 +110,9 @@ struct Rem6O3TraceWindowRow {
     issue_tick: u64,
     writeback_tick: u64,
     commit_tick: u64,
+    issue_to_writeback_ticks: u64,
+    writeback_to_commit_ticks: u64,
+    issue_to_commit_ticks: u64,
     pc: u64,
     rob_occupancy: u64,
     rob_commits_at_tick: u64,
@@ -54,6 +131,9 @@ impl Rem6O3TraceWindowRow {
             issue_tick: event.issue_tick(),
             writeback_tick: event.writeback_tick(),
             commit_tick: event.commit_tick(),
+            issue_to_writeback_ticks: event.issue_to_writeback_ticks(),
+            writeback_to_commit_ticks: event.writeback_to_commit_ticks(),
+            issue_to_commit_ticks: event.issue_to_commit_ticks(),
             pc: event.pc().get(),
             rob_occupancy: event.rob_occupancy(),
             rob_commits_at_tick: event.rob_commits_at_tick(),
@@ -80,23 +160,6 @@ impl Rem6O3TraceWindowRow {
             self.sequence,
         )
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Rem6O3TraceWindowRowSuffixes {
-    sequence: &'static str,
-    tick: &'static str,
-    issue_tick: &'static str,
-    writeback_tick: &'static str,
-    commit_tick: &'static str,
-    pc: &'static str,
-    rob_occupancy: &'static str,
-    rob_commits_at_tick: &'static str,
-    rob_commit_blocked: &'static str,
-    lsq_occupancy: &'static str,
-    rename_map_entries: &'static str,
-    lsq_data_latency_ticks: &'static str,
-    fu_latency_cycles: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1580,196 +1643,37 @@ impl Rem6O3TraceTotals {
                 value,
             });
         }
-        push_event_window_row_stats(
-            stats,
-            self.event_window_first,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.first.sequence",
-                tick: "event_window.first.tick",
-                issue_tick: "event_window.first.issue_tick",
-                writeback_tick: "event_window.first.writeback_tick",
-                commit_tick: "event_window.first.commit_tick",
-                pc: "event_window.first.pc",
-                rob_occupancy: "event_window.first.rob_occupancy",
-                rob_commits_at_tick: "event_window.first.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.first.rob_commit_blocked",
-                lsq_occupancy: "event_window.first.lsq_occupancy",
-                rename_map_entries: "event_window.first.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.first.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.first.fu_latency_cycles",
-            },
-        );
-        push_event_window_row_stats(
-            stats,
-            self.event_window_last,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.last.sequence",
-                tick: "event_window.last.tick",
-                issue_tick: "event_window.last.issue_tick",
-                writeback_tick: "event_window.last.writeback_tick",
-                commit_tick: "event_window.last.commit_tick",
-                pc: "event_window.last.pc",
-                rob_occupancy: "event_window.last.rob_occupancy",
-                rob_commits_at_tick: "event_window.last.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.last.rob_commit_blocked",
-                lsq_occupancy: "event_window.last.lsq_occupancy",
-                rename_map_entries: "event_window.last.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.last.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.last.fu_latency_cycles",
-            },
-        );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(stats, self.event_window_first, "event_window.first");
+        push_event_window_row_stats!(stats, self.event_window_last, "event_window.last");
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_rob_occupancy,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_rob_occupancy.sequence",
-                tick: "event_window.max_rob_occupancy.tick",
-                issue_tick: "event_window.max_rob_occupancy.issue_tick",
-                writeback_tick: "event_window.max_rob_occupancy.writeback_tick",
-                commit_tick: "event_window.max_rob_occupancy.commit_tick",
-                pc: "event_window.max_rob_occupancy.pc",
-                rob_occupancy: "event_window.max_rob_occupancy.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_rob_occupancy.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_rob_occupancy.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_rob_occupancy.lsq_occupancy",
-                rename_map_entries: "event_window.max_rob_occupancy.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.max_rob_occupancy.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_rob_occupancy.fu_latency_cycles",
-            },
+            "event_window.max_rob_occupancy"
         );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_lsq_occupancy,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_lsq_occupancy.sequence",
-                tick: "event_window.max_lsq_occupancy.tick",
-                issue_tick: "event_window.max_lsq_occupancy.issue_tick",
-                writeback_tick: "event_window.max_lsq_occupancy.writeback_tick",
-                commit_tick: "event_window.max_lsq_occupancy.commit_tick",
-                pc: "event_window.max_lsq_occupancy.pc",
-                rob_occupancy: "event_window.max_lsq_occupancy.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_lsq_occupancy.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_lsq_occupancy.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_lsq_occupancy.lsq_occupancy",
-                rename_map_entries: "event_window.max_lsq_occupancy.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.max_lsq_occupancy.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_lsq_occupancy.fu_latency_cycles",
-            },
+            "event_window.max_lsq_occupancy"
         );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_rename_map_entries,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_rename_map_entries.sequence",
-                tick: "event_window.max_rename_map_entries.tick",
-                issue_tick: "event_window.max_rename_map_entries.issue_tick",
-                writeback_tick: "event_window.max_rename_map_entries.writeback_tick",
-                commit_tick: "event_window.max_rename_map_entries.commit_tick",
-                pc: "event_window.max_rename_map_entries.pc",
-                rob_occupancy: "event_window.max_rename_map_entries.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_rename_map_entries.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_rename_map_entries.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_rename_map_entries.lsq_occupancy",
-                rename_map_entries: "event_window.max_rename_map_entries.rename_map_entries",
-                lsq_data_latency_ticks:
-                    "event_window.max_rename_map_entries.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_rename_map_entries.fu_latency_cycles",
-            },
+            "event_window.max_rename_map_entries"
         );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_structural_pressure,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_structural_pressure.sequence",
-                tick: "event_window.max_structural_pressure.tick",
-                issue_tick: "event_window.max_structural_pressure.issue_tick",
-                writeback_tick: "event_window.max_structural_pressure.writeback_tick",
-                commit_tick: "event_window.max_structural_pressure.commit_tick",
-                pc: "event_window.max_structural_pressure.pc",
-                rob_occupancy: "event_window.max_structural_pressure.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_structural_pressure.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_structural_pressure.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_structural_pressure.lsq_occupancy",
-                rename_map_entries: "event_window.max_structural_pressure.rename_map_entries",
-                lsq_data_latency_ticks:
-                    "event_window.max_structural_pressure.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_structural_pressure.fu_latency_cycles",
-            },
+            "event_window.max_structural_pressure"
         );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_lsq_data_latency,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_lsq_data_latency.sequence",
-                tick: "event_window.max_lsq_data_latency.tick",
-                issue_tick: "event_window.max_lsq_data_latency.issue_tick",
-                writeback_tick: "event_window.max_lsq_data_latency.writeback_tick",
-                commit_tick: "event_window.max_lsq_data_latency.commit_tick",
-                pc: "event_window.max_lsq_data_latency.pc",
-                rob_occupancy: "event_window.max_lsq_data_latency.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_lsq_data_latency.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_lsq_data_latency.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_lsq_data_latency.lsq_occupancy",
-                rename_map_entries: "event_window.max_lsq_data_latency.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.max_lsq_data_latency.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_lsq_data_latency.fu_latency_cycles",
-            },
+            "event_window.max_lsq_data_latency"
         );
-        push_event_window_row_stats(
+        push_event_window_row_stats!(
             stats,
             self.event_window_max_fu_latency,
-            Rem6O3TraceWindowRowSuffixes {
-                sequence: "event_window.max_fu_latency.sequence",
-                tick: "event_window.max_fu_latency.tick",
-                issue_tick: "event_window.max_fu_latency.issue_tick",
-                writeback_tick: "event_window.max_fu_latency.writeback_tick",
-                commit_tick: "event_window.max_fu_latency.commit_tick",
-                pc: "event_window.max_fu_latency.pc",
-                rob_occupancy: "event_window.max_fu_latency.rob_occupancy",
-                rob_commits_at_tick: "event_window.max_fu_latency.rob_commits_at_tick",
-                rob_commit_blocked: "event_window.max_fu_latency.rob_commit_blocked",
-                lsq_occupancy: "event_window.max_fu_latency.lsq_occupancy",
-                rename_map_entries: "event_window.max_fu_latency.rename_map_entries",
-                lsq_data_latency_ticks: "event_window.max_fu_latency.lsq_data_latency_ticks",
-                fu_latency_cycles: "event_window.max_fu_latency.fu_latency_cycles",
-            },
+            "event_window.max_fu_latency"
         );
-    }
-}
-
-fn push_event_window_row_stats(
-    stats: &mut Vec<Rem6O3TraceStat>,
-    row: Option<Rem6O3TraceWindowRow>,
-    suffixes: Rem6O3TraceWindowRowSuffixes,
-) {
-    let row = row.unwrap_or_default();
-    for (suffix, unit, value) in [
-        (suffixes.sequence, "Count", row.sequence),
-        (suffixes.tick, "Tick", row.tick),
-        (suffixes.issue_tick, "Tick", row.issue_tick),
-        (suffixes.writeback_tick, "Tick", row.writeback_tick),
-        (suffixes.commit_tick, "Tick", row.commit_tick),
-        (suffixes.pc, "Address", row.pc),
-        (suffixes.rob_occupancy, "Count", row.rob_occupancy),
-        (
-            suffixes.rob_commits_at_tick,
-            "Count",
-            row.rob_commits_at_tick,
-        ),
-        (suffixes.rob_commit_blocked, "Count", row.rob_commit_blocked),
-        (suffixes.lsq_occupancy, "Count", row.lsq_occupancy),
-        (suffixes.rename_map_entries, "Count", row.rename_map_entries),
-        (
-            suffixes.lsq_data_latency_ticks,
-            "Tick",
-            row.lsq_data_latency_ticks,
-        ),
-        (suffixes.fu_latency_cycles, "Cycle", row.fu_latency_cycles),
-    ] {
-        stats.push(Rem6O3TraceStat {
-            suffix,
-            unit,
-            value,
-        });
     }
 }

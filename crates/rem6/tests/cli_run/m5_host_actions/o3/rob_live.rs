@@ -188,6 +188,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     );
     assert_event_window_phase_stats(&json, "max_rob_occupancy", max_rob_phase_deltas);
     assert_event_window_phase_stats(&json, "max_fu_latency", max_fu_latency_phase_deltas);
+    assert_debug_event_window_phase_stats(&json, "max_rob_occupancy", max_rob_phase_deltas);
+    assert_debug_event_window_phase_stats(&json, "max_fu_latency", max_fu_latency_phase_deltas);
     let events = json
         .pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
@@ -394,6 +396,19 @@ fn assert_event_window_phase_deltas(json: &Value) -> (u64, u64, u64) {
 
 fn assert_event_window_phase_stats(json: &Value, row: &str, expected: (u64, u64, u64)) {
     let prefix = format!("sim.cpu0.o3.event_summary.event_window.{row}");
+    assert_event_window_phase_stat_prefix(json, &prefix, expected);
+}
+
+fn assert_debug_event_window_phase_stats(json: &Value, row: &str, expected: (u64, u64, u64)) {
+    for prefix in [
+        format!("sim.debug.o3_trace.event_window.{row}"),
+        format!("sim.debug.o3_trace.cpu.cpu0.event_window.{row}"),
+    ] {
+        assert_event_window_phase_stat_prefix(json, &prefix, expected);
+    }
+}
+
+fn assert_event_window_phase_stat_prefix(json: &Value, prefix: &str, expected: (u64, u64, u64)) {
     assert_json_stat(
         json,
         &format!("{prefix}.issue_to_writeback_ticks"),
