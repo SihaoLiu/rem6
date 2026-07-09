@@ -213,6 +213,19 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         (0, 0, 0),
         "younger independent add should expose a zero-latency event phase tuple: {younger_add}"
     );
+    let event_phase_totals = events.iter().fold((0, 0, 0), |accumulator, event| {
+        let deltas = assert_o3_phase_deltas(event);
+        (
+            accumulator.0 + deltas.0,
+            accumulator.1 + deltas.1,
+            accumulator.2 + deltas.2,
+        )
+    });
+    assert!(
+        event_phase_totals.0 > 0,
+        "O3 debug events should include nonzero aggregate issue-to-writeback time: {events:?}"
+    );
+    assert_debug_event_phase_stats(&json, event_phase_totals);
     let multiply_issue = json_u64_field(multiply, "/issue_tick");
     let multiply_writeback = json_u64_field(multiply, "/writeback_tick");
     let multiply_commit = json_u64_field(multiply, "/commit_tick");
@@ -417,6 +430,39 @@ fn assert_debug_event_window_phase_stats(json: &Value, row: &str, expected: (u64
     ] {
         assert_event_window_phase_stat_prefix(json, &prefix, expected);
     }
+}
+
+fn assert_debug_event_phase_stats(json: &Value, expected: (u64, u64, u64)) {
+    for prefix in [
+        "sim.debug.o3_trace.event",
+        "sim.debug.o3_trace.cpu.cpu0.event",
+    ] {
+        assert_event_phase_stat_prefix(json, prefix, expected);
+    }
+}
+
+fn assert_event_phase_stat_prefix(json: &Value, prefix: &str, expected: (u64, u64, u64)) {
+    assert_json_stat(
+        json,
+        &format!("{prefix}.issue_to_writeback_ticks"),
+        "Tick",
+        expected.0,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{prefix}.writeback_to_commit_ticks"),
+        "Tick",
+        expected.1,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        &format!("{prefix}.issue_to_commit_ticks"),
+        "Tick",
+        expected.2,
+        "monotonic",
+    );
 }
 
 fn assert_event_window_phase_stat_prefix(json: &Value, prefix: &str, expected: (u64, u64, u64)) {

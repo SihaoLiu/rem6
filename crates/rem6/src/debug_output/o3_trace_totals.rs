@@ -201,6 +201,9 @@ pub(super) struct Rem6O3TraceTotals {
     event_records: u64,
     event_first_tick: Option<u64>,
     event_last_tick: Option<u64>,
+    event_issue_to_writeback_ticks: u64,
+    event_writeback_to_commit_ticks: u64,
+    event_issue_to_commit_ticks: u64,
     event_max_rob_occupancy: u64,
     event_max_lsq_occupancy: u64,
     event_max_rename_map_entries: u64,
@@ -407,6 +410,18 @@ impl Rem6O3TraceTotals {
             self.event_last_tick = Some(
                 self.event_last_tick
                     .map_or(event_tick, |tick| tick.max(event_tick)),
+            );
+            add_counter(
+                &mut self.event_issue_to_writeback_ticks,
+                event.issue_to_writeback_ticks(),
+            );
+            add_counter(
+                &mut self.event_writeback_to_commit_ticks,
+                event.writeback_to_commit_ticks(),
+            );
+            add_counter(
+                &mut self.event_issue_to_commit_ticks,
+                event.issue_to_commit_ticks(),
             );
             self.add_event_window_row(event_window_row);
             self.event_max_rob_occupancy = self.event_max_rob_occupancy.max(event.rob_occupancy());
@@ -1369,6 +1384,26 @@ impl Rem6O3TraceTotals {
             unit: "Tick",
             value: event_tick_span,
         });
+        for (suffix, value) in [
+            (
+                "event.issue_to_writeback_ticks",
+                self.event_issue_to_writeback_ticks,
+            ),
+            (
+                "event.writeback_to_commit_ticks",
+                self.event_writeback_to_commit_ticks,
+            ),
+            (
+                "event.issue_to_commit_ticks",
+                self.event_issue_to_commit_ticks,
+            ),
+        ] {
+            stats.push(Rem6O3TraceStat {
+                suffix,
+                unit: "Tick",
+                value,
+            });
+        }
         stats.push(Rem6O3TraceStat {
             suffix: "event.lsq_data_latency_ticks",
             unit: "Tick",
