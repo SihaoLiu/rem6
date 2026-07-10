@@ -14,9 +14,9 @@ use crate::o3_runtime_trace::{
 };
 
 use super::{
-    encode_register_class, encode_u32, validate_runtime_snapshot, O3LoadStoreQueueEntry,
-    O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeError,
-    O3RuntimeSnapshot, O3RuntimeStats,
+    encode_register_class, encode_u32, validate_live_staged_rob_metadata,
+    validate_runtime_snapshot, O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry,
+    O3ReorderBufferEntry, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
@@ -103,6 +103,7 @@ impl O3RuntimeCheckpointPayload {
         stats: O3RuntimeStats,
         dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     ) -> Result<Self, O3RuntimeError> {
+        let snapshot = snapshot.into_checkpoint_snapshot();
         validate_runtime_snapshot(&snapshot)?;
         Ok(Self {
             snapshot,
@@ -661,6 +662,12 @@ fn read_rob_entry(
             read_bool("ROB rename-destination-present", payload, offset)?;
         let register_class = decode_register_class(read_u8(payload, offset)?)?;
         let architectural = read_u32(payload, offset)?;
+        validate_live_staged_rob_metadata(
+            sequence,
+            destination_present,
+            live_staged,
+            rename_destination_present,
+        )?;
         (
             live_staged,
             rename_destination_present.then_some((register_class, architectural)),

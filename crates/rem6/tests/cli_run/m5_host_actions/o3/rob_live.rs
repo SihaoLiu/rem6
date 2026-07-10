@@ -63,7 +63,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         &json,
         "sim.cpu0.o3.event_summary.rob.commit_blocked_events",
         "Count",
-        1,
+        0,
         "monotonic",
     );
     assert_json_stat(
@@ -123,8 +123,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         o3_runtime
             .pointer("/event_summary/rob/commit_blocked_events")
             .and_then(Value::as_u64),
-        Some(1),
-        "O3 runtime event summary should count exactly the resident divide as commit-blocked: {o3_runtime}"
+        Some(0),
+        "retirement events should not attribute the younger unready tail to the committing divide: {o3_runtime}"
     );
     assert_eq!(
         o3_runtime
@@ -244,6 +244,11 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     let younger_rob_commits = json_u64_field(younger_add, "/rob_commits_at_tick");
     let divide_commit_blocked = json_bool_field(resident_divide, "/rob_commit_blocked");
     let younger_commit_blocked = json_bool_field(younger_add, "/rob_commit_blocked");
+    assert_eq!(
+        json_u64_field(resident_divide, "/rename_map_entries"),
+        4,
+        "the divide event should include committed x1/x2 plus both live x3/x4 mappings: {resident_divide}"
+    );
     assert!(
         divide_writeback > divide_issue,
         "divide should occupy the FU after issue: {resident_divide}"
@@ -277,8 +282,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         "the resident divide should commit when its FU latency completes: {resident_divide}"
     );
     assert!(
-        divide_commit_blocked,
-        "resident divide should block the ROB head until writeback: {resident_divide}"
+        !divide_commit_blocked,
+        "the divide event commits at writeback and must not inherit the younger row's blocked state: {resident_divide}"
     );
     assert_eq!(
         younger_rob_commits, 1,
@@ -286,7 +291,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     );
     assert!(
         !younger_commit_blocked,
-        "ROB should no longer be commit-blocked when the younger event drains the resident divide: {younger_add}"
+        "the younger event should commit its own remaining row without a blocked boundary: {younger_add}"
     );
 }
 
@@ -389,7 +394,7 @@ fn rem6_run_o3_detailed_mode_delivers_live_rob_dump_before_exit() {
         "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.commit_blocked_events",
         "counter",
         "Count",
-        1,
+        0,
         "resettable",
     );
     assert_stats_dump_sample(

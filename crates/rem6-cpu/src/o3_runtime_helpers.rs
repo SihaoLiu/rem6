@@ -44,6 +44,56 @@ pub(super) fn validate_runtime_snapshot(
             .map_err(|error| O3RuntimeError::InvalidPendingState { error })?
             .encode();
     encode_u32("pending_payload_length", pending_payload.len())?;
+    let committed_physical_registers = snapshot
+        .rename_map()
+        .iter()
+        .map(|entry| entry.physical())
+        .collect::<BTreeSet<_>>();
+    let mut reorder_buffer_physical_registers = BTreeSet::new();
+    for entry in snapshot.reorder_buffer() {
+        validate_live_staged_rob_metadata(
+            entry.sequence(),
+            entry.destination().is_some(),
+            entry.is_live_staged(),
+            entry.rename_destination().is_some(),
+        )?;
+        let Some(physical) = entry.destination() else {
+            continue;
+        };
+        if physical.is_invalid() {
+            return Err(O3RuntimeError::InvalidReorderBufferPhysicalRegister {
+                sequence: entry.sequence(),
+            });
+        }
+        if !reorder_buffer_physical_registers.insert(physical) {
+            return Err(O3RuntimeError::DuplicateReorderBufferPhysicalRegister { physical });
+        }
+        if entry.is_live_staged() && committed_physical_registers.contains(&physical) {
+            return Err(O3RuntimeError::LiveStagedPhysicalRegisterAlreadyCommitted {
+                sequence: entry.sequence(),
+                physical,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_live_staged_rob_metadata(
+    sequence: u64,
+    destination_present: bool,
+    live_staged: bool,
+    rename_destination_present: bool,
+) -> Result<(), O3RuntimeError> {
+    if (!live_staged && rename_destination_present)
+        || (live_staged && destination_present != rename_destination_present)
+    {
+        return Err(O3RuntimeError::InvalidLiveStagedReorderBufferMetadata {
+            sequence,
+            destination_present,
+            live_staged,
+            rename_destination_present,
+        });
+    }
     Ok(())
 }
 

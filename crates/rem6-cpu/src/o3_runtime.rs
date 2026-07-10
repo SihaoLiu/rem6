@@ -37,7 +37,8 @@ pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
-    rob_commit_tick, validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
+    rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
+    O3RuntimeUniqueKey,
 };
 use o3_runtime_live_window::O3LiveRetiredInstruction;
 pub use o3_runtime_snapshot_entries::{
@@ -54,6 +55,7 @@ pub struct O3RuntimeSnapshot {
     reorder_buffer: Vec<O3ReorderBufferEntry>,
     load_store_queue: Vec<O3LoadStoreQueueEntry>,
     rename_map: Vec<O3RenameMapEntry>,
+    committed_rename_map: Option<Vec<O3RenameMapEntry>>,
     pending_state: O3PendingStateSnapshot,
 }
 
@@ -105,6 +107,7 @@ impl O3RuntimeSnapshot {
             reorder_buffer,
             load_store_queue,
             rename_map,
+            committed_rename_map: None,
             pending_state,
         };
         validate_runtime_snapshot(&snapshot)?;
@@ -126,6 +129,20 @@ impl O3RuntimeSnapshot {
     pub const fn pending_state(&self) -> &O3PendingStateSnapshot {
         &self.pending_state
     }
+
+    fn with_committed_rename_map(mut self, committed_rename_map: Vec<O3RenameMapEntry>) -> Self {
+        if self.rename_map != committed_rename_map {
+            self.committed_rename_map = Some(committed_rename_map);
+        }
+        self
+    }
+
+    fn into_checkpoint_snapshot(mut self) -> Self {
+        if let Some(committed_rename_map) = self.committed_rename_map.take() {
+            self.rename_map = committed_rename_map;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -143,8 +160,16 @@ pub struct O3RuntimeState {
     next_physical_register: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct O3ScalarIntegerDependencyObservation {
+    producer_physical_registers: Vec<O3PhysicalRegisterId>,
+    newly_observed_producers: u64,
+    consumers: u64,
+}
+
 impl O3RuntimeState {
     pub fn restore(&mut self, snapshot: O3RuntimeSnapshot) -> Result<(), O3RuntimeError> {
+        let snapshot = snapshot.into_checkpoint_snapshot();
         validate_runtime_snapshot(&snapshot)?;
         self.next_sequence = next_runtime_sequence(&snapshot);
         self.next_physical_register = next_runtime_physical_register(&snapshot);
@@ -257,9 +282,12 @@ impl O3RuntimeState {
         self.stats.observe_rob_occupancy(live_rob_occupancy);
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+        self.dependency_producers_with_consumers.clear();
         for instruction in &self.live_retired_instructions {
-            for _ in 0..instruction.iew_dependency_producers {
-                self.stats.record_iew_dependency_producer();
+            for physical in &instruction.iew_dependency_producer_registers {
+                if self.dependency_producers_with_consumers.insert(*physical) {
+                    self.stats.record_iew_dependency_producer();
+                }
             }
             for _ in 0..instruction.iew_dependency_consumers {
                 self.stats.record_iew_dependency_consumer();
@@ -270,7 +298,6 @@ impl O3RuntimeState {
         self.data_access_sequences.clear();
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
-        self.dependency_producers_with_consumers.clear();
     }
 
     pub(crate) fn record_live_retire_gate_wait(&mut self, wait_ticks: u64) {
@@ -520,6 +547,13 @@ fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
         .rename_map()
         .iter()
         .map(|entry| entry.physical().get())
+        .chain(
+            snapshot
+                .reorder_buffer()
+                .iter()
+                .filter_map(|entry| entry.destination())
+                .map(O3PhysicalRegisterId::get),
+        )
         .filter(|physical| *physical != u32::MAX)
         .max()
         .map_or(1, |physical| physical.saturating_add(1))
@@ -1340,6 +1374,22 @@ pub enum O3RuntimeError {
         field: &'static str,
         value: u8,
     },
+    InvalidLiveStagedReorderBufferMetadata {
+        sequence: u64,
+        destination_present: bool,
+        live_staged: bool,
+        rename_destination_present: bool,
+    },
+    InvalidReorderBufferPhysicalRegister {
+        sequence: u64,
+    },
+    DuplicateReorderBufferPhysicalRegister {
+        physical: O3PhysicalRegisterId,
+    },
+    LiveStagedPhysicalRegisterAlreadyCommitted {
+        sequence: u64,
+        physical: O3PhysicalRegisterId,
+    },
     InvalidPendingState {
         error: O3PipelineError,
     },
@@ -1388,6 +1438,29 @@ impl fmt::Display for O3RuntimeError {
             Self::InvalidCheckpointBool { field, value } => write!(
                 formatter,
                 "O3 runtime checkpoint field {field} boolean has invalid value {value}"
+            ),
+            Self::InvalidLiveStagedReorderBufferMetadata {
+                sequence,
+                destination_present,
+                live_staged,
+                rename_destination_present,
+            } => write!(
+                formatter,
+                "O3 runtime live-staged ROB metadata for sequence {sequence} is inconsistent: destination_present={destination_present}, live_staged={live_staged}, rename_destination_present={rename_destination_present}"
+            ),
+            Self::InvalidReorderBufferPhysicalRegister { sequence } => write!(
+                formatter,
+                "O3 runtime ROB sequence {sequence} uses an invalid physical register"
+            ),
+            Self::DuplicateReorderBufferPhysicalRegister { physical } => write!(
+                formatter,
+                "O3 runtime ROB repeats physical register {}",
+                physical.get()
+            ),
+            Self::LiveStagedPhysicalRegisterAlreadyCommitted { sequence, physical } => write!(
+                formatter,
+                "O3 runtime live-staged ROB sequence {sequence} uses physical register {} that is already committed",
+                physical.get()
             ),
             Self::InvalidPendingState { error } => {
                 write!(formatter, "O3 runtime checkpoint has invalid pending state: {error}")

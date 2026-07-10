@@ -35,8 +35,7 @@ impl O3RuntimeState {
             }
         } else {
             let sequence = self.allocate_sequence();
-            let (iew_dependency_producers, iew_dependency_consumers) =
-                self.record_scalar_integer_dependencies(&record.instruction());
+            let dependencies = self.record_scalar_integer_dependencies(&record.instruction());
             let destination = self.record_rename_map_entries(record, None);
             for entry in &mut self.snapshot.reorder_buffer {
                 entry.mark_ready();
@@ -59,8 +58,8 @@ impl O3RuntimeState {
                 occupancy,
                 commits,
                 commit_blocked,
-                iew_dependency_producers,
-                iew_dependency_consumers,
+                iew_dependency_producers: dependencies.newly_observed_producers,
+                iew_dependency_consumers: dependencies.consumers,
                 drains_runtime_rob: true,
             }
         };
@@ -122,7 +121,7 @@ impl O3RuntimeState {
                 .observe_lsq_occupancy(self.snapshot.load_store_queue.len());
         }
         let lsq_occupancy = self.snapshot.load_store_queue.len();
-        let rename_map_entries = self.snapshot.rename_map.len();
+        let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
         let trace_record = O3RuntimeTraceRecord::new(
             observation.sequence,
             observation.issue_tick,
@@ -167,8 +166,8 @@ impl O3RuntimeState {
             .load_store_queue
             .partition_point(|entry| entry.is_completed());
         self.snapshot.load_store_queue.drain(0..lsq_commits);
-        self.stats
-            .set_rename_map_entries(self.snapshot.rename_map.len());
+        let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
+        self.stats.set_rename_map_entries(rename_map_entries);
         trace_record
     }
 
@@ -216,8 +215,9 @@ impl O3RuntimeState {
     pub(super) fn record_scalar_integer_dependencies(
         &mut self,
         instruction: &rem6_isa_riscv::RiscvInstruction,
-    ) -> (u64, u64) {
-        let mut producers = 0_u64;
+    ) -> O3ScalarIntegerDependencyObservation {
+        let mut producer_physical_registers = BTreeSet::new();
+        let mut newly_observed_producers = 0_u64;
         let mut consumers = 0_u64;
         for register in o3_scalar_integer_source_registers(instruction) {
             if register.is_zero() {
@@ -229,17 +229,22 @@ impl O3RuntimeState {
             }) else {
                 continue;
             };
+            producer_physical_registers.insert(source.physical());
             if self
                 .dependency_producers_with_consumers
                 .insert(source.physical())
             {
-                producers = producers.saturating_add(1);
+                newly_observed_producers = newly_observed_producers.saturating_add(1);
                 self.stats.record_iew_dependency_producer();
             }
             consumers = consumers.saturating_add(1);
             self.stats.record_iew_dependency_consumer();
         }
-        (producers, consumers)
+        O3ScalarIntegerDependencyObservation {
+            producer_physical_registers: producer_physical_registers.into_iter().collect(),
+            newly_observed_producers,
+            consumers,
+        }
     }
 
     fn install_rename_map_entry(

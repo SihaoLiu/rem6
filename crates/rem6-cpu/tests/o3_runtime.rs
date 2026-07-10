@@ -328,6 +328,139 @@ fn o3_runtime_checkpoint_decodes_v20_without_live_staged_rob_metadata() {
 }
 
 #[test]
+fn o3_runtime_checkpoint_rejects_inconsistent_live_staged_rob_metadata() {
+    let snapshot = rem6_cpu::O3RuntimeSnapshot::new(
+        [O3ReorderBufferEntry::new(
+            10,
+            Address::new(0x8000),
+            Some(O3PhysicalRegisterId::new(40)),
+        )
+        .with_ready_tick(123)],
+        [],
+        [],
+        O3PendingStateSnapshot::new(
+            [],
+            [],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let encoded = O3RuntimeCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let rob_offset = o3_runtime_rob_payload_offset(&encoded);
+    let destination_present_offset = rob_offset + 8 + 8;
+    let live_staged_offset = rob_offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK;
+    let rename_destination_present_offset = live_staged_offset + 1;
+
+    for (name, destination_present, live_staged, rename_destination_present) in [
+        ("non-staged rename destination", 1, 0, 1),
+        ("staged destination without rename identity", 1, 1, 0),
+        ("staged rename identity without destination", 0, 1, 1),
+    ] {
+        let mut malformed = encoded.clone();
+        malformed[destination_present_offset] = destination_present;
+        malformed[live_staged_offset] = live_staged;
+        malformed[rename_destination_present_offset] = rename_destination_present;
+
+        let error = O3RuntimeCheckpointPayload::decode(&malformed)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("live-staged ROB metadata"),
+            "{name} should be rejected explicitly, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn o3_runtime_checkpoint_rejects_legacy_public_live_overlay_as_committed_mapping() {
+    let physical = O3PhysicalRegisterId::new(40);
+    let snapshot = rem6_cpu::O3RuntimeSnapshot::new(
+        [
+            O3ReorderBufferEntry::new(10, Address::new(0x8000), Some(physical))
+                .with_ready_tick(123),
+        ],
+        [],
+        [O3RenameMapEntry::new(O3RegisterClass::Integer, 3, physical)],
+        O3PendingStateSnapshot::new(
+            [],
+            [],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut encoded = O3RuntimeCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let rob_offset = o3_runtime_rob_payload_offset(&encoded);
+    let live_staged_offset = rob_offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK;
+    encoded[live_staged_offset] = 1;
+    encoded[live_staged_offset + 1] = 1;
+    encoded[live_staged_offset + 3..live_staged_offset + 7].copy_from_slice(&3_u32.to_le_bytes());
+
+    let error = O3RuntimeCheckpointPayload::decode(&encoded)
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("already committed"),
+        "legacy public-overlay payload should be rejected explicitly, got: {error}"
+    );
+}
+
+#[test]
+fn o3_runtime_checkpoint_rejects_invalid_live_staged_physical_register() {
+    let snapshot = rem6_cpu::O3RuntimeSnapshot::new(
+        [O3ReorderBufferEntry::new(
+            10,
+            Address::new(0x8000),
+            Some(O3PhysicalRegisterId::new(40)),
+        )
+        .with_ready_tick(123)],
+        [],
+        [],
+        O3PendingStateSnapshot::new(
+            [],
+            [],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut encoded = O3RuntimeCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let rob_offset = o3_runtime_rob_payload_offset(&encoded);
+    let physical_offset = rob_offset + 8 + 8 + 1;
+    let live_staged_offset = rob_offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK;
+    encoded[physical_offset..physical_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    encoded[live_staged_offset] = 1;
+    encoded[live_staged_offset + 1] = 1;
+    encoded[live_staged_offset + 3..live_staged_offset + 7].copy_from_slice(&3_u32.to_le_bytes());
+
+    let error = O3RuntimeCheckpointPayload::decode(&encoded)
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("invalid physical register"),
+        "invalid staged physical register should be rejected explicitly, got: {error}"
+    );
+}
+
+#[test]
 fn o3_runtime_checkpoint_decodes_v3_non_integer_fu_class_stats() {
     let core = RiscvCore::new(core(0x8000));
     for (sequence, instruction) in [

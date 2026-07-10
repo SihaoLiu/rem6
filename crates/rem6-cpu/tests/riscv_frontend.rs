@@ -7542,6 +7542,77 @@ fn riscv_core_schedulerless_execute_blocks_pending_gate_until_redirect_clears_it
 }
 
 #[test]
+fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destination() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let addi = i_type(9, 0, 0x0, 4, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.set_status(RiscvStatusWord::new(0).with_mie(true));
+    core.set_detailed_live_retire_gate_enabled(true);
+    let store = loaded_program_store(0x8000, &[div, addi], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    let live_snapshot = core.o3_runtime_snapshot();
+    assert_eq!(live_snapshot.reorder_buffer().len(), 2);
+    assert!(live_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
+    }));
+    assert!(live_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 4
+    }));
+
+    let interrupt_bit = 1_u64 << 1;
+    core.set_machine_interrupt_pending(interrupt_bit);
+    core.set_machine_interrupt_enable(interrupt_bit);
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
+        panic!("expected the live-gated divide to redirect through the pending interrupt");
+    };
+
+    assert!(matches!(
+        interrupted.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::Interrupt { code: 1 })
+    ));
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(core.read_register(reg(4)), 0);
+    let redirected_snapshot = core.o3_runtime_snapshot();
+    assert!(redirected_snapshot.reorder_buffer().is_empty());
+    assert!(!redirected_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && matches!(entry.architectural(), 3 | 4)
+    }));
+}
+
+#[test]
 fn riscv_core_schedulerless_execute_bypasses_unstarted_detailed_live_retire_gate() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
