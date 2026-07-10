@@ -765,6 +765,11 @@ system.cpu1.commit.committedInstType.IntDiv
 /cores/0/o3_runtime/event_window/max_rob_occupancy/tick
 /cores/0/o3_runtime/event_window/max_structural_pressure/lsq_occupancy
 /cores/0/o3_runtime/event_window/max_lsq_data_latency/lsq_ordering
+/cores/0/o3_runtime/live_retire_gate/scheduled_waits
+/cores/0/o3_runtime/live_retire_gate/wait_ticks
+/cores/0/o3_runtime/live_retire_gate/max_wait_ticks
+/memory/0/hex
+/simulation/final_tick
 /cores/0/o3_runtime/rob/allocations
 /cores/0/o3_runtime/rename/writes
 /cores/0/o3_runtime/snapshot/rob/count
@@ -990,6 +995,9 @@ sim.cpu0.o3.instructions
 sim.cpu0.o3.rob_allocations
 sim.cpu0.o3.lsq_loads
 sim.cpu0.o3.fu_integer_mul_instructions
+sim.cpu0.o3.live_retire_gate.scheduled_waits
+sim.cpu0.o3.live_retire_gate.wait_ticks
+sim.cpu0.o3.live_retire_gate.max_wait_ticks
 /cores/0/o3_runtime/instructions
 /cores/0/o3_runtime/fu_integer_mul_instructions
 sim.cpu0.o3.commit.committed_inst_type.mem_read
