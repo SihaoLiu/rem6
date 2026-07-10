@@ -20,6 +20,7 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB: u8 = 21;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE: u8 = 20;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS: u8 = 19;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS: u8 = 18;
@@ -28,7 +29,7 @@ const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -46,7 +47,10 @@ const U64_BYTES: usize = 8;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC.len() + 1 + U32_BYTES * 4;
 const O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY: usize = U64_BYTES + U64_BYTES + 1 + U32_BYTES + 1;
-const O3_RUNTIME_ROB_ENTRY_BYTES: usize = O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY + U64_BYTES;
+const O3_RUNTIME_ROB_ENTRY_BYTES_WITH_READY_TICK: usize =
+    O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY + U64_BYTES;
+const O3_RUNTIME_ROB_ENTRY_BYTES: usize =
+    O3_RUNTIME_ROB_ENTRY_BYTES_WITH_READY_TICK + 1 + 1 + 1 + U32_BYTES;
 const O3_RUNTIME_LSQ_ENTRY_BYTES: usize = U64_BYTES + 1 + U64_BYTES + U32_BYTES + 1 + 1;
 const O3_RUNTIME_RENAME_ENTRY_BYTES: usize = 1 + U32_BYTES + U32_BYTES;
 const O3_RUNTIME_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize = O3_RUNTIME_RENAME_ENTRY_BYTES + 1;
@@ -150,6 +154,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -169,8 +174,11 @@ impl O3RuntimeCheckpointPayload {
         offset = pending_payload_end;
 
         let has_rob_ready_ticks = version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS;
-        let rob_entry_bytes = if has_rob_ready_ticks {
+        let has_live_staged_rob = version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB;
+        let rob_entry_bytes = if has_live_staged_rob {
             O3_RUNTIME_ROB_ENTRY_BYTES
+        } else if has_rob_ready_ticks {
+            O3_RUNTIME_ROB_ENTRY_BYTES_WITH_READY_TICK
         } else {
             O3_RUNTIME_ROB_ENTRY_BYTES_LEGACY
         };
@@ -181,7 +189,12 @@ impl O3RuntimeCheckpointPayload {
         )?;
         let mut reorder_buffer = Vec::with_capacity(rob_count);
         for _ in 0..rob_count {
-            reorder_buffer.push(read_rob_entry(payload, &mut offset, has_rob_ready_ticks)?);
+            reorder_buffer.push(read_rob_entry(
+                payload,
+                &mut offset,
+                has_rob_ready_ticks,
+                has_live_staged_rob,
+            )?);
         }
 
         ensure_remaining(
@@ -371,6 +384,16 @@ fn write_rob_entry(payload: &mut Vec<u8>, entry: O3ReorderBufferEntry) {
     }
     payload.push(bool_flag(entry.is_ready()));
     payload.extend_from_slice(&entry.ready_tick().to_le_bytes());
+    payload.push(bool_flag(entry.is_live_staged()));
+    if let Some((register_class, architectural)) = entry.rename_destination() {
+        payload.push(1);
+        payload.push(encode_register_class(register_class));
+        payload.extend_from_slice(&architectural.to_le_bytes());
+    } else {
+        payload.push(0);
+        payload.push(encode_register_class(O3RegisterClass::Integer));
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+    }
 }
 
 fn write_lsq_entry(payload: &mut Vec<u8>, entry: O3LoadStoreQueueEntry) {
@@ -620,6 +643,7 @@ fn read_rob_entry(
     payload: &[u8],
     offset: &mut usize,
     has_ready_tick: bool,
+    has_live_staged: bool,
 ) -> Result<O3ReorderBufferEntry, O3RuntimeError> {
     let sequence = read_u64(payload, offset)?;
     let pc = Address::new(read_u64(payload, offset)?);
@@ -631,11 +655,27 @@ fn read_rob_entry(
     } else {
         pc.get()
     };
-    Ok(
-        O3ReorderBufferEntry::new(sequence, pc, destination_present.then_some(physical))
-            .with_ready(ready)
-            .with_ready_tick(ready_tick),
-    )
+    let (live_staged, rename_destination) = if has_live_staged {
+        let live_staged = read_bool("ROB live-staged", payload, offset)?;
+        let rename_destination_present =
+            read_bool("ROB rename-destination-present", payload, offset)?;
+        let register_class = decode_register_class(read_u8(payload, offset)?)?;
+        let architectural = read_u32(payload, offset)?;
+        (
+            live_staged,
+            rename_destination_present.then_some((register_class, architectural)),
+        )
+    } else {
+        (false, None)
+    };
+    let entry = O3ReorderBufferEntry::new(sequence, pc, destination_present.then_some(physical))
+        .with_ready(ready)
+        .with_ready_tick(ready_tick);
+    Ok(if live_staged {
+        entry.with_live_staged_rename_destination(rename_destination)
+    } else {
+        entry
+    })
 }
 
 fn read_lsq_entry(

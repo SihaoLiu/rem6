@@ -124,6 +124,10 @@ impl RiscvLiveRetireGateState {
             .is_some_and(RiscvLiveRetireGatePending::blocks_new_work)
     }
 
+    pub(crate) fn pending_ready_tick(&self) -> Option<Tick> {
+        self.pending.map(RiscvLiveRetireGatePending::ready_tick)
+    }
+
     pub(crate) fn rebind_pending_to_next_request(&mut self) {
         if let Some(pending) = &mut self.pending {
             pending.rebind_to_next_request();

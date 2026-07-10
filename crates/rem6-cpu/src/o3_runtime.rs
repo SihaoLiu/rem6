@@ -22,6 +22,8 @@ mod o3_runtime_checkpoint;
 mod o3_runtime_checkpoint_branch_mismatch;
 #[path = "o3_runtime_helpers.rs"]
 mod o3_runtime_helpers;
+#[path = "o3_runtime_live_window.rs"]
+mod o3_runtime_live_window;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
 #[path = "o3_runtime_snapshot_entries.rs"]
@@ -37,6 +39,7 @@ use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
     rob_commit_tick, validate_runtime_snapshot, validate_unique, O3RuntimeUniqueKey,
 };
+use o3_runtime_live_window::O3LiveRetiredInstruction;
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
@@ -135,6 +138,7 @@ pub struct O3RuntimeState {
     trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
     store_forwarding_window: O3StoreForwardingWindow,
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
+    live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -151,6 +155,7 @@ impl O3RuntimeState {
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         self.dependency_producers_with_consumers.clear();
+        self.live_retired_instructions.clear();
         Ok(())
     }
 
@@ -168,7 +173,7 @@ impl O3RuntimeState {
     }
 
     pub fn snapshot(&self) -> O3RuntimeSnapshot {
-        self.snapshot.clone()
+        self.snapshot_with_live_rename_map()
     }
 
     pub const fn stats(&self) -> O3RuntimeStats {
@@ -177,7 +182,7 @@ impl O3RuntimeState {
 
     pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
         O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
-            self.snapshot(),
+            self.snapshot.clone(),
             self.stats(),
             self.dependency_producers_with_consumers.clone(),
         )
@@ -242,6 +247,24 @@ impl O3RuntimeState {
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
+        let live_rob_occupancy = self
+            .live_retired_instructions
+            .iter()
+            .map(|instruction| instruction.rob_occupancy)
+            .max()
+            .unwrap_or_default()
+            .max(self.snapshot.reorder_buffer.len());
+        self.stats.observe_rob_occupancy(live_rob_occupancy);
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+        for instruction in &self.live_retired_instructions {
+            for _ in 0..instruction.iew_dependency_producers {
+                self.stats.record_iew_dependency_producer();
+            }
+            for _ in 0..instruction.iew_dependency_consumers {
+                self.stats.record_iew_dependency_consumer();
+            }
+        }
         self.trace_records.clear();
         self.dirty_trace_record_indices.clear();
         self.data_access_sequences.clear();
@@ -438,6 +461,7 @@ impl Default for O3RuntimeState {
             trace_data_access_sequences: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             dependency_producers_with_consumers: BTreeSet::new(),
+            live_retired_instructions: Vec::new(),
             next_sequence: 0,
             next_physical_register: 1,
         }

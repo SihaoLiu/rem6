@@ -27,8 +27,10 @@ const O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_PEND
 const O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET + 4;
 const O3_RUNTIME_CHECKPOINT_RENAME_COUNT_OFFSET: usize = O3_RUNTIME_CHECKPOINT_LSQ_COUNT_OFFSET + 4;
 const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY: usize = 8 + 8 + 1 + 4 + 1;
-const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES: usize =
+const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK: usize =
     O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY + 8;
+const O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES: usize =
+    O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK + 1 + 1 + 1 + 4;
 const O3_RUNTIME_CHECKPOINT_LSQ_ENTRY_BYTES: usize = 8 + 1 + 8 + 4 + 1 + 1;
 const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES: usize = 1 + 4 + 4;
 const O3_RUNTIME_CHECKPOINT_RENAME_ENTRY_BYTES_WITH_DEPENDENCY: usize =
@@ -289,6 +291,40 @@ fn o3_runtime_checkpoint_decodes_v19_without_live_retire_gate() {
     assert_eq!(decoded.stats().live_retire_gate_scheduled_waits(), 0);
     assert_eq!(decoded.stats().live_retire_gate_wait_ticks(), 0);
     assert_eq!(decoded.stats().live_retire_gate_max_wait_ticks(), 0);
+}
+
+#[test]
+fn o3_runtime_checkpoint_decodes_v20_without_live_staged_rob_metadata() {
+    let snapshot = rem6_cpu::O3RuntimeSnapshot::new(
+        [O3ReorderBufferEntry::new(
+            10,
+            Address::new(0x8000),
+            Some(O3PhysicalRegisterId::new(40)),
+        )
+        .with_ready(true)
+        .with_ready_tick(123)],
+        [],
+        [],
+        O3PendingStateSnapshot::new(
+            [],
+            [],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let payload = O3RuntimeCheckpointPayload::from_snapshot(snapshot).unwrap();
+    let mut encoded = strip_current_live_staged_rob_bytes(&payload.encode());
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 20;
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    let entry = decoded.snapshot().reorder_buffer()[0];
+    assert_eq!(entry.ready_tick(), 123);
+    assert!(entry.is_ready());
+    assert!(!entry.is_live_staged());
 }
 
 #[test]
@@ -1308,6 +1344,7 @@ fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {
 }
 
 fn strip_current_live_retire_gate(payload: &[u8]) -> Vec<u8> {
+    let payload = strip_current_live_staged_rob_bytes(payload);
     let trailer_offset = payload
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES)
@@ -1326,6 +1363,29 @@ fn strip_current_live_retire_gate(payload: &[u8]) -> Vec<u8> {
     .concat()
 }
 
+fn strip_current_live_staged_rob_bytes(payload: &[u8]) -> Vec<u8> {
+    let pending_len = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
+    let rob_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
+    let rob_offset = O3_RUNTIME_CHECKPOINT_HEADER_BYTES + pending_len;
+    let mut offset = rob_offset;
+    let live_metadata_bytes = O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES
+        - O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK;
+    let mut legacy = Vec::with_capacity(
+        payload
+            .len()
+            .saturating_sub(rob_count * live_metadata_bytes),
+    );
+    legacy.extend_from_slice(&payload[..rob_offset]);
+    for _ in 0..rob_count {
+        legacy.extend_from_slice(
+            &payload[offset..offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK],
+        );
+        offset += O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES;
+    }
+    legacy.extend_from_slice(&payload[offset..]);
+    legacy
+}
+
 fn strip_current_rob_ready_tick_bytes(payload: &[u8]) -> Vec<u8> {
     let payload = strip_current_live_retire_gate(payload);
     let pending_len = checkpoint_u32(&payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
@@ -1338,7 +1398,7 @@ fn strip_current_rob_ready_tick_bytes(payload: &[u8]) -> Vec<u8> {
         legacy.extend_from_slice(
             &payload[offset..offset + O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_LEGACY],
         );
-        offset += O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES;
+        offset += O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES_WITH_READY_TICK;
     }
     legacy.extend_from_slice(&payload[offset..]);
     legacy

@@ -7,8 +7,10 @@ pub struct O3ReorderBufferEntry {
     sequence: u64,
     pc: Address,
     destination: Option<O3PhysicalRegisterId>,
+    rename_destination: Option<(O3RegisterClass, u32)>,
     ready: bool,
     ready_tick: u64,
+    live_staged: bool,
 }
 
 impl O3ReorderBufferEntry {
@@ -21,8 +23,10 @@ impl O3ReorderBufferEntry {
             sequence,
             pc,
             destination,
+            rename_destination: None,
             ready: false,
             ready_tick: 0,
+            live_staged: false,
         }
     }
 
@@ -36,8 +40,22 @@ impl O3ReorderBufferEntry {
         self
     }
 
+    pub(crate) const fn with_live_staged_rename_destination(
+        mut self,
+        rename_destination: Option<(O3RegisterClass, u32)>,
+    ) -> Self {
+        self.rename_destination = rename_destination;
+        self.live_staged = true;
+        self
+    }
+
     pub(super) fn mark_ready(&mut self) {
         self.ready = true;
+    }
+
+    pub(super) fn mark_ready_at(&mut self, ready_tick: u64) {
+        self.ready = true;
+        self.ready_tick = ready_tick;
     }
 
     pub const fn sequence(self) -> u64 {
@@ -52,12 +70,20 @@ impl O3ReorderBufferEntry {
         self.destination
     }
 
+    pub(crate) const fn rename_destination(self) -> Option<(O3RegisterClass, u32)> {
+        self.rename_destination
+    }
+
     pub const fn is_ready(self) -> bool {
         self.ready
     }
 
     pub const fn ready_tick(self) -> u64 {
         self.ready_tick
+    }
+
+    pub const fn is_live_staged(self) -> bool {
+        self.live_staged
     }
 }
 

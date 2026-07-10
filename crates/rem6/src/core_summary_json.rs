@@ -268,11 +268,12 @@ fn o3_runtime_snapshot_json(summary: &Rem6CoreSummary) -> String {
         .iter()
         .map(|entry| {
             format!(
-                "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"destination\":{},\"ready\":{}}}",
+                "{{\"sequence\":{},\"pc\":\"0x{:x}\",\"destination\":{},\"ready\":{},\"live_staged\":{}}}",
                 entry.sequence(),
                 entry.pc().get(),
                 o3_runtime_physical_json(entry.destination()),
-                entry.is_ready()
+                entry.is_ready(),
+                entry.is_live_staged()
             )
         })
         .collect::<Vec<_>>()

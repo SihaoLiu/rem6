@@ -62,6 +62,7 @@ fn rem6_run_o3_detailed_div_live_retire_gate_delays_architectural_commit() {
         detailed.json
     );
 
+    assert_live_retire_window(&detailed_before_commit.json);
     assert_live_retire_gate_stats(&detailed_before_commit.json, 1, 19, 19);
     assert_live_retire_gate_stats(&detailed.json, 1, 19, 19);
     assert_live_retire_gate_stats_absent(&timing.json);
@@ -218,6 +219,59 @@ fn assert_live_retire_gate_stats_absent(json: &Value) {
             .is_none(),
         "inactive live retire-gate JSON should be absent: {json}"
     );
+}
+
+fn assert_live_retire_window(json: &Value) {
+    let snapshot = json
+        .pointer("/cores/0/o3_runtime/snapshot")
+        .unwrap_or_else(|| panic!("detailed run should expose a live O3 snapshot: {json}"));
+    let rob = snapshot
+        .pointer("/rob")
+        .unwrap_or_else(|| panic!("detailed run should expose a live ROB snapshot: {snapshot}"));
+    assert_eq!(
+        rob.pointer("/count").and_then(Value::as_u64),
+        Some(2),
+        "the gated DIV and its fetched successor should reside in the ROB before retirement: {rob}"
+    );
+    let entries = rob
+        .pointer("/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("live ROB should expose ordered entries: {rob}"));
+    for (entry, pc) in entries.iter().zip(["0x8000000c", "0x80000010"]) {
+        assert_eq!(entry.pointer("/pc").and_then(Value::as_str), Some(pc));
+        assert_eq!(
+            entry.pointer("/ready").and_then(Value::as_bool),
+            Some(false),
+            "neither staged instruction may become architecturally ready before the gate wakes: {entry}"
+        );
+        assert_eq!(
+            entry.pointer("/live_staged").and_then(Value::as_bool),
+            Some(true),
+            "pre-retirement ROB residency must be execution-owned rather than reconstructed from retired events: {entry}"
+        );
+        assert!(
+            entry
+                .pointer("/destination")
+                .and_then(Value::as_u64)
+                .is_some(),
+            "both scalar instructions should own a physical destination while staged: {entry}"
+        );
+    }
+
+    let rename_entries = snapshot
+        .pointer("/rename_map/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("live snapshot should expose rename mappings: {snapshot}"));
+    for architectural in [3, 4] {
+        assert!(
+            rename_entries.iter().any(|entry| {
+                entry.pointer("/register_class").and_then(Value::as_str) == Some("integer")
+                    && entry.pointer("/architectural").and_then(Value::as_u64)
+                        == Some(architectural)
+            }),
+            "live rename map should include staged x{architectural}: {rename_entries:?}"
+        );
+    }
 }
 
 fn live_retire_gate_json_u64_field(json: &Value, pointer: &str) -> u64 {

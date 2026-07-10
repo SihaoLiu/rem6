@@ -4,7 +4,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState,
     HtmFailureCause, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
-    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvCpuExecutionEvent,
+    O3RegisterClass, RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvCpuExecutionEvent,
     RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
@@ -7505,8 +7505,19 @@ fn riscv_core_schedulerless_execute_blocks_pending_gate_until_redirect_clears_it
     assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
     assert_eq!(core.read_register(reg(3)), 0);
     assert_eq!(core.pc(), Address::new(0x8000));
+    let live_snapshot = core.o3_runtime_snapshot();
+    assert_eq!(live_snapshot.reorder_buffer().len(), 1);
+    assert!(live_snapshot.reorder_buffer()[0].is_live_staged());
+    assert!(live_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
+    }));
 
     core.redirect_pc(Address::new(0x9000));
+    let redirected_snapshot = core.o3_runtime_snapshot();
+    assert!(redirected_snapshot.reorder_buffer().is_empty());
+    assert!(!redirected_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
+    }));
 
     assert!(matches!(
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),

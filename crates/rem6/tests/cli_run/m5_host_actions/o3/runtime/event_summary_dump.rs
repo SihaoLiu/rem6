@@ -291,11 +291,11 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_event_summary_trace_rows() {
     for (path, value) in [
         (
             "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.commit_blocked_events",
-            2,
+            1,
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.event_summary.rob.max_commits_at_tick",
-            2,
+            1,
         ),
     ] {
         assert_stats_dump_sample(

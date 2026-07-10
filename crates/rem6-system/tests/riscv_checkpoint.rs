@@ -290,6 +290,13 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
         scheduler.quiescent_snapshot(),
         Err(SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 })
     ));
+    let live_snapshot = core.o3_runtime_snapshot();
+    assert_eq!(live_snapshot.reorder_buffer().len(), 1);
+    assert!(live_snapshot.reorder_buffer()[0].is_live_staged());
+    assert!(!live_snapshot.reorder_buffer()[0].is_ready());
+    assert!(live_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
+    }));
 
     let captured = port.capture_into(&mut registry).unwrap();
     assert_eq!(
@@ -301,6 +308,7 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     );
     drop(scheduler);
     port.restore_from(&registry).unwrap();
+    assert_eq!(core.o3_runtime_snapshot(), live_snapshot);
 
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
     let reissued = core
@@ -353,6 +361,9 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     }
 
     core.reset_o3_runtime_stats();
+    assert_eq!(core.o3_runtime_snapshot(), live_snapshot);
+    assert_eq!(core.o3_runtime_stats().max_rob_occupancy(), 1);
+    assert_eq!(core.o3_runtime_stats().rename_map_entries(), 1);
     core.set_detailed_live_retire_gate_enabled(false);
     scheduler.run_until_idle_conservative();
     assert_eq!(scheduler.now(), ready_tick);
@@ -372,6 +383,11 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     ));
     assert_eq!(core.read_register(reg(3)), 12);
     assert_eq!(core.pc(), Address::new(entry + 4));
+    let retired_snapshot = core.o3_runtime_snapshot();
+    assert!(retired_snapshot.reorder_buffer().is_empty());
+    assert!(retired_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
+    }));
     assert_eq!(
         core.o3_runtime_stats().live_retire_gate_scheduled_waits(),
         0

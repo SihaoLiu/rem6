@@ -9,7 +9,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
-    riscv_live_retire_gate::RiscvLiveRetireGateDecision, BranchTargetKind, CpuFetchEvent,
+    riscv_live_retire_window::RiscvLiveRetireWindowRequest, BranchTargetKind, CpuFetchEvent,
     CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
     InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
     InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
@@ -161,18 +161,23 @@ impl RiscvCore {
                 raw.to_le_bytes().to_vec(),
             );
             let consumed = [prefix.fetch.request_id(), suffix.request_id()];
-            if self.live_retire_gate_blocks(
+            let Some(retire_tick) = self.live_retire_gate_retire_tick(
                 &mut state,
                 &mut gate_scheduler,
-                fetch.request_id(),
-                raw,
-                fetch.tick(),
-            )? {
+                RiscvLiveRetireWindowRequest::new(
+                    fetch.request_id(),
+                    fetch.pc(),
+                    raw,
+                    fetch.tick(),
+                    &fetch_events,
+                ),
+            )?
+            else {
                 return Ok(None);
-            }
+            };
             state.pending_fetch_prefix = None;
             return self
-                .retire_completed_fetch(&mut state, fetch, raw, &consumed)
+                .retire_completed_fetch(&mut state, fetch, raw, &consumed, retire_tick)
                 .map(Some);
         }
 
@@ -204,59 +209,28 @@ impl RiscvCore {
                 });
             }
         };
-        if self.live_retire_gate_blocks(
+        let Some(retire_tick) = self.live_retire_gate_retire_tick(
             &mut state,
             &mut gate_scheduler,
-            fetch.request_id(),
-            raw,
-            fetch.tick(),
-        )? {
+            RiscvLiveRetireWindowRequest::new(
+                fetch.request_id(),
+                fetch.pc(),
+                raw,
+                fetch.tick(),
+                &fetch_events,
+            ),
+        )?
+        else {
             return Ok(None);
-        }
-        self.retire_completed_fetch(&mut state, fetch.clone(), raw, &[fetch.request_id()])
-            .map(Some)
-    }
-
-    fn live_retire_gate_blocks(
-        &self,
-        state: &mut RiscvCoreState,
-        gate_scheduler: &mut Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
-        request: MemoryRequestId,
-        raw: u32,
-        fetch_tick: u64,
-    ) -> Result<bool, RiscvCpuError> {
-        let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
-            return Ok(state.live_retire_gate.blocks_without_scheduler());
         };
-        let now = scheduler
-            .partition_now(self.partition())
-            .map_err(RiscvCpuError::Scheduler)?;
-        let ready_base_tick = now.max(fetch_tick);
-        match state
-            .live_retire_gate
-            .before_retire(request, raw, now, ready_base_tick)?
-        {
-            RiscvLiveRetireGateDecision::Ready => Ok(false),
-            RiscvLiveRetireGateDecision::Blocked => Ok(true),
-            RiscvLiveRetireGateDecision::Schedule {
-                ready_tick,
-                created_wait_ticks,
-            } => {
-                match *kind {
-                    RiscvLiveRetireGateWakeKind::Serial => scheduler
-                        .schedule_at(self.partition(), ready_tick, |_| {})
-                        .map_err(RiscvCpuError::Scheduler)?,
-                    RiscvLiveRetireGateWakeKind::Parallel => scheduler
-                        .schedule_parallel_at(self.partition(), ready_tick, |_| {})
-                        .map_err(RiscvCpuError::Scheduler)?,
-                };
-                state.live_retire_gate.mark_scheduled(request);
-                if let Some(wait_ticks) = created_wait_ticks {
-                    state.o3_runtime.record_live_retire_gate_wait(wait_ticks);
-                }
-                Ok(true)
-            }
-        }
+        self.retire_completed_fetch(
+            &mut state,
+            fetch.clone(),
+            raw,
+            &[fetch.request_id()],
+            retire_tick,
+        )
+        .map(Some)
     }
 
     fn retire_completed_fetch(
@@ -265,6 +239,7 @@ impl RiscvCore {
         fetch: CpuFetchEvent,
         raw: u32,
         consumed_requests: &[MemoryRequestId],
+        retire_tick: u64,
     ) -> Result<RiscvCpuExecutionEvent, RiscvCpuError> {
         let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
         let instruction = decoded.instruction();
@@ -371,6 +346,12 @@ impl RiscvCore {
             0,
             true,
         );
+        state
+            .o3_runtime
+            .retire_live_staged_instruction(&event, retire_tick);
+        if redirects_fetch {
+            state.o3_runtime.discard_live_staged_instructions();
+        }
         let squashed_requests = event
             .in_order_pipeline_cycle()
             .map(|cycle| squashed_fetch_requests(state, &fetch_events, cycle, consumed_requests))

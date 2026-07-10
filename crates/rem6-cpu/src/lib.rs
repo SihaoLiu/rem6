@@ -71,6 +71,7 @@ mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_in_order_config;
 mod riscv_live_retire_gate;
+mod riscv_live_retire_window;
 mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_reservation;
 mod riscv_sc_progress;
@@ -419,6 +420,7 @@ impl RiscvCore {
         state.hart.set_pc(pc.get());
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.o3_runtime.discard_live_retire_window();
         state.live_retire_gate.clear_pending_for_pc_redirect();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
