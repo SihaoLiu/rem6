@@ -741,6 +741,167 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
 }
 
 #[test]
+fn rem6_run_reports_latest_debug_o3_restore_after_multiple_restores() {
+    let path = detailed_o3_scheduled_restore_binary(
+        "m5-switch-cpu-detailed-o3-multiple-scheduled-restores",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "500",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-checkpoint",
+            "8:o3-baseline",
+            "--host-checkpoint",
+            "50:o3-mutated",
+            "--host-restore-checkpoint",
+            "70:o3-baseline",
+            "--host-checkpoint",
+            "113:o3-replayed",
+            "--host-restore-checkpoint",
+            "130:o3-replayed",
+            "--debug-flags",
+            "HostAction",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let restores = json
+        .pointer("/host_actions/checkpoint_restores")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint restores: {json}"));
+    assert_eq!(restores.len(), 2, "checkpoint restores: {restores:?}");
+    assert_eq!(
+        restores[0].pointer("/label").and_then(Value::as_str),
+        Some("o3-baseline")
+    );
+    assert_eq!(
+        restores[1].pointer("/label").and_then(Value::as_str),
+        Some("o3-replayed")
+    );
+
+    let first_chunk = restore_component_chunk(&restores[0], "cpu0", "o3-runtime-state");
+    let latest_chunk = restore_component_chunk(&restores[1], "cpu0", "o3-runtime-state");
+    let first_checksum = first_chunk
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .map(parse_hex_u64)
+        .unwrap_or_else(|| panic!("missing first restore checksum: {first_chunk}"));
+    let latest_checksum = latest_chunk
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .map(parse_hex_u64)
+        .unwrap_or_else(|| panic!("missing latest restore checksum: {latest_chunk}"));
+    assert_ne!(
+        latest_checksum, first_checksum,
+        "the replayed restore should carry newer O3 runtime state"
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.host_action_trace.checkpoint_restore.target.cpu0.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
+        "Unspecified",
+        first_checksum.wrapping_add(latest_checksum),
+        "monotonic",
+    );
+    for prefix in [
+        "sim.host_actions.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state",
+        "sim.debug.host_action_trace.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state",
+    ] {
+        assert_json_stat(
+            &json,
+            &format!("{prefix}.payload_checksum_accumulator"),
+            "Unspecified",
+            latest_checksum,
+            "monotonic",
+        );
+    }
+
+    let first_o3_runtime = first_chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing first restored O3 runtime: {first_chunk}"));
+    let latest_o3_runtime = latest_chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing latest restored O3 runtime: {latest_chunk}"));
+    for (label, runtime) in [("first", first_o3_runtime), ("latest", latest_o3_runtime)] {
+        assert_eq!(
+            runtime.pointer("/decode_error").and_then(Value::as_bool),
+            Some(false),
+            "{label} restored O3 runtime should decode cleanly: {runtime}"
+        );
+    }
+    let first_rename_entries = first_o3_runtime
+        .pointer("/stats_rename_map_entries")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing first restored rename state: {first_o3_runtime}"));
+    let latest_rename_entries = latest_o3_runtime
+        .pointer("/stats_rename_map_entries")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing latest restored rename state: {latest_o3_runtime}"));
+    assert_ne!(
+        first_rename_entries, latest_rename_entries,
+        "latest restore selection should be observable in decoded rename state"
+    );
+    for (field, unit) in [
+        ("stats_lsq_operation_load", "Count"),
+        ("stats_lsq_data_latency_ticks", "Tick"),
+        ("stats_lsq_data_latency_max_ticks", "Tick"),
+        ("stats_lsq_data_latency_min_ticks", "Tick"),
+    ] {
+        let expected = latest_o3_runtime
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("missing latest restored O3 field {field}: {latest_o3_runtime}")
+            });
+        for stat_path in [
+            format!(
+                "sim.host_actions.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+            format!(
+                "sim.debug.host_action_trace.checkpoint_restore.latest_target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{field}"
+            ),
+        ] {
+            assert_json_stat(&json, &stat_path, unit, expected, "monotonic");
+        }
+    }
+}
+
+fn restore_component_chunk<'a>(restore: &'a Value, component: &str, chunk: &str) -> &'a Value {
+    restore
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|entry| {
+                entry.pointer("/component").and_then(Value::as_str) == Some(component)
+            })
+        })
+        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
+        .and_then(|chunks| {
+            chunks
+                .iter()
+                .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        })
+        .unwrap_or_else(|| panic!("missing restore component/chunk {component}/{chunk}: {restore}"))
+}
+
+#[test]
 fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
     let path = detailed_o3_restore_dump_stats_binary("m5-switch-cpu-o3-restore-dump-stats");
 
