@@ -22,6 +22,8 @@ mod lsq_live;
 mod lsq_multi_load;
 #[path = "o3/lsq_overlap.rs"]
 mod lsq_overlap;
+#[path = "o3/lsq_store_load.rs"]
+mod lsq_store_load;
 #[path = "o3/rename_live.rs"]
 mod rename_live;
 #[path = "o3/restore.rs"]

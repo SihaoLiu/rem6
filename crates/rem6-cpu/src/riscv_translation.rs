@@ -616,8 +616,8 @@ impl RiscvCoreState {
         if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_scalar_memory() {
             return Some((fetch_request, access));
         }
-        (self.can_overlap_one_detailed_scalar_load()
-            && self.o3_runtime.can_stage_second_scalar_load(event))
+        (self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
+            && self.o3_runtime.can_stage_second_scalar_memory(event))
         .then_some((fetch_request, access))
     }
 }

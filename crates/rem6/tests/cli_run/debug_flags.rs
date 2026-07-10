@@ -14561,8 +14561,18 @@ fn rem6_run_o3_debug_flag_sums_multicore_runtime_trace_stats() {
             .map(|event| json_record_u64(event, "tick"))
             .collect::<Vec<_>>();
         assert!(
-            event_ticks.windows(2).all(|window| window[0] < window[1]),
-            "O3 event ticks should be strictly increasing per CPU: {event_ticks:?}"
+            event_ticks.windows(2).all(|window| window[0] <= window[1]),
+            "O3 event ticks should be nondecreasing per CPU: {event_ticks:?}"
+        );
+        let event_sequences = events
+            .iter()
+            .map(|event| json_record_u64(event, "sequence"))
+            .collect::<Vec<_>>();
+        assert!(
+            event_sequences
+                .windows(2)
+                .all(|window| window[0] < window[1]),
+            "O3 event sequences should be strictly increasing per CPU: {event_sequences:?}"
         );
         let first_event_tick = *event_ticks.first().expect("per-CPU O3 event tick");
         let last_event_tick = *event_ticks.last().expect("per-CPU O3 event tick");

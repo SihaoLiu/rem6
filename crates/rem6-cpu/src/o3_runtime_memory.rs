@@ -1,6 +1,6 @@
 use super::*;
 
-const MAX_LIVE_SCALAR_LOADS: usize = 2;
+const MAX_LIVE_SCALAR_MEMORIES: usize = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveScalarMemory {
@@ -135,46 +135,6 @@ impl O3RuntimeState {
         true
     }
 
-    pub(crate) fn has_open_scalar_load_overlap_slot(&self) -> bool {
-        self.live_scalar_memories.len() == 1
-            && self.live_scalar_memory_younger_sequences.is_empty()
-            && self.live_scalar_memories[0].outcome == O3LiveScalarMemoryOutcome::Resident
-            && matches!(
-                self.live_scalar_memories[0]
-                    .execution
-                    .execution()
-                    .memory_access(),
-                Some(MemoryAccessKind::Load { .. })
-            )
-    }
-
-    pub(crate) fn can_defer_second_scalar_load_instruction(
-        &self,
-        instruction: RiscvInstruction,
-    ) -> bool {
-        if !self.has_open_scalar_load_overlap_slot() {
-            return false;
-        }
-        let Some(MemoryAccessKind::Load { rd: older_rd, .. }) = self.live_scalar_memories[0]
-            .execution
-            .execution()
-            .memory_access()
-        else {
-            return false;
-        };
-        let RiscvInstruction::Load { rd, rs1, .. } = instruction else {
-            return false;
-        };
-        !rd.is_zero() && rd != *older_rd && rs1 != *older_rd
-    }
-
-    pub(crate) fn can_stage_second_scalar_load(&self, execution: &RiscvCpuExecutionEvent) -> bool {
-        matches!(
-            execution.execution().memory_access(),
-            Some(MemoryAccessKind::Load { .. })
-        ) && self.can_defer_second_scalar_load_instruction(execution.instruction())
-    }
-
     pub(crate) fn defer_scalar_memory_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -187,7 +147,7 @@ impl O3RuntimeState {
             Some(pending) => pending == fetch_request,
             None => {
                 if !self.live_scalar_memories.is_empty()
-                    && !self.can_stage_second_scalar_load(execution)
+                    && !self.can_stage_second_scalar_memory(execution)
                 {
                     return false;
                 }
@@ -229,7 +189,7 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         issue_tick: u64,
     ) -> bool {
-        if self.live_scalar_memories.len() >= MAX_LIVE_SCALAR_LOADS {
+        if self.live_scalar_memories.len() >= MAX_LIVE_SCALAR_MEMORIES {
             return false;
         }
         let Some(access) = execution.execution().memory_access() else {
@@ -238,7 +198,8 @@ impl O3RuntimeState {
         if !is_deferred_o3_scalar_memory_access(Some(access)) {
             return false;
         }
-        if !self.live_scalar_memories.is_empty() && !self.can_stage_second_scalar_load(execution) {
+        if !self.live_scalar_memories.is_empty() && !self.can_stage_second_scalar_memory(execution)
+        {
             return false;
         }
         if self

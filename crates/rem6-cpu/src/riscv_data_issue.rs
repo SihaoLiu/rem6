@@ -6,8 +6,8 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId, ResponseStatus,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
@@ -1227,8 +1227,11 @@ pub(crate) struct IssuedDataAccess {
 }
 
 impl IssuedDataAccess {
-    pub(crate) fn targets_memory(&self) -> bool {
-        matches!(self.target, RiscvDataAccessTarget::Memory { .. })
+    pub(crate) fn memory_range(&self) -> Option<AddressRange> {
+        if !matches!(self.target, RiscvDataAccessTarget::Memory { .. }) {
+            return None;
+        }
+        AddressRange::new(self.physical_address, self.size).ok()
     }
 
     fn record(&self, tick: Tick) -> RiscvDataAccessRecord {

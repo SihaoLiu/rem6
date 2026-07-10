@@ -1,0 +1,206 @@
+use rem6_memory::{AccessSize, AddressRange};
+
+use super::*;
+
+impl O3RuntimeState {
+    pub(crate) fn has_open_scalar_memory_overlap_slot(&self) -> bool {
+        self.live_scalar_memories.len() == 1
+            && self.live_scalar_memory_younger_sequences.is_empty()
+            && self.live_scalar_memories[0].outcome == O3LiveScalarMemoryOutcome::Resident
+            && matches!(
+                self.live_scalar_memories[0]
+                    .execution
+                    .execution()
+                    .memory_access(),
+                Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
+            )
+    }
+
+    pub(crate) fn can_defer_second_scalar_memory_instruction(
+        &self,
+        instruction: RiscvInstruction,
+        younger_range: AddressRange,
+    ) -> bool {
+        if !self.has_open_scalar_memory_overlap_slot() {
+            return false;
+        }
+        let RiscvInstruction::Load { rd, rs1, .. } = instruction else {
+            return false;
+        };
+        if rd.is_zero() {
+            return false;
+        }
+        let Some(older) = self.live_scalar_memories[0]
+            .execution
+            .execution()
+            .memory_access()
+        else {
+            return false;
+        };
+        match older {
+            MemoryAccessKind::Load { rd: older_rd, .. } => rd != *older_rd && rs1 != *older_rd,
+            MemoryAccessKind::Store { .. } => scalar_memory_range(older)
+                .is_some_and(|older_range| !older_range.overlaps(younger_range)),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn can_stage_second_scalar_memory(
+        &self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> bool {
+        let Some(access @ MemoryAccessKind::Load { .. }) = execution.execution().memory_access()
+        else {
+            return false;
+        };
+        scalar_memory_range(access).is_some_and(|younger_range| {
+            self.can_defer_second_scalar_memory_instruction(execution.instruction(), younger_range)
+        })
+    }
+}
+
+fn scalar_memory_range(access: &MemoryAccessKind) -> Option<AddressRange> {
+    let (address, width) = match access {
+        MemoryAccessKind::Load { address, width, .. }
+        | MemoryAccessKind::Store { address, width, .. } => (*address, *width),
+        _ => return None,
+    };
+    let size = AccessSize::new(width.bytes() as u64).ok()?;
+    AddressRange::new(Address::new(address), size).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::{
+        Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
+    };
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    use super::*;
+    use crate::{CpuFetchEvent, CpuFetchRecord};
+
+    #[test]
+    fn disjoint_store_then_load_stages_two_live_scalar_memory_rows() {
+        let mut runtime = O3RuntimeState::default();
+        let older = scalar_store_event(0x8000, 10, 0x9000);
+        let younger = scalar_load_event(0x8004, 11, 13, 10, 0x9004);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+
+        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
+        assert_eq!(
+            runtime.snapshot().load_store_queue()[0].kind(),
+            O3LoadStoreQueueKind::Store
+        );
+        assert_eq!(
+            runtime.snapshot().load_store_queue()[1].kind(),
+            O3LoadStoreQueueKind::Load
+        );
+    }
+
+    #[test]
+    fn store_then_overlapping_load_does_not_stage_second_live_row() {
+        for younger_address in [0x8fff, 0x9000, 0x9002, 0x9003] {
+            let mut runtime = O3RuntimeState::default();
+            let older = scalar_store_event(0x8000, 10, 0x9000);
+            let younger = scalar_load_event(0x8004, 11, 13, 10, younger_address);
+
+            assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+            assert!(
+                !runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32),
+                "younger load at {younger_address:#x} overlaps the older word store"
+            );
+            assert_eq!(runtime.live_scalar_memories.len(), 1);
+        }
+    }
+
+    #[test]
+    fn load_then_store_remains_serialized() {
+        let mut runtime = O3RuntimeState::default();
+        let older = scalar_load_event(0x8000, 10, 12, 10, 0x9000);
+        let younger = scalar_store_event(0x8004, 11, 0x9040);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+        assert_eq!(runtime.live_scalar_memories.len(), 1);
+    }
+
+    fn scalar_load_event(
+        pc: u64,
+        sequence: u64,
+        rd: u8,
+        rs1: u8,
+        address: u64,
+    ) -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Load {
+            rd: reg(rd),
+            rs1: reg(rs1),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let access = MemoryAccessKind::Load {
+            rd: reg(rd),
+            address,
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        execution_event(pc, sequence, instruction, access)
+    }
+
+    fn scalar_store_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Store {
+            rs1: reg(10),
+            rs2: reg(11),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+        };
+        let access = MemoryAccessKind::Store {
+            address,
+            width: MemoryWidth::Word,
+            value: 0x2a,
+        };
+        execution_event(pc, sequence, instruction, access)
+    }
+
+    fn execution_event(
+        pc: u64,
+        sequence: u64,
+        instruction: RiscvInstruction,
+        access: MemoryAccessKind,
+    ) -> RiscvCpuExecutionEvent {
+        RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+        )
+    }
+
+    fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
+        CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                10 + sequence,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                memory_request(sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            0x0000_0073_u32.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn memory_request(sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    fn reg(index: u8) -> Register {
+        Register::new(index).unwrap()
+    }
+}

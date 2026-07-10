@@ -145,15 +145,10 @@ fn detailed_scalar_memory_blocks_execution(
     {
         return Ok(false);
     }
-    if !state.can_overlap_one_detailed_scalar_load() {
-        return Ok(true);
-    }
     let instruction = RiscvInstruction::decode_with_length(raw)
         .map_err(RiscvCpuError::Isa)?
         .instruction();
-    Ok(!state
-        .o3_runtime
-        .can_defer_second_scalar_load_instruction(instruction))
+    Ok(!state.can_overlap_detailed_scalar_memory_instruction(instruction))
 }
 
 fn stage_o3_live_retire_window(

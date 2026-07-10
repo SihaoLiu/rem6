@@ -68,7 +68,7 @@ impl RiscvCore {
             return None;
         };
         let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
-        if detailed_o3::scalar_load_has_younger_fetch(
+        if detailed_o3::scalar_memory_has_younger_fetch(
             &state,
             &fetch_events,
             fetch.request_id(),
@@ -147,7 +147,7 @@ impl RiscvCore {
         {
             return Ok(false);
         }
-        if detailed_o3::scalar_load_waits_for_younger_fetch(&state, &fetch_events) {
+        if detailed_o3::scalar_memory_waits_for_younger_fetch(&state, &fetch_events) {
             return Ok(false);
         }
 
@@ -941,7 +941,7 @@ fn fetch_ahead_decision(
     instruction: RiscvInstruction,
 ) -> Option<RiscvFetchAheadDecision> {
     if instruction_allows_straight_line_fetch_ahead(instruction)
-        || detailed_o3::allows_scalar_load_fetch_ahead(state, instruction)
+        || detailed_o3::allows_scalar_memory_fetch_ahead(state, instruction)
         || instruction_allows_trap_fallthrough_fetch_ahead(state, instruction)
     {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));

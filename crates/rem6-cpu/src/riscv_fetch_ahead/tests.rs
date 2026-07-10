@@ -9,7 +9,7 @@ use crate::{
     DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvPmaRange};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -68,6 +68,16 @@ fn r_type(funct7: u32, rs1: u8, rs2: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32 & 0x0fff;
+    ((imm >> 5) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x23
 }
 
 fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
@@ -162,6 +172,38 @@ fn detailed_scalar_load_fetches_one_sequential_younger_before_data_issue() {
     let decision = core.next_fetch_ahead_before_retire().unwrap();
 
     assert_eq!(decision.pc(), Address::new(0x8004));
+}
+
+#[test]
+fn detailed_scalar_store_fetches_one_sequential_younger_before_data_issue() {
+    let store = s_type(0, 3, 2, 0x2);
+    let core = core_with_completed_fetch(store.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(2).unwrap(), 0x9000);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8004));
+}
+
+#[test]
+fn detailed_uncacheable_scalar_store_does_not_fetch_ahead() {
+    let store = s_type(0, 3, 2, 0x2);
+    let core = core_with_completed_fetch(store.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(2).unwrap(), 0x9000);
+    core.add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9004).unwrap())
+        .unwrap();
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
 
 #[test]
