@@ -110,6 +110,111 @@ pub(super) fn o3_scalar_integer_source_registers(instruction: &RiscvInstruction)
     }
 }
 
+pub(super) const fn o3_scalar_integer_destination(
+    instruction: RiscvInstruction,
+) -> Option<Register> {
+    match instruction {
+        RiscvInstruction::Lui { rd, .. }
+        | RiscvInstruction::Auipc { rd, .. }
+        | RiscvInstruction::Addi { rd, .. }
+        | RiscvInstruction::Slti { rd, .. }
+        | RiscvInstruction::Sltiu { rd, .. }
+        | RiscvInstruction::Xori { rd, .. }
+        | RiscvInstruction::Ori { rd, .. }
+        | RiscvInstruction::Andi { rd, .. }
+        | RiscvInstruction::Slli { rd, .. }
+        | RiscvInstruction::Srli { rd, .. }
+        | RiscvInstruction::Srai { rd, .. }
+        | RiscvInstruction::Addiw { rd, .. }
+        | RiscvInstruction::Slliw { rd, .. }
+        | RiscvInstruction::Srliw { rd, .. }
+        | RiscvInstruction::Sraiw { rd, .. }
+        | RiscvInstruction::Add { rd, .. }
+        | RiscvInstruction::Sub { rd, .. }
+        | RiscvInstruction::Sll { rd, .. }
+        | RiscvInstruction::Slt { rd, .. }
+        | RiscvInstruction::Sltu { rd, .. }
+        | RiscvInstruction::Xor { rd, .. }
+        | RiscvInstruction::Srl { rd, .. }
+        | RiscvInstruction::Sra { rd, .. }
+        | RiscvInstruction::Or { rd, .. }
+        | RiscvInstruction::And { rd, .. }
+        | RiscvInstruction::Mul { rd, .. }
+        | RiscvInstruction::Mulh { rd, .. }
+        | RiscvInstruction::Mulhsu { rd, .. }
+        | RiscvInstruction::Mulhu { rd, .. }
+        | RiscvInstruction::Div { rd, .. }
+        | RiscvInstruction::Divu { rd, .. }
+        | RiscvInstruction::Rem { rd, .. }
+        | RiscvInstruction::Remu { rd, .. }
+        | RiscvInstruction::Mulw { rd, .. }
+        | RiscvInstruction::Divw { rd, .. }
+        | RiscvInstruction::Divuw { rd, .. }
+        | RiscvInstruction::Remw { rd, .. }
+        | RiscvInstruction::Remuw { rd, .. }
+        | RiscvInstruction::Addw { rd, .. }
+        | RiscvInstruction::Subw { rd, .. }
+        | RiscvInstruction::Sllw { rd, .. }
+        | RiscvInstruction::Srlw { rd, .. }
+        | RiscvInstruction::Sraw { rd, .. }
+        | RiscvInstruction::Jal { rd, .. }
+        | RiscvInstruction::Jalr { rd, .. }
+        | RiscvInstruction::VectorSetVli { rd, .. }
+        | RiscvInstruction::VectorSetIvli { rd, .. }
+        | RiscvInstruction::VectorSetVl { rd, .. }
+        | RiscvInstruction::Load { rd, .. }
+        | RiscvInstruction::LoadReserved { rd, .. }
+        | RiscvInstruction::StoreConditional { rd, .. }
+        | RiscvInstruction::AtomicMemory { rd, .. } => Some(rd),
+        _ => None,
+    }
+}
+
+pub(super) fn o3_speculative_scalar_alu_operands(
+    instruction: RiscvInstruction,
+) -> Option<(Register, Vec<Register>)> {
+    if !matches!(
+        instruction,
+        RiscvInstruction::Lui { .. }
+            | RiscvInstruction::Auipc { .. }
+            | RiscvInstruction::Addi { .. }
+            | RiscvInstruction::Slti { .. }
+            | RiscvInstruction::Sltiu { .. }
+            | RiscvInstruction::Xori { .. }
+            | RiscvInstruction::Ori { .. }
+            | RiscvInstruction::Andi { .. }
+            | RiscvInstruction::Slli { .. }
+            | RiscvInstruction::Srli { .. }
+            | RiscvInstruction::Srai { .. }
+            | RiscvInstruction::Addiw { .. }
+            | RiscvInstruction::Slliw { .. }
+            | RiscvInstruction::Srliw { .. }
+            | RiscvInstruction::Sraiw { .. }
+            | RiscvInstruction::Add { .. }
+            | RiscvInstruction::Sub { .. }
+            | RiscvInstruction::Sll { .. }
+            | RiscvInstruction::Slt { .. }
+            | RiscvInstruction::Sltu { .. }
+            | RiscvInstruction::Xor { .. }
+            | RiscvInstruction::Srl { .. }
+            | RiscvInstruction::Sra { .. }
+            | RiscvInstruction::Or { .. }
+            | RiscvInstruction::And { .. }
+            | RiscvInstruction::Addw { .. }
+            | RiscvInstruction::Subw { .. }
+            | RiscvInstruction::Sllw { .. }
+            | RiscvInstruction::Srlw { .. }
+            | RiscvInstruction::Sraw { .. }
+    ) {
+        return None;
+    }
+    Some((
+        o3_scalar_integer_destination(instruction)
+            .expect("speculative scalar ALU instructions have an integer destination"),
+        o3_scalar_integer_source_registers(&instruction),
+    ))
+}
+
 fn csr_operand_register(operand: RiscvCsrOperand) -> Option<Register> {
     match operand {
         RiscvCsrOperand::Register(register) => Some(register),

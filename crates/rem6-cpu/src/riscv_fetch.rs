@@ -167,6 +167,7 @@ impl RiscvCore {
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
         state.live_retire_gate.rebind_pending_to_next_request();
+        state.o3_runtime.discard_live_speculative_executions();
         drop(state);
         self.inner().reset_fetch_stream_to_pc(pc);
     }

@@ -254,8 +254,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         "divide should occupy the FU after issue: {resident_divide}"
     );
     assert!(
-        younger_issue >= divide_writeback,
-        "a younger staged row must not be reported as issued before the older divide writes back: divide={resident_divide}, younger={younger_add}"
+        younger_issue < divide_writeback,
+        "the independent younger add should execute while the older divide remains in flight: divide={resident_divide}, younger={younger_add}"
     );
     assert_eq!(
         younger_add
@@ -272,10 +272,13 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         younger_commit >= divide_writeback,
         "younger independent add should wait to commit until the older divide writes back: divide={resident_divide}, younger={younger_add}"
     );
+    assert!(
+        younger_phase_deltas.1 > 0,
+        "the younger zero-latency add should wait between early writeback and in-order commit: {younger_add}"
+    );
     assert_eq!(
-        younger_phase_deltas,
-        (0, 0, 0),
-        "the younger zero-latency add should issue and retire only after the older divide boundary: {younger_add}"
+        younger_phase_deltas.2, younger_phase_deltas.1,
+        "zero-latency younger execution should spend all pre-commit time after writeback: {younger_add}"
     );
     assert_eq!(
         divide_rob_commits, 1,

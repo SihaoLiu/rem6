@@ -65,6 +65,7 @@ fn rem6_run_o3_detailed_div_live_retire_gate_delays_architectural_commit() {
     assert_live_retire_window(&detailed_before_commit.json);
     assert_live_retire_gate_stats(&detailed_before_commit.json, 1, 19, 19);
     assert_live_retire_gate_stats(&detailed.json, 1, 19, 19);
+    assert_dependent_younger_waits_for_divide(&detailed.json);
     assert_live_retire_gate_stats_absent(&timing.json);
 }
 
@@ -115,6 +116,8 @@ fn run_live_retire_gate_case(
             "--stats-format",
             "json",
             "--execute",
+            "--debug-flags",
+            "O3",
             "--memory-system",
             memory_system,
             "--m5-switch-cpu-mode",
@@ -156,6 +159,28 @@ fn run_live_retire_gate_case(
         memory_hex,
         committed_instructions,
     }
+}
+
+fn assert_dependent_younger_waits_for_divide(json: &Value) {
+    let events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("detailed run should expose O3 timing rows: {json}"));
+    let divide = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        .unwrap_or_else(|| panic!("missing gated divide event: {events:?}"));
+    let dependent_add = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
+        .unwrap_or_else(|| panic!("missing dependent younger add event: {events:?}"));
+    let divide_writeback = live_retire_gate_json_u64_field(divide, "/writeback_tick");
+    let dependent_issue = live_retire_gate_json_u64_field(dependent_add, "/issue_tick");
+
+    assert!(
+        dependent_issue >= divide_writeback,
+        "a younger add that reads the divide destination must not issue from stale architectural state: divide={divide}, younger={dependent_add}"
+    );
 }
 
 fn assert_live_retire_gate_stats(

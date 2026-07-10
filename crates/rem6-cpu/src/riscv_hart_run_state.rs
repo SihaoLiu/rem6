@@ -151,6 +151,8 @@ impl RiscvCore {
         state.pending_fetch_prefix = None;
         state.executed_fetches.clear();
         state.discard_branch_speculations();
+        state.o3_runtime.discard_live_staged_instructions();
+        state.live_retire_gate.clear_pending_for_pc_redirect();
         state.issued_data_for_fetches.clear();
         state.pending_data_translations.clear();
         state.ready_translated_data.clear();

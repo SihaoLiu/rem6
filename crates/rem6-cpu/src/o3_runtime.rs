@@ -40,12 +40,15 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
-use o3_runtime_live_window::O3LiveRetiredInstruction;
+use o3_runtime_live_window::{O3LiveRetiredInstruction, O3LiveSpeculativeExecution};
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
-use o3_source_operands::o3_scalar_integer_source_registers;
+use o3_source_operands::{
+    o3_scalar_integer_destination, o3_scalar_integer_source_registers,
+    o3_speculative_scalar_alu_operands,
+};
 
 const U64_BYTES: usize = 8;
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
@@ -156,6 +159,7 @@ pub struct O3RuntimeState {
     store_forwarding_window: O3StoreForwardingWindow,
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
+    live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -181,6 +185,7 @@ impl O3RuntimeState {
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         self.dependency_producers_with_consumers.clear();
         self.live_retired_instructions.clear();
+        self.live_speculative_executions.clear();
         Ok(())
     }
 
@@ -489,6 +494,7 @@ impl Default for O3RuntimeState {
             store_forwarding_window: O3StoreForwardingWindow::default(),
             dependency_producers_with_consumers: BTreeSet::new(),
             live_retired_instructions: Vec::new(),
+            live_speculative_executions: Vec::new(),
             next_sequence: 0,
             next_physical_register: 1,
         }

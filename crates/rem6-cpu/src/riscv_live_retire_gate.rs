@@ -128,6 +128,10 @@ impl RiscvLiveRetireGateState {
         self.pending.map(RiscvLiveRetireGatePending::ready_tick)
     }
 
+    pub(crate) const fn detailed_policy_enabled(&self) -> bool {
+        self.policy.creates_gates()
+    }
+
     pub(crate) fn rebind_pending_to_next_request(&mut self) {
         if let Some(pending) = &mut self.pending {
             pending.rebind_to_next_request();
@@ -211,11 +215,11 @@ impl RiscvCore {
         } else {
             RiscvLiveRetireGatePolicy::disabled()
         };
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .live_retire_gate
-            .set_policy(policy);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.live_retire_gate.set_policy(policy);
+        if !detailed {
+            state.o3_runtime.discard_live_speculative_executions();
+        }
     }
 
     pub(crate) fn live_retire_gate_blocks_new_work(&self) -> bool {
@@ -299,8 +303,12 @@ mod tests {
         let mut gate = RiscvLiveRetireGateState::default();
         gate.set_policy(RiscvLiveRetireGatePolicy::detailed());
 
+        assert!(gate.detailed_policy_enabled());
         assert!(!gate.blocks_without_scheduler());
         assert_eq!(gate.checkpoint(), None);
+
+        gate.set_policy(RiscvLiveRetireGatePolicy::disabled());
+        assert!(!gate.detailed_policy_enabled());
     }
 
     #[test]

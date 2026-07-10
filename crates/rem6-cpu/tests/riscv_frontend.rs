@@ -7613,6 +7613,63 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
 }
 
 #[test]
+fn riscv_core_independent_live_younger_remains_non_architectural_until_retirement() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let addi = i_type(9, 0, 0x0, 4, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let store = loaded_program_store(0x8000, &[div, addi], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 2);
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(core.read_register(reg(4)), 0);
+    assert_eq!(core.pc(), Address::new(0x8000));
+
+    scheduler.run_until_idle_conservative();
+    let divide = drive_until_execution_event(&core, store.clone(), &mut scheduler, &transport);
+    assert_eq!(divide.fetch_pc(), Address::new(0x8000));
+    assert_eq!(core.read_register(reg(3)), 12);
+    assert_eq!(core.read_register(reg(4)), 0);
+    assert_eq!(core.pc(), Address::new(0x8004));
+
+    let younger = drive_until_execution_event(&core, store, &mut scheduler, &transport);
+    assert_eq!(younger.fetch_pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(reg(4)), 9);
+    assert_eq!(core.pc(), Address::new(0x8008));
+}
+
+#[test]
 fn riscv_core_schedulerless_execute_bypasses_unstarted_detailed_live_retire_gate() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
