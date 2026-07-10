@@ -5,10 +5,11 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
-    o3_fu_latency::o3_fu_latency_class, o3_runtime_trace::O3RuntimeFuLatencyClass,
-    riscv_execute::RiscvLiveRetireGateWakeKind,
-    riscv_live_retire_gate::RiscvLiveRetireGateDecision, CpuFetchEvent, CpuFetchEventKind,
-    RiscvCore, RiscvCoreState, RiscvCpuError,
+    o3_fu_latency::o3_fu_latency_class,
+    o3_runtime_trace::O3RuntimeFuLatencyClass,
+    riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
+    riscv_live_retire_gate::RiscvLiveRetireGateDecision,
+    CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError,
 };
 
 pub(super) struct RiscvLiveRetireWindowRequest<'a> {
@@ -20,7 +21,7 @@ pub(super) struct RiscvLiveRetireWindowRequest<'a> {
 }
 
 struct RiscvCompletedFetchInstruction {
-    fetch: CpuFetchEvent,
+    consumed_requests: Vec<MemoryRequestId>,
     decoded: RiscvDecodedInstruction,
 }
 
@@ -156,7 +157,7 @@ fn stage_o3_live_retire_window(
     };
     state.o3_runtime.record_live_speculative_execution(
         candidate,
-        younger.fetch.request_id(),
+        &younger.consumed_requests,
         issue_tick,
         speculative_execution,
     );
@@ -185,6 +186,7 @@ fn completed_fetch_instruction_from_events(
 ) -> Option<RiscvCompletedFetchInstruction> {
     let event = oldest_completed_fetch_at(executed_fetches, fetch_events, current_request, pc)?;
     let data = event.data()?;
+    let mut consumed_requests = vec![event.request_id()];
     let raw = match data {
         [low, high] if low & 0x3 != 0x3 => u32::from(u16::from_le_bytes([*low, *high])),
         [low, high] => {
@@ -198,6 +200,7 @@ fn completed_fetch_instruction_from_events(
             let [suffix_low, suffix_high] = suffix.data()? else {
                 return None;
             };
+            consumed_requests.push(suffix.request_id());
             u32::from_le_bytes([*low, *high, *suffix_low, *suffix_high])
         }
         [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
@@ -205,27 +208,9 @@ fn completed_fetch_instruction_from_events(
     };
     let decoded = RiscvInstruction::decode_with_length(raw).ok()?;
     Some(RiscvCompletedFetchInstruction {
-        fetch: event.clone(),
+        consumed_requests,
         decoded,
     })
-}
-
-fn oldest_completed_fetch_at<'a>(
-    executed_fetches: &BTreeSet<MemoryRequestId>,
-    fetch_events: &'a [CpuFetchEvent],
-    current_request: MemoryRequestId,
-    pc: Address,
-) -> Option<&'a CpuFetchEvent> {
-    fetch_events
-        .iter()
-        .filter(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && event.pc() == pc
-                && event.request_id().agent() == current_request.agent()
-                && event.request_id().sequence() > current_request.sequence()
-                && !executed_fetches.contains(&event.request_id())
-        })
-        .min_by_key(|event| event.request_id().sequence())
 }
 
 #[cfg(test)]
@@ -273,7 +258,14 @@ mod tests {
             completed_fetch_instruction_from_events(&BTreeSet::new(), &events, current, pc)
                 .unwrap();
 
-        assert_eq!(selected.fetch.request_id().sequence(), 11);
+        assert_eq!(selected.consumed_requests[0].sequence(), 11);
+        assert_eq!(
+            selected.consumed_requests,
+            vec![
+                MemoryRequestId::new(AgentId::new(7), 11),
+                MemoryRequestId::new(AgentId::new(7), 12),
+            ]
+        );
         assert_eq!(
             selected.decoded.instruction(),
             RiscvInstruction::decode(raw).unwrap()

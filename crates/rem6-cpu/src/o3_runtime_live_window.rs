@@ -19,7 +19,7 @@ pub(super) struct O3LiveRetiredInstruction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveSpeculativeExecution {
-    request: MemoryRequestId,
+    consumed_requests: Vec<MemoryRequestId>,
     sequence: u64,
     issue_tick: u64,
     execution: RiscvExecutionRecord,
@@ -54,6 +54,7 @@ impl O3RuntimeState {
     pub(crate) fn retire_live_staged_instruction(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
+        consumed_requests: &[MemoryRequestId],
         retire_tick: u64,
     ) {
         let pc = Address::new(execution.execution().pc());
@@ -66,7 +67,8 @@ impl O3RuntimeState {
             return;
         };
         let entry = self.snapshot.reorder_buffer[index];
-        let speculative_issue_tick = self.take_live_speculative_issue_tick(entry, execution);
+        let speculative_issue_tick =
+            self.take_live_speculative_issue_tick(entry, execution, consumed_requests);
         let dependencies = self.record_scalar_integer_dependencies(&execution.instruction());
         let rename_destination = staged_rename_entry(entry).filter(|destination| {
             execution_writes_rename_destination(execution.execution(), *destination)
@@ -220,11 +222,12 @@ impl O3RuntimeState {
     pub(crate) fn record_live_speculative_execution(
         &mut self,
         candidate: O3LiveSpeculativeIssueCandidate,
-        request: MemoryRequestId,
+        consumed_requests: &[MemoryRequestId],
         issue_tick: u64,
         execution: RiscvExecutionRecord,
     ) {
-        if Address::new(execution.pc()) != candidate.pc
+        if !valid_live_speculative_fetch_identity(consumed_requests)
+            || Address::new(execution.pc()) != candidate.pc
             || execution.instruction() != candidate.instruction
             || execution.trap().is_some()
             || execution.system_event().is_some()
@@ -245,7 +248,7 @@ impl O3RuntimeState {
 
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
-                request,
+                consumed_requests: consumed_requests.to_vec(),
                 sequence: candidate.sequence,
                 issue_tick,
                 execution,
@@ -299,16 +302,31 @@ impl O3RuntimeState {
         &mut self,
         entry: O3ReorderBufferEntry,
         execution: &RiscvCpuExecutionEvent,
+        consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
         let index = self
             .live_speculative_executions
             .iter()
             .position(|issued| issued.sequence == entry.sequence())?;
         let issued = self.live_speculative_executions.remove(index);
-        (issued.request == execution.fetch().request_id()
+        (issued.consumed_requests.as_slice() == consumed_requests
+            && consumed_requests.first() == Some(&execution.fetch().request_id())
             && issued.execution == *execution.execution())
         .then_some(issued.issue_tick)
     }
+}
+
+fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryRequestId]) -> bool {
+    let Some(first) = consumed_requests.first() else {
+        return false;
+    };
+    consumed_requests.len() <= 2
+        && consumed_requests
+            .iter()
+            .all(|request| request.agent() == first.agent())
+        && consumed_requests
+            .windows(2)
+            .all(|requests| requests[0].sequence() < requests[1].sequence())
 }
 
 fn staged_rename_entry(entry: O3ReorderBufferEntry) -> Option<O3RenameMapEntry> {
@@ -371,6 +389,22 @@ mod tests {
             rs1: Register::new(rs1).unwrap(),
             imm: Immediate::new(1),
         }
+    }
+
+    fn request(sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    fn retire_live(
+        runtime: &mut O3RuntimeState,
+        execution: &RiscvCpuExecutionEvent,
+        retire_tick: u64,
+    ) {
+        runtime.retire_live_staged_instruction(
+            execution,
+            &[execution.fetch().request_id()],
+            retire_tick,
+        );
     }
 
     #[test]
@@ -452,7 +486,7 @@ mod tests {
             .unwrap();
         runtime.record_live_speculative_execution(
             candidate,
-            MemoryRequestId::new(AgentId::new(7), 2),
+            &[request(2)],
             10,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -464,10 +498,49 @@ mod tests {
         );
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
-        runtime.retire_live_staged_instruction(&divide, 29);
+        retire_live(&mut runtime, &divide, 29);
         runtime.record_retired_instruction_with_trace(&divide, true);
         let younger = execution_event(younger_instruction, 0x8004, 2, 4);
-        runtime.retire_live_staged_instruction(&younger, 30);
+        retire_live(&mut runtime, &younger, 30);
+        runtime.record_retired_instruction_with_trace(&younger, true);
+
+        let trace = runtime.trace_records().last().copied().unwrap();
+        assert_eq!(trace.issue_tick(), 10);
+        assert_eq!(trace.writeback_tick(), 10);
+        assert_eq!(trace.commit_tick(), 30);
+    }
+
+    #[test]
+    fn matching_split_fetch_identity_keeps_early_issue_timing() {
+        let mut runtime = O3RuntimeState::default();
+        let younger_instruction = addi(4, 0);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), younger_instruction)),
+        );
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            candidate,
+            &[request(2), request(3)],
+            10,
+            RiscvExecutionRecord::new(
+                younger_instruction,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                None,
+            ),
+        );
+
+        let divide = execution_event(div_x3(), 0x8000, 1, 3);
+        retire_live(&mut runtime, &divide, 29);
+        runtime.record_retired_instruction_with_trace(&divide, true);
+        let younger = execution_event(younger_instruction, 0x8004, 2, 4);
+        runtime.retire_live_staged_instruction(&younger, &[request(2), request(3)], 30);
         runtime.record_retired_instruction_with_trace(&younger, true);
 
         let trace = runtime.trace_records().last().copied().unwrap();
@@ -514,7 +587,7 @@ mod tests {
             .unwrap();
         runtime.record_live_speculative_execution(
             candidate,
-            MemoryRequestId::new(AgentId::new(7), 2),
+            &[request(2)],
             10,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -526,7 +599,7 @@ mod tests {
         );
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
-        runtime.retire_live_staged_instruction(&divide, 29);
+        retire_live(&mut runtime, &divide, 29);
         runtime.record_retired_instruction_with_trace(&divide, true);
         let younger = RiscvCpuExecutionEvent::new(
             fetch_event(0x8004, 2),
@@ -539,12 +612,92 @@ mod tests {
                 None,
             ),
         );
-        runtime.retire_live_staged_instruction(&younger, 30);
+        retire_live(&mut runtime, &younger, 30);
         runtime.record_retired_instruction_with_trace(&younger, true);
 
         let trace = runtime.trace_records().last().copied().unwrap();
         assert_eq!(trace.issue_tick(), 30);
         assert_eq!(trace.commit_tick(), 30);
+    }
+
+    #[test]
+    fn mismatched_split_fetch_suffix_does_not_claim_early_issue() {
+        let mut runtime = O3RuntimeState::default();
+        let younger_instruction = addi(4, 0);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), younger_instruction)),
+        );
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            candidate,
+            &[request(2), request(3)],
+            10,
+            RiscvExecutionRecord::new(
+                younger_instruction,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                None,
+            ),
+        );
+
+        let divide = execution_event(div_x3(), 0x8000, 1, 3);
+        retire_live(&mut runtime, &divide, 29);
+        runtime.record_retired_instruction_with_trace(&divide, true);
+        let younger = execution_event(younger_instruction, 0x8004, 2, 4);
+        runtime.retire_live_staged_instruction(&younger, &[request(2), request(4)], 30);
+        runtime.record_retired_instruction_with_trace(&younger, true);
+
+        let trace = runtime.trace_records().last().copied().unwrap();
+        assert_eq!(trace.issue_tick(), 30);
+        assert_eq!(trace.commit_tick(), 30);
+    }
+
+    #[test]
+    fn malformed_live_speculative_fetch_identity_does_not_occupy_candidate() {
+        let younger_instruction = addi(4, 0);
+        let malformed_identities = [
+            Vec::new(),
+            vec![request(2), request(2)],
+            vec![request(3), request(2)],
+            vec![request(2), MemoryRequestId::new(AgentId::new(8), 3)],
+            vec![request(2), request(3), request(4)],
+        ];
+
+        for consumed_requests in malformed_identities {
+            let mut runtime = O3RuntimeState::default();
+            runtime.stage_live_retire_window(
+                Address::new(0x8000),
+                div_x3(),
+                29,
+                Some((Address::new(0x8004), younger_instruction)),
+            );
+            let candidate = runtime
+                .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
+                .unwrap();
+            runtime.record_live_speculative_execution(
+                candidate,
+                &consumed_requests,
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            );
+
+            assert!(runtime.live_speculative_executions.is_empty());
+            assert!(runtime
+                .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
+                .is_some());
+        }
     }
 
     #[test]
@@ -562,7 +715,7 @@ mod tests {
             .unwrap();
         runtime.record_live_speculative_execution(
             candidate,
-            MemoryRequestId::new(AgentId::new(7), 2),
+            &[request(2)],
             10,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -583,7 +736,7 @@ mod tests {
 
         runtime.record_live_speculative_execution(
             candidate,
-            MemoryRequestId::new(AgentId::new(7), 3),
+            &[request(3)],
             20,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -600,7 +753,7 @@ mod tests {
             .unwrap();
         runtime.record_live_speculative_execution(
             candidate,
-            MemoryRequestId::new(AgentId::new(7), 4),
+            &[request(4)],
             21,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -661,7 +814,7 @@ mod tests {
             ),
         );
 
-        runtime.retire_live_staged_instruction(&event, 29);
+        retire_live(&mut runtime, &event, 29);
         runtime.discard_live_staged_instructions();
         runtime.record_retired_instruction(&event);
 
@@ -683,7 +836,7 @@ mod tests {
         let first_instruction = addi(2, 1);
         let first = execution_event(first_instruction, 0x8000, 1, 2);
         runtime.stage_live_retire_window(Address::new(0x8000), first_instruction, 0, None);
-        runtime.retire_live_staged_instruction(&first, 10);
+        retire_live(&mut runtime, &first, 10);
 
         runtime.reset_stats();
         runtime.record_retired_instruction(&first);
@@ -708,7 +861,7 @@ mod tests {
         let pending_instruction = addi(3, 1);
         let pending = execution_event(pending_instruction, 0x8000, 1, 3);
         runtime.stage_live_retire_window(Address::new(0x8000), pending_instruction, 0, None);
-        runtime.retire_live_staged_instruction(&pending, 10);
+        retire_live(&mut runtime, &pending, 10);
 
         runtime.reset_stats();
 

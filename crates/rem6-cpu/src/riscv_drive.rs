@@ -27,6 +27,11 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
+        if let Some(event) =
+            self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
+        {
+            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+        }
         self.sync_in_order_fetch_state()?;
         if self.core.has_pending_fetch() {
             if !self.can_retire_completed_fetch_while_fetch_pending()? {
@@ -65,12 +70,6 @@ impl RiscvCore {
         }
         if self.live_retire_gate_blocks_new_work() {
             return Ok(None);
-        }
-
-        if let Some(event) =
-            self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
-        {
-            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
         }
 
         let event = self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;

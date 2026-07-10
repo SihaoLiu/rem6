@@ -13,6 +13,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore,
 };
+use rem6_mmio::MmioBus;
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery,
     TargetOutcome, TransportEndpointId,
@@ -185,6 +186,325 @@ fn responder(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static {
     move |delivery, _context| memory_response(&store, &delivery)
+}
+
+#[test]
+fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let cpu = cluster.core(CpuId::new(0)).unwrap();
+    cpu.write_register(reg(1), 84);
+    cpu.write_register(reg(2), 7);
+    cpu.write_register(reg(10), 0x9000);
+    cpu.set_detailed_live_retire_gate_enabled(true);
+    let load = i_type(0, 10, 0x3, 5, 0x03);
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let dependent_addi = i_type(1, 5, 0x0, 4, 0x13);
+    let store = store_with_programs_and_data(
+        &[(0x8000, load), (0x8004, div), (0x8008, dependent_addi)],
+        &[(0x9000, 41_u64.to_le_bytes().to_vec())],
+    );
+
+    for _ in 0..2 {
+        let fetch_store = store.clone();
+        cpu.issue_next_fetch_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            move |delivery, _context| memory_response(&fetch_store, &delivery),
+        )
+        .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    let executed_load = cpu.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(executed_load.fetch_pc(), Address::new(0x8000));
+    assert_eq!(cpu.read_register(reg(5)), 0);
+
+    let actions = cluster
+        .drive_ready_cores_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        actions[0].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    ));
+    scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(cpu.read_register(reg(5)), 41);
+
+    for _ in 0..16 {
+        cluster
+            .drive_ready_cores_parallel(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+        if cpu.read_register(reg(4)) == 42 {
+            break;
+        }
+    }
+
+    assert_eq!(cpu.read_register(reg(3)), 12);
+    assert_eq!(cpu.read_register(reg(4)), 42);
+}
+
+fn prepared_instruction_budget_scan() -> (
+    PartitionedScheduler,
+    MemoryTransport,
+    RiscvCluster,
+    Arc<Mutex<PartitionedMemoryStore>>,
+) {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let cpu0 = cluster.core(CpuId::new(0)).unwrap();
+    let cpu1 = cluster.core(CpuId::new(1)).unwrap();
+    cpu1.write_register(reg(10), 0x9000);
+    let load = i_type(0, 10, 0x3, 5, 0x03);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(1, 0, 0x0, 1, 0x13)),
+            (0x8004, i_type(2, 0, 0x0, 2, 0x13)),
+            (0x8100, load),
+        ],
+        &[(0x9000, 41_u64.to_le_bytes().to_vec())],
+    );
+
+    let cpu1_store = store.clone();
+    cpu1.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&cpu1_store, &delivery),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let executed_load = cpu1.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(executed_load.fetch_pc(), Address::new(0x8100));
+    assert!(cpu1.has_unissued_data_access());
+
+    let cpu0_store = store.clone();
+    cpu0.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&cpu0_store, &delivery),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let cpu0_store = store.clone();
+    cpu0.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&cpu0_store, &delivery),
+    )
+    .unwrap();
+
+    (scheduler, transport, cluster, store)
+}
+
+fn assert_budget_scan_drains_later_core(actions: &[RiscvClusterDriveEvent]) {
+    assert_eq!(
+        actions
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)]
+    );
+    assert!(matches!(
+        actions[0].action(),
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert!(matches!(
+        actions[1].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    ));
+}
+
+#[test]
+fn exhausted_instruction_budget_still_issues_later_core_data_work() {
+    let (mut scheduler, transport, cluster, store) = prepared_instruction_budget_scan();
+
+    let actions = cluster
+        .drive_ready_cores_parallel_with_instruction_budget(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            1,
+        )
+        .unwrap();
+
+    assert_budget_scan_drains_later_core(&actions);
+}
+
+#[test]
+fn exhausted_mmio_instruction_budget_still_issues_later_core_data_work() {
+    let (mut scheduler, transport, cluster, store) = prepared_instruction_budget_scan();
+    let actions = cluster
+        .drive_ready_cores_parallel_with_mmio_and_instruction_budget(
+            &mut scheduler,
+            &transport,
+            &MmioBus::new(),
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            1,
+        )
+        .unwrap();
+
+    assert_budget_scan_drains_later_core(&actions);
 }
 
 #[test]

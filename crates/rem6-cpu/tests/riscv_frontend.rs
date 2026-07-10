@@ -1415,6 +1415,73 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
 }
 
 #[test]
+fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.write_register(reg(10), 0x9000);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let load = i_type(0, 10, 0x3, 5, 0x03);
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let dependent_addi = i_type(1, 5, 0x0, 4, 0x13);
+    let store = loaded_program_store(
+        0x8000,
+        &[load, div, dependent_addi],
+        &[(0x9000, 41_u64.to_le_bytes().to_vec())],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(executed_load) = action else {
+        panic!("expected the oldest load to execute");
+    };
+    assert_eq!(
+        executed_load.instruction(),
+        RiscvInstruction::decode(load).unwrap()
+    );
+    assert_eq!(core.read_register(reg(5)), 0);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 41);
+
+    for _ in 0..16 {
+        match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+            | None => {
+                scheduler.run_until_idle_conservative();
+            }
+            Some(RiscvCoreDriveAction::InstructionExecuted(_)) => {}
+        }
+        if core.read_register(reg(4)) == 42 {
+            break;
+        }
+    }
+
+    assert_eq!(core.read_register(reg(3)), 12);
+    assert_eq!(core.read_register(reg(4)), 42);
+}
+
+#[test]
 fn riscv_core_driver_fetches_ahead_for_straight_line_integer_instruction() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

@@ -129,12 +129,7 @@ impl RiscvCore {
                     architectural,
                 });
             }
-            let suffix_pc = Address::new(prefix.fetch.pc().get() + 2);
-            let Some(suffix) = fetch_events.iter().find(|event| {
-                event.kind() == CpuFetchEventKind::Completed
-                    && event.pc() == suffix_pc
-                    && !state.executed_fetches.contains(&event.request_id())
-            }) else {
+            let Some(suffix) = next_completed_fetch_suffix(&state, &fetch_events, &prefix) else {
                 return Ok(None);
             };
             let suffix_data = suffix.data().ok_or(RiscvCpuError::MissingFetchData {
@@ -348,7 +343,7 @@ impl RiscvCore {
         );
         state
             .o3_runtime
-            .retire_live_staged_instruction(&event, retire_tick);
+            .retire_live_staged_instruction(&event, consumed_requests, retire_tick);
         if redirects_fetch {
             state.o3_runtime.discard_live_staged_instructions();
         }
@@ -382,6 +377,38 @@ impl RiscvCore {
         state.events.push(event.clone());
         Ok(event)
     }
+}
+
+fn next_completed_fetch_suffix<'a>(
+    state: &RiscvCoreState,
+    fetch_events: &'a [CpuFetchEvent],
+    prefix: &RiscvPendingFetchPrefix,
+) -> Option<&'a CpuFetchEvent> {
+    let suffix_pc = Address::new(prefix.fetch.pc().get() + 2);
+    oldest_completed_fetch_at(
+        &state.executed_fetches,
+        fetch_events,
+        prefix.fetch.request_id(),
+        suffix_pc,
+    )
+}
+
+pub(super) fn oldest_completed_fetch_at<'a>(
+    executed_fetches: &BTreeSet<MemoryRequestId>,
+    fetch_events: &'a [CpuFetchEvent],
+    current_request: MemoryRequestId,
+    pc: Address,
+) -> Option<&'a CpuFetchEvent> {
+    fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.pc() == pc
+                && event.request_id().agent() == current_request.agent()
+                && event.request_id().sequence() > current_request.sequence()
+                && !executed_fetches.contains(&event.request_id())
+        })
+        .min_by_key(|event| event.request_id().sequence())
 }
 
 fn next_completed_fetch_for_architectural_pc(
@@ -1637,6 +1664,17 @@ mod tests {
             ),
             vec![0; 4],
         )
+    }
+
+    #[test]
+    fn split_fetch_retirement_selects_oldest_suffix_request() {
+        let state = RiscvCoreState::new(0x800e, 0);
+        let prefix = RiscvPendingFetchPrefix::new(completed(10, 0x800e), [0x13, 0x00]);
+        let events = vec![completed(12, 0x8010), completed(11, 0x8010)];
+
+        let suffix = next_completed_fetch_suffix(&state, &events, &prefix).unwrap();
+
+        assert_eq!(suffix.request_id(), request(11));
     }
 
     #[test]

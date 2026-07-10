@@ -1021,6 +1021,24 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
+        let has_data_work = self.has_unissued_data_access() || self.has_pending_data_access();
+        if has_data_work {
+            if let Some(event) = self.issue_next_translated_data_access(
+                scheduler,
+                transport,
+                data_trace,
+                page_map,
+                data_responder,
+            )? {
+                return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+            }
+            if let Some(event) = self.take_pending_trap_event() {
+                return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                    event,
+                ))));
+            }
+            return Ok(None);
+        }
         if self.core.has_pending_fetch() {
             if self.has_pending_data_access() {
                 return Ok(None);
@@ -1060,25 +1078,6 @@ impl RiscvCore {
             ))));
         }
         if self.live_retire_gate_blocks_new_work() {
-            return Ok(None);
-        }
-
-        let had_unissued_data = self.has_unissued_data_access();
-        if let Some(event) = self.issue_next_translated_data_access(
-            scheduler,
-            transport,
-            data_trace,
-            page_map,
-            data_responder,
-        )? {
-            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
-        }
-        if let Some(event) = self.take_pending_trap_event() {
-            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
-                event,
-            ))));
-        }
-        if had_unissued_data || self.has_pending_data_access() {
             return Ok(None);
         }
 
