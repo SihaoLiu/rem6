@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::CpuId;
+use rem6_cpu::{CpuId, RiscvCoreDriveAction};
 use rem6_kernel::Tick;
 use rem6_stats::{
     GlobalInstTracker, GlobalInstTrackerSnapshot, LocalInstTracker, PcCountPair, PcCountTracker,
@@ -64,6 +64,34 @@ impl RiscvRetiredInstructionProbeSnapshot {
     pub fn retired_pc_point_for_cpu(&self, cpu: CpuId) -> Option<ProbePointId> {
         self.pc_points.get(&cpu).copied()
     }
+
+    pub fn retired_instruction_counts_by_cpu(&self) -> BTreeMap<CpuId, u64> {
+        let mut counts = self
+            .points
+            .keys()
+            .copied()
+            .map(|cpu| (cpu, 0u64))
+            .collect::<BTreeMap<_, _>>();
+        for event in self.probes.events() {
+            let ProbePayload::Counter { amount } = event.payload() else {
+                continue;
+            };
+            let Some((cpu, _point)) = self
+                .points
+                .iter()
+                .find(|(_cpu, point)| **point == event.point())
+            else {
+                continue;
+            };
+            let count = counts.entry(*cpu).or_default();
+            *count = (*count).saturating_add(*amount);
+        }
+        debug_assert_eq!(
+            counts.values().copied().fold(0u64, u64::saturating_add),
+            self.tracker.counter()
+        );
+        counts
+    }
 }
 
 impl RiscvSystemRun {
@@ -79,6 +107,23 @@ impl RiscvSystemRun {
         &self,
     ) -> Option<&RiscvRetiredInstructionProbeSnapshot> {
         self.retired_instruction_probes.as_ref()
+    }
+
+    pub fn retired_instruction_counts_by_cpu(&self) -> BTreeMap<CpuId, u64> {
+        if let Some(probes) = self.retired_instruction_probes() {
+            return probes.retired_instruction_counts_by_cpu();
+        }
+
+        let mut counts = BTreeMap::new();
+        for event in self.turns().iter().flat_map(|turn| turn.core_events()) {
+            let RiscvCoreDriveAction::InstructionExecuted(instruction) = event.action() else {
+                continue;
+            };
+            if instruction.counts_as_retired_instruction() {
+                *counts.entry(event.cpu()).or_insert(0) += 1;
+            }
+        }
+        counts
     }
 }
 

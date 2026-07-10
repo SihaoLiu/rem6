@@ -4,6 +4,7 @@ const SCALAR_STORE_PC: &str = "0x80000010";
 const SCALAR_LOAD_PC: &str = "0x80000014";
 const LOAD_DEPENDENT_PC: &str = "0x80000018";
 const YOUNGER_STORE_PC: &str = "0x8000001c";
+const MMIO_LOAD_PC: &str = "0x80000008";
 
 #[test]
 fn rem6_run_o3_detailed_scalar_memory_issue_response_retire_direct() {
@@ -32,6 +33,84 @@ fn rem6_run_o3_detailed_scalar_memory_issue_response_retire_cache_fabric_dram() 
     );
     assert_completed_scalar_memory_lifecycle(&json);
     assert_cache_fabric_dram_scalar_memory_resources(&json);
+}
+
+#[test]
+fn rem6_run_o3_detailed_scalar_memory_instruction_limit_retires_response_direct() {
+    let path = detailed_o3_scalar_memory_lifecycle_binary(
+        "m5-switch-cpu-o3-scalar-memory-instruction-limit-direct",
+    );
+    let json = scalar_memory_instruction_limit_json(&path, "direct", 220);
+
+    assert_response_owned_instruction_limit(&json, "direct");
+}
+
+#[test]
+fn rem6_run_o3_detailed_scalar_memory_instruction_limit_retires_response_cache_fabric_dram() {
+    let path = detailed_o3_scalar_memory_lifecycle_binary(
+        "m5-switch-cpu-o3-scalar-memory-instruction-limit-cache-fabric-dram",
+    );
+    let json = scalar_memory_instruction_limit_json(&path, "cache-fabric-dram", 360);
+
+    assert_response_owned_instruction_limit(&json, "cache-fabric-dram");
+    assert_cache_fabric_dram_scalar_memory_resources(&json);
+}
+
+#[test]
+fn rem6_run_o3_detailed_mmio_instruction_limit_retires_response() {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        u_type(0x1000_0000, 10, 0x37),
+        i_type(0, 10, 0b011, 5, 0x03),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-o3-mmio-instruction-limit", &elf);
+    let readfile_path = temp_binary(
+        "m5-switch-cpu-o3-mmio-instruction-limit-data",
+        &[0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--max-instructions",
+            "3",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            "direct",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+
+    assert_instruction_limit_summary(&json, 3);
+    assert_eq!(
+        json.pointer("/cores/0/registers/x5")
+            .and_then(Value::as_str),
+        Some("0x123456789abcdef")
+    );
+    assert_empty_scalar_memory_snapshot(&json);
+    let load = scalar_memory_event_at_pc(&json, MMIO_LOAD_PC);
+    assert_scalar_memory_event(load, "load", "0x10000000", 8, 0);
 }
 
 #[test]
@@ -215,6 +294,119 @@ fn scalar_memory_lifecycle_json(
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn scalar_memory_instruction_limit_json(path: &Path, memory_system: &str, max_tick: u64) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            &max_tick.to_string(),
+            "--stats-format",
+            "json",
+            "--execute",
+            "--max-instructions",
+            "6",
+            "--debug-flags",
+            "O3",
+            "--memory-system",
+            memory_system,
+            "--dump-memory",
+            "0x80000060:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn assert_response_owned_instruction_limit(json: &Value, memory_system: &str) {
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some(memory_system)
+    );
+    assert_instruction_limit_summary(json, 6);
+    assert_eq!(
+        json.pointer("/cores/0/registers/x12")
+            .and_then(Value::as_str),
+        Some("0x2a"),
+        "the final load must complete before the instruction limit stops execution"
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a00000000000000"),
+        "the instruction limit must stop before the dependent younger store"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "the committed load row must drain while its uncommitted dependent younger row remains"
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/rob/entries/0/pc")
+            .and_then(Value::as_str),
+        Some(LOAD_DEPENDENT_PC)
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/rob/entries/0/live_staged")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0),
+        "the response-owned scalar LSQ row must drain before the instruction limit stops"
+    );
+    let load = scalar_memory_event_at_pc(json, SCALAR_LOAD_PC);
+    assert_scalar_memory_event(load, "load", "0x80000060", 4, 0);
+}
+
+fn assert_instruction_limit_summary(json: &Value, committed: u64) {
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_at_instruction_limit")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_reason")
+            .and_then(Value::as_str),
+        Some("instruction_limit")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/committed_instructions")
+            .and_then(Value::as_u64),
+        Some(committed)
+    );
+    assert_eq!(
+        json.pointer("/simulation/instruction_probes/tracked_instructions")
+            .and_then(Value::as_u64),
+        Some(committed)
+    );
+}
+
+fn assert_empty_scalar_memory_snapshot(json: &Value) {
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
 }
 
 fn assert_completed_scalar_memory_lifecycle(json: &Value) {

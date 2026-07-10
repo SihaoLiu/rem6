@@ -3,8 +3,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 
 use rem6_cpu::{
-    CpuId, RiscvCluster, RiscvClusterTurn, RiscvCoreDriveAction, RiscvDataAccessEvent,
-    RiscvDataAccessEventKind,
+    CpuId, RiscvCluster, RiscvClusterTurn, RiscvDataAccessEvent, RiscvDataAccessEventKind,
 };
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteControlState, GdbRemoteError,
@@ -271,7 +270,7 @@ where
                     if let Some(stop) = watchpoint_stop {
                         session.set_stop_reply(stop);
                     }
-                    let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
+                    let retired_by_cpu = run.retired_instruction_counts_by_cpu();
                     let retired = retired_by_cpu.values().sum::<u64>();
                     if retired == 1 {
                         RiscvGdbSingleStepOutcome::InstructionRetired { retired_by_cpu }
@@ -280,7 +279,7 @@ where
                     }
                 } else {
                     let (run, _debug_stop) = drive(Some(1), None)?;
-                    let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
+                    let retired_by_cpu = run.retired_instruction_counts_by_cpu();
                     let retired = retired_by_cpu.values().sum::<u64>();
                     if retired == 1 {
                         RiscvGdbSingleStepOutcome::InstructionRetired { retired_by_cpu }
@@ -326,7 +325,7 @@ where
                                 session.set_stop_reply(stop);
                             }
                             RiscvGdbContinueOutcome::StoppedAtTrap {
-                                retired_by_cpu: riscv_run_retired_instructions_by_cpu(&run),
+                                retired_by_cpu: run.retired_instruction_counts_by_cpu(),
                             }
                         } else {
                             RiscvGdbContinueOutcome::CompletedRun { run: Box::new(run) }
@@ -384,7 +383,7 @@ impl RiscvGdbServeOutcome {
     fn completed_run_retired_instruction_count(&self) -> u64 {
         self.completed_run
             .as_ref()
-            .map(riscv_run_retired_instructions_by_cpu)
+            .map(RiscvSystemRun::retired_instruction_counts_by_cpu)
             .map(|retired_by_cpu| retired_by_cpu.values().sum())
             .unwrap_or_default()
     }
@@ -806,17 +805,4 @@ fn write_gdb_frames(
     stream
         .flush()
         .map_err(|error| execute_error(format!("failed to flush GDB stream: {error}")))
-}
-
-fn riscv_run_retired_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
-    let mut retired_by_cpu = BTreeMap::new();
-    for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
-        let RiscvCoreDriveAction::InstructionExecuted(execution) = event.action() else {
-            continue;
-        };
-        if execution.counts_as_retired_instruction() {
-            *retired_by_cpu.entry(event.cpu()).or_insert(0) += 1;
-        }
-    }
-    retired_by_cpu
 }

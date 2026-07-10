@@ -330,8 +330,10 @@ impl RiscvSystemRunDriver {
                 ));
             }
 
-            let remaining_instructions = max_instructions.saturating_sub(committed_instructions);
             self.snapshot_live_retire_gate_policy(cluster)?;
+            let remaining_instructions = max_instructions
+                .saturating_sub(committed_instructions)
+                .saturating_sub(pending_scalar_memory_retirement_count(cluster)?);
             let Some(turn) = cluster
                 .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
                     scheduler,
@@ -356,9 +358,8 @@ impl RiscvSystemRunDriver {
                     },
                 ));
             };
-            self.record_run_stats(cluster, scheduler.now(), &turn)?;
-            committed_instructions =
-                committed_instructions.saturating_add(committed_instruction_count(&turn));
+            let retirement = self.record_run_stats(cluster, scheduler.now(), &turn)?;
+            committed_instructions = committed_instructions.saturating_add(retirement.count());
             self.schedule_riscv_system_events_from_turn_parallel(
                 cluster,
                 scheduler,
@@ -384,8 +385,7 @@ impl RiscvSystemRunDriver {
                 ));
             }
             if committed_instructions >= max_instructions {
-                let tick =
-                    last_committed_instruction_tick(&turn).unwrap_or_else(|| scheduler.now());
+                let tick = retirement.last_tick().unwrap_or_else(|| scheduler.now());
                 turns.push(turn);
                 return Ok(self.run_result(
                     cluster,
@@ -516,8 +516,10 @@ impl RiscvSystemRunDriver {
                 ));
             }
 
-            let remaining_instructions = max_instructions.saturating_sub(committed_instructions);
             self.snapshot_live_retire_gate_policy(cluster)?;
+            let remaining_instructions = max_instructions
+                .saturating_sub(committed_instructions)
+                .saturating_sub(pending_scalar_memory_retirement_count(cluster)?);
             let Some(turn) = cluster
                 .drive_turn_parallel_with_instruction_budget_until_tick(
                     scheduler,
@@ -544,9 +546,8 @@ impl RiscvSystemRunDriver {
                     false,
                 ));
             };
-            self.record_run_stats(cluster, scheduler.now(), &turn)?;
-            committed_instructions =
-                committed_instructions.saturating_add(committed_instruction_count(&turn));
+            let retirement = self.record_run_stats(cluster, scheduler.now(), &turn)?;
+            committed_instructions = committed_instructions.saturating_add(retirement.count());
             self.schedule_riscv_system_events_from_turn_parallel(
                 cluster,
                 scheduler,
@@ -590,8 +591,7 @@ impl RiscvSystemRunDriver {
             if committed_instructions >= max_instructions
                 && (!drain_data_at_instruction_limit || !cluster_has_data_work(cluster)?)
             {
-                let tick =
-                    last_committed_instruction_tick(&turn).unwrap_or_else(|| scheduler.now());
+                let tick = retirement.last_tick().unwrap_or_else(|| scheduler.now());
                 turns.push(turn);
                 return Ok((
                     self.run_result(
@@ -625,19 +625,6 @@ impl RiscvSystemRunDriver {
     }
 }
 
-fn committed_instruction_count(turn: &RiscvClusterTurn) -> u64 {
-    turn.core_events()
-        .iter()
-        .filter(|event| match event.action() {
-            RiscvCoreDriveAction::InstructionExecuted(execution) => {
-                execution.counts_as_retired_instruction()
-            }
-            RiscvCoreDriveAction::FetchIssued { .. }
-            | RiscvCoreDriveAction::DataAccessIssued { .. } => false,
-        })
-        .count() as u64
-}
-
 fn cluster_has_data_work(cluster: &RiscvCluster) -> Result<bool, SystemError> {
     for cpu in cluster.core_ids() {
         let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
@@ -646,6 +633,20 @@ fn cluster_has_data_work(cluster: &RiscvCluster) -> Result<bool, SystemError> {
         }
     }
     Ok(false)
+}
+
+fn pending_scalar_memory_retirement_count(cluster: &RiscvCluster) -> Result<u64, SystemError> {
+    let mut pending = 0u64;
+    for cpu in cluster.core_ids() {
+        if cluster
+            .core(cpu)
+            .map_err(SystemError::RiscvCluster)?
+            .has_pending_o3_scalar_memory_retirement()
+        {
+            pending = pending.saturating_add(1);
+        }
+    }
+    Ok(pending)
 }
 
 fn last_committed_instruction_tick(turn: &RiscvClusterTurn) -> Option<u64> {

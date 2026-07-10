@@ -94,7 +94,7 @@ pub(super) fn execution_summary(
     inputs: ExecutionSummaryInputs<'_>,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let mut committed_by_cpu = inputs.prior_committed_by_cpu.clone();
-    for (cpu, committed) in committed_instructions_by_cpu(run) {
+    for (cpu, committed) in run.retired_instruction_counts_by_cpu() {
         *committed_by_cpu.entry(cpu).or_insert(0) += committed;
     }
     let committed_instructions = committed_by_cpu.values().sum();
@@ -662,19 +662,6 @@ pub(super) fn execution_summary(
         riscv_sbi_resets: inputs.riscv_sbi_resets,
         host_actions: inputs.host_actions,
     })
-}
-
-fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
-    let mut committed = BTreeMap::new();
-    for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
-        let RiscvCoreDriveAction::InstructionExecuted(instruction) = event.action() else {
-            continue;
-        };
-        if instruction.counts_as_retired_instruction() {
-            *committed.entry(event.cpu()).or_insert(0) += 1;
-        }
-    }
-    committed
 }
 
 fn execution_mode_for_cpu(

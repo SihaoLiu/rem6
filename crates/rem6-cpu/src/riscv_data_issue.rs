@@ -482,14 +482,11 @@ impl RiscvCore {
             let execution = execution
                 .as_ref()
                 .expect("issued scalar data access has a matching execution event");
-            let staged = match issue.target {
-                RiscvDataAccessTarget::Memory { .. } => state
-                    .o3_runtime
-                    .stage_live_scalar_memory_issue(execution, issue.request_id, issue.tick),
-                RiscvDataAccessTarget::Mmio { .. } => state
-                    .o3_runtime
-                    .queue_scalar_memory_legacy_fallback(execution, issue.request_id, issue.tick),
-            };
+            let staged = state.o3_runtime.stage_live_scalar_memory_issue(
+                execution,
+                issue.request_id,
+                issue.tick,
+            );
             assert!(
                 staged,
                 "detailed scalar data issue must own the only live O3 memory slot"

@@ -257,7 +257,9 @@ fn completed_scalar_load_blocks_younger_execution_until_o3_event_is_consumed() {
         .is_none());
     assert!(core.execute_next_completed_fetch().unwrap().is_none());
     assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 2);
-    assert!(core.record_ready_o3_scalar_memory_event_with_trace(true));
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .is_some());
 
     let younger = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
@@ -443,7 +445,9 @@ fn completed_data_request_blocks_second_issue_until_o3_retirement() {
         )
         .unwrap()
         .is_none());
-    assert!(core.record_ready_o3_scalar_memory_event_with_trace(false));
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(false)
+        .is_some());
     assert!(core
         .issue_next_data_access(
             &mut scheduler,
@@ -486,7 +490,12 @@ fn failed_issue_attempt_clears_deferred_marker_and_allows_retry() {
         .expect("riscv core lock")
         .events
         .push(event.clone());
-    assert!(core.defer_o3_scalar_memory_execution(&event));
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .defer_scalar_memory_execution(&event));
 
     let empty_transport = MemoryTransport::new();
     assert!(core

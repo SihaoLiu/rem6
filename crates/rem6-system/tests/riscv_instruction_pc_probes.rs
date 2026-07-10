@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
@@ -197,6 +198,10 @@ fn system_run_instruction_stats_drive_pc_count_from_retired_fetch_pcs() {
     assert_eq!(
         retired.tracker(),
         &GlobalInstTrackerSnapshot::new(3, Vec::new())
+    );
+    assert_eq!(
+        run.retired_instruction_counts_by_cpu(),
+        BTreeMap::from([(CpuId::new(0), 2), (CpuId::new(1), 1)])
     );
     assert_eq!(
         retired.pc_count(),

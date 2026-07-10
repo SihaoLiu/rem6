@@ -342,9 +342,7 @@ mod tests {
         RiscvClusterDriveEvent, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
         RiscvCpuExecutionEvent,
     };
-    use rem6_isa_riscv::{
-        Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
-    };
+    use rem6_isa_riscv::{Immediate, Register, RiscvExecutionRecord, RiscvInstruction};
     use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{
         AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId,
@@ -361,19 +359,36 @@ mod tests {
     use super::*;
     use crate::{
         riscv_execution_mode_target_for_cpu, ExecutionMode, GuestSourceId, HostEventPolicy,
-        RiscvCoreCheckpointPort, RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController,
-        SystemHostEventPort,
+        RiscvCoreCheckpointPort, RiscvInstructionStats, RiscvSystemRunDriver, RiscvTrapEventPort,
+        SystemHostController, SystemHostEventPort,
     };
 
     #[test]
     fn scalar_memory_execution_turn_defers_o3_retirement() {
         let cpu = CpuId::new(0);
-        let core = inactive_o3_core(cpu);
-        let cluster = RiscvCluster::new([core.clone()]).unwrap();
+        let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
         let driver = detailed_o3_driver_with_stats(cpu);
+
+        core.issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(0x0000_2603_u32.to_le_bytes().to_vec()),
+                    )
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle();
+        let execution = core.execute_next_completed_fetch().unwrap().unwrap();
         let turn = RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
             cpu,
-            RiscvCoreDriveAction::InstructionExecuted(Box::new(scalar_load_event(cpu))),
+            RiscvCoreDriveAction::InstructionExecuted(Box::new(execution)),
         )]);
 
         driver.record_o3_runtime_stats(&cluster, &turn).unwrap();
@@ -400,10 +415,10 @@ mod tests {
     }
 
     #[test]
-    fn scalar_memory_response_turn_records_o3_retirement_once_without_trace() {
+    fn scalar_memory_response_turn_records_o3_and_global_retirement_once_without_trace() {
         let cpu = CpuId::new(0);
         let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
-        let driver = detailed_o3_driver_with_stats(cpu);
+        let driver = detailed_o3_driver_with_retirement_stats(cpu);
 
         core.issue_next_fetch(
             &mut scheduler,
@@ -422,15 +437,18 @@ mod tests {
         .unwrap();
         scheduler.run_until_idle();
         let execution = core.execute_next_completed_fetch().unwrap().unwrap();
-        driver
-            .record_o3_runtime_stats(
+        let execution_retirement = driver
+            .record_run_stats(
                 &cluster,
+                scheduler.now(),
                 &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::InstructionExecuted(Box::new(execution)),
                 )]),
             )
             .unwrap();
+        assert_eq!(execution_retirement.count(), 0);
+        assert_eq!(retired_instruction_count(&driver), 0);
 
         let response_event = core
             .issue_next_data_access(
@@ -446,9 +464,10 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        driver
-            .record_o3_runtime_stats(
+        let issue_retirement = driver
+            .record_run_stats(
                 &cluster,
+                scheduler.now(),
                 &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::DataAccessIssued {
@@ -457,6 +476,8 @@ mod tests {
                 )]),
             )
             .unwrap();
+        assert_eq!(issue_retirement.count(), 0);
+        assert_eq!(retired_instruction_count(&driver), 0);
         assert_eq!(core.o3_runtime_stats().instructions(), 0);
         assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 1);
         assert_eq!(core.o3_runtime_snapshot().load_store_queue().len(), 1);
@@ -479,9 +500,16 @@ mod tests {
         );
 
         let response_summary = scheduler.run_until_idle();
-        driver
-            .record_o3_runtime_stats(&cluster, &RiscvClusterTurn::scheduler(response_summary))
+        let response_retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::scheduler(response_summary),
+            )
             .unwrap();
+        assert_eq!(response_retirement.count(), 1);
+        assert_eq!(response_retirement.last_tick(), Some(scheduler.now()));
+        assert_eq!(retired_instruction_count(&driver), 1);
 
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
         assert_eq!(core.o3_runtime_stats().lsq_loads(), 1);
@@ -507,14 +535,20 @@ mod tests {
             0
         );
 
-        driver
-            .record_o3_runtime_stats(&cluster, &RiscvClusterTurn::idle(scheduler.now()))
+        let repeated_retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
             .unwrap();
+        assert_eq!(repeated_retirement.count(), 0);
+        assert_eq!(retired_instruction_count(&driver), 1);
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
     }
 
     #[test]
-    fn scalar_memory_mmio_issue_turn_records_legacy_o3_retirement_once() {
+    fn scalar_memory_mmio_issue_remains_resident_until_response() {
         let cpu = CpuId::new(0);
         let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
         let driver = detailed_o3_driver(cpu);
@@ -579,17 +613,22 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(core.o3_runtime_stats().instructions(), 1);
-        assert_eq!(core.o3_runtime_stats().lsq_loads(), 1);
+        assert_eq!(core.o3_runtime_stats().instructions(), 0);
+        assert_eq!(core.o3_runtime_stats().lsq_loads(), 0);
         assert_eq!(core.o3_runtime_stats().max_lsq_occupancy(), 1);
-        assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
-        assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
+        assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 1);
+        assert_eq!(core.o3_runtime_snapshot().load_store_queue().len(), 1);
+        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
 
         scheduler.run_until_idle_parallel().unwrap();
         driver
             .record_o3_runtime_stats(&cluster, &RiscvClusterTurn::idle(scheduler.now()))
             .unwrap();
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
+        assert_eq!(core.o3_runtime_stats().lsq_loads(), 1);
+        assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
+        assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
+        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
     }
 
     #[test]
@@ -895,6 +934,26 @@ mod tests {
         detailed_o3_driver_with_registry(cpu, registry).with_o3_runtime_stats(o3_stats)
     }
 
+    fn detailed_o3_driver_with_retirement_stats(cpu: CpuId) -> RiscvSystemRunDriver {
+        let mut registry = StatsRegistry::new();
+        let o3_stats = RiscvO3RuntimeStats::register_for_cpus(&mut registry, [cpu], false).unwrap();
+        let driver = detailed_o3_driver_with_registry(cpu, registry);
+        RiscvSystemRunDriver::with_instruction_stats(
+            driver.trap_port().clone(),
+            RiscvInstructionStats::for_cpus([cpu]),
+        )
+        .with_o3_runtime_stats(o3_stats)
+    }
+
+    fn retired_instruction_count(driver: &RiscvSystemRunDriver) -> u64 {
+        driver
+            .instruction_stats()
+            .expect("test driver instruction stats")
+            .retired_instruction_probe_snapshot()
+            .tracker()
+            .counter()
+    }
+
     fn detailed_o3_driver_with_registry(
         cpu: CpuId,
         registry: StatsRegistry,
@@ -920,43 +979,6 @@ mod tests {
         let controller = driver.trap_port().controller();
         let controller = controller.lock().expect("system host controller lock");
         stat_sample(controller.executor().stats(), tick, path).value()
-    }
-
-    fn scalar_load_event(cpu: CpuId) -> RiscvCpuExecutionEvent {
-        let instruction = RiscvInstruction::Load {
-            rd: Register::new(12).unwrap(),
-            rs1: Register::new(10).unwrap(),
-            offset: Immediate::new(0),
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        RiscvCpuExecutionEvent::new(
-            rem6_cpu::CpuFetchEvent::completed(
-                rem6_cpu::CpuFetchRecord::new(
-                    1,
-                    PartitionId::new(cpu.get()),
-                    MemoryRouteId::new(0),
-                    TransportEndpointId::new(format!("cpu{}.ifetch", cpu.get())).unwrap(),
-                    MemoryRequestId::new(AgentId::new(cpu.get() + 1), 0),
-                    Address::new(0x8000_0000),
-                    AccessSize::new(4).unwrap(),
-                ),
-                0x0005_2603_u32.to_le_bytes().to_vec(),
-            ),
-            instruction,
-            RiscvExecutionRecord::new(
-                instruction,
-                0x8000_0000,
-                0x8000_0004,
-                Vec::new(),
-                Some(MemoryAccessKind::Load {
-                    rd: Register::new(12).unwrap(),
-                    address: 0x9000,
-                    width: MemoryWidth::Word,
-                    signed: false,
-                }),
-            ),
-        )
     }
 
     fn addi_event(cpu: CpuId) -> RiscvCpuExecutionEvent {

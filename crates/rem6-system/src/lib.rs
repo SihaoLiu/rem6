@@ -1,12 +1,8 @@
-use std::collections::BTreeSet;
-
-use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn, RiscvCoreDriveAction};
-use rem6_isa_riscv::MemoryAccessKind;
+use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_mmio::MmioBus;
-use rem6_stats::StatsRegistry;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 mod clint_checkpoint;
@@ -44,6 +40,7 @@ mod riscv_o3_runtime_stats;
 mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_driver;
+mod riscv_run_stats;
 mod riscv_run_translation;
 mod riscv_sbi;
 mod riscv_syscall;
@@ -774,194 +771,4 @@ impl RiscvSystemRunDriver {
             .stop_request()
             .copied()
     }
-
-    pub(crate) fn record_run_stats(
-        &self,
-        cluster: &RiscvCluster,
-        tick: Tick,
-        turn: &RiscvClusterTurn,
-    ) -> Result<(), SystemError> {
-        self.reset_runtime_stats_for_new_stats_resets(cluster)?;
-        self.record_o3_runtime_stats(cluster, turn)?;
-        self.record_instruction_stats(tick, turn)?;
-        self.record_data_access_stats(cluster)
-    }
-
-    pub(crate) fn record_o3_runtime_stats(
-        &self,
-        cluster: &RiscvCluster,
-        turn: &RiscvClusterTurn,
-    ) -> Result<(), SystemError> {
-        let retired = turn
-            .core_events()
-            .iter()
-            .filter_map(|event| match event.action() {
-                RiscvCoreDriveAction::InstructionExecuted(instruction)
-                    if instruction.counts_as_retired_instruction() =>
-                {
-                    Some((event.cpu(), instruction.as_ref()))
-                }
-                RiscvCoreDriveAction::InstructionExecuted(_) => None,
-                RiscvCoreDriveAction::FetchIssued { .. }
-                | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
-            })
-            .collect::<Vec<_>>();
-
-        let detailed_cpus = {
-            let controller = self.trap_port.controller();
-            let controller = controller.lock().expect("system host controller lock");
-            cluster
-                .core_ids()
-                .into_iter()
-                .filter(|cpu| {
-                    controller
-                        .executor()
-                        .execution_mode(&trap_event::execution_mode_target_for_cpu(*cpu))
-                        .is_some_and(|mode| mode == ExecutionMode::Detailed)
-                })
-                .collect::<BTreeSet<_>>()
-        };
-        let mut updated_cpus = BTreeSet::new();
-        for event in turn.core_events() {
-            if matches!(
-                event.action(),
-                RiscvCoreDriveAction::DataAccessIssued { .. }
-            ) && detailed_cpus.contains(&event.cpu())
-            {
-                let core = cluster
-                    .core(event.cpu())
-                    .map_err(SystemError::RiscvCluster)?;
-                if !core.o3_scalar_memory_lifecycle_is_quiescent() {
-                    updated_cpus.insert(event.cpu());
-                }
-            }
-        }
-        for (cpu, instruction) in retired {
-            if !detailed_cpus.contains(&cpu) {
-                continue;
-            }
-            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
-            if is_deferred_o3_scalar_memory(instruction) {
-                assert!(
-                    core.defer_o3_scalar_memory_execution(instruction),
-                    "detailed scalar memory execution must own the deferred O3 issue slot"
-                );
-            } else {
-                core.record_o3_retired_instruction_with_trace(
-                    instruction,
-                    self.o3_runtime_trace_enabled,
-                );
-                updated_cpus.insert(cpu);
-            }
-        }
-        for cpu in detailed_cpus {
-            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
-            while core.record_ready_o3_scalar_memory_event_with_trace(self.o3_runtime_trace_enabled)
-            {
-                updated_cpus.insert(cpu);
-            }
-        }
-        if self.o3_runtime_trace_enabled {
-            updated_cpus.extend(cluster.core_ids());
-        }
-        if let Some(o3_runtime_stats) = &self.o3_runtime_stats {
-            let controller = self.trap_port.controller();
-            let mut controller = controller.lock().expect("system host controller lock");
-            Self::sync_o3_runtime_stats(
-                o3_runtime_stats,
-                cluster,
-                self.o3_runtime_trace_enabled,
-                controller.executor_mut().stats_mut(),
-                updated_cpus,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn sync_o3_runtime_stats<I>(
-        o3_runtime_stats: &RiscvO3RuntimeStats,
-        cluster: &RiscvCluster,
-        trace_enabled: bool,
-        registry: &mut StatsRegistry,
-        cpus: I,
-    ) -> Result<(), SystemError>
-    where
-        I: IntoIterator<Item = CpuId>,
-    {
-        for cpu in cpus {
-            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
-            let snapshot = core.o3_runtime_stats();
-            let runtime_snapshot = core.o3_runtime_snapshot();
-            let trace_records = if trace_enabled {
-                let trace_offset = o3_runtime_stats.trace_record_offset(cpu);
-                let (next_trace_offset, trace_records) =
-                    core.take_o3_runtime_trace_updates(trace_offset);
-                o3_runtime_stats.set_trace_record_offset(cpu, next_trace_offset);
-                trace_records
-            } else {
-                Vec::new()
-            };
-            let in_order_pipeline_cycles = core.in_order_pipeline_snapshot().cycle();
-            o3_runtime_stats
-                .record_cpu_snapshot(
-                    registry,
-                    cpu,
-                    snapshot,
-                    &runtime_snapshot,
-                    &trace_records,
-                    in_order_pipeline_cycles,
-                )
-                .map_err(SystemError::Stats)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn record_instruction_stats(
-        &self,
-        tick: Tick,
-        turn: &RiscvClusterTurn,
-    ) -> Result<(), SystemError> {
-        let Some(instruction_stats) = &self.instruction_stats else {
-            return Ok(());
-        };
-
-        let controller = self.trap_port.controller();
-        let mut controller = controller.lock().expect("system host controller lock");
-        let mut retired = turn
-            .core_events()
-            .iter()
-            .filter_map(|event| match event.action() {
-                RiscvCoreDriveAction::InstructionExecuted(instruction)
-                    if instruction.counts_as_retired_instruction() =>
-                {
-                    Some((tick, event.cpu(), instruction.fetch_pc().get()))
-                }
-                RiscvCoreDriveAction::InstructionExecuted(_) => None,
-                RiscvCoreDriveAction::FetchIssued { .. }
-                | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        retired.sort_by_key(|(tick, cpu, _pc)| (*tick, *cpu));
-
-        for (tick, cpu, pc) in retired {
-            instruction_stats
-                .record_retired_instruction_probe(cpu, tick, pc)
-                .map_err(SystemError::Stats)?;
-            if let Some(stat) = instruction_stats.committed_stat(cpu) {
-                controller
-                    .executor_mut()
-                    .stats_mut()
-                    .increment(stat, 1)
-                    .map_err(SystemError::Stats)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn is_deferred_o3_scalar_memory(instruction: &rem6_cpu::RiscvCpuExecutionEvent) -> bool {
-    matches!(
-        instruction.execution().memory_access(),
-        Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
-    )
 }

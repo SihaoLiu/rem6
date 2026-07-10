@@ -1462,7 +1462,9 @@ fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
     ));
     scheduler.run_until_idle_conservative();
     assert_eq!(core.read_register(reg(5)), 41);
-    assert!(core.record_ready_o3_scalar_memory_event_with_trace(false));
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(false)
+        .is_some());
 
     for _ in 0..16 {
         match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {

@@ -347,15 +347,7 @@ impl O3RuntimeState {
         let completed_live_scalar_memory = live_scalar_memory
             .as_ref()
             .filter(|live| live.outcome == O3LiveScalarMemoryOutcome::Completed);
-        let legacy_scalar_memory = live_scalar_memory
-            .as_ref()
-            .is_some_and(|live| live.outcome == O3LiveScalarMemoryOutcome::LegacyFallback);
         let mut trace_record = self.record_runtime_state(execution, completed_live_scalar_memory);
-        if legacy_scalar_memory {
-            self.snapshot
-                .load_store_queue
-                .retain(|entry| entry.sequence() != trace_record.sequence());
-        }
         self.stats
             .record_retired_instruction(execution, trace_record);
         let observation = self.record_store_forwarding_window(
@@ -1558,13 +1550,14 @@ impl crate::RiscvCore {
         });
     }
 
-    pub fn record_ready_o3_scalar_memory_event_with_trace(&self, trace_enabled: bool) -> bool {
+    pub fn record_ready_o3_scalar_memory_event_with_trace(
+        &self,
+        trace_enabled: bool,
+    ) -> Option<RiscvCpuExecutionEvent> {
         self.with_o3_runtime(|runtime| {
-            let Some(execution) = runtime.take_ready_live_scalar_memory_event() else {
-                return false;
-            };
+            let execution = runtime.take_ready_live_scalar_memory_event()?;
             runtime.record_retired_instruction_with_trace(&execution, trace_enabled);
-            true
+            Some(execution)
         })
     }
 

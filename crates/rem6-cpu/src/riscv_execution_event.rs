@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
+use rem6_isa_riscv::{MemoryAccessKind, RiscvExecutionRecord, RiscvInstruction};
 use rem6_kernel::PartitionEventId;
 use rem6_memory::Address;
 
@@ -428,5 +428,12 @@ impl RiscvCpuExecutionEvent {
 
     pub const fn counts_as_retired_instruction(&self) -> bool {
         self.counts_as_retired_instruction
+    }
+
+    pub fn is_scalar_memory_access(&self) -> bool {
+        matches!(
+            self.execution.memory_access(),
+            Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
+        )
     }
 }

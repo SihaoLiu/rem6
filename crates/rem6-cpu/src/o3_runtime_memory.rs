@@ -22,7 +22,6 @@ pub(super) enum O3LiveScalarMemoryOutcome {
     Completed,
     Retried,
     Failed,
-    LegacyFallback,
 }
 
 pub(super) fn is_deferred_o3_scalar_memory_access(access: Option<&MemoryAccessKind>) -> bool {
@@ -40,7 +39,7 @@ pub(super) fn is_deferred_o3_scalar_memory_instruction(instruction: RiscvInstruc
 }
 
 pub(super) fn is_terminal_o3_scalar_memory_event(execution: &RiscvCpuExecutionEvent) -> bool {
-    is_deferred_o3_scalar_memory_access(execution.execution().memory_access())
+    execution.is_scalar_memory_access()
         && matches!(
             execution.data_access_event_kind(),
             Some(
@@ -56,6 +55,10 @@ impl O3RuntimeState {
         self.deferred_scalar_memory_execution.is_none()
             && self.live_scalar_memory.is_none()
             && self.live_scalar_memory_younger_sequences.is_empty()
+    }
+
+    pub(crate) fn has_pending_scalar_memory_retirement(&self) -> bool {
+        self.deferred_scalar_memory_execution.is_some() || self.live_scalar_memory.is_some()
     }
 
     pub(crate) const fn has_live_scalar_memory(&self) -> bool {
@@ -78,9 +81,7 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
-        if self.live_scalar_memory.is_some()
-            || !is_deferred_o3_scalar_memory_access(execution.execution().memory_access())
-        {
+        if self.live_scalar_memory.is_some() || !execution.is_scalar_memory_access() {
             return false;
         }
         let fetch_request = execution.fetch().request_id();
@@ -99,7 +100,7 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
         !detailed
-            || !is_deferred_o3_scalar_memory_access(execution.execution().memory_access())
+            || !execution.is_scalar_memory_access()
             || self.defer_scalar_memory_execution(execution)
     }
 
@@ -117,41 +118,6 @@ impl O3RuntimeState {
 
     pub(crate) fn clear_deferred_scalar_memory_execution(&mut self) -> bool {
         self.deferred_scalar_memory_execution.take().is_some()
-    }
-
-    pub(crate) fn queue_scalar_memory_legacy_fallback(
-        &mut self,
-        execution: &RiscvCpuExecutionEvent,
-        data_request: MemoryRequestId,
-        issue_tick: u64,
-    ) -> bool {
-        if self.live_scalar_memory.is_some()
-            || !is_deferred_o3_scalar_memory_access(execution.execution().memory_access())
-        {
-            return false;
-        }
-        if self
-            .deferred_scalar_memory_execution
-            .is_some_and(|pending| pending != execution.fetch().request_id())
-        {
-            return false;
-        }
-        self.deferred_scalar_memory_execution = None;
-        self.live_scalar_memory = Some(O3LiveScalarMemory {
-            fetch_request: execution.fetch().request_id(),
-            data_request,
-            sequence: self.next_sequence,
-            issue_tick,
-            issue_rob_occupancy: self.snapshot.reorder_buffer.len(),
-            issue_lsq_occupancy: self.snapshot.load_store_queue.len(),
-            retire_event: Some(execution.clone()),
-            response_tick: None,
-            latency_ticks: None,
-            load_data: None,
-            outcome: O3LiveScalarMemoryOutcome::LegacyFallback,
-            event_taken: false,
-        });
-        true
     }
 
     pub(crate) fn stage_live_scalar_memory_issue(
@@ -342,12 +308,12 @@ impl O3RuntimeState {
 }
 
 impl crate::RiscvCore {
-    pub fn defer_o3_scalar_memory_execution(&self, execution: &RiscvCpuExecutionEvent) -> bool {
-        self.with_o3_runtime(|runtime| runtime.defer_scalar_memory_execution(execution))
-    }
-
     pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool {
         self.with_o3_runtime(|runtime| runtime.scalar_memory_lifecycle_is_quiescent())
+    }
+
+    pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool {
+        self.with_o3_runtime(|runtime| runtime.has_pending_scalar_memory_retirement())
     }
 
     pub(crate) fn clear_deferred_o3_scalar_memory_execution(&self) -> bool {
@@ -539,22 +505,16 @@ mod tests {
     }
 
     #[test]
-    fn mmio_legacy_fallback_retirement_does_not_leave_an_lsq_row() {
+    fn pending_retirement_tracks_deferred_and_live_scalar_memory() {
         let mut runtime = O3RuntimeState::default();
         let execution = scalar_load_event(0x8000, 10);
-        assert!(runtime.queue_scalar_memory_legacy_fallback(&execution, memory_request(20), 31,));
-        assert_eq!(
-            runtime.take_ready_live_scalar_memory_event(),
-            Some(execution.clone())
-        );
-
-        runtime.record_retired_instruction_with_trace(&execution, true);
-
-        assert!(runtime.live_scalar_memory.is_none());
-        assert!(runtime.snapshot().reorder_buffer().is_empty());
-        assert!(runtime.snapshot().load_store_queue().is_empty());
-        assert_eq!(runtime.stats().instructions(), 1);
-        assert_eq!(runtime.stats().lsq_loads(), 1);
+        assert!(!runtime.has_pending_scalar_memory_retirement());
+        assert!(runtime.defer_scalar_memory_execution(&execution));
+        assert!(runtime.has_pending_scalar_memory_retirement());
+        assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
+        assert!(runtime.has_pending_scalar_memory_retirement());
+        runtime.discard_live_scalar_memory_lifecycle();
+        assert!(!runtime.has_pending_scalar_memory_retirement());
     }
 
     #[test]
