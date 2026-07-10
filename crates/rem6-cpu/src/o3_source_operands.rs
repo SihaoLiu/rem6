@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{Register, RiscvCsrOperand, RiscvInstruction};
 
-pub(super) fn o3_scalar_integer_source_registers(instruction: &RiscvInstruction) -> Vec<Register> {
+pub(crate) fn o3_scalar_integer_source_registers(instruction: &RiscvInstruction) -> Vec<Register> {
     match instruction {
         RiscvInstruction::Addi { rs1, .. }
         | RiscvInstruction::Slti { rs1, .. }
@@ -110,7 +110,7 @@ pub(super) fn o3_scalar_integer_source_registers(instruction: &RiscvInstruction)
     }
 }
 
-pub(super) const fn o3_scalar_integer_destination(
+pub(crate) const fn o3_scalar_integer_destination(
     instruction: RiscvInstruction,
 ) -> Option<Register> {
     match instruction {
@@ -170,7 +170,7 @@ pub(super) const fn o3_scalar_integer_destination(
     }
 }
 
-pub(super) fn o3_speculative_scalar_alu_operands(
+pub(crate) fn o3_speculative_scalar_alu_operands(
     instruction: RiscvInstruction,
 ) -> Option<(Register, Vec<Register>)> {
     if !matches!(

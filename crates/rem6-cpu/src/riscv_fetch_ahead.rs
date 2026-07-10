@@ -16,6 +16,7 @@ use crate::{
     RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
+mod detailed_o3;
 mod speculation;
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
@@ -38,12 +39,23 @@ impl RiscvCore {
                     && !state.executed_fetches.contains(&event.request_id())
             })
             .collect::<Vec<_>>();
-        if completed.is_empty() || completed.len() >= completed_fetch_window(&state) {
+        if completed.is_empty() {
             return None;
         }
         completed.sort_by_key(|event| event.request_id().sequence());
 
-        let fetch = next_fetch_ahead_candidate(&state, &completed)?;
+        let fetch = match detailed_o3::third_fetch_candidate(&state, &fetch_events, &completed) {
+            detailed_o3::ThirdFetchCandidate::Ready(pc) => {
+                return Some(RiscvFetchAheadDecision::straight_line(pc));
+            }
+            detailed_o3::ThirdFetchCandidate::Blocked => return None,
+            detailed_o3::ThirdFetchCandidate::NotApplicable => {
+                if completed.len() >= completed_fetch_window(&state) {
+                    return None;
+                }
+                next_fetch_ahead_candidate(&state, &completed)?
+            }
+        };
         let data = fetch.data()?;
         let raw = match data {
             [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),

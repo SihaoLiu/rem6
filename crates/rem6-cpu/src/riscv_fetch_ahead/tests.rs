@@ -61,6 +61,15 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn r_type(funct7: u32, rs1: u8, rs2: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
 fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
     crate::CpuFetchEvent::completed(
         CpuFetchRecord::new(
@@ -111,6 +120,7 @@ fn core_with_completed_fetches(
     );
     let mut core_state = core.core.state.lock().expect("cpu core lock");
     for (sequence, pc, data) in fetches {
+        let size = AccessSize::new(data.len() as u64).unwrap();
         core_state.events.push(crate::CpuFetchEvent::completed(
             CpuFetchRecord::new(
                 4,
@@ -119,13 +129,89 @@ fn core_with_completed_fetches(
                 endpoint("cpu0.ifetch"),
                 request(sequence),
                 Address::new(pc),
-                AccessSize::new(4).unwrap(),
+                size,
             ),
             data,
         ));
     }
     drop(core_state);
     core
+}
+
+#[test]
+fn detailed_o3_gate_fetches_third_row_after_independent_scalar_younger() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let independent_addi = i_type(5, 0, 0x0, 4, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, independent_addi.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_o3_gate_ignores_duplicate_younger_completion_when_fetching_third_row() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let independent_addi = i_type(5, 0, 0x0, 4, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, independent_addi.to_le_bytes().to_vec()),
+        (2, 0x8004, independent_addi.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_o3_gate_assembles_split_younger_before_fetching_third_row() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let independent_addi = i_type(5, 0, 0x0, 4, 0x13);
+    let bytes = independent_addi.to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, bytes[..2].to_vec()),
+        (2, 0x8006, bytes[2..].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_o3_gate_does_not_refetch_incomplete_split_younger_with_branch_lookahead() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let independent_addi = i_type(5, 0, 0x0, 4, 0x13);
+    let bytes = independent_addi.to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, bytes[..2].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_o3_gate_keeps_two_rows_when_younger_depends_on_gate_destination() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let dependent_addi = i_type(5, 3, 0x0, 4, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, dependent_addi.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
 
 fn core_with_recorded_selected_direct_speculation(kind: RiscvBranchPredictorKind) -> RiscvCore {

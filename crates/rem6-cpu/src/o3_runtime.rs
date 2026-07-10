@@ -45,7 +45,7 @@ pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
-use o3_source_operands::{
+pub(crate) use o3_source_operands::{
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };

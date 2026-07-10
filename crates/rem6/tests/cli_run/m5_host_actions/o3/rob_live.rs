@@ -77,14 +77,14 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         &json,
         "sim.cpu0.o3.max_rob_occupancy",
         "Count",
-        2,
+        3,
         "monotonic",
     );
     assert_json_stat_at_least(
         &json,
         "system.cpu.rob.maxOccupancy",
         "Count",
-        2,
+        3,
         "monotonic",
     );
     assert_json_stat(
@@ -116,7 +116,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         o3_runtime
             .pointer("/rob/max_occupancy")
             .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 2),
+            .is_some_and(|occupancy| occupancy >= 3),
         "O3 runtime JSON should expose live ROB overlap: {o3_runtime}"
     );
     assert_eq!(
@@ -142,7 +142,7 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         max_rob_event
             .pointer("/rob_occupancy")
             .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 2),
+            .is_some_and(|occupancy| occupancy >= 3),
         "event window should identify the live ROB overlap row: {max_rob_event}"
     );
     assert_eq!(
@@ -205,8 +205,13 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         .iter()
         .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000010"))
         .unwrap_or_else(|| panic!("missing younger independent add event: {events:?}"));
+    let forwarded_add = events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x80000014"))
+        .unwrap_or_else(|| panic!("missing forwarded dependent add event: {events:?}"));
     let divide_phase_deltas = assert_o3_phase_deltas(resident_divide);
     let younger_phase_deltas = assert_o3_phase_deltas(younger_add);
+    let forwarded_phase_deltas = assert_o3_phase_deltas(forwarded_add);
     assert!(
         divide_phase_deltas.0 > 0,
         "resident divide event should expose its nonzero issue-to-writeback phase: {resident_divide}"
@@ -214,6 +219,10 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     assert_eq!(
         younger_phase_deltas.0, 0,
         "younger independent add should have no FU issue-to-writeback delay: {younger_add}"
+    );
+    assert_eq!(
+        forwarded_phase_deltas.0, 0,
+        "forwarded dependent add should have no FU issue-to-writeback delay: {forwarded_add}"
     );
     let event_phase_totals = events.iter().fold((0, 0, 0), |accumulator, event| {
         let deltas = assert_o3_phase_deltas(event);
@@ -239,15 +248,18 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     let divide_writeback = json_u64_field(resident_divide, "/writeback_tick");
     let divide_commit = json_u64_field(resident_divide, "/commit_tick");
     let younger_issue = json_u64_field(younger_add, "/issue_tick");
+    let younger_writeback = json_u64_field(younger_add, "/writeback_tick");
     let younger_commit = json_u64_field(younger_add, "/commit_tick");
+    let forwarded_issue = json_u64_field(forwarded_add, "/issue_tick");
+    let forwarded_commit = json_u64_field(forwarded_add, "/commit_tick");
     let divide_rob_commits = json_u64_field(resident_divide, "/rob_commits_at_tick");
     let younger_rob_commits = json_u64_field(younger_add, "/rob_commits_at_tick");
     let divide_commit_blocked = json_bool_field(resident_divide, "/rob_commit_blocked");
     let younger_commit_blocked = json_bool_field(younger_add, "/rob_commit_blocked");
     assert_eq!(
         json_u64_field(resident_divide, "/rename_map_entries"),
-        4,
-        "the divide event should include committed x1/x2 plus both live x3/x4 mappings: {resident_divide}"
+        5,
+        "the divide event should include committed x1/x2 plus live x3/x4/x5 mappings: {resident_divide}"
     );
     assert!(
         divide_writeback > divide_issue,
@@ -257,12 +269,27 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         younger_issue < divide_writeback,
         "the independent younger add should execute while the older divide remains in flight: divide={resident_divide}, younger={younger_add}"
     );
+    assert!(
+        forwarded_issue > younger_writeback,
+        "the dependent x5 add should wake after its speculative x4 producer writes back: producer={younger_add}, consumer={forwarded_add}"
+    );
+    assert!(
+        forwarded_issue < divide_writeback,
+        "the dependent x5 add should still issue while the older divide remains in flight: divide={resident_divide}, consumer={forwarded_add}"
+    );
     assert_eq!(
         younger_add
             .pointer("/rob_occupancy")
             .and_then(Value::as_u64),
+        Some(2),
+        "the independent younger event should retire ahead of the remaining forwarded row: {younger_add}"
+    );
+    assert_eq!(
+        forwarded_add
+            .pointer("/rob_occupancy")
+            .and_then(Value::as_u64),
         Some(1),
-        "the younger event should retire from its own remaining ROB row: {younger_add}"
+        "the forwarded dependent event should retire from the final ROB row: {forwarded_add}"
     );
     assert!(
         divide_commit >= divide_writeback,
@@ -271,6 +298,10 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     assert!(
         younger_commit >= divide_writeback,
         "younger independent add should wait to commit until the older divide writes back: divide={resident_divide}, younger={younger_add}"
+    );
+    assert!(
+        forwarded_commit >= younger_commit,
+        "the forwarded dependent add must commit no earlier than its x4 producer: producer={younger_add}, consumer={forwarded_add}"
     );
     assert!(
         younger_phase_deltas.1 > 0,

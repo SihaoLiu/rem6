@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
+use rem6_isa_riscv::{RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
 
 use super::*;
 
@@ -21,16 +21,30 @@ pub(super) struct O3LiveRetiredInstruction {
 pub(super) struct O3LiveSpeculativeExecution {
     consumed_requests: Vec<MemoryRequestId>,
     sequence: u64,
+    producer_sequences: Vec<u64>,
     issue_tick: u64,
     execution: RiscvExecutionRecord,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveSpeculativeIssueCandidate {
     sequence: u64,
     pc: Address,
     instruction: RiscvInstruction,
     destination: O3RenameMapEntry,
+    producer_sequences: Vec<u64>,
+    forwarded_register_writes: Vec<RegisterWrite>,
+    dependency_ready_tick: u64,
+}
+
+impl O3LiveSpeculativeIssueCandidate {
+    pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
+        &self.forwarded_register_writes
+    }
+
+    pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
+        earliest_tick.max(self.dependency_ready_tick)
+    }
 }
 
 impl O3RuntimeState {
@@ -39,10 +53,10 @@ impl O3RuntimeState {
         current_pc: Address,
         current: RiscvInstruction,
         current_ready_tick: u64,
-        younger: Option<(Address, RiscvInstruction)>,
+        younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) {
         self.stage_live_instruction(current_pc, current, current_ready_tick);
-        if let Some((pc, instruction)) = younger {
+        for (pc, instruction) in younger {
             self.stage_live_instruction(pc, instruction, 0);
         }
         self.stats
@@ -196,26 +210,17 @@ impl O3RuntimeState {
             return None;
         }
 
-        let has_unavailable_source = self.snapshot.reorder_buffer[..index]
-            .iter()
-            .copied()
-            .filter(|predecessor| predecessor.is_live_staged())
-            .filter_map(|predecessor| predecessor.rename_destination())
-            .any(|(register_class, architectural)| {
-                register_class == O3RegisterClass::Integer
-                    && sources
-                        .iter()
-                        .any(|source| u32::from(source.index()) == architectural)
-            });
-        if has_unavailable_source {
-            return None;
-        }
+        let (producer_sequences, forwarded_register_writes, dependency_ready_tick) =
+            self.live_speculative_source_forwarding(index, &sources)?;
         Some(O3LiveSpeculativeIssueCandidate {
             sequence: entry.sequence(),
             pc,
             instruction,
             destination: staged_rename_entry(entry)
                 .expect("eligible live speculative execution has a rename destination"),
+            producer_sequences,
+            forwarded_register_writes,
+            dependency_ready_tick,
         })
     }
 
@@ -226,6 +231,7 @@ impl O3RuntimeState {
         issue_tick: u64,
         execution: RiscvExecutionRecord,
     ) {
+        let issue_tick = candidate.issue_tick(issue_tick);
         if !valid_live_speculative_fetch_identity(consumed_requests)
             || Address::new(execution.pc()) != candidate.pc
             || execution.instruction() != candidate.instruction
@@ -250,9 +256,58 @@ impl O3RuntimeState {
             .push(O3LiveSpeculativeExecution {
                 consumed_requests: consumed_requests.to_vec(),
                 sequence: candidate.sequence,
+                producer_sequences: candidate.producer_sequences,
                 issue_tick,
                 execution,
             });
+    }
+
+    fn live_speculative_source_forwarding(
+        &self,
+        consumer_index: usize,
+        sources: &[rem6_isa_riscv::Register],
+    ) -> Option<(Vec<u64>, Vec<RegisterWrite>, u64)> {
+        let mut producer_sequences = Vec::new();
+        let mut forwarded_register_writes = Vec::new();
+        let mut dependency_ready_tick = 0;
+        for source in sources.iter().copied().filter(|source| !source.is_zero()) {
+            let producer = self.snapshot.reorder_buffer[..consumer_index]
+                .iter()
+                .rev()
+                .copied()
+                .find(|producer| {
+                    producer.is_live_staged()
+                        && producer.rename_destination()
+                            == Some((O3RegisterClass::Integer, u32::from(source.index())))
+                });
+            let Some(producer) = producer else {
+                continue;
+            };
+            let issued = self
+                .live_speculative_executions
+                .iter()
+                .find(|issued| issued.sequence == producer.sequence())?;
+            let write = issued
+                .execution
+                .register_writes()
+                .iter()
+                .find(|write| write.register() == source)?;
+            dependency_ready_tick = dependency_ready_tick.max(issued.issue_tick.saturating_add(1));
+            if !producer_sequences.contains(&producer.sequence()) {
+                producer_sequences.push(producer.sequence());
+            }
+            if !forwarded_register_writes
+                .iter()
+                .any(|forwarded: &RegisterWrite| forwarded.register() == source)
+            {
+                forwarded_register_writes.push(write.clone());
+            }
+        }
+        Some((
+            producer_sequences,
+            forwarded_register_writes,
+            dependency_ready_tick,
+        ))
     }
 
     fn stage_live_instruction(
@@ -309,10 +364,42 @@ impl O3RuntimeState {
             .iter()
             .position(|issued| issued.sequence == entry.sequence())?;
         let issued = self.live_speculative_executions.remove(index);
-        (issued.consumed_requests.as_slice() == consumed_requests
+        let valid = issued.producer_sequences.is_empty()
+            && issued.consumed_requests.as_slice() == consumed_requests
             && consumed_requests.first() == Some(&execution.fetch().request_id())
-            && issued.execution == *execution.execution())
-        .then_some(issued.issue_tick)
+            && issued.execution == *execution.execution();
+        if valid {
+            self.validate_live_speculative_producer(entry.sequence());
+            Some(issued.issue_tick)
+        } else {
+            self.invalidate_live_speculative_execution_chain(entry.sequence());
+            None
+        }
+    }
+
+    fn validate_live_speculative_producer(&mut self, sequence: u64) {
+        for issued in &mut self.live_speculative_executions {
+            issued
+                .producer_sequences
+                .retain(|producer| *producer != sequence);
+        }
+    }
+
+    fn invalidate_live_speculative_execution_chain(&mut self, sequence: u64) {
+        let mut invalidated = vec![sequence];
+        while let Some(producer) = invalidated.pop() {
+            let mut index = 0;
+            while index < self.live_speculative_executions.len() {
+                if self.live_speculative_executions[index]
+                    .producer_sequences
+                    .contains(&producer)
+                {
+                    invalidated.push(self.live_speculative_executions.remove(index).sequence);
+                } else {
+                    index += 1;
+                }
+            }
+        }
     }
 }
 
@@ -437,7 +524,10 @@ mod tests {
             Address::new(0x8000),
             div_x3(),
             29,
-            Some((Address::new(0x8004), addi(4, 0))),
+            [
+                (Address::new(0x8004), addi(4, 0)),
+                (Address::new(0x8008), addi(5, 4)),
+            ],
         );
         let live_snapshot = runtime.snapshot();
         let encoded = runtime.checkpoint_payload().encode();
@@ -450,6 +540,7 @@ mod tests {
         assert_eq!(restored.snapshot(), live_snapshot);
         assert!(restored.snapshot().reorder_buffer()[0].is_live_staged());
         assert!(restored.snapshot().reorder_buffer()[1].is_live_staged());
+        assert!(restored.snapshot().reorder_buffer()[2].is_live_staged());
 
         let restored_destinations = restored
             .snapshot()
@@ -457,12 +548,12 @@ mod tests {
             .iter()
             .filter_map(|entry| entry.destination())
             .collect::<BTreeSet<_>>();
-        restored.stage_live_retire_window(Address::new(0x8008), addi(5, 0), 0, None);
+        restored.stage_live_retire_window(Address::new(0x800c), addi(6, 0), 0, None);
         let next_destination = restored
             .snapshot()
             .reorder_buffer()
             .iter()
-            .find(|entry| entry.pc() == Address::new(0x8008))
+            .find(|entry| entry.pc() == Address::new(0x800c))
             .and_then(|entry| entry.destination())
             .unwrap();
         assert!(
@@ -570,6 +661,144 @@ mod tests {
                 .is_none(),
             "a ready-but-uncommitted producer is still absent from the architectural hart clone"
         );
+    }
+
+    #[test]
+    fn speculative_predecessor_wakes_and_forwards_to_dependent_younger() {
+        let mut runtime = O3RuntimeState::default();
+        let producer = addi(4, 0);
+        let consumer = addi(5, 4);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), producer)),
+        );
+        runtime.stage_live_retire_window(Address::new(0x8008), consumer, 0, None);
+        let producer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), producer)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            producer_candidate,
+            &[request(2)],
+            10,
+            RiscvExecutionRecord::new(
+                producer,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                None,
+            ),
+        );
+
+        let consumer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), consumer)
+            .expect("speculative x4 write should wake the x5 consumer");
+
+        assert_eq!(
+            consumer_candidate.forwarded_register_writes(),
+            &[RegisterWrite::new(Register::new(4).unwrap(), 1)]
+        );
+        assert_eq!(consumer_candidate.issue_tick(10), 11);
+    }
+
+    #[test]
+    fn speculative_consumer_uses_nearest_live_producer() {
+        let mut runtime = O3RuntimeState::default();
+        let producer = addi(3, 0);
+        let consumer = addi(5, 3);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), producer)),
+        );
+        runtime.stage_live_retire_window(Address::new(0x8008), consumer, 0, None);
+        let producer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), producer)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            producer_candidate,
+            &[request(2)],
+            10,
+            RiscvExecutionRecord::new(
+                producer,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(3).unwrap(), 1)],
+                None,
+            ),
+        );
+
+        let consumer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), consumer)
+            .expect("the nearer x3 writer should hide the older pending divide destination");
+
+        assert_eq!(
+            consumer_candidate.forwarded_register_writes(),
+            &[RegisterWrite::new(Register::new(3).unwrap(), 1)]
+        );
+        assert_eq!(consumer_candidate.issue_tick(10), 11);
+    }
+
+    #[test]
+    fn invalidated_speculative_producer_revokes_dependent_issue_timing() {
+        let mut runtime = O3RuntimeState::default();
+        let producer = addi(4, 0);
+        let consumer = addi(5, 4);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            [
+                (Address::new(0x8004), producer),
+                (Address::new(0x8008), consumer),
+            ],
+        );
+        let producer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), producer)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            producer_candidate,
+            &[request(2)],
+            10,
+            RiscvExecutionRecord::new(
+                producer,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                None,
+            ),
+        );
+        let consumer_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), consumer)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            consumer_candidate,
+            &[request(3)],
+            10,
+            RiscvExecutionRecord::new(
+                consumer,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(Register::new(5).unwrap(), 1)],
+                None,
+            ),
+        );
+
+        let divide = execution_event(div_x3(), 0x8000, 1, 3);
+        retire_live(&mut runtime, &divide, 29);
+        runtime.record_retired_instruction_with_trace(&divide, true);
+        let producer = execution_event(producer, 0x8004, 2, 4);
+        runtime.retire_live_staged_instruction(&producer, &[request(4)], 30);
+        runtime.record_retired_instruction_with_trace(&producer, true);
+        let consumer = execution_event(consumer, 0x8008, 3, 5);
+        retire_live(&mut runtime, &consumer, 31);
+        runtime.record_retired_instruction_with_trace(&consumer, true);
+
+        let trace = runtime.trace_records().last().copied().unwrap();
+        assert_eq!(trace.issue_tick(), 31);
+        assert_eq!(trace.commit_tick(), 31);
     }
 
     #[test]

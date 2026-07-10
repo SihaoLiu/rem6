@@ -12,6 +12,8 @@ use crate::{
     CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError,
 };
 
+const MAX_LIVE_RETIRE_YOUNGER_INSTRUCTIONS: usize = 2;
+
 pub(super) struct RiscvLiveRetireWindowRequest<'a> {
     request: MemoryRequestId,
     pc: Address,
@@ -20,9 +22,27 @@ pub(super) struct RiscvLiveRetireWindowRequest<'a> {
     fetch_events: &'a [CpuFetchEvent],
 }
 
-struct RiscvCompletedFetchInstruction {
+pub(crate) struct RiscvCompletedFetchInstruction {
+    pc: Address,
     consumed_requests: Vec<MemoryRequestId>,
     decoded: RiscvDecodedInstruction,
+}
+
+impl RiscvCompletedFetchInstruction {
+    pub(crate) const fn pc(&self) -> Address {
+        self.pc
+    }
+
+    pub(crate) fn last_consumed_request(&self) -> MemoryRequestId {
+        *self
+            .consumed_requests
+            .last()
+            .expect("completed instruction consumes at least one fetch request")
+    }
+
+    pub(crate) const fn decoded(&self) -> RiscvDecodedInstruction {
+        self.decoded
+    }
 }
 
 impl<'a> RiscvLiveRetireWindowRequest<'a> {
@@ -124,18 +144,24 @@ fn stage_o3_live_retire_window(
 ) -> Result<(), RiscvCpuError> {
     let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
     let next_pc = Address::new(pc.get().wrapping_add(u64::from(decoded.bytes())));
-    let younger = completed_fetch_instruction_at(state, fetch_events, current_request, next_pc);
+    let younger = completed_fetch_instruction_window(
+        state,
+        fetch_events,
+        current_request,
+        next_pc,
+        MAX_LIVE_RETIRE_YOUNGER_INSTRUCTIONS,
+    );
     state.o3_runtime.stage_live_retire_window(
         pc,
         decoded.instruction(),
         ready_tick,
         younger
-            .as_ref()
-            .map(|younger| (next_pc, younger.decoded.instruction())),
+            .iter()
+            .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
-    let Some(younger) = younger else {
+    if younger.is_empty() {
         return Ok(());
-    };
+    }
     if !matches!(
         o3_fu_latency_class(decoded.instruction()),
         Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
@@ -143,25 +169,57 @@ fn stage_o3_live_retire_window(
     {
         return Ok(());
     }
-    let Some(candidate) = state
-        .o3_runtime
-        .live_speculative_issue_candidate(next_pc, younger.decoded.instruction())
-    else {
-        return Ok(());
-    };
+    for younger in younger {
+        let Some(candidate) = state
+            .o3_runtime
+            .live_speculative_issue_candidate(younger.pc, younger.decoded.instruction())
+        else {
+            continue;
+        };
 
-    let mut speculative_hart = state.hart.clone();
-    speculative_hart.set_pc(next_pc.get());
-    let Ok(speculative_execution) = speculative_hart.execute_decoded(younger.decoded) else {
-        return Ok(());
-    };
-    state.o3_runtime.record_live_speculative_execution(
-        candidate,
-        &younger.consumed_requests,
-        issue_tick,
-        speculative_execution,
-    );
+        let mut speculative_hart = state.hart.clone();
+        for write in candidate.forwarded_register_writes() {
+            speculative_hart.write(write.register(), write.value());
+        }
+        speculative_hart.set_pc(younger.pc.get());
+        let Ok(speculative_execution) = speculative_hart.execute_decoded(younger.decoded) else {
+            continue;
+        };
+        state.o3_runtime.record_live_speculative_execution(
+            candidate,
+            &younger.consumed_requests,
+            issue_tick,
+            speculative_execution,
+        );
+    }
     Ok(())
+}
+
+fn completed_fetch_instruction_window(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    mut current_request: MemoryRequestId,
+    mut pc: Address,
+    limit: usize,
+) -> Vec<RiscvCompletedFetchInstruction> {
+    let mut instructions = Vec::new();
+    for _ in 0..limit {
+        let Some(instruction) =
+            completed_fetch_instruction_at(state, fetch_events, current_request, pc)
+        else {
+            break;
+        };
+        current_request = *instruction
+            .consumed_requests
+            .last()
+            .expect("completed instruction consumes at least one fetch request");
+        pc = Address::new(
+            pc.get()
+                .wrapping_add(u64::from(instruction.decoded.bytes())),
+        );
+        instructions.push(instruction);
+    }
+    instructions
 }
 
 fn completed_fetch_instruction_at(
@@ -178,13 +236,22 @@ fn completed_fetch_instruction_at(
     )
 }
 
-fn completed_fetch_instruction_from_events(
+pub(crate) fn completed_fetch_instruction_from_events(
     executed_fetches: &BTreeSet<MemoryRequestId>,
     fetch_events: &[CpuFetchEvent],
     current_request: MemoryRequestId,
     pc: Address,
 ) -> Option<RiscvCompletedFetchInstruction> {
     let event = oldest_completed_fetch_at(executed_fetches, fetch_events, current_request, pc)?;
+    completed_fetch_instruction_starting_with(executed_fetches, fetch_events, event)
+}
+
+pub(crate) fn completed_fetch_instruction_starting_with(
+    executed_fetches: &BTreeSet<MemoryRequestId>,
+    fetch_events: &[CpuFetchEvent],
+    event: &CpuFetchEvent,
+) -> Option<RiscvCompletedFetchInstruction> {
+    let pc = event.pc();
     let data = event.data()?;
     let mut consumed_requests = vec![event.request_id()];
     let raw = match data {
@@ -208,6 +275,7 @@ fn completed_fetch_instruction_from_events(
     };
     let decoded = RiscvInstruction::decode_with_length(raw).ok()?;
     Some(RiscvCompletedFetchInstruction {
+        pc,
         consumed_requests,
         decoded,
     })
@@ -271,6 +339,34 @@ mod tests {
             RiscvInstruction::decode(raw).unwrap()
         );
         assert_eq!(selected.decoded.bytes(), 4);
+    }
+
+    #[test]
+    fn live_younger_window_collects_two_contiguous_instructions() {
+        let current = MemoryRequestId::new(AgentId::new(7), 10);
+        let first_pc = Address::new(0x8004);
+        let events = vec![
+            completed_fetch_with_data(7, 11, first_pc, 0x0050_0213_u32.to_le_bytes().to_vec()),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x00b2_0293_u32.to_le_bytes().to_vec(),
+            ),
+        ];
+        let state = RiscvCoreState::new(0x8000, 0);
+
+        let window = completed_fetch_instruction_window(&state, &events, current, first_pc, 2);
+
+        assert_eq!(window.len(), 2);
+        assert_eq!(window[0].pc, Address::new(0x8004));
+        assert_eq!(window[1].pc, Address::new(0x8008));
+        assert_eq!(window[0].consumed_requests, vec![request(7, 11)]);
+        assert_eq!(window[1].consumed_requests, vec![request(7, 12)]);
+    }
+
+    fn request(agent: u32, sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(agent), sequence)
     }
 
     fn completed_fetch(agent: u32, sequence: u64, pc: Address) -> CpuFetchEvent {
