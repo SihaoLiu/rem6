@@ -154,6 +154,104 @@ fn detailed_o3_gate_fetches_third_row_after_independent_scalar_younger() {
 }
 
 #[test]
+fn detailed_scalar_load_fetches_one_sequential_younger_before_data_issue() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8004));
+}
+
+#[test]
+fn detailed_scalar_load_waits_for_completed_younger_fetch() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let addi = i_type(7, 0, 0x0, 6, 0x13);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    let younger = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(1),
+        Address::new(0x8004),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(younger.clone()));
+
+    assert!(!core
+        .can_retire_completed_fetch_while_fetch_pending()
+        .unwrap());
+
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::completed(
+            younger,
+            addi.to_le_bytes().to_vec(),
+        ));
+    assert!(core
+        .can_retire_completed_fetch_while_fetch_pending()
+        .unwrap());
+}
+
+#[test]
+fn detailed_scalar_load_does_not_refetch_pending_younger_with_branch_lookahead() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    let younger = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(1),
+        Address::new(0x8004),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(younger));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_does_not_refetch_completed_younger_with_branch_lookahead() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let addi = i_type(7, 0, 0x0, 6, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, addi.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn timing_scalar_load_does_not_enable_detailed_fetch_ahead() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_o3_gate_ignores_duplicate_younger_completion_when_fetching_third_row() {
     let div = r_type(1, 1, 2, 0x4, 3, 0x33);
     let independent_addi = i_type(5, 0, 0x0, 4, 0x13);

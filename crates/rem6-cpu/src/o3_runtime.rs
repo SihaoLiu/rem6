@@ -168,6 +168,7 @@ pub struct O3RuntimeState {
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
     live_scalar_memory: Option<O3LiveScalarMemory>,
+    live_scalar_memory_younger_sequences: BTreeSet<u64>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -196,6 +197,7 @@ impl O3RuntimeState {
         self.live_speculative_executions.clear();
         self.deferred_scalar_memory_execution = None;
         self.live_scalar_memory = None;
+        self.live_scalar_memory_younger_sequences.clear();
         Ok(())
     }
 
@@ -522,6 +524,7 @@ impl Default for O3RuntimeState {
             live_speculative_executions: Vec::new(),
             deferred_scalar_memory_execution: None,
             live_scalar_memory: None,
+            live_scalar_memory_younger_sequences: BTreeSet::new(),
             next_sequence: 0,
             next_physical_register: 1,
         }

@@ -218,17 +218,19 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
-            state.o3_runtime.discard_live_scalar_memory_lifecycle();
-            state.o3_runtime.discard_live_speculative_executions();
+            if state.o3_runtime.has_live_scalar_memory_window() {
+                state.o3_runtime.discard_live_retire_window();
+            } else {
+                state.o3_runtime.discard_live_scalar_memory_lifecycle();
+                state.o3_runtime.discard_live_speculative_executions();
+            }
         }
     }
 
     pub(crate) fn live_retire_gate_blocks_new_work(&self) -> bool {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .live_retire_gate
-            .blocks_new_work()
+        let state = self.state.lock().expect("riscv core lock");
+        state.live_retire_gate.blocks_new_work()
+            || state.o3_runtime.has_ready_live_scalar_memory_event()
     }
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {

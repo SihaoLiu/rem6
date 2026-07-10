@@ -2,6 +2,7 @@ use super::*;
 
 const SCALAR_STORE_PC: &str = "0x80000010";
 const SCALAR_LOAD_PC: &str = "0x80000014";
+const LOAD_DEPENDENT_PC: &str = "0x80000018";
 const YOUNGER_STORE_PC: &str = "0x8000001c";
 
 #[test]
@@ -61,15 +62,16 @@ fn rem6_run_o3_detailed_scalar_load_is_resident_before_response() {
     );
 
     let rob = json
-        .pointer("/cores/0/o3_runtime/snapshot/rob/entries/0")
-        .unwrap_or_else(|| panic!("early run should expose one resident ROB row: {json}"));
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("early run should expose resident ROB rows: {json}"));
     let lsq = json
         .pointer("/cores/0/o3_runtime/snapshot/lsq/entries/0")
         .unwrap_or_else(|| panic!("early run should expose one resident LSQ row: {json}"));
     assert_eq!(
         json.pointer("/cores/0/o3_runtime/snapshot/rob/count")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
@@ -77,14 +79,17 @@ fn rem6_run_o3_detailed_scalar_load_is_resident_before_response() {
         Some(1)
     );
     assert_eq!(
-        rob.pointer("/pc").and_then(Value::as_str),
+        rob[0].pointer("/pc").and_then(Value::as_str),
         Some(SCALAR_LOAD_PC)
     );
-    assert_eq!(rob.pointer("/ready").and_then(Value::as_bool), Some(false));
     assert_eq!(
-        rob.pointer("/live_staged").and_then(Value::as_bool),
-        Some(true)
+        rob[1].pointer("/pc").and_then(Value::as_str),
+        Some(LOAD_DEPENDENT_PC)
     );
+    assert!(rob.iter().all(|entry| {
+        entry.pointer("/ready").and_then(Value::as_bool) == Some(false)
+            && entry.pointer("/live_staged").and_then(Value::as_bool) == Some(true)
+    }));
     assert_eq!(lsq.pointer("/kind").and_then(Value::as_str), Some("load"));
     assert_eq!(
         lsq.pointer("/address").and_then(Value::as_str),
@@ -95,7 +100,7 @@ fn rem6_run_o3_detailed_scalar_load_is_resident_before_response() {
         lsq.pointer("/completed").and_then(Value::as_bool),
         Some(false)
     );
-    assert_eq!(rob.pointer("/sequence"), lsq.pointer("/sequence"));
+    assert_eq!(rob[0].pointer("/sequence"), lsq.pointer("/sequence"));
 }
 
 #[test]
@@ -258,7 +263,7 @@ fn assert_completed_scalar_memory_lifecycle(json: &Value) {
         runtime
             .pointer("/rob/max_occupancy")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         runtime

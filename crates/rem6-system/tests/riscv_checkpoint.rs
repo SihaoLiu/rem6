@@ -248,6 +248,15 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
         &mut scheduler,
         &transport,
     );
+    let younger = loaded_store(0x9004, i_type(7, 0, 0x0, 13, 0x13));
+    cpu1.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        responder(younger),
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
     let bank = RiscvCoreCheckpointBank::new([
         RiscvCoreCheckpointPort::new(cpu0_component.clone(), cpu0),
         RiscvCoreCheckpointPort::new(cpu1_component.clone(), cpu1.clone()),
@@ -285,7 +294,11 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(cpu1.o3_runtime_snapshot().load_store_queue().len(), 1);
+    let resident = cpu1.o3_runtime_snapshot();
+    assert_eq!(resident.reorder_buffer().len(), 2);
+    assert_eq!(resident.reorder_buffer()[0].pc(), Address::new(0x9000));
+    assert_eq!(resident.reorder_buffer()[1].pc(), Address::new(0x9004));
+    assert_eq!(resident.load_store_queue().len(), 1);
     cpu1.set_detailed_live_retire_gate_enabled(false);
     assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     assert_eq!(

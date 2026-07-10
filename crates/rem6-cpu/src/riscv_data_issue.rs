@@ -17,10 +17,10 @@ use rem6_transport::{
 
 use crate::{
     riscv_checker, riscv_cross_line::supports_cross_line_data_access, riscv_data_access,
-    riscv_execute, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
-    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
-    RiscvLoadReservation,
+    riscv_execute, riscv_live_retire_window::stage_o3_scalar_memory_younger_window, CpuId,
+    InOrderPipelineCycleRecord, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessEvent,
+    RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 mod request_helpers;
@@ -452,17 +452,28 @@ impl RiscvCore {
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
+        let (detailed_scalar_memory, detailed_scalar_load) = {
+            let state = self.state.lock().expect("riscv core lock");
+            let detailed = state.live_retire_gate.detailed_policy_enabled();
+            let untranslated = state.data_translation.is_none();
+            (
+                detailed
+                    && matches!(
+                        issue.access,
+                        MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
+                    ),
+                detailed && untranslated && matches!(issue.access, MemoryAccessKind::Load { .. }),
+            )
+        };
+        let fetch_events = detailed_scalar_load
+            .then(|| self.core.fetch_events())
+            .unwrap_or_default();
         let mut state = self.state.lock().expect("riscv core lock");
         let execution = state
             .events
             .iter()
             .find(|event| event.fetch().request_id() == issue.fetch_request)
             .cloned();
-        let detailed_scalar_memory = state.live_retire_gate.detailed_policy_enabled()
-            && matches!(
-                issue.access,
-                MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
-            );
         state.issued_data_for_fetches.insert(issue.fetch_request);
         state
             .outstanding_data
@@ -483,6 +494,15 @@ impl RiscvCore {
                 staged,
                 "detailed scalar data issue must own the only live O3 memory slot"
             );
+            if detailed_scalar_load && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
+            {
+                stage_o3_scalar_memory_younger_window(
+                    &mut state,
+                    execution,
+                    issue.tick,
+                    &fetch_events,
+                );
+            }
         }
         if emit_issued_event {
             state

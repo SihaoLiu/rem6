@@ -222,6 +222,7 @@ impl O3RuntimeState {
 
         if observation.drains_runtime_rob {
             self.snapshot.reorder_buffer.drain(0..observation.commits);
+            self.retain_live_scalar_memory_younger_sequences_in_rob();
         }
         let lsq_commits = self
             .snapshot

@@ -107,15 +107,11 @@ impl RiscvCore {
         &self,
         mut gate_scheduler: Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
-        if self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .pending_trap
-            .is_some()
-        {
+        let state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some() || state.o3_runtime.has_ready_live_scalar_memory_event() {
             return Ok(None);
         }
+        drop(state);
         self.sync_in_order_fetch_state()?;
         let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");

@@ -58,12 +58,51 @@ impl O3RuntimeState {
         if is_deferred_o3_scalar_memory_instruction(current) {
             return;
         }
-        self.stage_live_instruction(current_pc, current, current_ready_tick);
+        let _ = self.stage_live_instruction(current_pc, current, current_ready_tick);
         for (pc, instruction) in younger {
             if is_deferred_o3_scalar_memory_instruction(instruction) {
                 break;
             }
-            self.stage_live_instruction(pc, instruction, 0);
+            let _ = self.stage_live_instruction(pc, instruction, 0);
+        }
+        self.stats
+            .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+    }
+
+    pub(crate) fn stage_live_scalar_memory_younger_window(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
+    ) {
+        let Some(live) = self.live_scalar_memory.as_ref() else {
+            return;
+        };
+        if live.fetch_request != fetch_request
+            || live.outcome != O3LiveScalarMemoryOutcome::Resident
+            || !self
+                .snapshot
+                .reorder_buffer
+                .iter()
+                .any(|entry| entry.sequence() == live.sequence && entry.is_live_staged())
+            || self
+                .snapshot
+                .reorder_buffer
+                .iter()
+                .any(|entry| entry.is_live_staged() && entry.sequence() > live.sequence)
+        {
+            return;
+        }
+
+        let Some((pc, instruction)) = younger.into_iter().next() else {
+            return;
+        };
+        if o3_speculative_scalar_alu_operands(instruction).is_none() {
+            return;
+        }
+        if let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) {
+            self.live_scalar_memory_younger_sequences.insert(sequence);
         }
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
@@ -89,6 +128,8 @@ impl O3RuntimeState {
         if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
             let boundary_sequence = self.snapshot.reorder_buffer[index].sequence();
             self.snapshot.reorder_buffer.drain(index..);
+            self.live_scalar_memory_younger_sequences
+                .retain(|sequence| *sequence < boundary_sequence);
             self.live_speculative_executions
                 .retain(|speculative| speculative.sequence < boundary_sequence);
             self.live_retired_instructions
@@ -114,6 +155,7 @@ impl O3RuntimeState {
         let rob_commit_blocked = rob_commits <= index;
         let commit_tick = rob_commit_tick(&self.snapshot, rob_commits).unwrap_or(retire_tick);
         self.snapshot.reorder_buffer.drain(0..rob_commits);
+        self.retain_live_scalar_memory_younger_sequences_in_rob();
         let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
         self.stats.set_rename_map_entries(rename_map_entries);
 
@@ -146,6 +188,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
+        self.live_scalar_memory_younger_sequences.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -153,6 +196,20 @@ impl O3RuntimeState {
 
     pub(crate) fn discard_live_speculative_executions(&mut self) {
         self.live_speculative_executions.clear();
+    }
+
+    pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {
+        self.snapshot
+            .reorder_buffer
+            .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);
+        self.live_scalar_memory_younger_sequences
+            .retain(|younger| *younger < sequence);
+        self.live_speculative_executions
+            .retain(|execution| execution.sequence < sequence);
+        self.live_retired_instructions
+            .retain(|instruction| instruction.sequence < sequence);
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }
 
     pub(super) fn take_live_retired_instruction(
@@ -333,14 +390,14 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
         ready_tick: u64,
-    ) {
+    ) -> Option<u64> {
         if self
             .snapshot
             .reorder_buffer
             .iter()
             .any(|entry| entry.is_live_staged() && entry.pc() == pc)
         {
-            return;
+            return None;
         }
         let sequence = self.allocate_sequence();
         let rename_destination = o3_scalar_integer_destination(instruction)
@@ -352,6 +409,18 @@ impl O3RuntimeState {
                 .with_ready_tick(ready_tick)
                 .with_live_staged_rename_destination(rename_destination),
         );
+        Some(sequence)
+    }
+
+    pub(super) fn retain_live_scalar_memory_younger_sequences_in_rob(&mut self) {
+        let resident_sequences = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .map(|entry| entry.sequence())
+            .collect::<BTreeSet<_>>();
+        self.live_scalar_memory_younger_sequences
+            .retain(|sequence| resident_sequences.contains(sequence));
     }
 
     pub(super) fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {
@@ -471,8 +540,8 @@ fn execution_writes_rename_destination(
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvTrap,
-        RiscvTrapKind,
+        Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord,
+        RiscvTrap, RiscvTrapKind,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId};
@@ -532,6 +601,43 @@ mod tests {
         );
         assert_eq!(integer_mapping(&runtime, 4), None);
         assert_eq!(integer_mapping(&runtime, 5), None);
+    }
+
+    #[test]
+    fn scalar_load_window_allows_one_independent_younger_issue_candidate() {
+        let mut runtime = O3RuntimeState::default();
+        let load = scalar_load_event();
+        let independent = addi(5, 0);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8004), independent)],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), independent)
+            .is_some());
+    }
+
+    #[test]
+    fn scalar_load_window_blocks_younger_load_destination_consumer() {
+        let mut runtime = O3RuntimeState::default();
+        let load = scalar_load_event();
+        let dependent = addi(5, 4);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8004), dependent)],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+            .is_none());
     }
 
     fn retire_live(
@@ -1194,6 +1300,26 @@ mod tests {
                 pc + 4,
                 vec![RegisterWrite::new(Register::new(destination).unwrap(), 1)],
                 None,
+            ),
+        )
+    }
+
+    fn scalar_load_event() -> RiscvCpuExecutionEvent {
+        let instruction = load_x4();
+        RiscvCpuExecutionEvent::new(
+            fetch_event(0x8000, 10),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                0x8000,
+                0x8004,
+                Vec::new(),
+                Some(MemoryAccessKind::Load {
+                    rd: Register::new(4).unwrap(),
+                    address: 0x9000,
+                    width: MemoryWidth::Word,
+                    signed: false,
+                }),
             ),
         )
     }

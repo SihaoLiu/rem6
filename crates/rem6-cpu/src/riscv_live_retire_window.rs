@@ -9,7 +9,7 @@ use crate::{
     o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::RiscvLiveRetireGateDecision,
-    CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError,
+    CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
 };
 
 const MAX_LIVE_RETIRE_YOUNGER_INSTRUCTIONS: usize = 2;
@@ -169,6 +169,40 @@ fn stage_o3_live_retire_window(
     {
         return Ok(());
     }
+    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+    Ok(())
+}
+
+pub(crate) fn stage_o3_scalar_memory_younger_window(
+    state: &mut RiscvCoreState,
+    execution: &RiscvCpuExecutionEvent,
+    issue_tick: u64,
+    fetch_events: &[CpuFetchEvent],
+) {
+    if !state.live_retire_gate.detailed_policy_enabled() {
+        return;
+    }
+    let younger = completed_fetch_instruction_window(
+        state,
+        fetch_events,
+        execution.fetch().request_id(),
+        Address::new(execution.execution().next_pc()),
+        1,
+    );
+    state.o3_runtime.stage_live_scalar_memory_younger_window(
+        execution.fetch().request_id(),
+        younger
+            .iter()
+            .map(|younger| (younger.pc, younger.decoded.instruction())),
+    );
+    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+}
+
+fn record_o3_live_speculative_younger_executions(
+    state: &mut RiscvCoreState,
+    younger: &[RiscvCompletedFetchInstruction],
+    issue_tick: u64,
+) {
     for younger in younger {
         let Some(candidate) = state
             .o3_runtime
@@ -192,7 +226,6 @@ fn stage_o3_live_retire_window(
             speculative_execution,
         );
     }
-    Ok(())
 }
 
 fn completed_fetch_instruction_window(
