@@ -66,6 +66,8 @@ const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES: usize = BranchTargetKind::
 const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES: usize =
     BranchTargetKind::COUNT * 4 * 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES: usize = BranchTargetKind::COUNT * 16 * 8;
+const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * 8;
+const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + 4 + 8 + 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
     (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
         + O3_RUNTIME_CHECKPOINT_LSQ_MATRIX_STATS_BYTES
@@ -166,7 +168,7 @@ fn o3_runtime_checkpoint_round_trips_rob_lsq_rename_and_pending_state() {
 #[test]
 fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
     let payload = RiscvCore::default_o3_runtime_checkpoint_payload();
-    let mut encoded = payload.encode();
+    let mut encoded = strip_current_live_retire_gate(&payload.encode());
     let v1_len = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
@@ -195,7 +197,7 @@ fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
 #[test]
 fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
     let payload = RiscvCore::default_o3_runtime_checkpoint_payload();
-    let mut encoded = payload.encode();
+    let mut encoded = strip_current_live_retire_gate(&payload.encode());
     let stats_offset = encoded
         .len()
         .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
@@ -273,6 +275,20 @@ fn o3_runtime_checkpoint_decodes_legacy_rob_entries_with_nonzero_ready_ticks() {
     let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
 
     assert_eq!(decoded.snapshot().reorder_buffer()[0].ready_tick(), 0x8000);
+}
+
+#[test]
+fn o3_runtime_checkpoint_decodes_v19_without_live_retire_gate() {
+    let payload = RiscvCore::default_o3_runtime_checkpoint_payload();
+    let mut encoded = strip_current_live_retire_gate(&payload.encode());
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 19;
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(decoded.stats().live_retire_gate_scheduled_waits(), 0);
+    assert_eq!(decoded.stats().live_retire_gate_wait_ticks(), 0);
+    assert_eq!(decoded.stats().live_retire_gate_max_wait_ticks(), 0);
 }
 
 #[test]
@@ -1291,9 +1307,29 @@ fn o3_runtime_rob_payload_offset(payload: &[u8]) -> usize {
     O3_RUNTIME_CHECKPOINT_HEADER_BYTES + u32::from_le_bytes(pending_len_bytes) as usize
 }
 
+fn strip_current_live_retire_gate(payload: &[u8]) -> Vec<u8> {
+    let trailer_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    let trailing_branch_stats = O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES
+        + O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
+    let live_stats_offset = trailer_offset
+        .checked_sub(trailing_branch_stats + O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_STATS_BYTES)
+        .unwrap();
+    [
+        &payload[..live_stats_offset],
+        &payload[live_stats_offset + O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_STATS_BYTES
+            ..trailer_offset],
+    ]
+    .concat()
+}
+
 fn strip_current_rob_ready_tick_bytes(payload: &[u8]) -> Vec<u8> {
-    let pending_len = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
-    let rob_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
+    let payload = strip_current_live_retire_gate(payload);
+    let pending_len = checkpoint_u32(&payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
+    let rob_count = checkpoint_u32(&payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
     let rob_offset = O3_RUNTIME_CHECKPOINT_HEADER_BYTES + pending_len;
     let mut offset = rob_offset;
     let mut legacy = Vec::with_capacity(payload.len().saturating_sub(rob_count * 8));

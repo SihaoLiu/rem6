@@ -29,6 +29,7 @@ mod o3_runtime_stats;
 #[path = "o3_source_operands.rs"]
 mod o3_source_operands;
 
+pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
@@ -172,6 +173,15 @@ impl O3RuntimeState {
         self.stats
     }
 
+    pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
+        O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
+            self.snapshot(),
+            self.stats(),
+            self.dependency_producers_with_consumers.clone(),
+        )
+        .expect("captured O3 runtime checkpoint is internally consistent")
+    }
+
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
         &self.trace_records
     }
@@ -236,6 +246,10 @@ impl O3RuntimeState {
         self.trace_data_access_sequences.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         self.dependency_producers_with_consumers.clear();
+    }
+
+    pub(crate) fn record_live_retire_gate_wait(&mut self, wait_ticks: u64) {
+        self.stats.record_live_retire_gate_wait(wait_ticks);
     }
 
     pub fn record_retired_instruction(&mut self, execution: &RiscvCpuExecutionEvent) {
@@ -1646,25 +1660,6 @@ impl crate::RiscvCore {
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {
         O3RuntimeCheckpointPayload::from_snapshot(default_o3_runtime_snapshot())
             .expect("default O3 runtime checkpoint payload is valid")
-    }
-
-    pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
-        self.with_o3_runtime(|runtime| {
-            O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
-                runtime.snapshot(),
-                runtime.stats(),
-                runtime.dependency_producers_with_consumers.clone(),
-            )
-            .expect("captured RISC-V O3 runtime checkpoint is internally consistent")
-        })
-    }
-
-    pub fn restore_o3_runtime_checkpoint_payload(
-        &self,
-        payload: O3RuntimeCheckpointPayload,
-    ) -> Result<(), O3RuntimeError> {
-        self.validate_o3_runtime_checkpoint_payload(&payload)?;
-        self.with_o3_runtime(|runtime| runtime.restore_checkpoint_payload(payload))
     }
 
     pub fn validate_o3_runtime_checkpoint_payload(

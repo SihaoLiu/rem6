@@ -23,6 +23,8 @@ const MAX_OCCUPANCY_STATS_BYTES: usize = 3 * U64_BYTES;
 const BRANCH_EVENT_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 6 * U64_BYTES;
 const BRANCH_EVENT_PREDICTION_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 4 * U64_BYTES;
 const BRANCH_MISMATCH_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 16 * U64_BYTES;
+const LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * U64_BYTES;
+const LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + U32_BYTES + 2 * U64_BYTES;
 const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
     + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
     + LSQ_OPERATION_STATS_BYTES
@@ -71,7 +73,26 @@ fn encoded_without_lsq_operation_byte_stats(
     .concat()
 }
 
+fn encoded_without_live_retire_gate(encoded: &[u8]) -> Vec<u8> {
+    let trailer_offset = encoded
+        .len()
+        .checked_sub(LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    let trailing_branch_stats = BRANCH_EVENT_STATS_BYTES
+        + BRANCH_EVENT_PREDICTION_STATS_BYTES
+        + BRANCH_MISMATCH_STATS_BYTES;
+    let live_stats_offset = trailer_offset
+        .checked_sub(trailing_branch_stats + LIVE_RETIRE_GATE_STATS_BYTES)
+        .unwrap();
+    [
+        &encoded[..live_stats_offset],
+        &encoded[live_stats_offset + LIVE_RETIRE_GATE_STATS_BYTES..trailer_offset],
+    ]
+    .concat()
+}
+
 fn encoded_without_fu_latency_class_extrema_stats(encoded: &[u8]) -> Vec<u8> {
+    let encoded = encoded_without_live_retire_gate(encoded);
     let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
     let extrema_offset = stats_offset + CURRENT_BASE_AND_FU_STATS_BYTES;
     [

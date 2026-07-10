@@ -12,6 +12,8 @@ mod branch_prediction;
 mod checkpoint;
 #[path = "o3/fu_latency.rs"]
 mod fu_latency;
+#[path = "o3/live_retire_gate.rs"]
+mod live_retire_gate;
 #[path = "o3/lsq.rs"]
 mod lsq;
 #[path = "o3/lsq_live.rs"]

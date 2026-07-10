@@ -1,4 +1,4 @@
-use rem6_kernel::{ParallelSchedulerContext, Tick};
+use rem6_kernel::{ParallelSchedulerContext, PartitionedScheduler, Tick};
 use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
 };
@@ -66,9 +66,10 @@ where
 pub(crate) fn completed_fetch_drive_event(
     cpu: CpuId,
     core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
 ) -> Result<Option<RiscvClusterDriveEvent>, RiscvClusterError> {
     Ok(core
-        .execute_next_completed_fetch()
+        .execute_next_completed_fetch_parallel(scheduler)
         .map_err(|error| RiscvClusterError::Core { cpu, error })?
         .map(|event| {
             RiscvClusterDriveEvent::new(
@@ -81,10 +82,14 @@ pub(crate) fn completed_fetch_drive_event(
 pub(crate) fn push_completed_fetch_drive_event(
     cpu: CpuId,
     core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
     actions: &mut Vec<RiscvClusterDriveEvent>,
 ) -> Result<bool, RiscvClusterError> {
-    if let Some(event) = completed_fetch_drive_event(cpu, core)? {
+    if let Some(event) = completed_fetch_drive_event(cpu, core, scheduler)? {
         actions.push(event);
+        return Ok(true);
+    }
+    if core.live_retire_gate_blocks_new_work() {
         return Ok(true);
     }
     Ok(false)
@@ -93,10 +98,14 @@ pub(crate) fn push_completed_fetch_drive_event(
 pub(crate) fn push_prepared_completed_fetch_drive_event(
     cpu: CpuId,
     core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
     prepared_actions: &mut Vec<PreparedParallelAction>,
 ) -> Result<bool, RiscvClusterError> {
-    if let Some(event) = completed_fetch_drive_event(cpu, core)? {
+    if let Some(event) = completed_fetch_drive_event(cpu, core, scheduler)? {
         prepared_actions.push(PreparedParallelAction::Ready(event));
+        return Ok(true);
+    }
+    if core.live_retire_gate_blocks_new_work() {
         return Ok(true);
     }
     Ok(false)

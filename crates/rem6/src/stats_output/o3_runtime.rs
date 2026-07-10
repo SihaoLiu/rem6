@@ -994,6 +994,28 @@ pub(super) fn emit_o3_runtime_stats(
     ] {
         increment_count_stat(stats, format!("sim.cpu{}.o3.{name}", core.cpu), value)?;
     }
+    if o3.live_retire_gate_scheduled_waits() != 0
+        || o3.live_retire_gate_wait_ticks() != 0
+        || o3.live_retire_gate_max_wait_ticks() != 0
+    {
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{}.o3.live_retire_gate.scheduled_waits", core.cpu),
+            o3.live_retire_gate_scheduled_waits(),
+        )?;
+        for (name, value) in [
+            ("wait_ticks", o3.live_retire_gate_wait_ticks()),
+            ("max_wait_ticks", o3.live_retire_gate_max_wait_ticks()),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.cpu{}.o3.live_retire_gate.{name}", core.cpu),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
     emit_o3_runtime_snapshot_stats(stats, core)?;
     emit_o3_runtime_checkpoint_restore_stats(stats, core)?;
     emit_o3_runtime_window_stats(

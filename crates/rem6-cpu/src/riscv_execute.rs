@@ -4,17 +4,18 @@ use rem6_isa_riscv::{
     RiscvInstruction, RiscvTrapKind, RiscvVectorFloatInstruction, RiscvVectorMemoryInstruction,
     RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
 };
+use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
-    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction,
-    InOrderBranchRedirect, InOrderPipelineCycleRecord, InOrderPipelineInstruction,
-    InOrderPipelineStage, InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore,
-    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvMultiperspectivePerceptronBranchUpdate, RiscvSelectedBranchSpeculation,
-    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    riscv_live_retire_gate::RiscvLiveRetireGateDecision, BranchTargetKind, CpuFetchEvent,
+    CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
+    InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
+    InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate,
+    RiscvSelectedBranchSpeculation, RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
+    StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
@@ -67,9 +68,44 @@ impl RiscvPendingFetchPrefix {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RiscvLiveRetireGateWakeKind {
+    Serial,
+    Parallel,
+}
+
 impl RiscvCore {
+    /// Executes without creating cycle-visible waits. A gate already started by a
+    /// scheduler-aware drive remains blocking until that scheduler reaches its wake.
     pub fn execute_next_completed_fetch(
         &self,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        self.execute_next_completed_fetch_inner(None)
+    }
+
+    pub(crate) fn execute_next_completed_fetch_serial(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        self.execute_next_completed_fetch_inner(Some((
+            scheduler,
+            RiscvLiveRetireGateWakeKind::Serial,
+        )))
+    }
+
+    pub(crate) fn execute_next_completed_fetch_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        self.execute_next_completed_fetch_inner(Some((
+            scheduler,
+            RiscvLiveRetireGateWakeKind::Parallel,
+        )))
+    }
+
+    fn execute_next_completed_fetch_inner(
+        &self,
+        mut gate_scheduler: Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
         if self
             .state
@@ -125,6 +161,15 @@ impl RiscvCore {
                 raw.to_le_bytes().to_vec(),
             );
             let consumed = [prefix.fetch.request_id(), suffix.request_id()];
+            if self.live_retire_gate_blocks(
+                &mut state,
+                &mut gate_scheduler,
+                fetch.request_id(),
+                raw,
+                fetch.tick(),
+            )? {
+                return Ok(None);
+            }
             state.pending_fetch_prefix = None;
             return self
                 .retire_completed_fetch(&mut state, fetch, raw, &consumed)
@@ -159,8 +204,59 @@ impl RiscvCore {
                 });
             }
         };
+        if self.live_retire_gate_blocks(
+            &mut state,
+            &mut gate_scheduler,
+            fetch.request_id(),
+            raw,
+            fetch.tick(),
+        )? {
+            return Ok(None);
+        }
         self.retire_completed_fetch(&mut state, fetch.clone(), raw, &[fetch.request_id()])
             .map(Some)
+    }
+
+    fn live_retire_gate_blocks(
+        &self,
+        state: &mut RiscvCoreState,
+        gate_scheduler: &mut Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
+        request: MemoryRequestId,
+        raw: u32,
+        fetch_tick: u64,
+    ) -> Result<bool, RiscvCpuError> {
+        let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
+            return Ok(state.live_retire_gate.blocks_without_scheduler());
+        };
+        let now = scheduler
+            .partition_now(self.partition())
+            .map_err(RiscvCpuError::Scheduler)?;
+        let ready_base_tick = now.max(fetch_tick);
+        match state
+            .live_retire_gate
+            .before_retire(request, raw, now, ready_base_tick)?
+        {
+            RiscvLiveRetireGateDecision::Ready => Ok(false),
+            RiscvLiveRetireGateDecision::Blocked => Ok(true),
+            RiscvLiveRetireGateDecision::Schedule {
+                ready_tick,
+                created_wait_ticks,
+            } => {
+                match *kind {
+                    RiscvLiveRetireGateWakeKind::Serial => scheduler
+                        .schedule_at(self.partition(), ready_tick, |_| {})
+                        .map_err(RiscvCpuError::Scheduler)?,
+                    RiscvLiveRetireGateWakeKind::Parallel => scheduler
+                        .schedule_parallel_at(self.partition(), ready_tick, |_| {})
+                        .map_err(RiscvCpuError::Scheduler)?,
+                };
+                state.live_retire_gate.mark_scheduled(request);
+                if let Some(wait_ticks) = created_wait_ticks {
+                    state.o3_runtime.record_live_retire_gate_wait(wait_ticks);
+                }
+                Ok(true)
+            }
+        }
     }
 
     fn retire_completed_fetch(
@@ -1514,7 +1610,7 @@ pub(crate) fn sync_in_order_fetch_state(
     Ok(())
 }
 
-fn remove_fetch_sequences_from_pipeline(
+pub(crate) fn remove_fetch_sequences_from_pipeline(
     state: &mut RiscvCoreState,
     sequences: &BTreeSet<u64>,
 ) -> Result<(), RiscvCpuError> {

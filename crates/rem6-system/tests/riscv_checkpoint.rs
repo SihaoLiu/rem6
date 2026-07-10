@@ -16,15 +16,15 @@ use rem6_cpu::{
     O3LoadStoreQueueEntry, O3PendingStateCheckpointPayload, O3PendingStateSnapshot,
     O3PhysicalRegisterId, O3PipelineStage, O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry,
     O3RuntimeCheckpointPayload, O3RuntimeSnapshot, O3ScopedReadyInstruction, O3WritebackCompletion,
-    O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore, RiscvHartRunState,
-    StatisticalCorrectorConfig, TageBranchPredictorConfig, TageScLBranchPredictor,
-    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorConfig,
+    O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore, RiscvCoreDriveAction,
+    RiscvHartRunState, StatisticalCorrectorConfig, TageBranchPredictorConfig,
+    TageScLBranchPredictor, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorConfig,
     TageScLBranchPredictorError, TournamentBranchPredictor,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorConfig,
     TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{FloatRegister, Register, RiscvPmpAddressMode, RiscvPmpConfig};
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
 };
@@ -211,6 +211,171 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
     assert_eq!(core.read_register(reg(0)), 0);
     assert_eq!(core.read_register(reg(1)), 0x1122_3344_5566_7788);
     assert_eq!(core.read_register(reg(5)), 0x55aa);
+}
+
+#[test]
+fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refetch() {
+    let entry = 0x8000;
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let core = riscv_core();
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+    port.register(&mut registry).unwrap();
+
+    let mut transport = MemoryTransport::new();
+    transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let store = loaded_store(entry, div);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+
+    let issued = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(Arc::clone(&store)),
+        )
+        .unwrap();
+    assert!(matches!(
+        issued,
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let fetch_ahead = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(Arc::clone(&store)),
+        )
+        .unwrap();
+    assert!(matches!(
+        fetch_ahead,
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let ready_tick = scheduler.now().checked_add(19).unwrap();
+    assert_eq!(
+        core.drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(Arc::clone(&store)),
+        )
+        .unwrap(),
+        None
+    );
+    assert!(matches!(
+        scheduler.quiescent_snapshot(),
+        Err(SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 })
+    ));
+
+    let captured = port.capture_into(&mut registry).unwrap();
+    assert_eq!(
+        captured
+            .o3_runtime_payload()
+            .stats()
+            .live_retire_gate_scheduled_waits(),
+        1
+    );
+    drop(scheduler);
+    port.restore_from(&registry).unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let reissued = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(Arc::clone(&store)),
+        )
+        .unwrap();
+    assert!(matches!(
+        reissued,
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let restored_fetch_ahead = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(Arc::clone(&store)),
+        )
+        .unwrap();
+    assert!(matches!(
+        restored_fetch_ahead,
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    for _ in 0..2 {
+        assert_eq!(
+            core.drive_next_action(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(Arc::clone(&store)),
+                responder(Arc::clone(&store)),
+            )
+            .unwrap(),
+            None
+        );
+        assert!(matches!(
+            scheduler.quiescent_snapshot(),
+            Err(SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 })
+        ));
+    }
+
+    core.reset_o3_runtime_stats();
+    core.set_detailed_live_retire_gate_enabled(false);
+    scheduler.run_until_idle_conservative();
+    assert_eq!(scheduler.now(), ready_tick);
+    let retired = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            responder(Arc::clone(&store)),
+            responder(store),
+        )
+        .unwrap();
+    assert!(matches!(
+        retired,
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert_eq!(core.read_register(reg(3)), 12);
+    assert_eq!(core.pc(), Address::new(entry + 4));
+    assert_eq!(
+        core.o3_runtime_stats().live_retire_gate_scheduled_waits(),
+        0
+    );
 }
 
 #[test]

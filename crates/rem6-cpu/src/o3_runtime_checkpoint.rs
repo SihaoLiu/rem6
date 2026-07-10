@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-use rem6_memory::Address;
+use rem6_kernel::Tick;
+use rem6_memory::{Address, AgentId, MemoryRequestId};
 
 use super::o3_runtime_checkpoint_branch_mismatch::{
     read_o3_runtime_branch_mismatch_stats, write_o3_runtime_branch_mismatch_stats,
@@ -19,6 +20,7 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE: u8 = 20;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS: u8 = 19;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS: u8 = 18;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS: u8 = 17;
@@ -26,7 +28,7 @@ const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -54,6 +56,30 @@ pub struct O3RuntimeCheckpointPayload {
     snapshot: O3RuntimeSnapshot,
     stats: O3RuntimeStats,
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
+    live_retire_gate: Option<O3LiveRetireGateCheckpointPayload>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct O3LiveRetireGateCheckpointPayload {
+    request: MemoryRequestId,
+    ready_tick: Tick,
+}
+
+impl O3LiveRetireGateCheckpointPayload {
+    pub(crate) const fn new(request: MemoryRequestId, ready_tick: Tick) -> Self {
+        Self {
+            request,
+            ready_tick,
+        }
+    }
+
+    pub(crate) const fn request(self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub(crate) const fn ready_tick(self) -> Tick {
+        self.ready_tick
+    }
 }
 
 impl O3RuntimeCheckpointPayload {
@@ -78,7 +104,16 @@ impl O3RuntimeCheckpointPayload {
             snapshot,
             stats,
             dependency_producers_with_consumers,
+            live_retire_gate: None,
         })
+    }
+
+    pub(crate) fn with_live_retire_gate(
+        mut self,
+        live_retire_gate: Option<O3LiveRetireGateCheckpointPayload>,
+    ) -> Self {
+        self.live_retire_gate = live_retire_gate;
+        self
     }
 
     pub fn decode(payload: &[u8]) -> Result<Self, O3RuntimeError> {
@@ -114,6 +149,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -204,7 +240,13 @@ impl O3RuntimeCheckpointPayload {
                     >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE,
             )?
+        };
+        let live_retire_gate = if version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE {
+            read_live_retire_gate_checkpoint(payload, &mut offset)?
+        } else {
+            None
         };
 
         if offset != payload.len() {
@@ -214,11 +256,12 @@ impl O3RuntimeCheckpointPayload {
             });
         }
 
-        Self::from_snapshot_with_stats_and_dependency_producers(
+        Ok(Self::from_snapshot_with_stats_and_dependency_producers(
             O3RuntimeSnapshot::new(reorder_buffer, load_store_queue, rename_map, pending_state)?,
             stats,
             dependency_producers_with_consumers,
-        )
+        )?
+        .with_live_retire_gate(live_retire_gate))
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -261,6 +304,7 @@ impl O3RuntimeCheckpointPayload {
             );
         }
         write_o3_runtime_stats(&mut payload, self.stats);
+        write_live_retire_gate_checkpoint(&mut payload, self.live_retire_gate);
         payload
     }
 
@@ -274,6 +318,10 @@ impl O3RuntimeCheckpointPayload {
 
     pub(crate) fn dependency_producers_with_consumers(&self) -> &BTreeSet<O3PhysicalRegisterId> {
         &self.dependency_producers_with_consumers
+    }
+
+    pub(crate) const fn live_retire_gate(&self) -> Option<O3LiveRetireGateCheckpointPayload> {
+        self.live_retire_gate
     }
 
     pub fn into_snapshot(self) -> O3RuntimeSnapshot {
@@ -500,6 +548,9 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         stats.max_rob_occupancy(),
         stats.max_lsq_occupancy(),
         stats.rename_map_entries(),
+        stats.live_retire_gate_scheduled_waits(),
+        stats.live_retire_gate_wait_ticks(),
+        stats.live_retire_gate_max_wait_ticks(),
     ] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
@@ -546,6 +597,23 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         );
     }
     write_o3_runtime_branch_mismatch_stats(payload, stats);
+}
+
+fn write_live_retire_gate_checkpoint(
+    payload: &mut Vec<u8>,
+    checkpoint: Option<O3LiveRetireGateCheckpointPayload>,
+) {
+    if let Some(checkpoint) = checkpoint {
+        payload.push(1);
+        payload.extend_from_slice(&checkpoint.request().agent().get().to_le_bytes());
+        payload.extend_from_slice(&checkpoint.request().sequence().to_le_bytes());
+        payload.extend_from_slice(&checkpoint.ready_tick().to_le_bytes());
+    } else {
+        payload.push(0);
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+        payload.extend_from_slice(&0_u64.to_le_bytes());
+        payload.extend_from_slice(&0_u64.to_le_bytes());
+    }
 }
 
 fn read_rob_entry(
@@ -629,6 +697,7 @@ fn read_o3_runtime_stats(
     has_lsq_forwarding_suppression_reason_stats: bool,
     has_branch_mismatch_stats: bool,
     has_fu_latency_class_extrema_stats: bool,
+    has_live_retire_gate_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
     let mut fu_latency_class_cycles = [0; O3RuntimeFuLatencyClass::COUNT];
@@ -814,6 +883,19 @@ fn read_o3_runtime_stats(
     let max_rob_occupancy = read_u64(payload, offset)?;
     let max_lsq_occupancy = read_u64(payload, offset)?;
     let rename_map_entries = read_u64(payload, offset)?;
+    let (
+        live_retire_gate_scheduled_waits,
+        live_retire_gate_wait_ticks,
+        live_retire_gate_max_wait_ticks,
+    ) = if has_live_retire_gate_stats {
+        (
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+        )
+    } else {
+        (0, 0, 0)
+    };
     if has_branch_event_stats {
         for kind in crate::BranchTargetKind::ALL {
             branch_event_kinds[kind.index()] = read_u64(payload, offset)?;
@@ -946,10 +1028,27 @@ fn read_o3_runtime_stats(
         fu_latency_class_max_cycles,
         fu_latency_class_min_cycles,
         iq_branch_insts_issued,
+        live_retire_gate_scheduled_waits,
+        live_retire_gate_wait_ticks,
+        live_retire_gate_max_wait_ticks,
         max_rob_occupancy,
         max_lsq_occupancy,
         rename_map_entries,
     })
+}
+
+fn read_live_retire_gate_checkpoint(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<Option<O3LiveRetireGateCheckpointPayload>, O3RuntimeError> {
+    let present = read_bool("live-retire-gate present", payload, offset)?;
+    let agent = read_u32(payload, offset)?;
+    let sequence = read_u64(payload, offset)?;
+    let ready_tick = read_u64(payload, offset)?;
+    Ok(present.then_some(O3LiveRetireGateCheckpointPayload::new(
+        MemoryRequestId::new(AgentId::new(agent), sequence),
+        ready_tick,
+    )))
 }
 
 fn read_u8(payload: &[u8], offset: &mut usize) -> Result<u8, O3RuntimeError> {

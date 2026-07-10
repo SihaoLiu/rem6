@@ -59,6 +59,7 @@ impl RiscvSystemRunDriver {
                 ));
             }
 
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let Some(turn) = cluster
                 .drive_turn_parallel_until_tick(
                     scheduler,
@@ -171,6 +172,7 @@ impl RiscvSystemRunDriver {
                 ));
             }
 
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let Some(turn) = cluster
                 .drive_turn_parallel_with_mmio_until_tick(
                     scheduler,
@@ -329,6 +331,7 @@ impl RiscvSystemRunDriver {
             }
 
             let remaining_instructions = max_instructions.saturating_sub(committed_instructions);
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let Some(turn) = cluster
                 .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
                     scheduler,
@@ -514,6 +517,7 @@ impl RiscvSystemRunDriver {
             }
 
             let remaining_instructions = max_instructions.saturating_sub(committed_instructions);
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let Some(turn) = cluster
                 .drive_turn_parallel_with_instruction_budget_until_tick(
                     scheduler,

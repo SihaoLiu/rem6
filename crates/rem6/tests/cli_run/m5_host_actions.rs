@@ -2062,6 +2062,54 @@ fn detailed_o3_live_rob_overlap_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn live_retire_gate_div_witness_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),           // switch cpu0 to the CLI-selected mode
+        i_type(84, 0, 0x0, 1, 0x13),   // addi x1, x0, 84
+        i_type(7, 0, 0x0, 2, 0x13),    // addi x2, x0, 7
+        r_type(1, 2, 1, 0x4, 3, 0x33), // div x3, x1, x2
+        i_type(-11, 3, 0x0, 4, 0x13),  // addi x4, x3, -11
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 12, 0x17),                              // auipc x12, 0
+        i_type(data_start - auipc_pc, 12, 0x0, 12, 0x13), // addi x12, x12, data
+        s_type(0, 4, 12, 0b010),                          // sw x4, 0(x12)
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.push(0);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn live_retire_gate_add_witness_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),         // switch cpu0 to detailed
+        i_type(11, 0, 0x0, 1, 0x13), // addi x1, x0, 11
+        i_type(14, 1, 0x0, 2, 0x13), // addi x2, x1, 14
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 12, 0x17),                              // auipc x12, 0
+        i_type(data_start - auipc_pc, 12, 0x0, 12, 0x13), // addi x12, x12, data
+        s_type(0, 2, 12, 0b010),                          // sw x2, 0(x12)
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.push(0);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_live_rob_dump_stats_binary(name: &str) -> std::path::PathBuf {
     let data_start = 64_i32;
     let mut words = vec![

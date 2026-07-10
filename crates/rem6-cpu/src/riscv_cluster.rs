@@ -308,7 +308,12 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
-                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                    && push_prepared_completed_fetch_drive_event(
+                        *cpu,
+                        core,
+                        scheduler,
+                        &mut prepared_actions,
+                    )?
                 {
                     continue;
                 }
@@ -334,7 +339,12 @@ impl RiscvCluster {
                 continue;
             }
 
-            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
+            if push_prepared_completed_fetch_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
                 continue;
             }
 
@@ -393,7 +403,12 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
-                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                    && push_prepared_completed_fetch_drive_event(
+                        *cpu,
+                        core,
+                        scheduler,
+                        &mut prepared_actions,
+                    )?
                 {
                     continue;
                 }
@@ -419,7 +434,12 @@ impl RiscvCluster {
                 continue;
             }
 
-            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
+            if push_prepared_completed_fetch_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
                 continue;
             }
 
@@ -515,7 +535,7 @@ impl RiscvCluster {
             if core.has_pending_fetch() {
                 if !data_only {
                     if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
-                        if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                        if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                             if committed_instructions >= instruction_budget {
                                 break;
                             }
@@ -524,6 +544,9 @@ impl RiscvCluster {
                             if committed_instructions >= instruction_budget {
                                 break;
                             }
+                            continue;
+                        }
+                        if core.live_retire_gate_blocks_new_work() {
                             continue;
                         }
                     }
@@ -553,7 +576,7 @@ impl RiscvCluster {
             }
 
             if !data_only {
-                if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     if committed_instructions >= instruction_budget {
                         break;
                     }
@@ -562,6 +585,9 @@ impl RiscvCluster {
                     if committed_instructions >= instruction_budget {
                         break;
                     }
+                    continue;
+                }
+                if core.live_retire_gate_blocks_new_work() {
                     continue;
                 }
             }
@@ -667,7 +693,12 @@ impl RiscvCluster {
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
                     && can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
-                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                    && push_prepared_completed_fetch_drive_event(
+                        *cpu,
+                        core,
+                        scheduler,
+                        &mut prepared_actions,
+                    )?
                 {
                     continue;
                 }
@@ -695,7 +726,12 @@ impl RiscvCluster {
                 continue;
             }
 
-            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
+            if push_prepared_completed_fetch_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
                 continue;
             }
 
@@ -808,7 +844,12 @@ impl RiscvCluster {
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
                     && can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
-                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                    && push_prepared_completed_fetch_drive_event(
+                        *cpu,
+                        core,
+                        scheduler,
+                        &mut prepared_actions,
+                    )?
                 {
                     continue;
                 }
@@ -836,7 +877,12 @@ impl RiscvCluster {
                 continue;
             }
 
-            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
+            if push_prepared_completed_fetch_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
                 continue;
             }
 
@@ -1032,7 +1078,7 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
-                    && push_completed_fetch_drive_event(*cpu, core, &mut actions)?
+                    && push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)?
                 {
                     continue;
                 }
@@ -1059,7 +1105,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if push_completed_fetch_drive_event(*cpu, core, &mut actions)? {
+            if push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
 
@@ -1143,7 +1189,7 @@ impl RiscvCluster {
             if core.has_pending_fetch() {
                 if !data_only {
                     if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
-                        if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                        if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                             if committed_instructions >= instruction_budget {
                                 break;
                             }
@@ -1152,6 +1198,9 @@ impl RiscvCluster {
                             if committed_instructions >= instruction_budget {
                                 break;
                             }
+                            continue;
+                        }
+                        if core.live_retire_gate_blocks_new_work() {
                             continue;
                         }
                     }
@@ -1180,7 +1229,7 @@ impl RiscvCluster {
                     continue;
                 }
 
-                if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     if committed_instructions >= instruction_budget {
                         break;
                     }
@@ -1189,6 +1238,9 @@ impl RiscvCluster {
                     if committed_instructions >= instruction_budget {
                         break;
                     }
+                    continue;
+                }
+                if core.live_retire_gate_blocks_new_work() {
                     continue;
                 }
             }

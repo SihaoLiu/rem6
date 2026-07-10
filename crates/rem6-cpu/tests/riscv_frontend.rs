@@ -7464,6 +7464,111 @@ fn riscv_core_redirect_clears_pending_split_fetch_prefix() {
 }
 
 #[test]
+fn riscv_core_schedulerless_execute_blocks_pending_gate_until_redirect_clears_it() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let addi = i_type(9, 0, 0x0, 4, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let store = loaded_program_store(0x8000, &[div], &[(0x9000, word(addi))]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(core.pc(), Address::new(0x8000));
+
+    core.redirect_pc(Address::new(0x9000));
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let executed = drive_one_action(&core, store, &mut scheduler, &transport)
+        .expect("redirect target should retire after the abandoned gate is cleared");
+
+    assert!(matches!(
+        executed,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(core.read_register(reg(4)), 9);
+    assert_eq!(core.pc(), Address::new(0x9004));
+}
+
+#[test]
+fn riscv_core_schedulerless_execute_bypasses_unstarted_detailed_live_retire_gate() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let store = loaded_store(0x8000, div);
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    let executed = core
+        .execute_next_completed_fetch()
+        .unwrap()
+        .expect("schedulerless execution should not start a cycle-visible gate");
+
+    assert_eq!(
+        executed.instruction(),
+        RiscvInstruction::decode(div).unwrap()
+    );
+    assert_eq!(core.read_register(reg(3)), 12);
+    assert_eq!(core.pc(), Address::new(0x8004));
+}
+
+#[test]
 fn riscv_core_pmp_rejects_locked_instruction_fetch_before_memory_issue() {
     let (mut scheduler, transport, fetch_route, _data_route) = data_routes();
     let core = RiscvCore::new(core(fetch_route, 0x8000));

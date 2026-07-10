@@ -100,6 +100,9 @@ pub struct O3RuntimeStats {
     pub(crate) fu_latency_class_max_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) fu_latency_class_min_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) iq_branch_insts_issued: u64,
+    pub(crate) live_retire_gate_scheduled_waits: u64,
+    pub(crate) live_retire_gate_wait_ticks: u64,
+    pub(crate) live_retire_gate_max_wait_ticks: u64,
     pub(crate) max_rob_occupancy: u64,
     pub(crate) max_lsq_occupancy: u64,
     pub(crate) rename_map_entries: u64,
@@ -698,6 +701,18 @@ impl O3RuntimeStats {
         self.iq_branch_insts_issued
     }
 
+    pub const fn live_retire_gate_scheduled_waits(self) -> u64 {
+        self.live_retire_gate_scheduled_waits
+    }
+
+    pub const fn live_retire_gate_wait_ticks(self) -> u64 {
+        self.live_retire_gate_wait_ticks
+    }
+
+    pub const fn live_retire_gate_max_wait_ticks(self) -> u64 {
+        self.live_retire_gate_max_wait_ticks
+    }
+
     pub const fn max_rob_occupancy(self) -> u64 {
         self.max_rob_occupancy
     }
@@ -739,6 +754,9 @@ impl O3RuntimeStats {
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.iq_branch_insts_issued != 0
+            || self.live_retire_gate_scheduled_waits != 0
+            || self.live_retire_gate_wait_ticks != 0
+            || self.live_retire_gate_max_wait_ticks != 0
             || self.max_rob_occupancy != 0
             || self.max_lsq_occupancy != 0
             || self.rename_map_entries != 0
@@ -768,6 +786,14 @@ impl O3RuntimeStats {
 
     pub(super) fn record_iew_dependency_consumer(&mut self) {
         self.iew_consumer_insts = self.iew_consumer_insts.saturating_add(1);
+    }
+
+    pub(crate) fn record_live_retire_gate_wait(&mut self, wait_ticks: u64) {
+        self.live_retire_gate_scheduled_waits =
+            self.live_retire_gate_scheduled_waits.saturating_add(1);
+        self.live_retire_gate_wait_ticks =
+            self.live_retire_gate_wait_ticks.saturating_add(wait_ticks);
+        self.live_retire_gate_max_wait_ticks = self.live_retire_gate_max_wait_ticks.max(wait_ticks);
     }
 
     pub(super) fn record_retired_instruction(

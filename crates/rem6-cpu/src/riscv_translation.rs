@@ -1029,10 +1029,13 @@ impl RiscvCore {
                 self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
-            if let Some(event) = self.execute_next_completed_fetch()? {
+            if let Some(event) = self.execute_next_completed_fetch_serial(scheduler)? {
                 return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
                     event,
                 ))));
+            }
+            if self.live_retire_gate_blocks_new_work() {
+                return Ok(None);
             }
             self.record_in_order_fetch_wait_stall_cycle()?;
             return Ok(None);
@@ -1051,10 +1054,13 @@ impl RiscvCore {
             return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
         }
 
-        if let Some(event) = self.execute_next_completed_fetch()? {
+        if let Some(event) = self.execute_next_completed_fetch_serial(scheduler)? {
             return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
                 event,
             ))));
+        }
+        if self.live_retire_gate_blocks_new_work() {
+            return Ok(None);
         }
 
         let had_unissued_data = self.has_unissued_data_access();

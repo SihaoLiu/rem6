@@ -49,6 +49,7 @@ impl RiscvSystemRunDriver {
         }
 
         for _ in 0..max_turns {
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let turn = cluster
                 .drive_turn_parallel_with_data_translation(
                     scheduler,
@@ -146,6 +147,7 @@ impl RiscvSystemRunDriver {
         }
 
         for _ in 0..max_turns {
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let turn = cluster
                 .drive_turn_parallel_with_mmio_and_data_translation(
                     scheduler,

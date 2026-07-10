@@ -38,6 +38,7 @@ mod riscv_debug_layout;
 mod riscv_debug_page_table;
 mod riscv_debug_pmp;
 mod riscv_instruction_stats;
+mod riscv_live_retire_gate_policy;
 mod riscv_o3_runtime_stats;
 mod riscv_run_activity;
 mod riscv_run_control;
@@ -519,6 +520,7 @@ impl RiscvSystemRunDriver {
         }
 
         for _ in 0..max_turns {
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let turn = cluster
                 .drive_turn(
                     scheduler,
@@ -608,6 +610,7 @@ impl RiscvSystemRunDriver {
         }
 
         for _ in 0..max_turns {
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let turn = cluster
                 .drive_turn_parallel(
                     scheduler,
@@ -703,6 +706,7 @@ impl RiscvSystemRunDriver {
         }
 
         for _ in 0..max_turns {
+            self.snapshot_live_retire_gate_policy(cluster)?;
             let turn = cluster
                 .drive_turn_parallel_with_mmio(
                     scheduler,

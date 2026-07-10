@@ -616,6 +616,22 @@ fn o3_runtime_lsq_ordering_json(summary: &Rem6CoreSummary) -> String {
         .join(",")
 }
 
+fn o3_runtime_live_retire_gate_json(summary: &Rem6CoreSummary) -> String {
+    let stats = summary.o3_runtime;
+    if stats.live_retire_gate_scheduled_waits() == 0
+        && stats.live_retire_gate_wait_ticks() == 0
+        && stats.live_retire_gate_max_wait_ticks() == 0
+    {
+        return String::new();
+    }
+    format!(
+        ",\"live_retire_gate\":{{\"scheduled_waits\":{},\"wait_ticks\":{},\"max_wait_ticks\":{}}}",
+        stats.live_retire_gate_scheduled_waits(),
+        stats.live_retire_gate_wait_ticks(),
+        stats.live_retire_gate_max_wait_ticks()
+    )
+}
+
 fn o3_runtime_branch_repair_kind_json<F>(count: F) -> String
 where
     F: Fn(BranchTargetKind) -> u64,
@@ -798,6 +814,7 @@ impl Rem6CoreSummary {
             let lsq_data_latency = o3_runtime_lsq_data_latency_json(self);
             let lsq_operations = o3_runtime_lsq_operation_json(self);
             let lsq_orderings = o3_runtime_lsq_ordering_json(self);
+            let live_retire_gate = o3_runtime_live_retire_gate_json(self);
             let branch_event = o3_runtime_branch_event_json(self);
             let branch_repair = o3_runtime_branch_repair_json(self);
             let branch_direction_mismatch = o3_runtime_branch_direction_mismatch_json(self);
@@ -812,7 +829,7 @@ impl Rem6CoreSummary {
             let event_window = o3_runtime_event_window_json(self);
             let event_summary = o3_runtime_event_summary_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
@@ -861,6 +878,7 @@ impl Rem6CoreSummary {
                 lsq_data_latency,
                 lsq_operations,
                 lsq_orderings,
+                live_retire_gate,
                 self.o3_runtime.lsq_store_conditional_failures(),
                 self.o3_runtime.max_rob_occupancy(),
                 self.o3_runtime.max_lsq_occupancy(),

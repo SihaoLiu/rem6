@@ -144,6 +144,18 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.fu_latency_instructions(),
             ),
             (self.fu_latency_cycles, snapshot.fu_latency_cycles()),
+            (
+                self.live_retire_gate_scheduled_waits,
+                snapshot.live_retire_gate_scheduled_waits(),
+            ),
+            (
+                self.live_retire_gate_wait_ticks,
+                snapshot.live_retire_gate_wait_ticks(),
+            ),
+            (
+                self.live_retire_gate_max_wait_ticks,
+                snapshot.live_retire_gate_max_wait_ticks(),
+            ),
             (self.iq_insts_issued, snapshot.instructions()),
             (
                 self.iq_mem_insts_issued,

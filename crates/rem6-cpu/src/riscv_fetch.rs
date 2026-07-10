@@ -166,6 +166,7 @@ impl RiscvCore {
         let pc = Address::new(state.hart.pc());
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.live_retire_gate.rebind_pending_to_next_request();
         drop(state);
         self.inner().reset_fetch_stream_to_pc(pc);
     }

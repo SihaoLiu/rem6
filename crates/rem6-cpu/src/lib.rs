@@ -70,6 +70,7 @@ mod riscv_gshare_checkpoint;
 mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_in_order_config;
+mod riscv_live_retire_gate;
 mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_reservation;
 mod riscv_sc_progress;
@@ -418,6 +419,7 @@ impl RiscvCore {
         state.hart.set_pc(pc.get());
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.live_retire_gate.clear_pending_for_pc_redirect();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(pc);
@@ -777,6 +779,7 @@ struct RiscvCoreState {
     tage_sc_l_branch_predictor: TageScLBranchPredictor,
     multiperspective_perceptron: MultiperspectivePerceptron,
     o3_runtime: o3_runtime::O3RuntimeState,
+    live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -856,6 +859,7 @@ impl RiscvCoreState {
             tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
             multiperspective_perceptron: default_riscv_multiperspective_perceptron(),
             o3_runtime: o3_runtime::O3RuntimeState::default(),
+            live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState::default(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),
