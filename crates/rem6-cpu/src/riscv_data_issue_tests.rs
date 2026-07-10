@@ -2,7 +2,10 @@ use std::sync::Mutex;
 
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord};
 use rem6_kernel::PartitionedScheduler;
-use rem6_memory::{AddressRange, AgentId, MemoryResponse};
+use rem6_memory::{
+    Address, AddressRange, AgentId, MemoryRequestId, MemoryResponse, TranslationPageMap,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig,
+};
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -11,7 +14,7 @@ use rem6_transport::{
 use super::*;
 use crate::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState,
-    RiscvCluster, RiscvCpuExecutionEvent,
+    CpuTranslationFrontend, RiscvCluster, RiscvCpuExecutionEvent,
 };
 
 #[test]
@@ -903,6 +906,240 @@ fn failed_issue_attempt_clears_deferred_marker_and_allows_retry() {
         .is_some());
 }
 
+#[test]
+fn dropped_prepared_parallel_data_access_clears_deferred_marker_and_allows_retry() {
+    let (scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    let fetch_request = defer_scalar_load(&core, 0x9000);
+
+    let prepared = core
+        .prepare_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("direct load should prepare a parallel data access");
+    assert!(matches!(
+        &prepared,
+        PreparedDataParallelAccess::Transaction { issue, .. }
+            if issue.fetch_request == fetch_request
+    ));
+
+    drop(prepared);
+
+    assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 0);
+    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.has_unissued_data_access());
+    assert!(!core.has_pending_data_access());
+
+    let retry = core
+        .prepare_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+    assert!(matches!(
+        retry,
+        Some(PreparedDataParallelAccess::Transaction { .. })
+    ));
+}
+
+#[test]
+fn dropped_prepared_translated_parallel_data_access_clears_deferred_marker_and_allows_retry() {
+    let (scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    let fetch_request = defer_scalar_load(&core, 0x4008);
+    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    page_map
+        .map(
+            Address::new(0x4000),
+            Address::new(0x9000),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+
+    let prepared = core
+        .prepare_translated_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("translated load should prepare a parallel data access");
+    assert!(matches!(
+        &prepared,
+        PreparedDataParallelAccess::Transaction { issue, .. }
+            if issue.fetch_request == fetch_request
+                && issue.physical_address == Address::new(0x9008)
+    ));
+
+    drop(prepared);
+
+    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
+    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.has_unissued_data_access());
+    assert!(!core.has_pending_data_access());
+
+    let retry = core
+        .prepare_translated_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+    assert!(matches!(
+        retry,
+        Some(PreparedDataParallelAccess::Transaction { .. })
+    ));
+}
+
+#[test]
+fn failed_parallel_data_submission_clears_deferred_marker_and_allows_retry() {
+    let (mut retry_scheduler, transport, fetch_route, data_route) = memory_routes();
+    let mut rejecting_scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    let fetch_request = defer_scalar_load(&core, 0x9000);
+
+    let error = core
+        .issue_next_data_access_parallel(
+            &mut rejecting_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap_err();
+    assert!(matches!(error, RiscvCpuError::Transport(_)));
+    assert!(rejecting_scheduler.is_idle());
+    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
+    assert!(core.has_unissued_data_access());
+    assert!(!core.has_pending_data_access());
+
+    assert!(core
+        .issue_next_data_access_parallel(
+            &mut retry_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn failed_parallel_translated_data_submission_clears_deferred_marker_and_allows_retry() {
+    let (mut retry_scheduler, transport, fetch_route, data_route) = memory_routes();
+    let mut rejecting_scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    let fetch_request = defer_scalar_load(&core, 0x4008);
+    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    page_map
+        .map(
+            Address::new(0x4000),
+            Address::new(0x9000),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+
+    let error = core
+        .issue_next_translated_data_access_parallel(
+            &mut rejecting_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap_err();
+    assert!(matches!(error, RiscvCpuError::Transport(_)));
+    assert!(rejecting_scheduler.is_idle());
+    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
+    assert!(core.has_unissued_data_access());
+    assert!(!core.has_pending_data_access());
+
+    assert!(core
+        .issue_next_translated_data_access_parallel(
+            &mut retry_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn dropped_prepared_parallel_data_access_tolerates_poisoned_core_state() {
+    let (scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    let fetch_request = defer_scalar_load(&core, 0x9000);
+    let prepared = core
+        .prepare_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("direct load should prepare a parallel data access");
+
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
+        let core = core.clone();
+        move || {
+            let _state = core.state.lock().expect("riscv core lock");
+            panic!("poison riscv core state");
+        }
+    }));
+    assert!(poisoned.is_err());
+    assert!(core.state.is_poisoned());
+
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(prepared)));
+    assert!(dropped.is_ok());
+    assert!(!core
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .o3_runtime
+        .owns_pending_scalar_memory_retirement(fetch_request));
+}
+
 fn memory_routes() -> (
     PartitionedScheduler,
     MemoryTransport,
@@ -957,6 +1194,15 @@ fn detailed_two_load_core(
         scalar_load_event(0x8004, 2, 6, younger_address),
     ]);
     core
+}
+
+fn defer_scalar_load(core: &RiscvCore, address: u64) -> MemoryRequestId {
+    let event = scalar_load_event(0x8000, 1, 5, address);
+    let fetch_request = event.fetch().request_id();
+    let mut state = core.state.lock().expect("riscv core lock");
+    state.events.push(event.clone());
+    assert!(state.o3_runtime.defer_scalar_memory_execution(&event));
+    fetch_request
 }
 
 fn test_mmio_bus(address: u64, value: Vec<u8>) -> MmioBus {

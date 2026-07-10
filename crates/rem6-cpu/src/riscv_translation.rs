@@ -1151,35 +1151,40 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        self.data_issue_attempt(|| {
-            let Some(prepared) = self.prepare_translated_data_parallel_access(
-                scheduler.now(),
-                transport,
-                trace,
-                page_map,
-                responder,
-            )?
-            else {
-                return Ok(None);
-            };
+        let Some(prepared) = self.prepare_translated_data_parallel_access(
+            scheduler.now(),
+            transport,
+            trace,
+            page_map,
+            responder,
+        )?
+        else {
+            return Ok(None);
+        };
 
-            match prepared {
-                PreparedDataParallelAccess::Transaction { issue, transaction } => {
-                    let event = transport
-                        .submit_parallel_batch(scheduler, [transaction])
-                        .map_err(RiscvCpuError::Transport)?
-                        .into_iter()
-                        .next()
-                        .expect("single translated data transaction returns one event");
+        match prepared {
+            PreparedDataParallelAccess::Transaction {
+                issue,
+                transaction,
+                cleanup,
+            } => {
+                let event = transport
+                    .submit_parallel_batch(scheduler, [transaction])
+                    .map_err(RiscvCpuError::Transport)?
+                    .into_iter()
+                    .next()
+                    .expect("single translated data transaction returns one event");
 
-                    self.record_data_issue(issue);
-                    Ok(Some(event))
-                }
-                PreparedDataParallelAccess::ConditionalFailed { issue } => self
-                    .schedule_store_conditional_failure_parallel(scheduler, issue)
-                    .map(Some),
+                self.record_data_issue(issue);
+                cleanup.disarm();
+                Ok(Some(event))
             }
-        })
+            PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
+                let event = self.schedule_store_conditional_failure_parallel(scheduler, issue)?;
+                cleanup.disarm();
+                Ok(Some(event))
+            }
+        }
     }
 
     pub fn issue_next_translated_mmio_data_access_parallel(
@@ -1237,9 +1242,9 @@ impl RiscvCore {
                 return Ok(None);
             };
             if self.store_conditional_fails(&issue) {
-                return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
-                    issue,
-                }));
+                return Ok(Some(PreparedDataParallelAccess::conditional_failed(
+                    self, issue,
+                )));
             }
             let request = self.apply_pma_data_request_attributes(
                 issue.fetch_request,
@@ -1256,10 +1261,11 @@ impl RiscvCore {
                 move |delivery| core.record_data_response(delivery),
             );
 
-            Ok(Some(PreparedDataParallelAccess::Transaction {
+            Ok(Some(PreparedDataParallelAccess::transaction(
+                self,
                 issue,
                 transaction,
-            }))
+            )))
         })
     }
 

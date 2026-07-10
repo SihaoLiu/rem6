@@ -92,30 +92,35 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        self.data_issue_attempt(|| {
-            let Some(prepared) =
-                self.prepare_data_parallel_access(scheduler.now(), transport, trace, responder)?
-            else {
-                return Ok(None);
-            };
+        let Some(prepared) =
+            self.prepare_data_parallel_access(scheduler.now(), transport, trace, responder)?
+        else {
+            return Ok(None);
+        };
 
-            match prepared {
-                PreparedDataParallelAccess::Transaction { issue, transaction } => {
-                    let event = transport
-                        .submit_parallel_batch(scheduler, [transaction])
-                        .map_err(RiscvCpuError::Transport)?
-                        .into_iter()
-                        .next()
-                        .expect("single data transaction returns one event");
+        match prepared {
+            PreparedDataParallelAccess::Transaction {
+                issue,
+                transaction,
+                cleanup,
+            } => {
+                let event = transport
+                    .submit_parallel_batch(scheduler, [transaction])
+                    .map_err(RiscvCpuError::Transport)?
+                    .into_iter()
+                    .next()
+                    .expect("single data transaction returns one event");
 
-                    self.record_data_issue(issue);
-                    Ok(Some(event))
-                }
-                PreparedDataParallelAccess::ConditionalFailed { issue } => self
-                    .schedule_store_conditional_failure_parallel(scheduler, issue)
-                    .map(Some),
+                self.record_data_issue(issue);
+                cleanup.disarm();
+                Ok(Some(event))
             }
-        })
+            PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
+                let event = self.schedule_store_conditional_failure_parallel(scheduler, issue)?;
+                cleanup.disarm();
+                Ok(Some(event))
+            }
+        }
     }
 
     pub(crate) fn prepare_data_parallel_access<F>(
@@ -135,9 +140,9 @@ impl RiscvCore {
                 return Ok(None);
             };
             if self.store_conditional_fails(&issue) {
-                return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
-                    issue,
-                }));
+                return Ok(Some(PreparedDataParallelAccess::conditional_failed(
+                    self, issue,
+                )));
             }
             let request = self.apply_pma_data_request_attributes(
                 issue.fetch_request,
@@ -153,10 +158,11 @@ impl RiscvCore {
                 responder,
                 move |delivery| core.record_data_response(delivery),
             );
-            Ok(Some(PreparedDataParallelAccess::Transaction {
+            Ok(Some(PreparedDataParallelAccess::transaction(
+                self,
                 issue,
                 transaction,
-            }))
+            )))
         })
     }
 
@@ -1245,10 +1251,66 @@ pub(crate) enum PreparedDataParallelAccess {
     Transaction {
         issue: OutstandingDataAccess,
         transaction: ParallelMemoryTransaction,
+        cleanup: PreparedDataIssueCleanup,
     },
     ConditionalFailed {
         issue: OutstandingDataAccess,
+        cleanup: PreparedDataIssueCleanup,
     },
+}
+
+impl PreparedDataParallelAccess {
+    pub(crate) fn transaction(
+        core: &RiscvCore,
+        issue: OutstandingDataAccess,
+        transaction: ParallelMemoryTransaction,
+    ) -> Self {
+        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        Self::Transaction {
+            issue,
+            transaction,
+            cleanup,
+        }
+    }
+
+    pub(crate) fn conditional_failed(core: &RiscvCore, issue: OutstandingDataAccess) -> Self {
+        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        Self::ConditionalFailed { issue, cleanup }
+    }
+}
+
+pub(crate) struct PreparedDataIssueCleanup {
+    core: RiscvCore,
+    fetch_request: MemoryRequestId,
+    armed: bool,
+}
+
+impl PreparedDataIssueCleanup {
+    fn new(core: &RiscvCore, fetch_request: MemoryRequestId) -> Self {
+        Self {
+            core: core.clone(),
+            fetch_request,
+            armed: true,
+        }
+    }
+
+    pub(crate) fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PreparedDataIssueCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.core
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .o3_runtime
+            .abort_deferred_scalar_memory_execution(self.fetch_request);
+    }
 }
 
 fn record_load_completion(

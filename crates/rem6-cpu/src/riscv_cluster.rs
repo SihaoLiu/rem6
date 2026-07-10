@@ -72,7 +72,11 @@ fn push_prepared_data_action(
         return false;
     };
     match prepared {
-        PreparedDataParallelAccess::Transaction { issue, transaction } => {
+        PreparedDataParallelAccess::Transaction {
+            issue,
+            transaction,
+            cleanup,
+        } => {
             let transaction_index = transactions.len();
             transaction_cpus.push(cpu);
             transactions.push(transaction);
@@ -81,13 +85,15 @@ fn push_prepared_data_action(
                 core: core.clone(),
                 issue,
                 transaction_index,
+                cleanup,
             });
         }
-        PreparedDataParallelAccess::ConditionalFailed { issue } => {
+        PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
             prepared_actions.push(PreparedParallelAction::LocalDataFailure {
                 cpu,
                 core: core.clone(),
                 issue,
+                cleanup,
             });
         }
     }
@@ -1000,8 +1006,10 @@ impl RiscvCluster {
                     core,
                     issue,
                     transaction_index,
+                    cleanup,
                 } => {
                     core.record_prepared_data_issue(issue);
+                    cleanup.disarm();
                     actions.push(RiscvClusterDriveEvent::new(
                         cpu,
                         RiscvCoreDriveAction::DataAccessIssued {
@@ -1009,16 +1017,23 @@ impl RiscvCluster {
                         },
                     ));
                 }
-                PreparedParallelAction::LocalDataFailure { cpu, core, issue } => {
+                PreparedParallelAction::LocalDataFailure {
+                    cpu,
+                    core,
+                    issue,
+                    cleanup,
+                } => {
                     match core
                         .schedule_prepared_store_conditional_failure_parallel(scheduler, issue)
                     {
-                        Ok(event) => actions.push(RiscvClusterDriveEvent::new(
-                            cpu,
-                            RiscvCoreDriveAction::DataAccessIssued { event },
-                        )),
+                        Ok(event) => {
+                            cleanup.disarm();
+                            actions.push(RiscvClusterDriveEvent::new(
+                                cpu,
+                                RiscvCoreDriveAction::DataAccessIssued { event },
+                            ));
+                        }
                         Err(error) => {
-                            core.clear_deferred_o3_scalar_memory_execution();
                             first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
                         }
                     }

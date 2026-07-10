@@ -5,7 +5,7 @@ use rem6_transport::{
 
 use crate::riscv_cluster::RiscvClusterError;
 use crate::riscv_cluster_run::RiscvClusterDriveEvent;
-use crate::riscv_data_issue::OutstandingDataAccess;
+use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataIssueCleanup};
 use crate::riscv_fetch_ahead::PreparedRiscvFetchAheadSpeculation;
 use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction};
 
@@ -23,11 +23,13 @@ pub(crate) enum PreparedParallelAction {
         core: RiscvCore,
         issue: OutstandingDataAccess,
         transaction_index: usize,
+        cleanup: PreparedDataIssueCleanup,
     },
     LocalDataFailure {
         cpu: CpuId,
         core: RiscvCore,
         issue: OutstandingDataAccess,
+        cleanup: PreparedDataIssueCleanup,
     },
 }
 
@@ -52,20 +54,6 @@ impl PreparedParallelActions {
 
     pub(crate) fn drain(&mut self) -> std::vec::Drain<'_, PreparedParallelAction> {
         self.actions.drain(..)
-    }
-}
-
-impl Drop for PreparedParallelActions {
-    fn drop(&mut self) {
-        for action in &self.actions {
-            match action {
-                PreparedParallelAction::Data { core, .. }
-                | PreparedParallelAction::LocalDataFailure { core, .. } => {
-                    core.clear_deferred_o3_scalar_memory_execution();
-                }
-                PreparedParallelAction::Ready(_) | PreparedParallelAction::Fetch { .. } => {}
-            }
-        }
     }
 }
 
