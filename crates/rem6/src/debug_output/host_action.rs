@@ -1,14 +1,19 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::formatting::json_escape;
+use crate::host_actions::transfer_stats::{
+    HostActionChunkStats, HostActionComponentStats, HostActionTargetStats, HostActionTransferStats,
+};
 use crate::{
     Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
-    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
-    Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
     Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
+
+#[cfg(test)]
+use crate::{Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary};
 
 const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
@@ -29,28 +34,6 @@ pub(crate) struct Rem6HostActionTraceStat {
     path: String,
     unit: &'static str,
     value: u64,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Rem6HostActionTraceTransferStats {
-    components: u64,
-    chunks: u64,
-    payload_bytes: u64,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Rem6HostActionTraceChunkStats {
-    chunks: u64,
-    payload_bytes: u64,
-    payload_checksum_accumulator: u64,
-    o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Rem6HostActionTraceTargetStats {
-    transfers: BTreeMap<String, Rem6HostActionTraceTransferStats>,
-    components: BTreeMap<(String, String), Rem6HostActionTraceTransferStats>,
-    chunks: BTreeMap<(String, String, String), Rem6HostActionTraceChunkStats>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,146 +138,10 @@ impl Rem6HostActionTraceStat {
     }
 }
 
-fn add_host_action_trace_chunk_stats(
-    stats: &mut Rem6HostActionTraceChunkStats,
-    chunk: &Rem6HostCheckpointChunkSummary,
-) {
-    stats.chunks += 1;
-    stats.payload_bytes += chunk.payload_bytes;
-    stats.payload_checksum_accumulator = stats
-        .payload_checksum_accumulator
-        .wrapping_add(chunk.payload_checksum);
-    let Some(o3_runtime) = &chunk.o3_runtime else {
-        return;
-    };
-    for (field, value) in o3_runtime.numeric_stat_fields() {
-        stats
-            .o3_runtime_numeric
-            .entry(field.to_string())
-            .and_modify(|current| current.merge_restore_value(value))
-            .or_insert(value);
-    }
-}
-
-impl Rem6HostActionTraceTargetStats {
-    fn add_restore_targets(
-        &mut self,
-        restore: &Rem6HostCheckpointSummary,
-        stat_path_segment: &impl Fn(&str) -> String,
-    ) {
-        let target_paths = restore
-            .execution_modes
-            .iter()
-            .map(|authority| stat_path_segment(&authority.target))
-            .collect::<BTreeSet<_>>();
-        for component in &restore.components {
-            let component_path = stat_path_segment(&component.component);
-            if !target_paths.contains(&component_path) {
-                continue;
-            }
-            self.add_transfer(
-                component_path.clone(),
-                Rem6HostActionTraceTransferStats {
-                    components: 1,
-                    chunks: component.chunk_count,
-                    payload_bytes: component.payload_bytes,
-                },
-            );
-            self.add_component(
-                component_path.clone(),
-                component_path,
-                component,
-                stat_path_segment,
-            );
-        }
-    }
-
-    fn add_switch_transfer(
-        &mut self,
-        target: String,
-        transfer: &Rem6ExecutionModeStateTransferSummary,
-        stat_path_segment: &impl Fn(&str) -> String,
-    ) {
-        self.add_transfer(
-            target.clone(),
-            Rem6HostActionTraceTransferStats {
-                components: transfer.component_count,
-                chunks: transfer.chunk_count,
-                payload_bytes: transfer.payload_bytes,
-            },
-        );
-        for component in &transfer.components {
-            self.add_component(
-                target.clone(),
-                stat_path_segment(&component.component),
-                component,
-                stat_path_segment,
-            );
-        }
-    }
-
-    fn add_transfer(&mut self, target: String, transfer: Rem6HostActionTraceTransferStats) {
-        let stats = self.transfers.entry(target).or_default();
-        stats.components += transfer.components;
-        stats.chunks += transfer.chunks;
-        stats.payload_bytes += transfer.payload_bytes;
-    }
-
-    fn add_component(
-        &mut self,
-        target: String,
-        component_path: String,
-        component: &Rem6HostCheckpointComponentSummary,
-        stat_path_segment: &impl Fn(&str) -> String,
-    ) {
-        let stats = self
-            .components
-            .entry((target.clone(), component_path.clone()))
-            .or_default();
-        stats.components += 1;
-        stats.chunks += component.chunk_count;
-        stats.payload_bytes += component.payload_bytes;
-        for chunk in &component.chunks {
-            let chunk_path = stat_path_segment(&chunk.name);
-            let stats = self
-                .chunks
-                .entry((target.clone(), component_path.clone(), chunk_path))
-                .or_default();
-            add_host_action_trace_chunk_stats(stats, chunk);
-        }
-    }
-}
-
-fn collect_host_action_trace_component_stats<'a>(
-    components: impl IntoIterator<Item = &'a Rem6HostCheckpointComponentSummary>,
-    stat_path_segment: &impl Fn(&str) -> String,
-) -> (
-    BTreeMap<String, Rem6HostActionTraceTransferStats>,
-    BTreeMap<(String, String), Rem6HostActionTraceChunkStats>,
-) {
-    let mut component_stats = BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
-    let mut chunk_stats = BTreeMap::<(String, String), Rem6HostActionTraceChunkStats>::new();
-    for component in components {
-        let component_path = stat_path_segment(&component.component);
-        let transfer = component_stats.entry(component_path.clone()).or_default();
-        transfer.components += 1;
-        transfer.chunks += component.chunk_count;
-        transfer.payload_bytes += component.payload_bytes;
-        for chunk in &component.chunks {
-            let chunk_path = stat_path_segment(&chunk.name);
-            let stats = chunk_stats
-                .entry((component_path.clone(), chunk_path))
-                .or_default();
-            add_host_action_trace_chunk_stats(stats, chunk);
-        }
-    }
-    (component_stats, chunk_stats)
-}
-
 fn push_host_action_trace_transfer_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: String,
-    transfer: &Rem6HostActionTraceTransferStats,
+    transfer: &HostActionTransferStats,
 ) {
     stats.push(Rem6HostActionTraceStat::count(
         format!("{prefix}.components"),
@@ -313,7 +160,7 @@ fn push_host_action_trace_transfer_stats(
 fn push_host_action_trace_chunk_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: String,
-    chunk_stats: Rem6HostActionTraceChunkStats,
+    chunk_stats: HostActionChunkStats,
 ) {
     stats.push(Rem6HostActionTraceStat::count(
         format!("{prefix}.chunks"),
@@ -339,13 +186,12 @@ fn push_host_action_trace_chunk_stats(
 fn push_host_action_trace_component_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: &str,
-    component_stats: BTreeMap<String, Rem6HostActionTraceTransferStats>,
-    chunk_stats: BTreeMap<(String, String), Rem6HostActionTraceChunkStats>,
+    component_stats: HostActionComponentStats,
 ) {
-    for (component, transfer) in component_stats {
+    for (component, transfer) in component_stats.components {
         push_host_action_trace_transfer_stats(stats, format!("{prefix}.{component}"), &transfer);
     }
-    for ((component, chunk), transfer) in chunk_stats {
+    for ((component, chunk), transfer) in component_stats.chunks {
         push_host_action_trace_chunk_stats(
             stats,
             format!("{prefix}.{component}.chunk.{chunk}"),
@@ -357,8 +203,8 @@ fn push_host_action_trace_component_stats(
 fn push_host_action_trace_target_component_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: &str,
-    component_stats: BTreeMap<(String, String), Rem6HostActionTraceTransferStats>,
-    chunk_stats: BTreeMap<(String, String, String), Rem6HostActionTraceChunkStats>,
+    component_stats: BTreeMap<(String, String), HostActionTransferStats>,
+    chunk_stats: BTreeMap<(String, String, String), HostActionChunkStats>,
 ) {
     for ((target, component), transfer) in component_stats {
         push_host_action_trace_transfer_stats(
@@ -379,7 +225,7 @@ fn push_host_action_trace_target_component_stats(
 fn push_host_action_trace_target_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: &str,
-    target_stats: Rem6HostActionTraceTargetStats,
+    target_stats: HostActionTargetStats,
 ) {
     for (target, transfer) in target_stats.transfers {
         push_host_action_trace_transfer_stats(stats, format!("{prefix}.{target}"), &transfer);
@@ -396,9 +242,9 @@ fn push_host_action_trace_latest_target_stats(
     stats: &mut Vec<Rem6HostActionTraceStat>,
     prefix: &str,
     all_targets: Vec<String>,
-    latest: Rem6HostActionTraceTargetStats,
+    latest: HostActionTargetStats,
 ) {
-    let empty_transfer = Rem6HostActionTraceTransferStats::default();
+    let empty_transfer = HostActionTransferStats::default();
     for target in all_targets {
         push_host_action_trace_transfer_stats(
             stats,
@@ -463,16 +309,16 @@ pub(crate) fn host_action_trace_checkpoint_stats(
     checkpoints: &[Rem6HostCheckpointSummary],
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6HostActionTraceStat> {
-    let (component_transfers, chunk_transfers) = collect_host_action_trace_component_stats(
+    let component_stats = HostActionComponentStats::from_components(
         checkpoints
             .iter()
             .flat_map(|checkpoint| checkpoint.components.iter()),
         &stat_path_segment,
     );
-    let (latest_component_transfers, latest_chunk_transfers) = checkpoints
+    let latest_component_stats = checkpoints
         .last()
         .map(|checkpoint| {
-            collect_host_action_trace_component_stats(
+            HostActionComponentStats::from_components(
                 checkpoint.components.iter(),
                 &stat_path_segment,
             )
@@ -480,17 +326,11 @@ pub(crate) fn host_action_trace_checkpoint_stats(
         .unwrap_or_default();
 
     let mut stats = Vec::new();
-    push_host_action_trace_component_stats(
-        &mut stats,
-        "checkpoint.component",
-        component_transfers,
-        chunk_transfers,
-    );
+    push_host_action_trace_component_stats(&mut stats, "checkpoint.component", component_stats);
     push_host_action_trace_component_stats(
         &mut stats,
         "checkpoint.latest_component",
-        latest_component_transfers,
-        latest_chunk_transfers,
+        latest_component_stats,
     );
     stats
 }
@@ -506,13 +346,13 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     let mut modes = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
     let mut target_modes =
         BTreeMap::<String, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
-    let (component_transfers, chunk_transfers) = collect_host_action_trace_component_stats(
+    let component_stats = HostActionComponentStats::from_components(
         checkpoint_restores
             .iter()
             .flat_map(|restore| restore.components.iter()),
         &stat_path_segment,
     );
-    let mut target_stats = Rem6HostActionTraceTargetStats::default();
+    let mut target_stats = HostActionTargetStats::default();
 
     for restore in checkpoint_restores {
         if restore.execution_mode_authority_present {
@@ -538,7 +378,7 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     }
     let all_restore_targets = target_stats.transfers.keys().cloned().collect::<Vec<_>>();
     let latest_target_stats = checkpoint_restores.last().map(|restore| {
-        let mut stats = Rem6HostActionTraceTargetStats::default();
+        let mut stats = HostActionTargetStats::default();
         stats.add_restore_targets(restore, &stat_path_segment);
         stats
     });
@@ -581,8 +421,7 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     push_host_action_trace_component_stats(
         &mut stats,
         "checkpoint_restore.component",
-        component_transfers,
-        chunk_transfers,
+        component_stats,
     );
     push_host_action_trace_target_stats(&mut stats, "checkpoint_restore.target", target_stats);
     if let Some(latest_target_stats) = latest_target_stats {
@@ -600,12 +439,11 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
     execution_mode_switches: &[Rem6HostExecutionModeSwitchSummary],
     stat_path_segment: impl Fn(&str) -> String,
 ) -> Vec<Rem6HostActionTraceStat> {
-    let mut target_stats = Rem6HostActionTraceTargetStats::default();
+    let mut target_stats = HostActionTargetStats::default();
     let mut quiescence_validated = 0;
-    let mut quiescence_captured = Rem6HostActionTraceTransferStats::default();
+    let mut quiescence_captured = HostActionTransferStats::default();
     let mut target_quiescence_validated = BTreeMap::<String, u64>::new();
-    let mut target_quiescence_captured =
-        BTreeMap::<String, Rem6HostActionTraceTransferStats>::new();
+    let mut target_quiescence_captured = BTreeMap::<String, HostActionTransferStats>::new();
     let mut latest_checker = None;
     let mut target_checkers = BTreeMap::new();
     for switch in execution_mode_switches {
@@ -646,7 +484,7 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
     let latest_target_stats = execution_mode_switches.iter().rev().find_map(|switch| {
         let transfer = switch.state_transfer.as_ref()?;
         let target = stat_path_segment(&switch.target);
-        let mut stats = Rem6HostActionTraceTargetStats::default();
+        let mut stats = HostActionTargetStats::default();
         stats.add_switch_transfer(target, transfer, &stat_path_segment);
         Some(stats)
     });

@@ -4,8 +4,13 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
 use crate::{
-    host_actions::Rem6ExecutionModeSwitchCheckerSummary, Rem6HostActionSummary,
-    Rem6HostCheckpointChunkSummary, Rem6HostO3RuntimeCheckpointStatValue,
+    host_actions::{
+        transfer_stats::{
+            HostActionComponentStats, HostActionTargetStats, HostActionTransferStats,
+        },
+        Rem6ExecutionModeSwitchCheckerSummary,
+    },
+    Rem6HostActionSummary,
 };
 
 const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
@@ -14,42 +19,6 @@ pub(super) fn emit_run_host_action_stats(
     stats: &mut StatsRegistry,
     summary: &Rem6HostActionSummary,
 ) -> Result<(), Rem6CliError> {
-    #[derive(Default)]
-    struct HostCheckpointComponentStats {
-        components: u64,
-        chunks: u64,
-        payload_bytes: u64,
-    }
-
-    #[derive(Default)]
-    struct HostCheckpointChunkStats {
-        chunks: u64,
-        payload_bytes: u64,
-        payload_checksum_accumulator: u64,
-        o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
-    }
-
-    fn add_host_checkpoint_chunk_stats(
-        stats: &mut HostCheckpointChunkStats,
-        chunk: &Rem6HostCheckpointChunkSummary,
-    ) {
-        stats.chunks += 1;
-        stats.payload_bytes += chunk.payload_bytes;
-        stats.payload_checksum_accumulator = stats
-            .payload_checksum_accumulator
-            .wrapping_add(chunk.payload_checksum);
-        let Some(o3_runtime) = &chunk.o3_runtime else {
-            return;
-        };
-        for (field, value) in o3_runtime.numeric_stat_fields() {
-            stats
-                .o3_runtime_numeric
-                .entry(field.to_string())
-                .and_modify(|current| current.merge_restore_value(value))
-                .or_insert(value);
-        }
-    }
-
     let mut guest_host_call_arguments = 0;
     let mut guest_host_call_payload_bytes = 0;
     let mut guest_host_call_response_return_values = 0;
@@ -75,26 +44,13 @@ pub(super) fn emit_run_host_action_stats(
             .or_default() += 1;
     }
 
-    let mut checkpoint_component_stats = BTreeMap::<String, HostCheckpointComponentStats>::new();
-    let mut checkpoint_chunk_stats = BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
-    for checkpoint in &summary.checkpoints {
-        for component in &checkpoint.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = checkpoint_component_stats
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = checkpoint_chunk_stats
-                    .entry((component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-            }
-        }
-    }
+    let checkpoint_stats = HostActionComponentStats::from_components(
+        summary
+            .checkpoints
+            .iter()
+            .flat_map(|checkpoint| checkpoint.components.iter()),
+        &stat_path_segment,
+    );
 
     let mut checkpoint_restore_execution_mode_authority_manifests = 0;
     let mut checkpoint_restore_execution_mode_authority_cleared_manifests = 0;
@@ -105,16 +61,14 @@ pub(super) fn emit_run_host_action_stats(
     let mut checkpoint_restore_execution_mode_authority_targets_seen = BTreeSet::<String>::new();
     let mut checkpoint_restore_execution_mode_authority_target_modes =
         BTreeMap::<(String, &'static str), u64>::new();
-    let mut checkpoint_restore_component_stats =
-        BTreeMap::<String, HostCheckpointComponentStats>::new();
-    let mut checkpoint_restore_chunk_stats =
-        BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
-    let mut checkpoint_restore_target_stats =
-        BTreeMap::<String, HostCheckpointComponentStats>::new();
-    let mut checkpoint_restore_target_component_stats =
-        BTreeMap::<(String, String), HostCheckpointComponentStats>::new();
-    let mut checkpoint_restore_target_chunk_stats =
-        BTreeMap::<(String, String, String), HostCheckpointChunkStats>::new();
+    let checkpoint_restore_stats = HostActionComponentStats::from_components(
+        summary
+            .checkpoint_restores
+            .iter()
+            .flat_map(|restore| restore.components.iter()),
+        &stat_path_segment,
+    );
+    let mut checkpoint_restore_target_stats = HostActionTargetStats::default();
     for restore in &summary.checkpoint_restores {
         if restore.execution_mode_authority_present {
             checkpoint_restore_execution_mode_authority_manifests += 1;
@@ -136,47 +90,7 @@ pub(super) fn emit_run_host_action_stats(
                 .entry((target, authority.mode))
                 .or_default() += 1;
         }
-        let restore_target_paths = restore
-            .execution_modes
-            .iter()
-            .map(|authority| stat_path_segment(&authority.target))
-            .collect::<BTreeSet<_>>();
-        for component in &restore.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = checkpoint_restore_component_stats
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            if restore_target_paths.contains(&component_path) {
-                let target_stats = checkpoint_restore_target_stats
-                    .entry(component_path.clone())
-                    .or_default();
-                target_stats.components += 1;
-                target_stats.chunks += component.chunk_count;
-                target_stats.payload_bytes += component.payload_bytes;
-                let target_component_stats = checkpoint_restore_target_component_stats
-                    .entry((component_path.clone(), component_path.clone()))
-                    .or_default();
-                target_component_stats.components += 1;
-                target_component_stats.chunks += component.chunk_count;
-                target_component_stats.payload_bytes += component.payload_bytes;
-            }
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = checkpoint_restore_chunk_stats
-                    .entry((component_path.clone(), chunk_path.clone()))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-                if restore_target_paths.contains(&component_path) {
-                    let target_chunk_stats = checkpoint_restore_target_chunk_stats
-                        .entry((component_path.clone(), component_path.clone(), chunk_path))
-                        .or_default();
-                    add_host_checkpoint_chunk_stats(target_chunk_stats, chunk);
-                }
-            }
-        }
+        checkpoint_restore_target_stats.add_restore_targets(restore, &stat_path_segment);
     }
 
     let mut switch_modes = BTreeMap::<&'static str, u64>::new();
@@ -215,19 +129,18 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_quiescence_checker = None;
     let mut switch_quiescence_target_validated = BTreeMap::<String, u64>::new();
     let mut switch_quiescence_target_captured_stats =
-        BTreeMap::<String, HostCheckpointComponentStats>::new();
+        BTreeMap::<String, HostActionTransferStats>::new();
     let mut switch_quiescence_target_checkers =
         BTreeMap::<String, Rem6ExecutionModeSwitchCheckerSummary>::new();
-    let mut switch_state_transfer_component_stats =
-        BTreeMap::<String, HostCheckpointComponentStats>::new();
-    let mut switch_state_transfer_chunk_stats =
-        BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
-    let mut switch_state_transfer_target_stats =
-        BTreeMap::<String, HostCheckpointComponentStats>::new();
-    let mut switch_state_transfer_target_component_stats =
-        BTreeMap::<(String, String), HostCheckpointComponentStats>::new();
-    let mut switch_state_transfer_target_chunk_stats =
-        BTreeMap::<(String, String, String), HostCheckpointChunkStats>::new();
+    let switch_state_transfer_stats = HostActionComponentStats::from_components(
+        summary
+            .execution_mode_switches
+            .iter()
+            .filter_map(|switch| switch.state_transfer.as_ref())
+            .flat_map(|transfer| transfer.components.iter()),
+        &stat_path_segment,
+    );
+    let mut switch_state_transfer_target_stats = HostActionTargetStats::default();
     for switch in &summary.execution_mode_switches {
         let Some(transfer) = switch.state_transfer.as_ref() else {
             continue;
@@ -237,12 +150,11 @@ pub(super) fn emit_run_host_action_stats(
         switch_state_transfer_components += transfer.component_count;
         switch_state_transfer_chunks += transfer.chunk_count;
         switch_state_transfer_payload_bytes += transfer.payload_bytes;
-        let target_stats = switch_state_transfer_target_stats
-            .entry(target_path.clone())
-            .or_default();
-        target_stats.components += transfer.component_count;
-        target_stats.chunks += transfer.chunk_count;
-        target_stats.payload_bytes += transfer.payload_bytes;
+        switch_state_transfer_target_stats.add_switch_transfer(
+            target_path,
+            transfer,
+            &stat_path_segment,
+        );
         let quiescence_target_path = stat_path_segment(&transfer.quiescence_gate.target);
         if transfer.quiescence_gate.validated {
             switch_quiescence_validated += 1;
@@ -268,34 +180,6 @@ pub(super) fn emit_run_host_action_stats(
         if let Some(checker) = transfer.quiescence_gate.checker {
             switch_quiescence_checker = Some(checker);
             switch_quiescence_target_checkers.insert(quiescence_target_path, checker);
-        }
-        for component in &transfer.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = switch_state_transfer_component_stats
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-
-            let target_component_stats = switch_state_transfer_target_component_stats
-                .entry((target_path.clone(), component_path.clone()))
-                .or_default();
-            target_component_stats.components += 1;
-            target_component_stats.chunks += component.chunk_count;
-            target_component_stats.payload_bytes += component.payload_bytes;
-
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = switch_state_transfer_chunk_stats
-                    .entry((component_path.clone(), chunk_path.clone()))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-                let target_chunk_stats = switch_state_transfer_target_chunk_stats
-                    .entry((target_path.clone(), component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(target_chunk_stats, chunk);
-            }
         }
     }
 
@@ -437,27 +321,11 @@ pub(super) fn emit_run_host_action_stats(
                 value,
             )?;
         }
-        let mut latest_checkpoint_component_stats =
-            BTreeMap::<String, HostCheckpointComponentStats>::new();
-        let mut latest_checkpoint_chunk_stats =
-            BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
-        for component in &checkpoint.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = latest_checkpoint_component_stats
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = latest_checkpoint_chunk_stats
-                    .entry((component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-            }
-        }
-        for (component_path, component_stats) in latest_checkpoint_component_stats {
+        let latest_checkpoint_stats = HostActionComponentStats::from_components(
+            checkpoint.components.iter(),
+            &stat_path_segment,
+        );
+        for (component_path, component_stats) in latest_checkpoint_stats.components {
             for (name, unit, value) in [
                 ("components", "Count", component_stats.components),
                 ("chunks", "Count", component_stats.chunks),
@@ -474,7 +342,7 @@ pub(super) fn emit_run_host_action_stats(
                 )?;
             }
         }
-        for ((component_path, chunk_path), chunk_stats) in latest_checkpoint_chunk_stats {
+        for ((component_path, chunk_path), chunk_stats) in latest_checkpoint_stats.chunks {
             for (name, unit, value) in [
                 ("chunks", "Count", chunk_stats.chunks),
                 ("payload_bytes", "Byte", chunk_stats.payload_bytes),
@@ -523,49 +391,15 @@ pub(super) fn emit_run_host_action_stats(
                 value,
             )?;
         }
-        let latest_restore_target_paths = restore
-            .execution_modes
-            .iter()
-            .map(|authority| stat_path_segment(&authority.target))
-            .collect::<BTreeSet<_>>();
-        let mut latest_restore_target_stats =
-            BTreeMap::<String, HostCheckpointComponentStats>::new();
-        let mut latest_restore_target_component_stats =
-            BTreeMap::<(String, String), HostCheckpointComponentStats>::new();
-        let mut latest_restore_target_chunk_stats =
-            BTreeMap::<(String, String, String), HostCheckpointChunkStats>::new();
-        for component in &restore.components {
-            let component_path = stat_path_segment(&component.component);
-            if !latest_restore_target_paths.contains(&component_path) {
-                continue;
-            }
-            let target_path = component_path.clone();
-            let target_stats = latest_restore_target_stats
-                .entry(target_path.clone())
-                .or_default();
-            target_stats.components += 1;
-            target_stats.chunks += component.chunk_count;
-            target_stats.payload_bytes += component.payload_bytes;
-            let component_stats = latest_restore_target_component_stats
-                .entry((target_path.clone(), component_path.clone()))
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = latest_restore_target_chunk_stats
-                    .entry((target_path.clone(), component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-            }
-        }
-        for target_path in checkpoint_restore_target_stats.keys() {
+        let mut latest_restore_target_stats = HostActionTargetStats::default();
+        latest_restore_target_stats.add_restore_targets(restore, &stat_path_segment);
+        for target_path in checkpoint_restore_target_stats.transfers.keys() {
             for (name, unit, value) in [
                 (
                     "components",
                     "Count",
                     latest_restore_target_stats
+                        .transfers
                         .get(target_path)
                         .map(|stats| stats.components)
                         .unwrap_or_default(),
@@ -574,6 +408,7 @@ pub(super) fn emit_run_host_action_stats(
                     "chunks",
                     "Count",
                     latest_restore_target_stats
+                        .transfers
                         .get(target_path)
                         .map(|stats| stats.chunks)
                         .unwrap_or_default(),
@@ -582,6 +417,7 @@ pub(super) fn emit_run_host_action_stats(
                     "payload_bytes",
                     "Byte",
                     latest_restore_target_stats
+                        .transfers
                         .get(target_path)
                         .map(|stats| stats.payload_bytes)
                         .unwrap_or_default(),
@@ -599,7 +435,7 @@ pub(super) fn emit_run_host_action_stats(
             }
         }
         for ((target_path, component_path), component_stats) in
-            latest_restore_target_component_stats
+            latest_restore_target_stats.components
         {
             for (name, unit, value) in [
                 ("components", "Count", component_stats.components),
@@ -618,7 +454,7 @@ pub(super) fn emit_run_host_action_stats(
             }
         }
         for ((target_path, component_path, chunk_path), chunk_stats) in
-            latest_restore_target_chunk_stats
+            latest_restore_target_stats.chunks
         {
             for (name, unit, value) in [
                 ("chunks", "Count", chunk_stats.chunks),
@@ -796,7 +632,7 @@ pub(super) fn emit_run_host_action_stats(
             },
         )?;
         let latest_transfer_target = stat_path_segment(&switch.target);
-        for target_path in switch_state_transfer_target_stats.keys() {
+        for target_path in switch_state_transfer_target_stats.transfers.keys() {
             let is_latest = target_path == &latest_transfer_target;
             for (name, unit, value) in [
                 (
@@ -830,27 +666,11 @@ pub(super) fn emit_run_host_action_stats(
                 )?;
             }
         }
-        let mut latest_transfer_component_stats =
-            BTreeMap::<String, HostCheckpointComponentStats>::new();
-        let mut latest_transfer_chunk_stats =
-            BTreeMap::<(String, String), HostCheckpointChunkStats>::new();
-        for component in &transfer.components {
-            let component_path = stat_path_segment(&component.component);
-            let component_stats = latest_transfer_component_stats
-                .entry(component_path.clone())
-                .or_default();
-            component_stats.components += 1;
-            component_stats.chunks += component.chunk_count;
-            component_stats.payload_bytes += component.payload_bytes;
-            for chunk in &component.chunks {
-                let chunk_path = stat_path_segment(&chunk.name);
-                let chunk_stats = latest_transfer_chunk_stats
-                    .entry((component_path.clone(), chunk_path))
-                    .or_default();
-                add_host_checkpoint_chunk_stats(chunk_stats, chunk);
-            }
-        }
-        for (component_path, component_stats) in latest_transfer_component_stats {
+        let latest_transfer_stats = HostActionComponentStats::from_components(
+            transfer.components.iter(),
+            &stat_path_segment,
+        );
+        for (component_path, component_stats) in latest_transfer_stats.components {
             for (name, unit, value) in [
                 ("components", "Count", component_stats.components),
                 ("chunks", "Count", component_stats.chunks),
@@ -867,7 +687,7 @@ pub(super) fn emit_run_host_action_stats(
                 )?;
             }
         }
-        for ((component_path, chunk_path), chunk_stats) in latest_transfer_chunk_stats {
+        for ((component_path, chunk_path), chunk_stats) in latest_transfer_stats.chunks {
             for (name, unit, value) in [
                 ("chunks", "Count", chunk_stats.chunks),
                 ("payload_bytes", "Byte", chunk_stats.payload_bytes),
@@ -1139,7 +959,7 @@ pub(super) fn emit_run_host_action_stats(
         StatResetPolicy::Monotonic,
         switch_quiescence_captured_payload_bytes,
     )?;
-    for (component_path, component_stats) in checkpoint_component_stats {
+    for (component_path, component_stats) in checkpoint_stats.components {
         increment_stat(
             stats,
             &format!("sim.host_actions.checkpoint.component.{component_path}.components"),
@@ -1162,7 +982,7 @@ pub(super) fn emit_run_host_action_stats(
             component_stats.payload_bytes,
         )?;
     }
-    for ((component_path, chunk_path), chunk_stats) in checkpoint_chunk_stats {
+    for ((component_path, chunk_path), chunk_stats) in checkpoint_stats.chunks {
         increment_stat(
             stats,
             &format!(
@@ -1202,7 +1022,7 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for (component_path, component_stats) in checkpoint_restore_component_stats {
+    for (component_path, component_stats) in checkpoint_restore_stats.components {
         increment_stat(
             stats,
             &format!("sim.host_actions.checkpoint_restore.component.{component_path}.components"),
@@ -1227,7 +1047,7 @@ pub(super) fn emit_run_host_action_stats(
             component_stats.payload_bytes,
         )?;
     }
-    for ((component_path, chunk_path), chunk_stats) in checkpoint_restore_chunk_stats {
+    for ((component_path, chunk_path), chunk_stats) in checkpoint_restore_stats.chunks {
         increment_stat(
             stats,
             &format!(
@@ -1267,7 +1087,7 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for (target_path, target_stats) in checkpoint_restore_target_stats {
+    for (target_path, target_stats) in checkpoint_restore_target_stats.transfers {
         increment_stat(
             stats,
             &format!("sim.host_actions.checkpoint_restore.target.{target_path}.components"),
@@ -1291,7 +1111,7 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for ((target_path, component_path), component_stats) in
-        checkpoint_restore_target_component_stats
+        checkpoint_restore_target_stats.components
     {
         increment_stat(
             stats,
@@ -1322,7 +1142,7 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for ((target_path, component_path, chunk_path), chunk_stats) in
-        checkpoint_restore_target_chunk_stats
+        checkpoint_restore_target_stats.chunks
     {
         increment_stat(
             stats,
@@ -1363,7 +1183,7 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for (component_path, component_stats) in switch_state_transfer_component_stats {
+    for (component_path, component_stats) in switch_state_transfer_stats.components {
         increment_stat(
             stats,
             &format!(
@@ -1392,7 +1212,7 @@ pub(super) fn emit_run_host_action_stats(
             component_stats.payload_bytes,
         )?;
     }
-    for ((component_path, chunk_path), chunk_stats) in switch_state_transfer_chunk_stats {
+    for ((component_path, chunk_path), chunk_stats) in switch_state_transfer_stats.chunks {
         increment_stat(
             stats,
             &format!(
@@ -1432,7 +1252,7 @@ pub(super) fn emit_run_host_action_stats(
             )?;
         }
     }
-    for (target_path, target_stats) in switch_state_transfer_target_stats {
+    for (target_path, target_stats) in switch_state_transfer_target_stats.transfers {
         increment_stat(
             stats,
             &format!(
@@ -1462,7 +1282,7 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for ((target_path, component_path), component_stats) in
-        switch_state_transfer_target_component_stats
+        switch_state_transfer_target_stats.components
     {
         increment_stat(
             stats,
@@ -1493,7 +1313,7 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for ((target_path, component_path, chunk_path), chunk_stats) in
-        switch_state_transfer_target_chunk_stats
+        switch_state_transfer_target_stats.chunks
     {
         increment_stat(
             stats,

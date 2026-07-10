@@ -1,3 +1,5 @@
+pub(crate) mod transfer_stats;
+
 use rem6_cpu::{
     BranchTargetKind, O3RuntimeCheckpointPayload, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
 };
