@@ -25,9 +25,9 @@ impl O3RuntimeState {
             .then(|| self.take_live_retired_instruction(execution.fetch().request_id()))
             .flatten();
         let observation = if let Some(live) = live_scalar_memory {
-            let response_tick = live
-                .response_tick
-                .expect("completed live scalar memory has a response tick");
+            let commit_tick = live
+                .commit_tick
+                .expect("taken live scalar memory has an ordered commit tick");
             let rob = self
                 .snapshot
                 .reorder_buffer
@@ -40,7 +40,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence: live.sequence,
                 issue_tick: live.issue_tick,
-                commit_tick: response_tick,
+                commit_tick,
                 occupancy: live.issue_rob_occupancy,
                 commits: 1,
                 commit_blocked: false,

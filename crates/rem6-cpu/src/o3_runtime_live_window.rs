@@ -76,7 +76,7 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) {
-        let Some(live) = self.live_scalar_memory.as_ref() else {
+        let Some(live) = self.live_scalar_memories.last() else {
             return;
         };
         if live.fetch_request != fetch_request

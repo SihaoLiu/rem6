@@ -426,6 +426,12 @@ impl RiscvCpuExecutionEvent {
         self.data_access_event_kind = Some(kind);
     }
 
+    pub(crate) fn clear_data_access_retirement(&mut self) {
+        self.data_access_event_kind = None;
+        self.in_order_pipeline_cycle = None;
+        self.in_order_pipeline_data_wait_cycles = 0;
+    }
+
     pub const fn counts_as_retired_instruction(&self) -> bool {
         self.counts_as_retired_instruction
     }

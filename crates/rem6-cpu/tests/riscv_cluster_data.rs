@@ -520,10 +520,11 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
         RiscvCoreDriveAction::DataAccessIssued { .. }
     ));
     scheduler.run_until_idle_parallel().unwrap();
-    assert_eq!(cpu.read_register(reg(5)), 41);
+    assert_eq!(cpu.read_register(reg(5)), 0);
     assert!(cpu
         .record_ready_o3_scalar_memory_event_with_trace(false)
         .is_some());
+    assert_eq!(cpu.read_register(reg(5)), 41);
 
     for _ in 0..16 {
         cluster

@@ -9,7 +9,7 @@ use rem6_memory::{
     AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest, MemoryRequestId,
     ResponseStatus,
 };
-use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId};
+use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
     ResponseDelivery, TargetOutcome, TransportError,
@@ -335,6 +335,9 @@ impl RiscvCore {
         scheduler: &PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        if self.has_outstanding_data_request() {
+            return Ok(None);
+        }
         if let Some(fetch) = self.data_translation_page_map_required_fetch() {
             return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
         }
@@ -346,11 +349,9 @@ impl RiscvCore {
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address, 0)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
-        let request = mmio_request(request_id, &access, size, address, 0)?;
-        let route = match bus.route_for(self.core.partition(), &request) {
-            Ok(route) => route,
-            Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
-            Err(error) => return Err(RiscvCpuError::Mmio(error)),
+        let Some(route) = self.mmio_route_for_access(bus, request_id, &access, size, address)?
+        else {
+            return Ok(None);
         };
         if route.source_partition() != self.core.partition() {
             return Err(RiscvCpuError::MmioRoutePartitionMismatch {
@@ -378,6 +379,40 @@ impl RiscvCore {
             request_byte_offset: 0,
             line_layout: None,
         }))
+    }
+
+    pub(crate) fn next_unissued_data_access_targets_mmio(
+        &self,
+        bus: &MmioBus,
+    ) -> Result<bool, RiscvCpuError> {
+        if let Some(fetch) = self.data_translation_page_map_required_fetch() {
+            return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
+        }
+        let Some((_, access)) = self.next_unissued_data_access() else {
+            return Ok(false);
+        };
+        let size = access_size(&access)?;
+        let address = Address::new(access_address(&access));
+        let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
+        Ok(self
+            .mmio_route_for_access(bus, request_id, &access, size, address)?
+            .is_some())
+    }
+
+    fn mmio_route_for_access(
+        &self,
+        bus: &MmioBus,
+        request_id: MemoryRequestId,
+        access: &MemoryAccessKind,
+        size: AccessSize,
+        address: Address,
+    ) -> Result<Option<MmioRoute>, RiscvCpuError> {
+        let request = mmio_request(request_id, access, size, address, 0)?;
+        match bus.route_for(self.core.partition(), &request) {
+            Ok(route) => Ok(Some(route)),
+            Err(MmioError::UnmappedAddress { .. }) => Ok(None),
+            Err(error) => Err(RiscvCpuError::Mmio(error)),
+        }
     }
 
     pub(crate) fn check_pmp_data_access(
@@ -456,12 +491,16 @@ impl RiscvCore {
             let state = self.state.lock().expect("riscv core lock");
             let detailed = state.live_retire_gate.detailed_policy_enabled();
             let untranslated = state.data_translation.is_none();
+            let scalar_memory = matches!(
+                issue.access,
+                MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
+            );
             (
-                detailed
-                    && matches!(
-                        issue.access,
-                        MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
-                    ),
+                scalar_memory
+                    && (detailed
+                        || state
+                            .o3_runtime
+                            .owns_pending_scalar_memory_retirement(issue.fetch_request)),
                 detailed && untranslated && matches!(issue.access, MemoryAccessKind::Load { .. }),
             )
         };
@@ -489,7 +528,7 @@ impl RiscvCore {
             );
             assert!(
                 staged,
-                "detailed scalar data issue must own the only live O3 memory slot"
+                "detailed scalar data issue must own an available O3 memory slot"
             );
             if detailed_scalar_load && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
             {
@@ -589,20 +628,31 @@ impl RiscvCore {
         match delivery.response().status() {
             ResponseStatus::Completed => {
                 let data = delivery.response().data().map(ToOwned::to_owned);
-                record_load_completion(
-                    &mut state,
-                    self.id(),
-                    &access,
-                    data.as_deref(),
-                    "load response data",
-                );
-                riscv_checker::sync_checker_hart(&mut state);
-                let completed_event = record_data_retire_cycle(
-                    &mut state,
-                    &access,
-                    delivery.tick(),
-                    RiscvDataAccessEventKind::Completed,
-                );
+                let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                if !deferred_o3_scalar_load_writeback(&state, &access) {
+                    record_load_completion(
+                        &mut state,
+                        self.id(),
+                        &access,
+                        data.as_deref(),
+                        "load response data",
+                    );
+                    riscv_checker::sync_checker_hart(&mut state);
+                }
+                let completed_event = if deferred_retirement {
+                    mark_data_access_event_kind(
+                        &mut state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                } else {
+                    record_data_retire_cycle(
+                        &mut state,
+                        &access,
+                        delivery.tick(),
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                };
                 record_o3_data_access_outcome(
                     &mut state,
                     &access,
@@ -700,20 +750,31 @@ impl RiscvCore {
         match completion.response() {
             Ok(response) => {
                 let data = response.data().map(ToOwned::to_owned);
-                record_load_completion(
-                    &mut state,
-                    self.id(),
-                    &access,
-                    data.as_deref(),
-                    "MMIO load response data",
-                );
-                riscv_checker::sync_checker_hart(&mut state);
-                let completed_event = record_data_retire_cycle(
-                    &mut state,
-                    &access,
-                    completion.tick(),
-                    RiscvDataAccessEventKind::Completed,
-                );
+                let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                if !deferred_o3_scalar_load_writeback(&state, &access) {
+                    record_load_completion(
+                        &mut state,
+                        self.id(),
+                        &access,
+                        data.as_deref(),
+                        "MMIO load response data",
+                    );
+                    riscv_checker::sync_checker_hart(&mut state);
+                }
+                let completed_event = if deferred_retirement {
+                    mark_data_access_event_kind(
+                        &mut state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                } else {
+                    record_data_retire_cycle(
+                        &mut state,
+                        &access,
+                        completion.tick(),
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                };
                 record_o3_data_access_outcome(
                     &mut state,
                     &access,
@@ -753,10 +814,41 @@ fn record_data_retire_cycle(
     completion_tick: Tick,
     kind: RiscvDataAccessEventKind,
 ) -> Option<RiscvCpuExecutionEvent> {
+    record_data_retire_cycle_for_fetch(
+        state,
+        access.fetch_request,
+        access.tick,
+        completion_tick,
+        kind,
+    )
+}
+
+pub(crate) fn record_deferred_o3_data_retire_cycle(
+    state: &mut RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    issue_tick: Tick,
+    completion_tick: Tick,
+) -> Option<RiscvCpuExecutionEvent> {
+    record_data_retire_cycle_for_fetch(
+        state,
+        fetch_request,
+        issue_tick,
+        completion_tick,
+        RiscvDataAccessEventKind::Completed,
+    )
+}
+
+fn record_data_retire_cycle_for_fetch(
+    state: &mut RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    issue_tick: Tick,
+    completion_tick: Tick,
+    kind: RiscvDataAccessEventKind,
+) -> Option<RiscvCpuExecutionEvent> {
     let Some(index) = state
         .events
         .iter()
-        .position(|event| event.fetch().request_id() == access.fetch_request)
+        .position(|event| event.fetch().request_id() == fetch_request)
     else {
         debug_assert!(
             false,
@@ -765,17 +857,14 @@ fn record_data_retire_cycle(
         return None;
     };
     state.events[index].set_data_access_event_kind(kind);
-    let data_wait_cycles = completion_tick.saturating_sub(access.tick);
+    let data_wait_cycles = completion_tick.saturating_sub(issue_tick);
     if state.events[index].in_order_pipeline_cycle().is_some()
         || !state.events[index].counts_as_retired_instruction()
     {
         return Some(state.events[index].clone());
     }
-    let attributed_data_wait_cycles = retag_existing_fetch_wait_cycles_for_data_access(
-        state,
-        access.fetch_request,
-        data_wait_cycles,
-    );
+    let attributed_data_wait_cycles =
+        retag_existing_fetch_wait_cycles_for_data_access(state, fetch_request, data_wait_cycles);
     let remaining_data_wait_cycles = data_wait_cycles.saturating_sub(attributed_data_wait_cycles);
     let execute_wait_cycles =
         riscv_execute::in_order_execute_wait_cycles(state.events[index].instruction());
@@ -791,7 +880,7 @@ fn record_data_retire_cycle(
     }
     let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_waits_with_causes(
         state,
-        access.fetch_request.sequence(),
+        fetch_request.sequence(),
         None,
         &waits,
     )
@@ -799,6 +888,17 @@ fn record_data_retire_cycle(
     state.events[index].set_in_order_pipeline_cycle(cycle);
     state.events[index].set_in_order_pipeline_data_wait_cycles(data_wait_cycles);
     Some(state.events[index].clone())
+}
+
+fn deferred_o3_scalar_memory_retirement(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
+    state
+        .o3_runtime
+        .owns_pending_scalar_memory_retirement(access.fetch_request)
+}
+
+fn deferred_o3_scalar_load_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
+    matches!(access.access, MemoryAccessKind::Load { .. })
+        && deferred_o3_scalar_memory_retirement(state, access)
 }
 
 fn mark_data_access_event_kind(
@@ -828,6 +928,16 @@ fn record_o3_data_access_outcome(
         return;
     };
     let latency_ticks = response_tick.saturating_sub(access.tick);
+    let squash_younger_requests = matches!(
+        execution.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
+    )
+    .then(|| {
+        state
+            .o3_runtime
+            .younger_live_scalar_memory_requests(access.fetch_request, access.request)
+    })
+    .unwrap_or_default();
     if state.o3_runtime.complete_live_scalar_memory_response(
         &execution,
         access.request,
@@ -835,6 +945,17 @@ fn record_o3_data_access_outcome(
         latency_ticks,
         load_data,
     ) {
+        for (request, fetch_request) in squash_younger_requests {
+            state.outstanding_data.remove(&request);
+            state.issued_data_for_fetches.remove(&fetch_request);
+            if let Some(event) = state
+                .events
+                .iter_mut()
+                .find(|event| event.fetch().request_id() == fetch_request)
+            {
+                event.clear_data_access_retirement();
+            }
+        }
         return;
     }
     if matches!(
@@ -1100,6 +1221,10 @@ pub(crate) struct IssuedDataAccess {
 }
 
 impl IssuedDataAccess {
+    pub(crate) fn targets_memory(&self) -> bool {
+        matches!(self.target, RiscvDataAccessTarget::Memory { .. })
+    }
+
     fn record(&self, tick: Tick) -> RiscvDataAccessRecord {
         RiscvDataAccessRecord::new(
             tick,

@@ -275,7 +275,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert_eq!(registry.chunk(&cpu1_component, "pc"), None);
 
     cpu1.set_detailed_live_retire_gate_enabled(false);
-    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     assert_eq!(
         bank.capture_all_into(&mut registry),
         Err(CheckpointError::ComponentNotQuiescent {
@@ -300,7 +300,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert_eq!(resident.reorder_buffer()[1].pc(), Address::new(0x9004));
     assert_eq!(resident.load_store_queue().len(), 1);
     cpu1.set_detailed_live_retire_gate_enabled(false);
-    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     assert_eq!(
         bank.capture_all_into(&mut registry),
         Err(CheckpointError::ComponentNotQuiescent {
@@ -313,6 +313,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert!(cpu1.has_pending_data_access());
     cpu1.redirect_pc(Address::new(0x9100));
     assert!(!cpu1.has_pending_data_access());
+    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     bank.capture_all_into(&mut registry).unwrap();
     assert!(registry.chunk(&cpu0_component, "pc").is_some());
     assert!(registry.chunk(&cpu1_component, "pc").is_some());

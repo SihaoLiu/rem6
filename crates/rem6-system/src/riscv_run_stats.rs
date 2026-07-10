@@ -38,8 +38,29 @@ impl RiscvSystemRunDriver {
         tick: Tick,
         turn: &RiscvClusterTurn,
     ) -> Result<RiscvRetirementSummary, SystemError> {
+        self.record_run_stats_inner(cluster, tick, turn, None)
+    }
+
+    pub(crate) fn record_run_stats_with_retirement_budget(
+        &self,
+        cluster: &RiscvCluster,
+        tick: Tick,
+        turn: &RiscvClusterTurn,
+        retirement_budget: u64,
+    ) -> Result<RiscvRetirementSummary, SystemError> {
+        self.record_run_stats_inner(cluster, tick, turn, Some(retirement_budget))
+    }
+
+    fn record_run_stats_inner(
+        &self,
+        cluster: &RiscvCluster,
+        tick: Tick,
+        turn: &RiscvClusterTurn,
+        retirement_budget: Option<u64>,
+    ) -> Result<RiscvRetirementSummary, SystemError> {
         self.reset_runtime_stats_for_new_stats_resets(cluster)?;
-        let retired = self.record_retirement_observations(cluster, turn, tick)?;
+        let retired =
+            self.record_retirement_observations(cluster, turn, tick, retirement_budget)?;
         self.record_instruction_stats(&retired)?;
         self.record_data_access_stats(cluster)?;
         Ok(RiscvRetirementSummary {
@@ -54,7 +75,7 @@ impl RiscvSystemRunDriver {
         cluster: &RiscvCluster,
         turn: &RiscvClusterTurn,
     ) -> Result<(), SystemError> {
-        self.record_retirement_observations(cluster, turn, 0)
+        self.record_retirement_observations(cluster, turn, 0, None)
             .map(|_| ())
     }
 
@@ -63,6 +84,7 @@ impl RiscvSystemRunDriver {
         cluster: &RiscvCluster,
         turn: &RiscvClusterTurn,
         tick: Tick,
+        retirement_budget: Option<u64>,
     ) -> Result<Vec<RiscvRetirementObservation>, SystemError> {
         let detailed_cpus = self.detailed_cpus(cluster);
         let mut retired = Vec::new();
@@ -88,7 +110,9 @@ impl RiscvSystemRunDriver {
                             .map_err(SystemError::RiscvCluster)?;
                         if deferred_scalar_memory {
                             assert!(
-                                core.has_pending_o3_scalar_memory_retirement(),
+                                core.owns_pending_o3_scalar_memory_retirement(
+                                    instruction.fetch().request_id()
+                                ),
                                 "detailed scalar execution must reserve CPU-owned retirement"
                             );
                         } else {
@@ -116,14 +140,27 @@ impl RiscvSystemRunDriver {
             }
         }
 
+        let mut remaining_scalar_retirements = retirement_budget
+            .unwrap_or(u64::MAX)
+            .saturating_sub(u64::try_from(retired.len()).unwrap_or(u64::MAX));
         for cpu in detailed_cpus {
             let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
-            while let Some(instruction) =
-                core.record_ready_o3_scalar_memory_event_with_trace(self.o3_runtime_trace_enabled)
-            {
+            loop {
+                let kind = core.ready_o3_scalar_memory_event_kind();
+                if kind == Some(RiscvDataAccessEventKind::Completed)
+                    && remaining_scalar_retirements == 0
+                {
+                    break;
+                }
+                let Some(instruction) = core
+                    .record_ready_o3_scalar_memory_event_with_trace(self.o3_runtime_trace_enabled)
+                else {
+                    break;
+                };
                 updated_cpus.insert(cpu);
                 if instruction.data_access_event_kind() == Some(RiscvDataAccessEventKind::Completed)
                 {
+                    remaining_scalar_retirements = remaining_scalar_retirements.saturating_sub(1);
                     retired.push(RiscvRetirementObservation {
                         tick,
                         cpu,
@@ -150,16 +187,28 @@ impl RiscvSystemRunDriver {
     }
 
     fn detailed_cpus(&self, cluster: &RiscvCluster) -> BTreeSet<CpuId> {
-        let controller = self.trap_port.controller();
-        let controller = controller.lock().expect("system host controller lock");
+        let configured = {
+            let controller = self.trap_port.controller();
+            let controller = controller.lock().expect("system host controller lock");
+            cluster
+                .core_ids()
+                .into_iter()
+                .filter(|cpu| {
+                    controller
+                        .executor()
+                        .execution_mode(&trap_event::execution_mode_target_for_cpu(*cpu))
+                        .is_some_and(|mode| mode == ExecutionMode::Detailed)
+                })
+                .collect::<BTreeSet<_>>()
+        };
         cluster
             .core_ids()
             .into_iter()
             .filter(|cpu| {
-                controller
-                    .executor()
-                    .execution_mode(&trap_event::execution_mode_target_for_cpu(*cpu))
-                    .is_some_and(|mode| mode == ExecutionMode::Detailed)
+                configured.contains(cpu)
+                    || cluster
+                        .core(*cpu)
+                        .is_ok_and(|core| core.has_pending_o3_scalar_memory_retirement())
             })
             .collect()
     }

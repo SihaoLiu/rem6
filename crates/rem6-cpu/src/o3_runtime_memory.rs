@@ -1,16 +1,19 @@
 use super::*;
 
+const MAX_LIVE_SCALAR_LOADS: usize = 2;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveScalarMemory {
     pub(super) fetch_request: MemoryRequestId,
     pub(super) data_request: MemoryRequestId,
+    pub(super) execution: RiscvCpuExecutionEvent,
     pub(super) sequence: u64,
     pub(super) issue_tick: u64,
     pub(super) issue_rob_occupancy: usize,
     pub(super) issue_lsq_occupancy: usize,
-    pub(super) retire_event: Option<RiscvCpuExecutionEvent>,
     pub(super) response_tick: Option<u64>,
     pub(super) latency_ticks: Option<u64>,
+    pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
     pub(super) outcome: O3LiveScalarMemoryOutcome,
     pub(super) event_taken: bool,
@@ -53,41 +56,141 @@ pub(super) fn is_terminal_o3_scalar_memory_event(execution: &RiscvCpuExecutionEv
 impl O3RuntimeState {
     pub(crate) fn scalar_memory_lifecycle_is_quiescent(&self) -> bool {
         self.deferred_scalar_memory_execution.is_none()
-            && self.live_scalar_memory.is_none()
+            && self.live_scalar_memories.is_empty()
             && self.live_scalar_memory_younger_sequences.is_empty()
     }
 
     pub(crate) fn has_pending_scalar_memory_retirement(&self) -> bool {
-        self.deferred_scalar_memory_execution.is_some() || self.live_scalar_memory.is_some()
+        self.pending_scalar_memory_retirement_count() > 0
     }
 
-    pub(crate) const fn has_live_scalar_memory(&self) -> bool {
-        self.live_scalar_memory.is_some()
+    pub(crate) fn pending_scalar_memory_retirement_count(&self) -> usize {
+        self.live_scalar_memories.len()
+            + usize::from(self.deferred_scalar_memory_execution.is_some())
+    }
+
+    pub(crate) fn owns_pending_scalar_memory_retirement(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> bool {
+        self.deferred_scalar_memory_execution == Some(fetch_request)
+            || self
+                .live_scalar_memories
+                .iter()
+                .any(|live| live.fetch_request == fetch_request)
+    }
+
+    pub(crate) fn has_live_scalar_memory(&self) -> bool {
+        !self.live_scalar_memories.is_empty()
     }
 
     pub(crate) fn has_live_scalar_memory_window(&self) -> bool {
-        self.live_scalar_memory.is_some() || !self.live_scalar_memory_younger_sequences.is_empty()
+        !self.live_scalar_memories.is_empty()
+            || !self.live_scalar_memory_younger_sequences.is_empty()
     }
 
     pub(crate) fn has_ready_live_scalar_memory_event(&self) -> bool {
-        self.live_scalar_memory.as_ref().is_some_and(|live| {
-            live.outcome != O3LiveScalarMemoryOutcome::Resident
-                && !live.event_taken
-                && live.retire_event.is_some()
+        self.live_scalar_memories.first().is_some_and(|live| {
+            live.outcome != O3LiveScalarMemoryOutcome::Resident && !live.event_taken
         })
+    }
+
+    pub(crate) fn ready_live_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        let live = self.live_scalar_memories.first()?;
+        if live.outcome == O3LiveScalarMemoryOutcome::Resident || live.event_taken {
+            return None;
+        }
+        live.execution.data_access_event_kind()
+    }
+
+    pub(crate) fn ready_live_scalar_memory_completion_timing(
+        &self,
+    ) -> Option<(MemoryRequestId, u64, u64)> {
+        let live = self.live_scalar_memories.first()?;
+        if live.outcome != O3LiveScalarMemoryOutcome::Completed || live.event_taken {
+            return None;
+        }
+        Some((
+            live.fetch_request,
+            live.issue_tick,
+            live.response_tick
+                .expect("completed live scalar memory has a response tick"),
+        ))
+    }
+
+    pub(crate) fn replace_ready_live_scalar_memory_execution(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> bool {
+        let Some(live) = self.live_scalar_memories.first_mut() else {
+            return false;
+        };
+        if live.fetch_request != execution.fetch().request_id()
+            || live.outcome != O3LiveScalarMemoryOutcome::Completed
+            || live.event_taken
+        {
+            return false;
+        }
+        live.execution = execution.clone();
+        true
+    }
+
+    pub(crate) fn has_open_scalar_load_overlap_slot(&self) -> bool {
+        self.live_scalar_memories.len() == 1
+            && self.live_scalar_memory_younger_sequences.is_empty()
+            && self.live_scalar_memories[0].outcome == O3LiveScalarMemoryOutcome::Resident
+            && matches!(
+                self.live_scalar_memories[0]
+                    .execution
+                    .execution()
+                    .memory_access(),
+                Some(MemoryAccessKind::Load { .. })
+            )
+    }
+
+    pub(crate) fn can_defer_second_scalar_load_instruction(
+        &self,
+        instruction: RiscvInstruction,
+    ) -> bool {
+        if !self.has_open_scalar_load_overlap_slot() {
+            return false;
+        }
+        let Some(MemoryAccessKind::Load { rd: older_rd, .. }) = self.live_scalar_memories[0]
+            .execution
+            .execution()
+            .memory_access()
+        else {
+            return false;
+        };
+        let RiscvInstruction::Load { rd, rs1, .. } = instruction else {
+            return false;
+        };
+        !rd.is_zero() && rd != *older_rd && rs1 != *older_rd
+    }
+
+    pub(crate) fn can_stage_second_scalar_load(&self, execution: &RiscvCpuExecutionEvent) -> bool {
+        matches!(
+            execution.execution().memory_access(),
+            Some(MemoryAccessKind::Load { .. })
+        ) && self.can_defer_second_scalar_load_instruction(execution.instruction())
     }
 
     pub(crate) fn defer_scalar_memory_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
-        if self.live_scalar_memory.is_some() || !execution.is_scalar_memory_access() {
+        if !execution.is_scalar_memory_access() {
             return false;
         }
         let fetch_request = execution.fetch().request_id();
         match self.deferred_scalar_memory_execution {
             Some(pending) => pending == fetch_request,
             None => {
+                if !self.live_scalar_memories.is_empty()
+                    && !self.can_stage_second_scalar_load(execution)
+                {
+                    return false;
+                }
                 self.deferred_scalar_memory_execution = Some(fetch_request);
                 true
             }
@@ -126,13 +229,16 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         issue_tick: u64,
     ) -> bool {
-        if self.live_scalar_memory.is_some() {
+        if self.live_scalar_memories.len() >= MAX_LIVE_SCALAR_LOADS {
             return false;
         }
         let Some(access) = execution.execution().memory_access() else {
             return false;
         };
         if !is_deferred_o3_scalar_memory_access(Some(access)) {
+            return false;
+        }
+        if !self.live_scalar_memories.is_empty() && !self.can_stage_second_scalar_load(execution) {
             return false;
         }
         if self
@@ -164,16 +270,17 @@ impl O3RuntimeState {
         self.stats.observe_lsq_occupancy(issue_lsq_occupancy);
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
-        self.live_scalar_memory = Some(O3LiveScalarMemory {
+        self.live_scalar_memories.push(O3LiveScalarMemory {
             fetch_request: execution.fetch().request_id(),
             data_request,
+            execution: execution.clone(),
             sequence,
             issue_tick,
             issue_rob_occupancy,
             issue_lsq_occupancy,
-            retire_event: None,
             response_tick: None,
             latency_ticks: None,
+            commit_tick: None,
             load_data: None,
             outcome: O3LiveScalarMemoryOutcome::Resident,
             event_taken: false,
@@ -189,15 +296,14 @@ impl O3RuntimeState {
         latency_ticks: u64,
         load_data: Option<&[u8]>,
     ) -> bool {
-        let Some(live) = self.live_scalar_memory.as_mut() else {
+        let Some(index) = self.live_scalar_memories.iter().position(|live| {
+            live.data_request == data_request
+                && live.fetch_request == execution.fetch().request_id()
+                && live.outcome == O3LiveScalarMemoryOutcome::Resident
+        }) else {
             return false;
         };
-        if live.data_request != data_request
-            || live.fetch_request != execution.fetch().request_id()
-            || live.outcome != O3LiveScalarMemoryOutcome::Resident
-        {
-            return false;
-        }
+        let sequence = self.live_scalar_memories[index].sequence;
 
         let outcome = match execution.data_access_event_kind() {
             Some(RiscvDataAccessEventKind::Completed) => {
@@ -205,7 +311,7 @@ impl O3RuntimeState {
                     .snapshot
                     .reorder_buffer
                     .iter()
-                    .position(|entry| entry.sequence() == live.sequence)
+                    .position(|entry| entry.sequence() == sequence)
                 else {
                     return false;
                 };
@@ -213,7 +319,7 @@ impl O3RuntimeState {
                     .snapshot
                     .load_store_queue
                     .iter()
-                    .position(|entry| entry.sequence() == live.sequence)
+                    .position(|entry| entry.sequence() == sequence)
                 else {
                     return false;
                 };
@@ -229,10 +335,11 @@ impl O3RuntimeState {
             | None => return false,
         };
 
-        let sequence = live.sequence;
-        live.retire_event = Some(execution.clone());
+        let live = &mut self.live_scalar_memories[index];
+        live.execution = execution.clone();
         live.response_tick = Some(response_tick);
         live.latency_ticks = Some(latency_ticks);
+        live.commit_tick = None;
         live.load_data = load_data.map(ToOwned::to_owned);
         live.outcome = outcome;
         live.event_taken = false;
@@ -241,17 +348,48 @@ impl O3RuntimeState {
             O3LiveScalarMemoryOutcome::Retried | O3LiveScalarMemoryOutcome::Failed
         );
         if remove_rows {
+            for stale in self.live_scalar_memories.iter().skip(index + 1) {
+                self.data_access_sequences.remove(&stale.fetch_request);
+                self.trace_data_access_sequences
+                    .remove(&stale.fetch_request);
+            }
+            self.live_scalar_memories.truncate(index + 1);
             self.discard_live_scalar_memory_window_rows(sequence);
         }
         true
     }
 
+    pub(crate) fn younger_live_scalar_memory_requests(
+        &self,
+        fetch_request: MemoryRequestId,
+        data_request: MemoryRequestId,
+    ) -> Vec<(MemoryRequestId, MemoryRequestId)> {
+        let Some(index) = self.live_scalar_memories.iter().position(|live| {
+            live.fetch_request == fetch_request && live.data_request == data_request
+        }) else {
+            return Vec::new();
+        };
+        self.live_scalar_memories
+            .iter()
+            .skip(index + 1)
+            .map(|live| (live.data_request, live.fetch_request))
+            .collect()
+    }
+
     pub(crate) fn take_ready_live_scalar_memory_event(&mut self) -> Option<RiscvCpuExecutionEvent> {
-        let live = self.live_scalar_memory.as_mut()?;
+        let live = self.live_scalar_memories.first_mut()?;
         if live.outcome == O3LiveScalarMemoryOutcome::Resident || live.event_taken {
             return None;
         }
-        let event = live.retire_event.clone()?;
+        let event = live.execution.clone();
+        if live.outcome == O3LiveScalarMemoryOutcome::Completed {
+            let response_tick = live
+                .response_tick
+                .expect("completed live scalar memory has a response tick");
+            live.commit_tick = Some(
+                response_tick.max(self.last_scalar_memory_commit_tick.unwrap_or(response_tick)),
+            );
+        }
         live.event_taken = true;
         Some(event)
     }
@@ -260,27 +398,45 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> Option<O3LiveScalarMemory> {
-        let live = self.live_scalar_memory.as_ref()?;
+        let live = self.live_scalar_memories.first()?;
         if live.fetch_request != execution.fetch().request_id()
-            || live.retire_event.as_ref() != Some(execution)
+            || live.execution != *execution
             || !live.event_taken
             || live.outcome == O3LiveScalarMemoryOutcome::Resident
         {
             return None;
         }
-        self.data_access_sequences.remove(&live.fetch_request);
-        self.trace_data_access_sequences.remove(&live.fetch_request);
-        self.live_scalar_memory.take()
+        let fetch_request = live.fetch_request;
+        self.data_access_sequences.remove(&fetch_request);
+        self.trace_data_access_sequences.remove(&fetch_request);
+        let live = self.live_scalar_memories.remove(0);
+        if live.outcome == O3LiveScalarMemoryOutcome::Completed {
+            self.last_scalar_memory_commit_tick = live.commit_tick;
+        }
+        Some(live)
+    }
+
+    pub(crate) fn ready_live_scalar_load_writeback(&self) -> Option<(MemoryAccessKind, Vec<u8>)> {
+        let live = self.live_scalar_memories.first()?;
+        if live.outcome != O3LiveScalarMemoryOutcome::Completed || live.event_taken {
+            return None;
+        }
+        let access = live.execution.execution().memory_access()?.clone();
+        if !matches!(access, MemoryAccessKind::Load { .. }) {
+            return None;
+        }
+        Some((access, live.load_data.clone()?))
     }
 
     pub(crate) fn discard_live_scalar_memory_lifecycle(&mut self) {
         self.deferred_scalar_memory_execution = None;
-        let live = self.live_scalar_memory.take();
-        if let Some(live) = live.as_ref() {
+        let live = std::mem::take(&mut self.live_scalar_memories);
+        for live in &live {
             self.data_access_sequences.remove(&live.fetch_request);
             self.trace_data_access_sequences.remove(&live.fetch_request);
         }
         let boundary_sequence = live
+            .first()
             .map(|live| live.sequence)
             .or_else(|| self.live_scalar_memory_younger_sequences.first().copied());
         if let Some(sequence) = boundary_sequence {
@@ -292,7 +448,7 @@ impl O3RuntimeState {
         self.discard_live_staged_window_from(sequence);
         self.snapshot
             .load_store_queue
-            .retain(|entry| entry.sequence() != sequence);
+            .retain(|entry| entry.sequence() < sequence);
     }
 
     pub(super) fn remove_live_scalar_memory_rows(&mut self, sequence: u64) {
@@ -314,6 +470,18 @@ impl crate::RiscvCore {
 
     pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool {
         self.with_o3_runtime(|runtime| runtime.has_pending_scalar_memory_retirement())
+    }
+
+    pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize {
+        self.with_o3_runtime(|runtime| runtime.pending_scalar_memory_retirement_count())
+    }
+
+    pub fn owns_pending_o3_scalar_memory_retirement(&self, fetch_request: MemoryRequestId) -> bool {
+        self.with_o3_runtime(|runtime| runtime.owns_pending_scalar_memory_retirement(fetch_request))
+    }
+
+    pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        self.with_o3_runtime(|runtime| runtime.ready_live_scalar_memory_event_kind())
     }
 
     pub(crate) fn clear_deferred_o3_scalar_memory_execution(&self) -> bool {
@@ -352,7 +520,7 @@ mod tests {
         assert!(!lsq.is_completed());
         assert_eq!(runtime.stats().max_rob_occupancy(), 1);
         assert_eq!(runtime.stats().max_lsq_occupancy(), 1);
-        assert_eq!(runtime.live_scalar_memory.as_ref().unwrap().issue_tick, 31);
+        assert_eq!(runtime.live_scalar_memories.first().unwrap().issue_tick, 31);
     }
 
     #[test]
@@ -362,7 +530,7 @@ mod tests {
 
         assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(21), 37));
 
-        let live = runtime.live_scalar_memory.as_ref().unwrap();
+        let live = runtime.live_scalar_memories.first().unwrap();
         assert_eq!(live.fetch_request, execution.fetch().request_id());
         assert_eq!(live.data_request, memory_request(21));
         assert_eq!(live.issue_tick, 37);
@@ -380,7 +548,7 @@ mod tests {
         assert!(!runtime.stage_live_scalar_memory_issue(&execution, memory_request(22), 41));
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
     }
 
     #[test]
@@ -389,7 +557,7 @@ mod tests {
         let execution = scalar_load_event(0x8000, 10);
         let data_request = memory_request(20);
         assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
-        let live_sequence = runtime.live_scalar_memory.as_ref().unwrap().sequence;
+        let live_sequence = runtime.live_scalar_memories.first().unwrap().sequence;
         let unrelated_sequence = runtime.allocate_sequence();
         runtime.snapshot.reorder_buffer.insert(
             0,
@@ -436,7 +604,7 @@ mod tests {
         assert!(live_rob.is_ready());
         assert_eq!(live_rob.ready_tick(), 41);
         assert!(live_lsq.is_completed());
-        let live = runtime.live_scalar_memory.as_ref().unwrap();
+        let live = runtime.live_scalar_memories.first().unwrap();
         assert_eq!(live.outcome, O3LiveScalarMemoryOutcome::Completed);
         assert_eq!(live.response_tick, Some(41));
         assert_eq!(live.latency_ticks, Some(10));
@@ -446,6 +614,76 @@ mod tests {
             Some(completed)
         );
         assert!(runtime.take_ready_live_scalar_memory_event().is_none());
+    }
+
+    #[test]
+    fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
+        let mut runtime = O3RuntimeState::default();
+        let older = scalar_load_event_with(0x8000, 10, 12, 10, 0x9000);
+        let younger = scalar_load_event_with(0x8004, 11, 13, 10, 0x9040);
+        let older_data_request = memory_request(20);
+        let younger_data_request = memory_request(21);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&older, older_data_request, 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&younger, younger_data_request, 32));
+
+        let sequences = runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.sequence())
+            .collect::<Vec<_>>();
+        assert_eq!(sequences.len(), 2);
+        let mut younger_completed = younger.clone();
+        younger_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(runtime.complete_live_scalar_memory_response(
+            &younger_completed,
+            younger_data_request,
+            40,
+            8,
+            Some(&[0x63, 0, 0, 0]),
+        ));
+
+        let snapshot = runtime.snapshot();
+        assert!(!snapshot.reorder_buffer()[0].is_ready());
+        assert!(snapshot.reorder_buffer()[1].is_ready());
+        assert!(!snapshot.load_store_queue()[0].is_completed());
+        assert!(snapshot.load_store_queue()[1].is_completed());
+        assert!(runtime.take_ready_live_scalar_memory_event().is_none());
+
+        let mut older_completed = older.clone();
+        older_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(runtime.complete_live_scalar_memory_response(
+            &older_completed,
+            older_data_request,
+            45,
+            14,
+            Some(&[0x2a, 0, 0, 0]),
+        ));
+
+        assert_eq!(
+            runtime.take_ready_live_scalar_memory_event(),
+            Some(older_completed.clone())
+        );
+        runtime.record_retired_instruction_with_trace(&older_completed, true);
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
+        assert_eq!(
+            runtime.take_ready_live_scalar_memory_event(),
+            Some(younger_completed.clone())
+        );
+        runtime.record_retired_instruction_with_trace(&younger_completed, true);
+
+        assert!(runtime.snapshot().reorder_buffer().is_empty());
+        assert!(runtime.snapshot().load_store_queue().is_empty());
+        let trace = runtime.trace_records();
+        assert_eq!(trace.len(), 2);
+        assert_eq!(trace[0].sequence(), sequences[0]);
+        assert_eq!(trace[1].sequence(), sequences[1]);
+        assert_eq!(trace[0].lsq_data_response_tick(), 45);
+        assert_eq!(trace[1].lsq_data_response_tick(), 40);
+        assert_eq!(trace[0].commit_tick(), 45);
+        assert_eq!(trace[1].commit_tick(), 45);
     }
 
     #[test]
@@ -464,7 +702,7 @@ mod tests {
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
         assert_eq!(
-            runtime.live_scalar_memory.as_ref().unwrap().outcome,
+            runtime.live_scalar_memories.first().unwrap().outcome,
             O3LiveScalarMemoryOutcome::Retried
         );
         assert_eq!(runtime.take_ready_live_scalar_memory_event(), Some(retry));
@@ -487,7 +725,7 @@ mod tests {
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
         assert_eq!(
-            runtime.live_scalar_memory.as_ref().unwrap().outcome,
+            runtime.live_scalar_memories.first().unwrap().outcome,
             O3LiveScalarMemoryOutcome::Failed
         );
         assert_eq!(
@@ -498,7 +736,7 @@ mod tests {
 
         runtime.record_retired_instruction_with_trace(&failed, true);
 
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
         assert_eq!(runtime.stats().instructions(), 0);
         assert_eq!(runtime.stats().lsq_loads(), 0);
         assert!(runtime.trace_records().is_empty());
@@ -528,7 +766,7 @@ mod tests {
 
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
-        let live = runtime.live_scalar_memory.as_ref().unwrap();
+        let live = runtime.live_scalar_memories.first().unwrap();
         assert_eq!(live.fetch_request, execution.fetch().request_id());
         assert_eq!(live.data_request, data_request);
         assert_eq!(runtime.stats().max_rob_occupancy(), 1);
@@ -591,7 +829,7 @@ mod tests {
 
         runtime.record_retired_instruction_with_trace(&completed, true);
 
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
         assert_eq!(runtime.stats().instructions(), 1);
@@ -640,7 +878,7 @@ mod tests {
 
         runtime.record_retired_instruction_with_trace(&completed, true);
 
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
         assert_eq!(
@@ -721,7 +959,7 @@ mod tests {
 
         runtime.record_retired_instruction_with_trace(&retry, true);
 
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
         assert_eq!(runtime.stats().instructions(), 0);
@@ -766,27 +1004,9 @@ mod tests {
 
         runtime.discard_live_staged_instructions();
 
-        assert!(runtime.live_scalar_memory.is_none());
+        assert!(runtime.live_scalar_memories.is_empty());
         assert!(runtime.snapshot().reorder_buffer().is_empty());
         assert!(runtime.snapshot().load_store_queue().is_empty());
-    }
-
-    #[test]
-    fn cleanup_mode_disable_removes_resident_scalar_rows_and_identity() {
-        let mut runtime = O3RuntimeState::default();
-        let execution = scalar_load_event(0x8000, 10);
-        assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
-        stage_independent_younger(&mut runtime, &execution);
-        assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
-        let core = core_with_runtime(runtime);
-        core.set_detailed_live_retire_gate_enabled(true);
-
-        core.set_detailed_live_retire_gate_enabled(false);
-
-        let state = core.state.lock().expect("riscv core lock");
-        assert!(state.o3_runtime.live_scalar_memory.is_none());
-        assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
-        assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     }
 
     #[test]
@@ -800,7 +1020,7 @@ mod tests {
         core.redirect_pc(Address::new(0x9000));
 
         let state = core.state.lock().expect("riscv core lock");
-        assert!(state.o3_runtime.live_scalar_memory.is_none());
+        assert!(state.o3_runtime.live_scalar_memories.is_empty());
         assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
         assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     }
@@ -829,16 +1049,26 @@ mod tests {
     }
 
     fn scalar_load_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {
+        scalar_load_event_with(pc, sequence, 12, 10, 0x9000)
+    }
+
+    fn scalar_load_event_with(
+        pc: u64,
+        sequence: u64,
+        rd: u8,
+        rs1: u8,
+        address: u64,
+    ) -> RiscvCpuExecutionEvent {
         let instruction = RiscvInstruction::Load {
-            rd: reg(12),
-            rs1: reg(10),
+            rd: reg(rd),
+            rs1: reg(rs1),
             offset: Immediate::new(0),
             width: MemoryWidth::Word,
             signed: false,
         };
         let access = MemoryAccessKind::Load {
-            rd: reg(12),
-            address: 0x9000,
+            rd: reg(rd),
+            address,
             width: MemoryWidth::Word,
             signed: false,
         };

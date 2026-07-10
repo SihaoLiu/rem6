@@ -12,7 +12,7 @@ use crate::o3_pipeline::{O3PendingStateSnapshot, O3PipelineError};
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
-use crate::RiscvDataAccessEventKind;
+use crate::{RiscvCoreState, RiscvDataAccessEventKind};
 
 #[path = "o3_runtime_checkpoint.rs"]
 mod o3_runtime_checkpoint;
@@ -167,8 +167,9 @@ pub struct O3RuntimeState {
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
-    live_scalar_memory: Option<O3LiveScalarMemory>,
+    live_scalar_memories: Vec<O3LiveScalarMemory>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
+    last_scalar_memory_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -196,8 +197,9 @@ impl O3RuntimeState {
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
         self.deferred_scalar_memory_execution = None;
-        self.live_scalar_memory = None;
+        self.live_scalar_memories.clear();
         self.live_scalar_memory_younger_sequences.clear();
+        self.last_scalar_memory_commit_tick = None;
         Ok(())
     }
 
@@ -515,8 +517,9 @@ impl Default for O3RuntimeState {
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
             deferred_scalar_memory_execution: None,
-            live_scalar_memory: None,
+            live_scalar_memories: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),
+            last_scalar_memory_commit_tick: None,
             next_sequence: 0,
             next_physical_register: 1,
         }
@@ -1554,11 +1557,37 @@ impl crate::RiscvCore {
         &self,
         trace_enabled: bool,
     ) -> Option<RiscvCpuExecutionEvent> {
-        self.with_o3_runtime(|runtime| {
+        let mut state = self.state.lock().expect("riscv core lock");
+        if let Some((fetch_request, issue_tick, response_tick)) = state
+            .o3_runtime
+            .ready_live_scalar_memory_completion_timing()
+        {
+            let execution = crate::riscv_data_issue::record_deferred_o3_data_retire_cycle(
+                &mut state,
+                fetch_request,
+                issue_tick,
+                response_tick,
+            )
+            .expect("completed O3 scalar memory has a matching execution event");
+            assert!(
+                state
+                    .o3_runtime
+                    .replace_ready_live_scalar_memory_execution(&execution),
+                "completed O3 scalar memory accepts its ordered pipeline retirement"
+            );
+        }
+        let (execution, writeback) = {
+            let runtime = &mut state.o3_runtime;
+            let writeback = runtime.ready_live_scalar_load_writeback();
             let execution = runtime.take_ready_live_scalar_memory_event()?;
             runtime.record_retired_instruction_with_trace(&execution, trace_enabled);
-            Some(execution)
-        })
+            (execution, writeback)
+        };
+        if let Some((access, data)) = writeback {
+            apply_deferred_scalar_load_writeback(&mut state, &access, &data);
+            crate::riscv_checker::sync_checker_hart(&mut state);
+        }
+        Some(execution)
     }
 
     pub fn record_o3_completed_load_data(
@@ -1576,4 +1605,18 @@ impl crate::RiscvCore {
         O3RuntimeCheckpointPayload::from_snapshot(default_o3_runtime_snapshot())
             .expect("default O3 runtime checkpoint payload is valid")
     }
+}
+
+pub(crate) fn apply_deferred_scalar_load_writeback(
+    state: &mut RiscvCoreState,
+    access: &MemoryAccessKind,
+    data: &[u8],
+) {
+    let writeback = access
+        .read_response_writeback(data)
+        .expect("deferred scalar load response payload width")
+        .expect("deferred scalar load response writeback");
+    state
+        .hart
+        .write(writeback.expect_integer_register(), writeback.value());
 }

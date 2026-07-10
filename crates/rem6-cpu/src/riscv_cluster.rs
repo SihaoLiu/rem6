@@ -432,7 +432,7 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_data_access() || core.has_pending_trap() {
+            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
                 continue;
             }
             if core.has_unissued_data_access() {
@@ -549,7 +549,7 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_data_access() || core.has_pending_trap() {
+            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
                 continue;
             }
             if core.has_unissued_data_access() {
@@ -1056,18 +1056,23 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_data_access() || core.has_pending_trap() {
+            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
                 continue;
             }
             if core.has_unissued_data_access() {
-                if let Some(event) = core
-                    .issue_next_mmio_data_access_parallel(scheduler, bus)
+                if core
+                    .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
                 {
-                    actions.push(RiscvClusterDriveEvent::new(
-                        *cpu,
-                        RiscvCoreDriveAction::DataAccessIssued { event },
-                    ));
+                    if let Some(event) =
+                        core.issue_next_mmio_data_access_parallel(scheduler, bus)
+                            .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+                    {
+                        actions.push(RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::DataAccessIssued { event },
+                        ));
+                    }
                     continue;
                 }
                 if let Some(event) = core
@@ -1165,18 +1170,23 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_data_access() || core.has_pending_trap() {
+            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
                 continue;
             }
             if core.has_unissued_data_access() {
-                if let Some(event) = core
-                    .issue_next_mmio_data_access_parallel(scheduler, bus)
+                if core
+                    .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
                 {
-                    actions.push(RiscvClusterDriveEvent::new(
-                        *cpu,
-                        RiscvCoreDriveAction::DataAccessIssued { event },
-                    ));
+                    if let Some(event) =
+                        core.issue_next_mmio_data_access_parallel(scheduler, bus)
+                            .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+                    {
+                        actions.push(RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::DataAccessIssued { event },
+                        ));
+                    }
                     continue;
                 }
                 if let Some(event) = core

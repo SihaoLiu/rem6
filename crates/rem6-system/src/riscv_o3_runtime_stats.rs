@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(registry.chunk(&component, "pc"), None);
 
         core.set_detailed_live_retire_gate_enabled(false);
-        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
     }
 
     #[test]
@@ -545,6 +545,225 @@ mod tests {
         assert_eq!(repeated_retirement.count(), 0);
         assert_eq!(retired_instruction_count(&driver), 1);
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
+    }
+
+    #[test]
+    fn pending_scalar_memory_retires_after_detailed_mode_turns_off() {
+        let cpu = CpuId::new(0);
+        let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
+        let driver = detailed_o3_driver_with_retirement_stats(cpu);
+
+        core.issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(0x0000_2603_u32.to_le_bytes().to_vec()),
+                    )
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle();
+        let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+        let execution_retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(execution)),
+                )]),
+            )
+            .unwrap();
+        assert_eq!(execution_retirement.count(), 0);
+
+        {
+            let controller = driver.trap_port().controller();
+            controller
+                .lock()
+                .expect("system host controller lock")
+                .executor_mut()
+                .set_execution_mode(
+                    riscv_execution_mode_target_for_cpu(cpu),
+                    ExecutionMode::Timing,
+                );
+        }
+        core.set_detailed_live_retire_gate_enabled(false);
+        assert!(core.has_pending_o3_scalar_memory_retirement());
+
+        let response_event = core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0x2a, 0, 0, 0]))
+                            .unwrap(),
+                    )
+                },
+            )
+            .unwrap()
+            .unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::DataAccessIssued {
+                        event: response_event,
+                    },
+                )]),
+            )
+            .unwrap();
+
+        let response_summary = scheduler.run_until_idle();
+        let response_retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::scheduler(response_summary),
+            )
+            .unwrap();
+
+        assert_eq!(response_retirement.count(), 1);
+        assert_eq!(retired_instruction_count(&driver), 1);
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 0x2a);
+        assert_eq!(core.o3_runtime_stats().instructions(), 1);
+        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    }
+
+    #[test]
+    fn scalar_memory_response_retirement_respects_instruction_headroom() {
+        let cpu = CpuId::new(0);
+        let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
+        let driver = detailed_o3_driver_with_retirement_stats(cpu);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        issue_fetch_instruction(
+            &core,
+            &mut scheduler,
+            &transport,
+            load_word_instruction(0, 2, 12),
+        );
+        let older = core.execute_next_completed_fetch().unwrap().unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(older)),
+                )]),
+            )
+            .unwrap();
+
+        issue_fetch_instruction(
+            &core,
+            &mut scheduler,
+            &transport,
+            load_word_instruction(64, 2, 13),
+        );
+        let older_response = core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |delivery, _context| TargetOutcome::RespondAfter {
+                    delay: 20,
+                    response: MemoryResponse::completed(
+                        delivery.request(),
+                        Some(vec![0x2a, 0, 0, 0]),
+                    )
+                    .unwrap(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::DataAccessIssued {
+                        event: older_response,
+                    },
+                )]),
+            )
+            .unwrap();
+
+        let younger = core.execute_next_completed_fetch().unwrap().unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(younger)),
+                )]),
+            )
+            .unwrap();
+        let younger_response = core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0]))
+                            .unwrap(),
+                    )
+                },
+            )
+            .unwrap()
+            .unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::DataAccessIssued {
+                        event: younger_response,
+                    },
+                )]),
+            )
+            .unwrap();
+
+        let responses = scheduler.run_until_idle();
+        let first = driver
+            .record_run_stats_with_retirement_budget(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::scheduler(responses),
+                1,
+            )
+            .unwrap();
+        assert_eq!(first.count(), 1);
+        assert_eq!(retired_instruction_count(&driver), 1);
+        assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 1);
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 0x2a);
+        assert_eq!(core.read_register(Register::new(13).unwrap()), 0);
+
+        let second = driver
+            .record_run_stats_with_retirement_budget(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+                1,
+            )
+            .unwrap();
+        assert_eq!(second.count(), 1);
+        assert_eq!(retired_instruction_count(&driver), 2);
+        assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 0);
+        assert_eq!(core.read_register(Register::new(13).unwrap()), 0x63);
     }
 
     #[test]
@@ -922,6 +1141,38 @@ mod tests {
         core.set_detailed_live_retire_gate_enabled(true);
         let cluster = RiscvCluster::new([core.clone()]).unwrap();
         (core, cluster, scheduler, transport)
+    }
+
+    fn issue_fetch_instruction(
+        core: &RiscvCore,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        instruction: u32,
+    ) {
+        core.issue_next_fetch(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            move |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(instruction.to_le_bytes().to_vec()),
+                    )
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle();
+    }
+
+    fn load_word_instruction(imm: i32, rs1: u8, rd: u8) -> u32 {
+        (((imm as u32) & 0x0fff) << 20)
+            | (u32::from(rs1) << 15)
+            | (0b010 << 12)
+            | (u32::from(rd) << 7)
+            | 0x03
     }
 
     fn detailed_o3_driver(cpu: CpuId) -> RiscvSystemRunDriver {

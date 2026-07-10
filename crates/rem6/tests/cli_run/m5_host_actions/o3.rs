@@ -18,6 +18,8 @@ mod live_retire_gate;
 mod lsq;
 #[path = "o3/lsq_live.rs"]
 mod lsq_live;
+#[path = "o3/lsq_multi_load.rs"]
+mod lsq_multi_load;
 #[path = "o3/lsq_overlap.rs"]
 mod lsq_overlap;
 #[path = "o3/rename_live.rs"]

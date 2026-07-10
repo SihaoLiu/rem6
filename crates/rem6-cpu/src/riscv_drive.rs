@@ -21,7 +21,7 @@ impl RiscvCore {
         if !self.is_hart_started() {
             return Ok(None);
         }
-        if self.has_pending_data_access() {
+        if self.pending_data_access_blocks_new_work() {
             return Ok(None);
         }
         if self.has_pending_trap() {

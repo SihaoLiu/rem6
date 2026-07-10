@@ -73,6 +73,12 @@ pub(super) fn scalar_load_waits_for_younger_fetch(
     else {
         return false;
     };
+    if state
+        .o3_runtime
+        .can_defer_second_scalar_load_instruction(decoded.instruction())
+    {
+        return false;
+    }
 
     allows_scalar_load_fetch_ahead(state, decoded.instruction())
         && super::has_pending_younger_fetch(state, fetch_events, load.request_id().sequence())

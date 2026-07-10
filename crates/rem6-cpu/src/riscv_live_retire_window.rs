@@ -70,6 +70,9 @@ impl RiscvCore {
         gate_scheduler: &mut Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
         window: RiscvLiveRetireWindowRequest<'_>,
     ) -> Result<Option<u64>, RiscvCpuError> {
+        if detailed_scalar_memory_blocks_execution(state, window.raw)? {
+            return Ok(None);
+        }
         let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
             return Ok(
                 (!state.live_retire_gate.blocks_without_scheduler()).then_some(window.fetch_tick)
@@ -131,6 +134,26 @@ impl RiscvCore {
             }
         }
     }
+}
+
+fn detailed_scalar_memory_blocks_execution(
+    state: &RiscvCoreState,
+    raw: u32,
+) -> Result<bool, RiscvCpuError> {
+    if !state.live_retire_gate.detailed_policy_enabled()
+        || !state.o3_runtime.has_pending_scalar_memory_retirement()
+    {
+        return Ok(false);
+    }
+    if !state.can_overlap_one_detailed_scalar_load() {
+        return Ok(true);
+    }
+    let instruction = RiscvInstruction::decode_with_length(raw)
+        .map_err(RiscvCpuError::Isa)?
+        .instruction();
+    Ok(!state
+        .o3_runtime
+        .can_defer_second_scalar_load_instruction(instruction))
 }
 
 fn stage_o3_live_retire_window(

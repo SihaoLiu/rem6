@@ -1,6 +1,9 @@
+use std::sync::Mutex;
+
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord};
 use rem6_kernel::PartitionedScheduler;
-use rem6_memory::{AgentId, MemoryResponse};
+use rem6_memory::{AddressRange, AgentId, MemoryResponse};
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
@@ -8,7 +11,7 @@ use rem6_transport::{
 use super::*;
 use crate::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState,
-    RiscvCpuExecutionEvent,
+    RiscvCluster, RiscvCpuExecutionEvent,
 };
 
 #[test]
@@ -332,38 +335,9 @@ fn detailed_scalar_store_submission_does_not_stage_younger_fetch() {
 }
 
 #[test]
-fn pending_data_request_blocks_second_issue_before_transport_submission() {
+fn two_independent_detailed_scalar_loads_issue_before_first_response() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = RiscvCore::with_data(
-        cpu_core(fetch_route, 0x8000),
-        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
-    );
-    core.set_detailed_live_retire_gate_enabled(true);
-    let load = |pc, sequence, rd, address| {
-        let instruction = rem6_isa_riscv::RiscvInstruction::Load {
-            rd: reg(rd),
-            rs1: reg(2),
-            offset: Immediate::new(0),
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        let access = MemoryAccessKind::Load {
-            rd: reg(rd),
-            address,
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        RiscvCpuExecutionEvent::new(
-            fetch_event(pc, sequence),
-            instruction,
-            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
-        )
-    };
-    core.state
-        .lock()
-        .expect("riscv core lock")
-        .events
-        .extend([load(0x8000, 1, 5, 0x9000), load(0x8004, 2, 6, 0x9004)]);
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
 
     core.issue_next_data_access(
         &mut scheduler,
@@ -379,48 +353,457 @@ fn pending_data_request_blocks_second_issue_before_transport_submission() {
             &mut scheduler,
             &transport,
             MemoryTrace::new(),
-            |_delivery, _context| panic!("blocked request must not reach the responder"),
+            |_delivery, _context| TargetOutcome::NoResponse,
         )
         .unwrap()
-        .is_none());
+        .is_some());
     let state = core.state.lock().expect("riscv core lock");
-    assert_eq!(state.outstanding_data.len(), 1);
-    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
+    assert_eq!(state.outstanding_data.len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 2);
+}
+
+#[test]
+fn younger_mmio_load_does_not_fall_through_to_memory_while_load_is_outstanding() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0xa000);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+
+    let bus = test_mmio_bus(0xa000, vec![0x63, 0, 0, 0]);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+
+    let actions = cluster
+        .drive_ready_cores_parallel_with_mmio(
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+
+    assert!(actions.is_empty());
+    assert_eq!(
+        core.state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn older_mmio_load_blocks_younger_memory_issue() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0xa000, 0x9000);
+    let bus = test_mmio_bus(0xa000, vec![0x2a, 0, 0, 0]);
+
+    core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+        .unwrap()
+        .unwrap();
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let actions = cluster
+        .drive_ready_cores_parallel_with_mmio(
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+
+    assert!(actions.is_empty());
+    assert_eq!(
+        core.state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn older_detailed_scalar_load_failure_replays_younger_cancelled_request() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 40,
+            response: MemoryResponse::completed(delivery.request(), Some(vec![0xff, 0, 0, 0]))
+                .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    let (older_request, younger_request) = {
+        let state = core.state.lock().expect("riscv core lock");
+        let mut requests = state
+            .outstanding_data
+            .values()
+            .map(|access| (access.fetch_request.sequence(), access.request))
+            .collect::<Vec<_>>();
+        requests.sort_unstable_by_key(|(sequence, _)| *sequence);
+        (requests[0].1, requests[1].1)
+    };
+
+    core.record_data_failure(older_request, scheduler.now());
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(!state.outstanding_data.contains_key(&younger_request));
+    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 0);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 0);
+    drop(state);
+
+    let failed = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older failed load should drain before replay");
+    assert_eq!(
+        failed.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Failed)
+    );
+    assert!(core.has_unissued_data_access());
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(6)), 0);
+    let replayed = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("replayed younger load should complete");
+    assert_eq!(replayed.fetch_pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(reg(6)), 0x63);
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .is_empty());
+}
+
+#[test]
+fn older_detailed_scalar_load_retry_replays_younger_cancelled_request() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::retry(delivery.request()),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .is_empty());
+    let retry = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older retry should drain before replay");
+    assert_eq!(
+        retry.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Retry)
+    );
+    assert!(core.has_unissued_data_access());
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(6)), 0);
+    core.record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("replayed younger load should complete");
+    assert_eq!(core.read_register(reg(6)), 0x63);
+}
+
+#[test]
+fn younger_completed_load_replay_replaces_cancelled_timing_provenance() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0xff, 0, 0, 0])).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    let older_request = {
+        let state = core.state.lock().expect("riscv core lock");
+        let younger = state
+            .events
+            .iter()
+            .find(|event| event.fetch_pc() == Address::new(0x8004))
+            .expect("younger execution event");
+        assert_eq!(
+            younger.data_access_event_kind(),
+            Some(RiscvDataAccessEventKind::Completed)
+        );
+        *state
+            .outstanding_data
+            .keys()
+            .next()
+            .expect("older request remains outstanding")
+    };
+
+    core.record_data_failure(older_request, scheduler.now());
+    core.record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older failed load should drain before replay");
+
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        let younger = state
+            .events
+            .iter()
+            .find(|event| event.fetch_pc() == Address::new(0x8004))
+            .expect("younger execution event");
+        assert_eq!(younger.data_access_event_kind(), None);
+        assert!(younger.in_order_pipeline_cycle().is_none());
+        assert_eq!(younger.in_order_pipeline_data_wait_cycles(), 0);
+    }
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 10,
+            response: MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0]))
+                .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    let replayed = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("replayed younger load should retire");
+
+    assert_eq!(replayed.fetch_pc(), Address::new(0x8004));
+    assert_eq!(
+        replayed.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Completed)
+    );
+    assert!(replayed.in_order_pipeline_cycle().is_some());
+    assert_eq!(core.read_register(reg(6)), 0x63);
+}
+
+#[test]
+fn younger_detailed_scalar_load_response_waits_for_older_retirement() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::completed(delivery.request(), Some(vec![0x2a, 0, 0, 0]))
+                .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    while core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .len()
+        == 2
+    {
+        let before = scheduler.now();
+        let summary = scheduler.run_next_epoch();
+        assert!(summary.executed_events() > 0 || summary.final_tick() > before);
+    }
+
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .is_none());
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
+
+    let older = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older completed load should retire first");
+    assert_eq!(older.fetch_pc(), Address::new(0x8000));
+    assert_eq!(core.read_register(reg(5)), 0x2a);
+    assert_eq!(core.read_register(reg(6)), 0);
+
+    let younger = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("younger completed load should retire second");
+    assert_eq!(younger.fetch_pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(reg(5)), 0x2a);
+    assert_eq!(core.read_register(reg(6)), 0x63);
+}
+
+#[test]
+fn disabling_detailed_mode_preserves_ordered_pending_load_retirement() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9040);
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::completed(delivery.request(), Some(vec![0x2a, 0, 0, 0]))
+                .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    while core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .len()
+        == 2
+    {
+        scheduler.run_next_epoch();
+    }
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
+
+    core.set_detailed_live_retire_gate_enabled(false);
+
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 2);
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .is_none());
+    scheduler.run_until_idle_conservative();
+
+    let older = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older load should retire first after mode disable");
+    assert_eq!(older.fetch_pc(), Address::new(0x8000));
+    assert_eq!(core.read_register(reg(5)), 0x2a);
+    assert_eq!(core.read_register(reg(6)), 0);
+    let younger = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("younger completed load should retire second after mode disable");
+    assert_eq!(younger.fetch_pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(reg(6)), 0x63);
+    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
 }
 
 #[test]
 fn completed_data_request_blocks_second_issue_until_o3_retirement() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = RiscvCore::with_data(
-        cpu_core(fetch_route, 0x8000),
-        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
-    );
-    core.set_detailed_live_retire_gate_enabled(true);
-    let load = |pc, sequence, rd, address| {
-        let instruction = rem6_isa_riscv::RiscvInstruction::Load {
-            rd: reg(rd),
-            rs1: reg(2),
-            offset: Immediate::new(0),
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        let access = MemoryAccessKind::Load {
-            rd: reg(rd),
-            address,
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        RiscvCpuExecutionEvent::new(
-            fetch_event(pc, sequence),
-            instruction,
-            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
-        )
-    };
-    core.state
-        .lock()
-        .expect("riscv core lock")
-        .events
-        .extend([load(0x8000, 1, 5, 0x9000), load(0x8004, 2, 6, 0x9004)]);
+    let core = detailed_two_load_core(fetch_route, data_route, 0x9000, 0x9004);
 
     core.issue_next_data_access(
         &mut scheduler,
@@ -556,6 +939,65 @@ fn memory_routes() -> (
         .unwrap();
 
     (scheduler, transport, fetch_route, data_route)
+}
+
+fn detailed_two_load_core(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+    older_address: u64,
+    younger_address: u64,
+) -> RiscvCore {
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.state.lock().expect("riscv core lock").events.extend([
+        scalar_load_event(0x8000, 1, 5, older_address),
+        scalar_load_event(0x8004, 2, 6, younger_address),
+    ]);
+    core
+}
+
+fn test_mmio_bus(address: u64, value: Vec<u8>) -> MmioBus {
+    let mut bank =
+        MmioRegisterBank::new(Address::new(address), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        0,
+        AccessSize::new(value.len() as u64).unwrap(),
+        MmioAccess::ReadOnly,
+        value,
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(address), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+    bus
+}
+
+fn scalar_load_event(pc: u64, sequence: u64, rd: u8, address: u64) -> RiscvCpuExecutionEvent {
+    let instruction = rem6_isa_riscv::RiscvInstruction::Load {
+        rd: reg(rd),
+        rs1: reg(2),
+        offset: Immediate::new(0),
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    let access = MemoryAccessKind::Load {
+        rd: reg(rd),
+        address,
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    RiscvCpuExecutionEvent::new(
+        fetch_event(pc, sequence),
+        instruction,
+        RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+    )
 }
 
 fn cpu_core(route: MemoryRouteId, entry: u64) -> CpuCore {

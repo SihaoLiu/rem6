@@ -592,10 +592,7 @@ impl RiscvCoreState {
     pub(super) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
-        if !self.outstanding_data.is_empty() || self.o3_runtime.has_live_scalar_memory() {
-            return None;
-        }
-        self.events.iter().find_map(|event| {
+        let candidate = self.events.iter().find_map(|event| {
             let fetch_request = event.fetch().request_id();
             if self.issued_data_for_fetches.contains(&fetch_request) {
                 return None;
@@ -613,8 +610,15 @@ impl RiscvCoreState {
             event
                 .execution()
                 .memory_access()
-                .map(|access| (fetch_request, access.clone()))
-        })
+                .map(|access| (event, fetch_request, access.clone()))
+        });
+        let (event, fetch_request, access) = candidate?;
+        if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_scalar_memory() {
+            return Some((fetch_request, access));
+        }
+        (self.can_overlap_one_detailed_scalar_load()
+            && self.o3_runtime.can_stage_second_scalar_load(event))
+        .then_some((fetch_request, access))
     }
 }
 

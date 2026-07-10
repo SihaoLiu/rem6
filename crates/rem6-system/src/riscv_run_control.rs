@@ -358,7 +358,12 @@ impl RiscvSystemRunDriver {
                     },
                 ));
             };
-            let retirement = self.record_run_stats(cluster, scheduler.now(), &turn)?;
+            let retirement = self.record_run_stats_with_retirement_budget(
+                cluster,
+                scheduler.now(),
+                &turn,
+                max_instructions.saturating_sub(committed_instructions),
+            )?;
             committed_instructions = committed_instructions.saturating_add(retirement.count());
             self.schedule_riscv_system_events_from_turn_parallel(
                 cluster,
@@ -546,7 +551,12 @@ impl RiscvSystemRunDriver {
                     false,
                 ));
             };
-            let retirement = self.record_run_stats(cluster, scheduler.now(), &turn)?;
+            let retirement = self.record_run_stats_with_retirement_budget(
+                cluster,
+                scheduler.now(),
+                &turn,
+                max_instructions.saturating_sub(committed_instructions),
+            )?;
             committed_instructions = committed_instructions.saturating_add(retirement.count());
             self.schedule_riscv_system_events_from_turn_parallel(
                 cluster,
@@ -638,13 +648,11 @@ fn cluster_has_data_work(cluster: &RiscvCluster) -> Result<bool, SystemError> {
 fn pending_scalar_memory_retirement_count(cluster: &RiscvCluster) -> Result<u64, SystemError> {
     let mut pending = 0u64;
     for cpu in cluster.core_ids() {
-        if cluster
+        let count = cluster
             .core(cpu)
             .map_err(SystemError::RiscvCluster)?
-            .has_pending_o3_scalar_memory_retirement()
-        {
-            pending = pending.saturating_add(1);
-        }
+            .pending_o3_scalar_memory_retirement_count();
+        pending = pending.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
     }
     Ok(pending)
 }
@@ -663,6 +671,145 @@ fn last_committed_instruction_tick(turn: &RiscvClusterTurn) -> Option<u64> {
             | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
         })
         .max()
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_cpu::{CpuCore, CpuDataConfig, CpuFetchConfig, CpuResetState, RiscvCore};
+    use rem6_isa_riscv::Register;
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryResponse};
+    use rem6_transport::{MemoryRoute, TransportEndpointId};
+
+    use super::*;
+
+    #[test]
+    fn pending_scalar_memory_retirement_count_counts_two_same_core_loads() {
+        let (core, cluster, mut scheduler, transport) = scalar_memory_cluster();
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        issue_fetch(&core, &mut scheduler, &transport, load_word(0, 2, 12));
+        let older = core.execute_next_completed_fetch().unwrap().unwrap();
+        assert_eq!(older.fetch_pc(), Address::new(0x8000_0000));
+
+        issue_fetch(&core, &mut scheduler, &transport, load_word(64, 2, 13));
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .unwrap();
+
+        let younger = core.execute_next_completed_fetch().unwrap().unwrap();
+        assert_eq!(younger.fetch_pc(), Address::new(0x8000_0004));
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(pending_scalar_memory_retirement_count(&cluster).unwrap(), 2);
+    }
+
+    fn issue_fetch(
+        core: &RiscvCore,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        instruction: u32,
+    ) {
+        core.issue_next_fetch(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            move |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(instruction.to_le_bytes().to_vec()),
+                    )
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle_conservative();
+    }
+
+    fn scalar_memory_cluster() -> (
+        RiscvCore,
+        RiscvCluster,
+        PartitionedScheduler,
+        MemoryTransport,
+    ) {
+        let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+        let mut transport = MemoryTransport::new();
+        let fetch_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.ifetch"),
+                    PartitionId::new(0),
+                    endpoint("memory.ifetch"),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let data_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.dmem"),
+                    PartitionId::new(0),
+                    endpoint("memory.dmem"),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let reset = CpuResetState::new(
+            CpuId::new(0),
+            PartitionId::new(0),
+            AgentId::new(7),
+            Address::new(0x8000_0000),
+        );
+        let fetch = CpuFetchConfig::new(
+            endpoint("cpu0.ifetch"),
+            fetch_route,
+            CacheLineLayout::new(16).unwrap(),
+            AccessSize::new(4).unwrap(),
+        );
+        let core = RiscvCore::with_data(
+            CpuCore::new(reset, fetch).unwrap(),
+            CpuDataConfig::new(
+                endpoint("cpu0.dmem"),
+                data_route,
+                CacheLineLayout::new(16).unwrap(),
+            ),
+        );
+        core.set_detailed_live_retire_gate_enabled(true);
+        let cluster = RiscvCluster::new([core.clone()]).unwrap();
+        (core, cluster, scheduler, transport)
+    }
+
+    fn endpoint(name: &str) -> TransportEndpointId {
+        TransportEndpointId::new(name).unwrap()
+    }
+
+    fn load_word(imm: i32, rs1: u8, rd: u8) -> u32 {
+        (((imm as u32) & 0x0fff) << 20)
+            | (u32::from(rs1) << 15)
+            | (0b010 << 12)
+            | (u32::from(rd) << 7)
+            | 0x03
+    }
 }
 
 fn turn_final_tick(turn: &RiscvClusterTurn) -> Option<u64> {

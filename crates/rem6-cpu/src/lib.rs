@@ -390,6 +390,14 @@ impl RiscvCore {
             || !state.ready_translated_data.is_empty()
     }
 
+    pub(crate) fn pending_data_access_blocks_new_work(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        let has_pending = !state.outstanding_data.is_empty()
+            || !state.pending_data_translations.is_empty()
+            || !state.ready_translated_data.is_empty();
+        has_pending && !state.can_overlap_one_detailed_scalar_load()
+    }
+
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
@@ -812,6 +820,19 @@ struct RiscvCoreState {
 }
 
 impl RiscvCoreState {
+    fn can_overlap_one_detailed_scalar_load(&self) -> bool {
+        self.data_translation.is_none()
+            && self.pending_data_translations.is_empty()
+            && self.ready_translated_data.is_empty()
+            && self.outstanding_data.len() == 1
+            && self
+                .outstanding_data
+                .values()
+                .next()
+                .is_some_and(riscv_data_issue::IssuedDataAccess::targets_memory)
+            && self.o3_runtime.has_open_scalar_load_overlap_slot()
+    }
+
     fn new(pc: u64, hart_id: u64) -> Self {
         Self {
             hart: RiscvHartState::with_hart_id(pc, hart_id),
