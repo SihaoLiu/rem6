@@ -285,6 +285,7 @@ name = "rem6-fabric"
 version = "0.1.0"
 dependencies = [
  "rem6-kernel",
+ "syn",
 ]
 
 [[package]]

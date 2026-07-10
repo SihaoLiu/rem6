@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::Tick;
 
-use crate::{FabricLinkId, VirtualNetworkId};
+use crate::types::{FabricLinkId, VirtualNetworkId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricLaneActivity {

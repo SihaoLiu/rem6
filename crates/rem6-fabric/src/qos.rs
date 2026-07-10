@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 
-use crate::{FabricPacket, FabricPath};
+use crate::path::FabricPath;
+use crate::types::FabricPacket;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct QosRequestorId(u32);
