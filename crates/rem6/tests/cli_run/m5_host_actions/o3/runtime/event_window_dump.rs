@@ -68,6 +68,7 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_summary.event_window.max_fu_latency.fu_latency_cycles",
         "sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+        "sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.lsq_ordering.acquire",
         "sim.cpu0.o3.event_summary.span_ticks",
         "sim.cpu0.o3.event_window.records",
         "sim.cpu0.o3.event_window.span_ticks",
@@ -75,6 +76,8 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_window.max_lsq_occupancy.pc",
         "sim.cpu0.o3.event_window.max_fu_latency.fu_latency_cycles",
         "sim.cpu0.o3.event_window.max_lsq_data_latency.lsq_data_latency_ticks",
+        "sim.cpu0.o3.event_window.max_lsq_data_latency.lsq_ordering.acquire",
+        "sim.debug.o3_trace.cpu.cpu0.event_window.max_lsq_data_latency.lsq_ordering.acquire",
         "sim.cpu0.o3.event_summary.rob_allocations",
         "sim.cpu0.o3.event_summary.rob_commits",
         "sim.cpu0.o3.event_summary.rename_writes",
@@ -134,6 +137,17 @@ fn rem6_run_o3_runtime_json_keeps_trace_event_summary_null_without_debug_trace()
         "sim.cpu0.o3.event_summary.lsq_ordering.acquire_release",
     ] {
         assert_json_stat_absent(&json, path);
+    }
+    for ordering in ["acquire", "release", "acquire_release"] {
+        assert_json_stat(
+            &json,
+            &format!(
+                "sim.debug.o3_trace.event_window.max_lsq_data_latency.lsq_ordering.{ordering}"
+            ),
+            "Count",
+            0,
+            "monotonic",
+        );
     }
 }
 

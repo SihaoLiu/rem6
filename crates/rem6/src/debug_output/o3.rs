@@ -36,6 +36,8 @@ mod o3_lsq_json;
 mod o3_summary_json;
 #[path = "o3_trace_totals.rs"]
 mod o3_trace_totals;
+#[path = "o3_trace_window.rs"]
+mod o3_trace_window;
 
 pub(crate) use o3_branch_direction_mismatch::o3_branch_direction_mismatch_to_json;
 use o3_branch_direction_mismatch::Rem6O3BranchDirectionMismatchTotals;

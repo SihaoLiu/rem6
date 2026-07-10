@@ -1,4 +1,4 @@
-use rem6_cpu::O3RuntimeTraceRecord;
+use rem6_cpu::{O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
 use super::helpers::register_o3_counter;
@@ -18,6 +18,7 @@ struct O3EventWindowRow {
     rob_commits_at_tick: u64,
     rob_commit_blocked: u64,
     lsq_occupancy: u64,
+    lsq_ordering: Option<O3RuntimeLsqOrdering>,
     rename_map_entries: u64,
     lsq_data_latency_ticks: u64,
     fu_latency_cycles: u64,
@@ -39,6 +40,7 @@ impl O3EventWindowRow {
             rob_commits_at_tick: event.rob_commits_at_tick(),
             rob_commit_blocked: u64::from(event.rob_commit_blocked()),
             lsq_occupancy: event.lsq_occupancy(),
+            lsq_ordering: Some(event.lsq_ordering()),
             rename_map_entries: event.rename_map_entries(),
             lsq_data_latency_ticks: event.lsq_data_latency_ticks(),
             fu_latency_cycles: event.fu_latency_cycles(),
@@ -174,6 +176,7 @@ struct RiscvO3RuntimeEventWindowRowStats {
     rob_commits_at_tick: StatId,
     rob_commit_blocked: StatId,
     lsq_occupancy: StatId,
+    lsq_ordering: [StatId; O3RuntimeLsqOrdering::TRACKED.len()],
     rename_map_entries: StatId,
     lsq_data_latency_ticks: StatId,
     fu_latency_cycles: StatId,
@@ -221,6 +224,11 @@ impl RiscvO3RuntimeEventWindowRowStats {
                 "Count",
             )?,
             lsq_occupancy: register_o3_counter(registry, &prefix, "lsq_occupancy", "Count")?,
+            lsq_ordering: [
+                register_o3_counter(registry, &prefix, "lsq_ordering.acquire", "Count")?,
+                register_o3_counter(registry, &prefix, "lsq_ordering.release", "Count")?,
+                register_o3_counter(registry, &prefix, "lsq_ordering.acquire_release", "Count")?,
+            ],
             rename_map_entries: register_o3_counter(
                 registry,
                 &prefix,
@@ -269,6 +277,13 @@ impl RiscvO3RuntimeEventWindowRowStats {
             (self.fu_latency_cycles, row.fu_latency_cycles),
         ] {
             registry.set_resettable_counter(stat, value)?;
+        }
+        for (stat, ordering) in self
+            .lsq_ordering
+            .into_iter()
+            .zip(O3RuntimeLsqOrdering::TRACKED)
+        {
+            registry.set_resettable_counter(stat, u64::from(row.lsq_ordering == Some(ordering)))?;
         }
         Ok(())
     }

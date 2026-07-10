@@ -4,6 +4,8 @@ use super::*;
 mod event_summary_dump;
 #[path = "lsq/event_window_dump.rs"]
 mod event_window_dump;
+#[path = "lsq/event_window_ordering.rs"]
+mod event_window_ordering;
 #[path = "lsq/forwarding.rs"]
 mod forwarding;
 #[path = "lsq/runtime.rs"]

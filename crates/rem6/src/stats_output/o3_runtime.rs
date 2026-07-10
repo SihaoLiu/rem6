@@ -290,6 +290,19 @@ fn emit_o3_runtime_window_row_stats(
             u64::from(lsq_operation == operation),
         )?;
     }
+    let lsq_ordering = event.map_or(O3RuntimeLsqOrdering::None, |event| event.lsq_ordering());
+    for ordering in O3RuntimeLsqOrdering::TRACKED {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{cpu}.o3.{family}.{row}.lsq_ordering.{}",
+                ordering.as_str()
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            u64::from(lsq_ordering == ordering),
+        )?;
+    }
     Ok(())
 }
 

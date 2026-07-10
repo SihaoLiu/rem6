@@ -395,7 +395,7 @@ fn event_summary_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String
         || "null".to_string(),
         |event| {
             format!(
-                "{{\"sequence\":{},\"tick\":{},\"issue_tick\":{},\"writeback_tick\":{},\"commit_tick\":{},\"issue_to_writeback_ticks\":{},\"writeback_to_commit_ticks\":{},\"issue_to_commit_ticks\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"rob_commits_at_tick\":{},\"rob_commit_blocked\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"rename_map_entries\":{},\"lsq_data_latency_ticks\":{},\"fu_latency_cycles\":{}}}",
+                "{{\"sequence\":{},\"tick\":{},\"issue_tick\":{},\"writeback_tick\":{},\"commit_tick\":{},\"issue_to_writeback_ticks\":{},\"writeback_to_commit_ticks\":{},\"issue_to_commit_ticks\":{},\"pc\":\"0x{:x}\",\"rob_occupancy\":{},\"rob_commits_at_tick\":{},\"rob_commit_blocked\":{},\"lsq_occupancy\":{},\"lsq_operation\":\"{}\",\"lsq_ordering\":\"{}\",\"rename_map_entries\":{},\"lsq_data_latency_ticks\":{},\"fu_latency_cycles\":{}}}",
                 event.sequence(),
                 event.tick(),
                 event.issue_tick(),
@@ -410,6 +410,7 @@ fn event_summary_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String
                 event.rob_commit_blocked(),
                 event.lsq_occupancy(),
                 event.lsq_operation().as_str(),
+                event.lsq_ordering().as_str(),
                 event.rename_map_entries(),
                 event.lsq_data_latency_ticks(),
                 event.fu_latency_cycles()

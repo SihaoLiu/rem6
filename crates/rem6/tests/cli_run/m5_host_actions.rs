@@ -3035,6 +3035,36 @@ fn detailed_o3_ordered_atomic_lsq_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn detailed_o3_event_window_ordering_binary(
+    name: &str,
+    acquire: bool,
+    release: bool,
+) -> std::path::PathBuf {
+    let data_start = 64_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 5, 0x17),                                // auipc x5, 0
+        i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13),    // addi x5, x5, data
+        i_type(4, 0, 0x0, 6, 0x13),                        // addi x6, x0, 4
+        atomic_type(0x01, acquire, release, 6, 5, 0x3, 7), // amoswap.d x7, x6, (x5)
+        i_type(9, 0, 0x0, 8, 0x13),                        // addi x8, x0, 9
+        b_type(20, 7, 8, 0x1),                             // bne x7, x8, fail
+        i_type(0, 0, 0x0, 10, 0x13),                       // addi x10, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),                       // addi x11, x0, 0
+        m5op(M5_DUMP_STATS),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([9, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn detailed_o3_store_conditional_failure_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;
