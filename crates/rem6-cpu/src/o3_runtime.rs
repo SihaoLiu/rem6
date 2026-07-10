@@ -8,9 +8,7 @@ use rem6_memory::{Address, MemoryRequestId};
 use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_fu_latency::o3_fu_latency_class;
-use crate::o3_pipeline::{
-    O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineError,
-};
+use crate::o3_pipeline::{O3PendingStateSnapshot, O3PipelineError};
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
@@ -457,28 +455,6 @@ impl O3RuntimeState {
             record.set_lsq_store_conditional_failed(true);
             self.dirty_trace_record_indices.insert(index);
         }
-    }
-
-    pub fn pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
-        O3PendingStateCheckpointPayload::from_snapshot(self.snapshot.pending_state.clone())
-            .expect("O3 runtime pending-state snapshot is valid")
-    }
-
-    pub fn restore_pending_state_checkpoint_payload(
-        &mut self,
-        payload: O3PendingStateCheckpointPayload,
-    ) -> Result<(), O3PipelineError> {
-        let pending_state =
-            O3PendingStateCheckpointPayload::from_snapshot(payload.snapshot().clone())?
-                .into_snapshot();
-        self.snapshot = O3RuntimeSnapshot::new(
-            self.snapshot.reorder_buffer.clone(),
-            self.snapshot.load_store_queue.clone(),
-            self.snapshot.rename_map.clone(),
-            pending_state,
-        )
-        .expect("existing O3 runtime snapshot is valid");
-        Ok(())
     }
 }
 
@@ -1542,35 +1518,5 @@ impl crate::RiscvCore {
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {
         O3RuntimeCheckpointPayload::from_snapshot(default_o3_runtime_snapshot())
             .expect("default O3 runtime checkpoint payload is valid")
-    }
-
-    pub fn validate_o3_runtime_checkpoint_payload(
-        &self,
-        payload: &O3RuntimeCheckpointPayload,
-    ) -> Result<(), O3RuntimeError> {
-        O3RuntimeCheckpointPayload::from_snapshot(payload.snapshot().clone()).map(|_| ())
-    }
-
-    pub fn default_o3_pending_state_checkpoint_payload() -> O3PendingStateCheckpointPayload {
-        O3RuntimeState::default().pending_state_checkpoint_payload()
-    }
-
-    pub fn o3_pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
-        self.with_o3_runtime(|runtime| runtime.pending_state_checkpoint_payload())
-    }
-
-    pub fn restore_o3_pending_state_checkpoint_payload(
-        &self,
-        payload: O3PendingStateCheckpointPayload,
-    ) -> Result<(), O3PipelineError> {
-        self.validate_o3_pending_state_checkpoint_payload(&payload)?;
-        self.with_o3_runtime(|runtime| runtime.restore_pending_state_checkpoint_payload(payload))
-    }
-
-    pub fn validate_o3_pending_state_checkpoint_payload(
-        &self,
-        payload: &O3PendingStateCheckpointPayload,
-    ) -> Result<(), O3PipelineError> {
-        O3PendingStateCheckpointPayload::from_snapshot(payload.snapshot().clone()).map(|_| ())
     }
 }

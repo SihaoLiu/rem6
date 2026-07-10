@@ -112,6 +112,29 @@ fn cpu_source_files_stay_within_size_limit() {
     );
 }
 
+#[test]
+fn o3_pending_checkpoint_payload_stays_in_codec_boundary() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let allowed = [
+        "src/o3_pipeline.rs",
+        "src/o3_runtime_checkpoint.rs",
+        "src/o3_runtime_helpers.rs",
+        "src/public_api.rs",
+    ];
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let source = fs::read_to_string(&path).unwrap();
+        let relative = path.strip_prefix(crate_dir).unwrap().to_string_lossy();
+        if !source.contains("O3PendingStateCheckpointPayload") {
+            continue;
+        }
+        assert!(
+            allowed.contains(&relative.as_ref()),
+            "O3 pending checkpoint payload must stay in codec and projection modules, but {relative} depends on it"
+        );
+    }
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

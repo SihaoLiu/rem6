@@ -242,7 +242,6 @@ impl RiscvCore {
         &self,
         payload: O3RuntimeCheckpointPayload,
     ) -> Result<(), O3RuntimeError> {
-        self.validate_o3_runtime_checkpoint_payload(&payload)?;
         let live_retire_gate = payload.live_retire_gate();
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.restore_checkpoint_payload(payload)?;

@@ -59,7 +59,6 @@ pub struct RiscvCoreCheckpointRecord {
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
-    o3_pending_state_payload: O3PendingStateCheckpointPayload,
     o3_runtime_payload: O3RuntimeCheckpointPayload,
 }
 
@@ -77,7 +76,6 @@ struct RiscvCoreCheckpointRecordParts {
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
-    o3_pending_state_payload: O3PendingStateCheckpointPayload,
     o3_runtime_payload: O3RuntimeCheckpointPayload,
 }
 
@@ -130,7 +128,6 @@ impl RiscvCoreCheckpointRecord {
                 RiscvCore::default_tage_sc_l_branch_predictor_checkpoint_payload(),
             multiperspective_perceptron_payload:
                 RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
-            o3_pending_state_payload: RiscvCore::default_o3_pending_state_checkpoint_payload(),
             o3_runtime_payload: RiscvCore::default_o3_runtime_checkpoint_payload(),
         })
     }
@@ -150,7 +147,6 @@ impl RiscvCoreCheckpointRecord {
             tournament_branch_predictor_payload: parts.tournament_branch_predictor_payload,
             tage_sc_l_branch_predictor_payload: parts.tage_sc_l_branch_predictor_payload,
             multiperspective_perceptron_payload: parts.multiperspective_perceptron_payload,
-            o3_pending_state_payload: parts.o3_pending_state_payload,
             o3_runtime_payload: parts.o3_runtime_payload,
         }
     }
@@ -213,10 +209,6 @@ impl RiscvCoreCheckpointRecord {
         &self.multiperspective_perceptron_payload
     }
 
-    pub const fn o3_pending_state_payload(&self) -> &O3PendingStateCheckpointPayload {
-        &self.o3_pending_state_payload
-    }
-
     pub const fn o3_runtime_payload(&self) -> &O3RuntimeCheckpointPayload {
         &self.o3_runtime_payload
     }
@@ -262,6 +254,8 @@ impl RiscvCoreCheckpointPort {
         registry: &mut CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
         let record = self.capture_record();
+        let o3_pending_state_payload =
+            o3_pending_state_payload_from_runtime(record.o3_runtime_payload());
         registry.write_chunk(
             &self.component,
             PC_CHUNK,
@@ -329,7 +323,7 @@ impl RiscvCoreCheckpointPort {
         registry.write_chunk(
             &self.component,
             O3_PENDING_STATE_CHUNK,
-            encode_o3_pending_state_payload(record.o3_pending_state_payload()),
+            encode_o3_pending_state_payload(&o3_pending_state_payload),
         )?;
         registry.write_chunk(
             &self.component,
@@ -491,8 +485,7 @@ impl RiscvCoreCheckpointPort {
         if runtime_chunk_present {
             if let Some(payload) = pending_chunk {
                 let decoded_pending = decode_o3_pending_state_payload(&self.component, payload)?;
-                let runtime_pending =
-                    o3_pending_state_payload_from_runtime(&self.component, &o3_runtime_payload)?;
+                let runtime_pending = o3_pending_state_payload_from_runtime(&o3_runtime_payload);
                 if decoded_pending != runtime_pending {
                     return Err(RiscvCoreCheckpointError::MismatchedO3PendingStateSnapshot {
                         component: self.component.clone(),
@@ -525,15 +518,6 @@ impl RiscvCoreCheckpointPort {
                     })?;
             }
         }
-        let o3_pending_state_payload =
-            o3_pending_state_payload_from_runtime(&self.component, &o3_runtime_payload)?;
-        self.core
-            .validate_o3_runtime_checkpoint_payload(&o3_runtime_payload)
-            .map_err(|error| RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-                component: self.component.clone(),
-                error,
-            })?;
-
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
                 component: self.component.clone(),
@@ -549,7 +533,6 @@ impl RiscvCoreCheckpointPort {
                 tournament_branch_predictor_payload,
                 tage_sc_l_branch_predictor_payload,
                 multiperspective_perceptron_payload,
-                o3_pending_state_payload,
                 o3_runtime_payload,
             },
         ))
@@ -677,7 +660,6 @@ impl RiscvCoreCheckpointPort {
             multiperspective_perceptron_payload: self
                 .core
                 .multiperspective_perceptron_checkpoint_payload(),
-            o3_pending_state_payload: self.core.o3_pending_state_checkpoint_payload(),
             o3_runtime_payload: self.core.o3_runtime_checkpoint_payload(),
         })
     }
@@ -1197,16 +1179,10 @@ fn decode_o3_runtime_payload(
 }
 
 fn o3_pending_state_payload_from_runtime(
-    component: &CheckpointComponentId,
     payload: &O3RuntimeCheckpointPayload,
-) -> Result<O3PendingStateCheckpointPayload, RiscvCoreCheckpointError> {
+) -> O3PendingStateCheckpointPayload {
     O3PendingStateCheckpointPayload::from_snapshot(payload.snapshot().pending_state().clone())
-        .map_err(
-            |error| RiscvCoreCheckpointError::InvalidO3PendingStateSnapshot {
-                component: component.clone(),
-                error,
-            },
-        )
+        .expect("validated O3 runtime payload has valid pending state")
 }
 
 fn decode_in_order_pipeline_snapshot(

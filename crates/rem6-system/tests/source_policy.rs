@@ -191,6 +191,54 @@ fn riscv_syscall_table_lives_in_focused_module() {
     }
 }
 
+#[test]
+fn riscv_checkpoint_projects_legacy_o3_pending_state_from_runtime() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let checkpoint_rs = fs::read_to_string(crate_dir.join("src/riscv_checkpoint.rs")).unwrap();
+    let record = source_section(
+        &checkpoint_rs,
+        "pub struct RiscvCoreCheckpointRecord {",
+        "struct RiscvCoreCheckpointRecordParts {",
+    );
+    let record_parts = source_section(
+        &checkpoint_rs,
+        "struct RiscvCoreCheckpointRecordParts {",
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
+    );
+    let capture = source_section(
+        &checkpoint_rs,
+        "pub fn capture_into(",
+        "pub fn restore_from(",
+    );
+
+    for definition in [record, record_parts] {
+        assert!(
+            !definition.contains("O3PendingStateCheckpointPayload"),
+            "RISC-V checkpoint records must retain only the complete O3 runtime payload"
+        );
+    }
+    assert!(
+        capture.contains(
+            "o3_pending_state_payload_from_runtime(record.o3_runtime_payload())"
+        ),
+        "checkpoint capture must project the legacy pending chunk from the captured runtime payload"
+    );
+    assert!(
+        capture.contains("O3_PENDING_STATE_CHUNK"),
+        "checkpoint capture must continue emitting the legacy pending chunk"
+    );
+}
+
+fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("missing source section start: {start}"))
+        .1
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing source section end: {end}"))
+        .0
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
