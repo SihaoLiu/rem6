@@ -13,6 +13,8 @@ const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
+const MAX_STATS_COMPAT_ROOT_LINES: usize = 20_200;
+const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -316,6 +318,67 @@ fn cli_stats_output_o3_runtime_stays_focused() {
         lines <= MAX_O3_RUNTIME_STATS_LINES,
         "src/stats_output/o3_runtime.rs should delegate O3 stat families to focused modules, but it has {lines} lines"
     );
+}
+
+#[test]
+fn stats_compat_dram_aliases_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let root_lines = root.lines().count();
+
+    assert!(
+        root_lines <= MAX_STATS_COMPAT_ROOT_LINES,
+        "tests/cli_run/stats_compat.rs should not regrow after delegating DRAM aliases, but it has {root_lines} lines"
+    );
+    assert!(
+        root.contains("#[path = \"stats_compat/dram.rs\"]\nmod dram;"),
+        "tests/cli_run/stats_compat.rs must delegate DRAM aliases to the focused child path"
+    );
+
+    let module_path = crate_dir.join("tests/cli_run/stats_compat/dram.rs");
+    assert!(
+        module_path.exists(),
+        "DRAM stats compatibility tests belong in tests/cli_run/stats_compat/dram.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_STATS_COMPAT_MODULE_LINES,
+        "tests/cli_run/stats_compat/dram.rs exceeds {MAX_STATS_COMPAT_MODULE_LINES} lines: {module_lines}"
+    );
+
+    for anchor in [
+        "fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases",
+        "fn rem6_run_json_stats_omit_text_only_gem5_dram_interface_page_hit_rate_alias",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "tests/cli_run/stats_compat/dram.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "tests/cli_run/stats_compat.rs still owns `{anchor}`"
+        );
+    }
+
+    for family in [
+        "gem5_mem_ctrl",
+        "gem5_nvm_interface",
+        "gem5_dram_interface",
+        "gem5-mem-ctrl",
+        "gem5-nvm-interface",
+        "gem5-dram-interface",
+    ] {
+        assert!(
+            module.contains(family),
+            "tests/cli_run/stats_compat/dram.rs is missing DRAM family `{family}`"
+        );
+        assert!(
+            !root.contains(family),
+            "tests/cli_run/stats_compat.rs still owns DRAM family `{family}`"
+        );
+    }
 }
 
 #[test]
