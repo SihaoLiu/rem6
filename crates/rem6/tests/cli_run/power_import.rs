@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -12,6 +12,31 @@ fn unique_power_import_temp_dir(prefix: &str) -> PathBuf {
             .unwrap()
             .as_nanos()
     ))
+}
+
+fn run_power_import_fixture(prefix: &str, file_name: &str, format: &str, contents: &str) -> Output {
+    let temp_dir = unique_power_import_temp_dir(prefix);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join(file_name);
+    std::fs::write(&input, contents).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            format,
+            "--input",
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    output
+}
+
+fn assert_power_import_failure(output: Output, stderr: &str) {
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), stderr);
 }
 
 #[test]
@@ -75,6 +100,162 @@ fn rem6_power_import_summarizes_mcpat_xml() {
         json.pointer("/totals/dynamic_watts")
             .and_then(Value::as_f64),
         Some(3.5)
+    );
+}
+
+#[test]
+fn rem6_power_import_accepts_standard_mcpat_xml_syntax() {
+    let temp_dir = unique_power_import_temp_dir("mcpat-standard-xml");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join("mcpat.xml");
+    std::fs::write(
+        &input,
+        concat!(
+            "<mcpat_power tick='42'>\n",
+            "  <component id='system.cpu&#38;cluster' name='system.cpu&#x26;cluster' state='On'>\n",
+            "    <power dynamic_watts='3.500000' leakage_watts='1.250000' total_watts='4.750000'/>\n",
+            "    <thermal temperature_c='41.250000'/>\n",
+            "    <residency state='On' ticks='42' ratio='1.000000'/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts='3.500000' leakage_watts='1.250000' total_watts='4.750000'/>\n",
+            "</mcpat_power>\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            "mcpat-xml",
+            "--input",
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json.pointer("/records/0/target").and_then(Value::as_str),
+        Some("system.cpu&cluster")
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_malformed_mcpat_xml() {
+    let output = run_power_import_fixture(
+        "mcpat-malformed-xml",
+        "mcpat.xml",
+        "mcpat-xml",
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        ),
+    );
+
+    assert_power_import_failure(
+        output,
+        "failed to process power analysis artifact: invalid McPat power analysis artifact: invalid XML syntax\n",
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_duplicate_mcpat_component_power() {
+    let output = run_power_import_fixture(
+        "mcpat-duplicate-power",
+        "mcpat.xml",
+        "mcpat-xml",
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+    );
+
+    assert_power_import_failure(
+        output,
+        "failed to process power analysis artifact: invalid McPat power analysis artifact: component system.cpu has duplicate power tag\n",
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_dsent_characters_after_closing_quote() {
+    let output = run_power_import_fixture(
+        "dsent-post-quote",
+        "dsent.csv",
+        "dsent-csv",
+        concat!(
+            "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+            "component,64,\"gpu.fabric\"x,On,44.500000,2.250000,0.500000,2.750000,On,64,1.000000\n",
+            "total,64,__total__,All,,2.250000,0.500000,2.750000,,64,1.000000\n",
+        ),
+    );
+
+    assert_power_import_failure(
+        output,
+        "failed to process power analysis artifact: invalid Dsent power analysis artifact: CSV field contains characters after a closing quote\n",
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_mcpat_residency_tick_overflow() {
+    let xml = format!(
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"{}\" ratio=\"1.000000\"/>\n",
+            "    <residency state=\"ClockGated\" ticks=\"1\" ratio=\"0.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+        u64::MAX,
+    );
+    let output =
+        run_power_import_fixture("mcpat-residency-overflow", "mcpat.xml", "mcpat-xml", &xml);
+
+    assert_power_import_failure(
+        output,
+        "failed to process power analysis artifact: invalid McPat power analysis artifact: component residency ticks overflow\n",
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_dsent_residency_tick_overflow() {
+    let csv = format!(
+        concat!(
+            "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+            "component,42,gpu.fabric,On,44.500000,2.250000,0.500000,2.750000,On,{},1.000000\n",
+            "component,42,gpu.fabric,On,44.500000,2.250000,0.500000,2.750000,ClockGated,1,0.000000\n",
+            "total,42,__total__,All,,2.250000,0.500000,2.750000,,42,1.000000\n",
+        ),
+        u64::MAX,
+    );
+    let output =
+        run_power_import_fixture("dsent-residency-overflow", "dsent.csv", "dsent-csv", &csv);
+
+    assert_power_import_failure(
+        output,
+        "failed to process power analysis artifact: invalid Dsent power analysis artifact: component gpu.fabric residency ticks overflow\n",
     );
 }
 

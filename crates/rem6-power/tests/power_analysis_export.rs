@@ -214,6 +214,95 @@ fn mcpat_compatible_xml_import_round_trips_adapter_records() {
 }
 
 #[test]
+fn mcpat_compatible_xml_import_accepts_standard_attribute_syntax_and_entities() {
+    let xml = concat!(
+        "<mcpat_power tick='42'>\n",
+        "  <component\n",
+        "      id='system.cpu&#38;cluster' name='system.cpu&#x26;cluster' state='On'>\n",
+        "    <power dynamic_watts='3.500000' leakage_watts='1.250000' total_watts='4.750000'/>\n",
+        "    <thermal temperature_c='41.250000'/>\n",
+        "    <residency\n",
+        "        state='On' ticks='42' ratio='1.000000'/>\n",
+        "  </component>\n",
+        "  <totals dynamic_watts='3.500000' leakage_watts='1.250000' total_watts='4.750000'/>\n",
+        "</mcpat_power>\n",
+    );
+
+    let imported = PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap();
+
+    assert_eq!(imported.tick(), 42);
+    assert_eq!(imported.records().len(), 1);
+    assert_eq!(imported.records()[0].target(), "system.cpu&cluster");
+    assert_close(imported.records()[0].dynamic_watts(), 3.5);
+}
+
+#[test]
+fn mcpat_compatible_xml_import_preserves_optional_metadata_and_extensions() {
+    let xml = concat!(
+        "<mcpat_power tick=\"42\">\n",
+        "  <metadata producer=\"external-tool\"/>\n",
+        "  <component id=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\"/>\n",
+        "    <extension value=\"preserved\"/>\n",
+        "  </component>\n",
+        "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "</mcpat_power>\n",
+    );
+
+    let imported = PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap();
+
+    assert_eq!(imported.tick(), 42);
+    assert_eq!(imported.records()[0].target(), "system.cpu");
+    assert_eq!(
+        imported.records()[0].residency_ticks(PowerStateKind::On),
+        42
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_namespace_qualified_schema_elements() {
+    let xml = concat!(
+        "<x:mcpat_power xmlns:x=\"urn:unrelated\" tick=\"42\">\n",
+        "  <x:component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <x:power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <x:thermal temperature_c=\"41.250000\"/>\n",
+        "    <x:residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </x:component>\n",
+        "  <x:totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "</x:mcpat_power>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "root element must be mcpat_power".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_prefers_unqualified_schema_attributes() {
+    let xml = concat!(
+        "<mcpat_power xmlns:x=\"urn:unrelated\" x:tick=\"99\" tick=\"42\">\n",
+        "  <component x:id=\"wrong.cpu\" id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </component>\n",
+        "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "</mcpat_power>\n",
+    );
+
+    let imported = PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap();
+
+    assert_eq!(imported.tick(), 42);
+    assert_eq!(imported.records()[0].target(), "system.cpu");
+}
+
+#[test]
 fn mcpat_report_import_reads_leaf_component_power_without_double_counting_parent() {
     let report = concat!(
         "Processor:\n",
@@ -369,6 +458,76 @@ fn mcpat_compatible_xml_import_rejects_duplicate_totals() {
         PowerError::InvalidPowerAnalysisArtifact {
             kind: ExternalPowerAnalysisKind::McPat,
             message: "duplicate totals tag".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_duplicate_component_power() {
+    let xml = concat!(
+        "<mcpat_power tick=\"42\">\n",
+        "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </component>\n",
+        "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "</mcpat_power>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "component system.cpu has duplicate power tag".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_malformed_xml() {
+    let xml = concat!(
+        "<mcpat_power tick=\"42\">\n",
+        "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </component>\n",
+        "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "invalid XML syntax".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_residency_tick_overflow() {
+    let xml = format!(
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"{}\" ratio=\"1.000000\"/>\n",
+            "    <residency state=\"ClockGated\" ticks=\"1\" ratio=\"0.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+        u64::MAX,
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(&xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "component residency ticks overflow".to_string(),
         },
     );
 }
@@ -582,6 +741,44 @@ fn dsent_compatible_csv_import_round_trips_multiline_quoted_fields() {
     assert_eq!(imported.records().len(), 1);
     assert_eq!(imported.records()[0].target(), "system.mesh\nlink0");
     assert_close(imported.records()[0].dynamic_watts(), 0.75);
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_characters_after_closing_quote() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,64,\"gpu.fabric\"x,On,44.500000,2.250000,0.500000,2.750000,On,64,1.000000\n",
+        "total,64,__total__,All,,2.250000,0.500000,2.750000,,64,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "CSV field contains characters after a closing quote".to_string(),
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_residency_tick_overflow() {
+    let csv = format!(
+        concat!(
+            "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+            "component,42,gpu.fabric,On,44.500000,2.250000,0.500000,2.750000,On,{},1.000000\n",
+            "component,42,gpu.fabric,On,44.500000,2.250000,0.500000,2.750000,ClockGated,1,0.000000\n",
+            "total,42,__total__,All,,2.250000,0.500000,2.750000,,42,1.000000\n",
+        ),
+        u64::MAX,
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(&csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "component gpu.fabric residency ticks overflow".to_string(),
+        },
+    );
 }
 
 #[test]

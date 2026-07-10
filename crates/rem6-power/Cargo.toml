@@ -6,8 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+csv = "1.4.0"
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-stats = { path = "../rem6-stats" }
+roxmltree = "0.21.1"
 
 [lints]
 workspace = true
