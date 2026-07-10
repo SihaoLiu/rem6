@@ -3,6 +3,75 @@ mod riscv_syscall_emulation_support;
 
 use riscv_syscall_emulation_support::*;
 
+#[path = "riscv_syscall_emulation/riscv_sbi_base.rs"]
+mod riscv_sbi_base;
+#[path = "riscv_syscall_emulation/riscv_sbi_debug_console.rs"]
+mod riscv_sbi_debug_console;
+#[path = "riscv_syscall_emulation/riscv_sbi_firmware.rs"]
+mod riscv_sbi_firmware;
+#[path = "riscv_syscall_emulation/riscv_sbi_hsm_suspend.rs"]
+mod riscv_sbi_hsm_suspend;
+#[path = "riscv_syscall_emulation/riscv_syscall_admin.rs"]
+mod riscv_syscall_admin;
+#[path = "riscv_syscall_emulation/riscv_syscall_brk_emulation.rs"]
+mod riscv_syscall_brk_emulation;
+#[path = "riscv_syscall_emulation/riscv_syscall_clock_gettime.rs"]
+mod riscv_syscall_clock_gettime;
+#[path = "riscv_syscall_emulation/riscv_syscall_close_range.rs"]
+mod riscv_syscall_close_range;
+#[path = "riscv_syscall_emulation/riscv_syscall_epoll.rs"]
+mod riscv_syscall_epoll;
+#[path = "riscv_syscall_emulation/riscv_syscall_eventfd.rs"]
+mod riscv_syscall_eventfd;
+#[path = "riscv_syscall_emulation/riscv_syscall_getcwd.rs"]
+mod riscv_syscall_getcwd;
+#[path = "riscv_syscall_emulation/riscv_syscall_getrlimit.rs"]
+mod riscv_syscall_getrlimit;
+#[path = "riscv_syscall_emulation/riscv_syscall_getrusage.rs"]
+mod riscv_syscall_getrusage;
+#[path = "riscv_syscall_emulation/riscv_syscall_inotify.rs"]
+mod riscv_syscall_inotify;
+#[path = "riscv_syscall_emulation/riscv_syscall_ioctl.rs"]
+mod riscv_syscall_ioctl;
+#[path = "riscv_syscall_emulation/riscv_syscall_lseek.rs"]
+mod riscv_syscall_lseek;
+#[path = "riscv_syscall_emulation/riscv_syscall_mknod.rs"]
+mod riscv_syscall_mknod;
+#[path = "riscv_syscall_emulation/riscv_syscall_openat2.rs"]
+mod riscv_syscall_openat2;
+#[path = "riscv_syscall_emulation/riscv_syscall_pipe.rs"]
+mod riscv_syscall_pipe;
+#[path = "riscv_syscall_emulation/riscv_syscall_prlimit64.rs"]
+mod riscv_syscall_prlimit64;
+#[path = "riscv_syscall_emulation/riscv_syscall_pselect.rs"]
+mod riscv_syscall_pselect;
+#[path = "riscv_syscall_emulation/riscv_syscall_readlinkat.rs"]
+mod riscv_syscall_readlinkat;
+#[path = "riscv_syscall_emulation/riscv_syscall_readv.rs"]
+mod riscv_syscall_readv;
+#[path = "riscv_syscall_emulation/riscv_syscall_rename.rs"]
+mod riscv_syscall_rename;
+#[path = "riscv_syscall_emulation/riscv_syscall_riscv_flush_icache.rs"]
+mod riscv_syscall_riscv_flush_icache;
+#[path = "riscv_syscall_emulation/riscv_syscall_robust_list.rs"]
+mod riscv_syscall_robust_list;
+#[path = "riscv_syscall_emulation/riscv_syscall_rseq.rs"]
+mod riscv_syscall_rseq;
+#[path = "riscv_syscall_emulation/riscv_syscall_signalfd.rs"]
+mod riscv_syscall_signalfd;
+#[path = "riscv_syscall_emulation/riscv_syscall_socket.rs"]
+mod riscv_syscall_socket;
+#[path = "riscv_syscall_emulation/riscv_syscall_startup_stack.rs"]
+mod riscv_syscall_startup_stack;
+#[path = "riscv_syscall_emulation/riscv_syscall_times.rs"]
+mod riscv_syscall_times;
+#[path = "riscv_syscall_emulation/riscv_syscall_uname.rs"]
+mod riscv_syscall_uname;
+#[path = "riscv_syscall_emulation/riscv_syscall_wait4.rs"]
+mod riscv_syscall_wait4;
+#[path = "riscv_syscall_emulation/riscv_syscall_writev.rs"]
+mod riscv_syscall_writev;
+
 #[test]
 fn user_ecall_exit_is_consumed_as_riscv_se_syscall() {
     let host = PartitionId::new(3);

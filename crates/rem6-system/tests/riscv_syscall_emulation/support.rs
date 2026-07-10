@@ -49,7 +49,6 @@ pub(crate) fn lb(rd: u8, rs1: u8, imm: i32) -> u32 {
     i_type(imm, rs1, 0x0, rd, 0x03)
 }
 
-#[allow(dead_code)]
 pub(crate) fn ld(rd: u8, rs1: u8, imm: i32) -> u32 {
     i_type(imm, rs1, 0x3, rd, 0x03)
 }
