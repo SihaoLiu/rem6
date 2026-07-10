@@ -19,7 +19,6 @@ mod guest_futex;
 mod guest_futex_checkpoint;
 mod heterogeneous_checkpoint;
 mod host;
-mod host_assist;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod net_checkpoint;
@@ -129,12 +128,6 @@ pub use host::{
     ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
     ExecutionModeSwitchStateTransferChunk, ExecutionModeSwitchStateTransferComponent,
     SystemActionExecutor, SystemActionOutcome, SystemHostController, SystemRunController,
-};
-pub use host_assist::{
-    HostAssistedArchitecture, HostAssistedMemoryMode, HostAssistedPendingService,
-    HostAssistedRegisterId, HostAssistedRegisterSpace, HostAssistedSimulationMode,
-    HostAssistedStateComponent, HostAssistedSwitchAction, HostAssistedSwitchError,
-    HostAssistedSwitchPlan, HostAssistedSwitchPlanner, HostAssistedSwitchRequest,
 };
 pub use interrupt_checkpoint::{
     InterruptControllerCheckpointBank, InterruptControllerCheckpointError,

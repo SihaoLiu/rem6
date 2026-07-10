@@ -53,6 +53,36 @@ fn system_lib_rs_remains_a_facade() {
 }
 
 #[test]
+fn host_assisted_kvm_facade_stays_retired_until_real_adapter_exists() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    assert!(
+        !crate_dir.join("src/host_assist.rs").exists(),
+        "admission-only host_assist.rs must stay retired until a real host adapter exists"
+    );
+    assert!(
+        !crate_dir.join("tests/host_assist.rs").exists(),
+        "synthetic host_assist integration tests should be deleted with the facade"
+    );
+
+    for root in [crate_dir.join("src"), crate_dir.join("tests")] {
+        for path in rust_source_files(&root) {
+            if path.ends_with("tests/source_policy.rs") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            for forbidden in ["HostAssisted", "host_assist"] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not restore retired host-assist marker `{forbidden}`",
+                    path.strip_prefix(crate_dir).unwrap().display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn system_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
