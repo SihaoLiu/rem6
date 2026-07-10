@@ -13,8 +13,9 @@ const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
-const MAX_STATS_COMPAT_ROOT_LINES: usize = 18_500;
+const MAX_STATS_COMPAT_ROOT_LINES: usize = 17_500;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
+const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -329,6 +330,59 @@ fn stats_compat_root_keeps_current_ratchet() {
         lines <= MAX_STATS_COMPAT_ROOT_LINES,
         "tests/cli_run/stats_compat.rs exceeds the current decomposition ratchet: {lines} lines"
     );
+}
+
+#[test]
+fn stats_compat_in_order_branch_prediction_matrix_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert!(
+        root.contains("include!(\"stats_compat/in_order_branch_prediction_matrix.rs\");"),
+        "tests/cli_run/stats_compat.rs must include the focused in-order branch prediction matrix"
+    );
+
+    let module_path =
+        crate_dir.join("tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs");
+    assert!(
+        module_path.exists(),
+        "the in-order branch prediction compatibility matrix belongs in tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES,
+        "tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs exceeds {MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES} lines: {module_lines}"
+    );
+
+    for anchor in [
+        "fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution",
+        "fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "tests/cli_run/stats_compat.rs still owns `{anchor}`"
+        );
+    }
+
+    for family in [
+        "in-order-conditional-branch-predicted-taken",
+        "in-order-branch-prediction-aliases",
+    ] {
+        assert!(
+            module.contains(family),
+            "tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs is missing matrix binary family `{family}`"
+        );
+        assert!(
+            !root.contains(family),
+            "tests/cli_run/stats_compat.rs still owns CPU branch binary family `{family}`"
+        );
+    }
 }
 
 #[test]
