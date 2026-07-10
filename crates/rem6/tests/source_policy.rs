@@ -13,7 +13,7 @@ const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
-const MAX_STATS_COMPAT_ROOT_LINES: usize = 20_200;
+const MAX_STATS_COMPAT_ROOT_LINES: usize = 18_500;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -321,19 +321,25 @@ fn cli_stats_output_o3_runtime_stays_focused() {
 }
 
 #[test]
+fn stats_compat_root_keeps_current_ratchet() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/stats_compat.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_STATS_COMPAT_ROOT_LINES,
+        "tests/cli_run/stats_compat.rs exceeds the current decomposition ratchet: {lines} lines"
+    );
+}
+
+#[test]
 fn stats_compat_dram_aliases_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
-    let root_lines = root.lines().count();
 
     assert!(
-        root_lines <= MAX_STATS_COMPAT_ROOT_LINES,
-        "tests/cli_run/stats_compat.rs should not regrow after delegating DRAM aliases, but it has {root_lines} lines"
-    );
-    assert!(
-        root.contains("#[path = \"stats_compat/dram.rs\"]\nmod dram;"),
-        "tests/cli_run/stats_compat.rs must delegate DRAM aliases to the focused child path"
+        root.contains("include!(\"stats_compat/dram.rs\");"),
+        "tests/cli_run/stats_compat.rs must include the focused DRAM test file"
     );
 
     let module_path = crate_dir.join("tests/cli_run/stats_compat/dram.rs");
@@ -377,6 +383,108 @@ fn stats_compat_dram_aliases_live_in_focused_module() {
         assert!(
             !root.contains(family),
             "tests/cli_run/stats_compat.rs still owns DRAM family `{family}`"
+        );
+    }
+}
+
+#[test]
+fn stats_compat_cache_aliases_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert!(
+        root.contains("include!(\"stats_compat/cache.rs\");"),
+        "tests/cli_run/stats_compat.rs must include the focused cache test file"
+    );
+
+    let module_path = crate_dir.join("tests/cli_run/stats_compat/cache.rs");
+    assert!(
+        module_path.exists(),
+        "cache stats compatibility tests belong in tests/cli_run/stats_compat/cache.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_STATS_COMPAT_MODULE_LINES,
+        "tests/cli_run/stats_compat/cache.rs exceeds {MAX_STATS_COMPAT_MODULE_LINES} lines: {module_lines}"
+    );
+
+    for anchor in [
+        "fn rem6_run_text_stats_omit_ambiguous_gem5_l1_cache_aliases_for_multicore",
+        "fn rem6_run_json_stats_emit_gem5_l1_icache_prefetcher_pf_useful_alias",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "tests/cli_run/stats_compat/cache.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "tests/cli_run/stats_compat.rs still owns `{anchor}`"
+        );
+    }
+
+    let root_test_names = root
+        .lines()
+        .filter(|line| line.contains("fn rem6_run_"))
+        .collect::<Vec<_>>();
+    let module_test_names = module
+        .lines()
+        .filter(|line| line.contains("fn rem6_run_"))
+        .collect::<Vec<_>>();
+    for family in [
+        "gem5_l1_cache",
+        "gem5_l2_cache",
+        "gem5_l3_cache",
+        "gem5_ruby_network",
+        "gem5_l1_prefetcher",
+        "gem5_l1_icache_prefetcher",
+        "gem5_l1_demand",
+    ] {
+        assert!(
+            module_test_names.iter().any(|name| name.contains(family)),
+            "tests/cli_run/stats_compat/cache.rs is missing cache test family `{family}`"
+        );
+        assert!(
+            root_test_names.iter().all(|name| !name.contains(family)),
+            "tests/cli_run/stats_compat.rs still owns cache test family `{family}`"
+        );
+    }
+
+    for family in [
+        "gem5-l1-cache",
+        "gem5-l2-cache",
+        "gem5-l3-cache",
+        "gem5-ruby-network",
+        "gem5-l1-prefetcher",
+        "gem5-l1-icache-prefetcher",
+        "gem5-l1-demand",
+    ] {
+        assert!(
+            module.contains(family),
+            "tests/cli_run/stats_compat/cache.rs is missing cache binary family `{family}`"
+        );
+        assert!(
+            !root.contains(family),
+            "tests/cli_run/stats_compat.rs still owns cache binary family `{family}`"
+        );
+    }
+
+    for marker in [
+        "system.cpu.dcache",
+        "system.cpu.icache",
+        "system.l2",
+        "system.l3",
+        "system.ruby.network",
+        "prefetcher",
+    ] {
+        assert!(
+            module.contains(marker),
+            "tests/cli_run/stats_compat/cache.rs is missing cache alias marker `{marker}`"
+        );
+        assert!(
+            !root.contains(marker),
+            "tests/cli_run/stats_compat.rs still owns cache alias marker `{marker}`"
         );
     }
 }

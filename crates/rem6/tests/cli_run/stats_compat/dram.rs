@@ -1,12 +1,3 @@
-use std::process::Command;
-
-use super::{
-    fixed_ratio_default_precision, fixed_ratio_precision, gem5_l1_cache_alias_binary,
-    json_stat_values_with_prefix, text_stat_decimal, text_stat_line, text_stat_lines_with_prefix,
-    text_stat_value, text_stat_values_with_prefix,
-};
-use crate::support::*;
-
 #[test]
 fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");
