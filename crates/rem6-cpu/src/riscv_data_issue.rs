@@ -18,8 +18,9 @@ use rem6_transport::{
 use crate::{
     riscv_checker, riscv_cross_line::supports_cross_line_data_access, riscv_data_access,
     riscv_execute, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent,
-    RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+    InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
+    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
+    RiscvLoadReservation,
 };
 
 mod request_helpers;
@@ -46,35 +47,37 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return self
-                .schedule_store_conditional_failure(scheduler, issue)
-                .map(Some);
-        }
-        let request = self.apply_pma_data_request_attributes(
-            issue.fetch_request,
-            issue.physical_address,
-            issue.size,
-            issue.memory_request()?,
-        )?;
+        self.data_issue_attempt(|| {
+            let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return self
+                    .schedule_store_conditional_failure(scheduler, issue)
+                    .map(Some);
+            }
+            let request = self.apply_pma_data_request_attributes(
+                issue.fetch_request,
+                issue.physical_address,
+                issue.size,
+                issue.memory_request()?,
+            )?;
 
-        let core = self.clone();
-        let event = transport
-            .submit(
-                scheduler,
-                issue.memory_route(),
-                request,
-                trace,
-                responder,
-                move |delivery| core.record_data_response(delivery),
-            )
-            .map_err(RiscvCpuError::Transport)?;
+            let core = self.clone();
+            let event = transport
+                .submit(
+                    scheduler,
+                    issue.memory_route(),
+                    request,
+                    trace,
+                    responder,
+                    move |delivery| core.record_data_response(delivery),
+                )
+                .map_err(RiscvCpuError::Transport)?;
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+            self.record_data_issue(issue);
+            Ok(Some(event))
+        })
     }
 
     pub fn issue_next_data_access_parallel<F>(
@@ -89,28 +92,30 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(prepared) =
-            self.prepare_data_parallel_access(scheduler.now(), transport, trace, responder)?
-        else {
-            return Ok(None);
-        };
+        self.data_issue_attempt(|| {
+            let Some(prepared) =
+                self.prepare_data_parallel_access(scheduler.now(), transport, trace, responder)?
+            else {
+                return Ok(None);
+            };
 
-        match prepared {
-            PreparedDataParallelAccess::Transaction { issue, transaction } => {
-                let event = transport
-                    .submit_parallel_batch(scheduler, [transaction])
-                    .map_err(RiscvCpuError::Transport)?
-                    .into_iter()
-                    .next()
-                    .expect("single data transaction returns one event");
+            match prepared {
+                PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                    let event = transport
+                        .submit_parallel_batch(scheduler, [transaction])
+                        .map_err(RiscvCpuError::Transport)?
+                        .into_iter()
+                        .next()
+                        .expect("single data transaction returns one event");
 
-                self.record_data_issue(issue);
-                Ok(Some(event))
+                    self.record_data_issue(issue);
+                    Ok(Some(event))
+                }
+                PreparedDataParallelAccess::ConditionalFailed { issue } => self
+                    .schedule_store_conditional_failure_parallel(scheduler, issue)
+                    .map(Some),
             }
-            PreparedDataParallelAccess::ConditionalFailed { issue } => self
-                .schedule_store_conditional_failure_parallel(scheduler, issue)
-                .map(Some),
-        }
+        })
     }
 
     pub(crate) fn prepare_data_parallel_access<F>(
@@ -125,32 +130,34 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(issue) = self.prepare_data_access(tick, transport)? else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
+        self.data_issue_attempt(|| {
+            let Some(issue) = self.prepare_data_access(tick, transport)? else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
+                    issue,
+                }));
+            }
+            let request = self.apply_pma_data_request_attributes(
+                issue.fetch_request,
+                issue.physical_address,
+                issue.size,
+                issue.memory_request()?,
+            )?;
+            let core = self.clone();
+            let transaction = ParallelMemoryTransaction::new(
+                issue.memory_route(),
+                request,
+                trace,
+                responder,
+                move |delivery| core.record_data_response(delivery),
+            );
+            Ok(Some(PreparedDataParallelAccess::Transaction {
                 issue,
-            }));
-        }
-        let request = self.apply_pma_data_request_attributes(
-            issue.fetch_request,
-            issue.physical_address,
-            issue.size,
-            issue.memory_request()?,
-        )?;
-        let core = self.clone();
-        let transaction = ParallelMemoryTransaction::new(
-            issue.memory_route(),
-            request,
-            trace,
-            responder,
-            move |delivery| core.record_data_response(delivery),
-        );
-        Ok(Some(PreparedDataParallelAccess::Transaction {
-            issue,
-            transaction,
-        }))
+                transaction,
+            }))
+        })
     }
 
     pub(crate) fn record_prepared_data_issue(&self, issue: OutstandingDataAccess) {
@@ -170,29 +177,42 @@ impl RiscvCore {
         scheduler: &mut PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
-        let Some(issue) = self.prepare_mmio_data_access(scheduler, bus)? else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return self
-                .schedule_store_conditional_failure_parallel(scheduler, issue)
-                .map(Some);
-        }
-        let request = issue.mmio_request()?;
-        let bus = bus.clone();
-        let core = self.clone();
-        let request_id = issue.request_id;
-        let event = scheduler
-            .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
-                bus.submit_parallel(context, request, move |completion| {
-                    core.record_mmio_completion(request_id, completion);
+        self.data_issue_attempt(|| {
+            let Some(issue) = self.prepare_mmio_data_access(scheduler, bus)? else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return self
+                    .schedule_store_conditional_failure_parallel(scheduler, issue)
+                    .map(Some);
+            }
+            let request = issue.mmio_request()?;
+            let bus = bus.clone();
+            let core = self.clone();
+            let request_id = issue.request_id;
+            let event = scheduler
+                .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
+                    bus.submit_parallel(context, request, move |completion| {
+                        core.record_mmio_completion(request_id, completion);
+                    })
+                    .expect("validated parallel MMIO data access submission");
                 })
-                .expect("validated parallel MMIO data access submission");
-            })
-            .map_err(RiscvCpuError::Scheduler)?;
+                .map_err(RiscvCpuError::Scheduler)?;
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+            self.record_data_issue(issue);
+            Ok(Some(event))
+        })
+    }
+
+    pub(crate) fn data_issue_attempt<T>(
+        &self,
+        attempt: impl FnOnce() -> Result<T, RiscvCpuError>,
+    ) -> Result<T, RiscvCpuError> {
+        let result = attempt();
+        if result.is_err() {
+            self.clear_deferred_o3_scalar_memory_execution();
+        }
+        result
     }
 
     fn prepare_data_access(
@@ -433,10 +453,37 @@ impl RiscvCore {
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
         let mut state = self.state.lock().expect("riscv core lock");
+        let execution = state
+            .events
+            .iter()
+            .find(|event| event.fetch().request_id() == issue.fetch_request)
+            .cloned();
+        let detailed_scalar_memory = state.live_retire_gate.detailed_policy_enabled()
+            && matches!(
+                issue.access,
+                MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
+            );
         state.issued_data_for_fetches.insert(issue.fetch_request);
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
+        if detailed_scalar_memory {
+            let execution = execution
+                .as_ref()
+                .expect("issued scalar data access has a matching execution event");
+            let staged = match issue.target {
+                RiscvDataAccessTarget::Memory { .. } => state
+                    .o3_runtime
+                    .stage_live_scalar_memory_issue(execution, issue.request_id, issue.tick),
+                RiscvDataAccessTarget::Mmio { .. } => state
+                    .o3_runtime
+                    .queue_scalar_memory_legacy_fallback(execution, issue.request_id, issue.tick),
+            };
+            assert!(
+                staged,
+                "detailed scalar data issue must own the only live O3 memory slot"
+            );
+        }
         if emit_issued_event {
             state
                 .data_events
@@ -499,12 +546,13 @@ impl RiscvCore {
             .sc_progress
             .record_failure(self.id(), tick, access.physical_address, access.size);
         riscv_checker::sync_checker_hart(&mut state);
-        record_data_retire_cycle(
+        let completed_event = record_data_retire_cycle(
             &mut state,
             &access,
             tick,
             RiscvDataAccessEventKind::ConditionalFailed,
         );
+        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None);
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -532,11 +580,18 @@ impl RiscvCore {
                     "load response data",
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(
+                let completed_event = record_data_retire_cycle(
                     &mut state,
                     &access,
                     delivery.tick(),
                     RiscvDataAccessEventKind::Completed,
+                );
+                record_o3_data_access_outcome(
+                    &mut state,
+                    &access,
+                    completed_event,
+                    delivery.tick(),
+                    data.as_deref(),
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
@@ -544,9 +599,18 @@ impl RiscvCore {
                 ));
             }
             ResponseStatus::Retry => {
-                state
-                    .o3_runtime
-                    .discard_data_access_outcome(access.fetch_request);
+                let retry_event = mark_data_access_event_kind(
+                    &mut state,
+                    &access,
+                    RiscvDataAccessEventKind::Retry,
+                );
+                record_o3_data_access_outcome(
+                    &mut state,
+                    &access,
+                    retry_event,
+                    delivery.tick(),
+                    None,
+                );
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
@@ -571,11 +635,18 @@ impl RiscvCore {
                     access.size,
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(
+                let completed_event = record_data_retire_cycle(
                     &mut state,
                     &access,
                     delivery.tick(),
                     RiscvDataAccessEventKind::ConditionalFailed,
+                );
+                record_o3_data_access_outcome(
+                    &mut state,
+                    &access,
+                    completed_event,
+                    delivery.tick(),
+                    None,
                 );
                 state
                     .data_events
@@ -591,9 +662,9 @@ impl RiscvCore {
         let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
         };
-        state
-            .o3_runtime
-            .discard_data_access_outcome(access.fetch_request);
+        let failed_event =
+            mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Failed);
+        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None);
         state
             .data_events
             .push(RiscvDataAccessEvent::failed(access.record(tick)));
@@ -620,11 +691,18 @@ impl RiscvCore {
                     "MMIO load response data",
                 );
                 riscv_checker::sync_checker_hart(&mut state);
-                record_data_retire_cycle(
+                let completed_event = record_data_retire_cycle(
                     &mut state,
                     &access,
                     completion.tick(),
                     RiscvDataAccessEventKind::Completed,
+                );
+                record_o3_data_access_outcome(
+                    &mut state,
+                    &access,
+                    completed_event,
+                    completion.tick(),
+                    data.as_deref(),
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
@@ -632,9 +710,18 @@ impl RiscvCore {
                 ));
             }
             Err(_) => {
-                state
-                    .o3_runtime
-                    .discard_data_access_outcome(access.fetch_request);
+                let retry_event = mark_data_access_event_kind(
+                    &mut state,
+                    &access,
+                    RiscvDataAccessEventKind::Retry,
+                );
+                record_o3_data_access_outcome(
+                    &mut state,
+                    &access,
+                    retry_event,
+                    completion.tick(),
+                    None,
+                );
                 state.data_events.push(RiscvDataAccessEvent::retry(
                     access.record(completion.tick()),
                 ));
@@ -648,7 +735,7 @@ fn record_data_retire_cycle(
     access: &IssuedDataAccess,
     completion_tick: Tick,
     kind: RiscvDataAccessEventKind,
-) {
+) -> Option<RiscvCpuExecutionEvent> {
     let Some(index) = state
         .events
         .iter()
@@ -658,20 +745,14 @@ fn record_data_retire_cycle(
             false,
             "completed data access must have a matching execution event"
         );
-        return;
+        return None;
     };
     state.events[index].set_data_access_event_kind(kind);
     let data_wait_cycles = completion_tick.saturating_sub(access.tick);
-    let completed_event = state.events[index].clone();
-    state.o3_runtime.record_data_access_outcome(
-        &completed_event,
-        completion_tick,
-        data_wait_cycles,
-    );
     if state.events[index].in_order_pipeline_cycle().is_some()
         || !state.events[index].counts_as_retired_instruction()
     {
-        return;
+        return Some(state.events[index].clone());
     }
     let attributed_data_wait_cycles = retag_existing_fetch_wait_cycles_for_data_access(
         state,
@@ -700,6 +781,57 @@ fn record_data_retire_cycle(
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);
     state.events[index].set_in_order_pipeline_data_wait_cycles(data_wait_cycles);
+    Some(state.events[index].clone())
+}
+
+fn mark_data_access_event_kind(
+    state: &mut RiscvCoreState,
+    access: &IssuedDataAccess,
+    kind: RiscvDataAccessEventKind,
+) -> Option<RiscvCpuExecutionEvent> {
+    let event = state
+        .events
+        .iter_mut()
+        .find(|event| event.fetch().request_id() == access.fetch_request)?;
+    event.set_data_access_event_kind(kind);
+    Some(event.clone())
+}
+
+fn record_o3_data_access_outcome(
+    state: &mut RiscvCoreState,
+    access: &IssuedDataAccess,
+    execution: Option<RiscvCpuExecutionEvent>,
+    response_tick: Tick,
+    load_data: Option<&[u8]>,
+) {
+    let Some(execution) = execution else {
+        state
+            .o3_runtime
+            .discard_data_access_outcome(access.fetch_request);
+        return;
+    };
+    let latency_ticks = response_tick.saturating_sub(access.tick);
+    if state.o3_runtime.complete_live_scalar_memory_response(
+        &execution,
+        access.request,
+        response_tick,
+        latency_ticks,
+        load_data,
+    ) {
+        return;
+    }
+    if matches!(
+        execution.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
+    ) {
+        state
+            .o3_runtime
+            .discard_data_access_outcome(access.fetch_request);
+    } else {
+        state
+            .o3_runtime
+            .record_data_access_outcome(&execution, response_tick, latency_ticks);
+    }
 }
 
 fn retag_existing_fetch_wait_cycles_for_data_access(
@@ -1170,154 +1302,8 @@ fn record_load_completion(
 }
 
 #[cfg(test)]
-mod tests {
-    use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord};
-    use rem6_kernel::PartitionedScheduler;
-    use rem6_memory::{AgentId, MemoryResponse};
-    use rem6_transport::{
-        MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
-    };
-
-    use super::*;
-    use crate::{
-        CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState,
-        RiscvCpuExecutionEvent,
-    };
-
-    #[test]
-    fn retry_response_discards_pending_o3_trace_data_access_outcome() {
-        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-        let core = RiscvCore::with_data(
-            cpu_core(fetch_route, 0x8000),
-            CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
-        );
-        let instruction = rem6_isa_riscv::RiscvInstruction::Load {
-            rd: reg(5),
-            rs1: reg(2),
-            offset: Immediate::new(0),
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        let access = MemoryAccessKind::Load {
-            rd: reg(5),
-            address: 0x9000,
-            width: MemoryWidth::Word,
-            signed: false,
-        };
-        let event = RiscvCpuExecutionEvent::new(
-            fetch_event(0x8000, 1),
-            instruction,
-            RiscvExecutionRecord::new(instruction, 0x8000, 0x8004, Vec::new(), Some(access)),
-        );
-        core.record_o3_retired_instruction_with_trace(&event, true);
-        {
-            let mut state = core.state.lock().expect("riscv core lock");
-            state.events.push(event);
-            assert_eq!(state.o3_runtime.pending_trace_data_access_outcomes(), 1);
-        }
-
-        core.issue_next_data_access(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
-        )
-        .unwrap()
-        .unwrap();
-        scheduler.run_until_idle_conservative();
-
-        let state = core.state.lock().expect("riscv core lock");
-        assert!(state.outstanding_data.is_empty());
-        assert_eq!(state.o3_runtime.pending_trace_data_access_outcomes(), 0);
-        let trace = state.o3_runtime.trace_records();
-        assert_eq!(trace.len(), 1);
-        assert_eq!(trace[0].lsq_data_response_tick(), 0);
-        assert_eq!(trace[0].lsq_data_latency_ticks(), 0);
-    }
-
-    fn memory_routes() -> (
-        PartitionedScheduler,
-        MemoryTransport,
-        MemoryRouteId,
-        MemoryRouteId,
-    ) {
-        let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
-        let mut transport = MemoryTransport::new();
-        let fetch_route = transport
-            .add_route(
-                MemoryRoute::new(
-                    endpoint("cpu0.ifetch"),
-                    PartitionId::new(0),
-                    endpoint("l1i0"),
-                    PartitionId::new(1),
-                    2,
-                    3,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let data_route = transport
-            .add_route(
-                MemoryRoute::new(
-                    endpoint("cpu0.dmem"),
-                    PartitionId::new(0),
-                    endpoint("l1d0"),
-                    PartitionId::new(1),
-                    2,
-                    3,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-
-        (scheduler, transport, fetch_route, data_route)
-    }
-
-    fn cpu_core(route: MemoryRouteId, entry: u64) -> CpuCore {
-        CpuCore::new(
-            CpuResetState::new(
-                CpuId::new(0),
-                PartitionId::new(0),
-                AgentId::new(7),
-                Address::new(entry),
-            ),
-            CpuFetchConfig::new(
-                endpoint("cpu0.ifetch"),
-                route,
-                line_layout(),
-                AccessSize::new(4).unwrap(),
-            ),
-        )
-        .unwrap()
-    }
-
-    fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
-        CpuFetchEvent::completed(
-            CpuFetchRecord::new(
-                10 + sequence,
-                PartitionId::new(0),
-                MemoryRouteId::new(0),
-                endpoint("cpu0.ifetch"),
-                MemoryRequestId::new(AgentId::new(7), sequence),
-                Address::new(pc),
-                AccessSize::new(4).unwrap(),
-            ),
-            0x0000_0013u32.to_le_bytes().to_vec(),
-        )
-    }
-
-    fn line_layout() -> CacheLineLayout {
-        CacheLineLayout::new(16).unwrap()
-    }
-
-    fn endpoint(name: &str) -> TransportEndpointId {
-        TransportEndpointId::new(name).unwrap()
-    }
-
-    fn reg(index: u8) -> Register {
-        Register::new(index).unwrap()
-    }
-}
+#[path = "riscv_data_issue_tests.rs"]
+mod tests;
 
 fn scatter_segment_load(
     data: &[u8],

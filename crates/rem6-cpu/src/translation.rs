@@ -889,6 +889,11 @@ impl CpuTranslationFrontend {
         self.pending.is_empty()
     }
 
+    pub(crate) fn clear_pending(&mut self) {
+        self.queue.clear_pending();
+        self.pending.clear();
+    }
+
     pub const fn tlb(&self) -> Option<&TranslationTlb> {
         self.tlb.as_ref()
     }

@@ -376,6 +376,9 @@ pub enum CheckpointError {
     UnknownComponent {
         component: CheckpointComponentId,
     },
+    ComponentNotQuiescent {
+        component: CheckpointComponentId,
+    },
     EmptyChunkName {
         component: CheckpointComponentId,
     },
@@ -406,6 +409,11 @@ impl fmt::Display for CheckpointError {
                     component.as_str()
                 )
             }
+            Self::ComponentNotQuiescent { component } => write!(
+                formatter,
+                "checkpoint component is not quiescent: {}",
+                component.as_str()
+            ),
             Self::EmptyChunkName { component } => {
                 write!(
                     formatter,

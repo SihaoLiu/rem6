@@ -267,6 +267,9 @@ pub(super) fn record_data_translation_fault_state(
             fault: fault.fault().clone(),
         })?;
     let original = state.events[original_index].clone();
+    state
+        .o3_runtime
+        .abort_deferred_scalar_memory_execution(fetch_request);
     let trap_kind = data_translation_fault_trap_kind(&fault);
     let execution = state.hart.enter_synchronous_trap(
         original.instruction(),

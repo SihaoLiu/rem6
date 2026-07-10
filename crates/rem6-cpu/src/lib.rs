@@ -390,6 +390,24 @@ impl RiscvCore {
             || !state.ready_translated_data.is_empty()
     }
 
+    pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
+            && state.outstanding_data.is_empty()
+            && state.pending_data_translations.is_empty()
+            && state.ready_translated_data.is_empty()
+            && state
+                .data_translation
+                .as_ref()
+                .is_none_or(CpuTranslationFrontend::is_empty)
+            && state.events.iter().all(|event| {
+                event.execution().memory_access().is_none()
+                    || state
+                        .issued_data_for_fetches
+                        .contains(&event.fetch().request_id())
+            })
+    }
+
     fn has_outstanding_data_request(&self) -> bool {
         !self
             .state
@@ -422,6 +440,7 @@ impl RiscvCore {
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_retire_window();
         state.live_retire_gate.clear_pending_for_pc_redirect();
+        state.discard_data_accesses_for_control_boundary();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(pc);
@@ -884,6 +903,22 @@ impl RiscvCoreState {
         self.branch_speculations.clear();
         self.branch_speculation_kinds.clear();
         self.branch_target_predictions.clear();
+    }
+
+    fn discard_data_accesses_for_control_boundary(&mut self) {
+        let stale_data_fetches = self
+            .events
+            .iter()
+            .filter(|event| event.execution().memory_access().is_some())
+            .map(|event| event.fetch().request_id())
+            .collect::<Vec<_>>();
+        self.issued_data_for_fetches.extend(stale_data_fetches);
+        if let Some(frontend) = self.data_translation.as_mut() {
+            frontend.clear_pending();
+        }
+        self.pending_data_translations.clear();
+        self.ready_translated_data.clear();
+        self.outstanding_data.clear();
     }
 
     fn discard_return_address_stack_speculations(&mut self) {

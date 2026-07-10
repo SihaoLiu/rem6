@@ -1,66 +1,218 @@
 use super::*;
 
+const SCALAR_STORE_PC: &str = "0x80000010";
+const SCALAR_LOAD_PC: &str = "0x80000014";
+const YOUNGER_STORE_PC: &str = "0x8000001c";
+
 #[test]
-fn rem6_run_o3_detailed_mode_exposes_live_lsq_overlap() {
-    let path = detailed_o3_live_lsq_overlap_binary("m5-switch-cpu-o3-live-lsq-overlap");
-    let json = o3_live_lsq_overlap_json(&path, "direct", "220");
+fn rem6_run_o3_detailed_scalar_memory_issue_response_retire_direct() {
+    let path = detailed_o3_scalar_memory_lifecycle_binary("m5-switch-cpu-o3-scalar-memory-direct");
+    let json = scalar_memory_lifecycle_json(&path, "direct", 220, None);
 
     assert_eq!(
         json.pointer("/simulation/memory_system")
             .and_then(Value::as_str),
         Some("direct")
     );
-    assert_o3_live_lsq_overlap(&json);
+    assert_completed_scalar_memory_lifecycle(&json);
 }
 
 #[test]
-fn rem6_run_o3_cache_fabric_dram_preserves_live_lsq_overlap() {
-    let path = detailed_o3_live_lsq_overlap_binary("m5-switch-cpu-o3-live-lsq-cache-fabric-dram");
-    let json = o3_live_lsq_overlap_json(&path, "cache-fabric-dram", "360");
+fn rem6_run_o3_detailed_scalar_memory_issue_response_retire_cache_fabric_dram() {
+    let path = detailed_o3_scalar_memory_lifecycle_binary(
+        "m5-switch-cpu-o3-scalar-memory-cache-fabric-dram",
+    );
+    let json = scalar_memory_lifecycle_json(&path, "cache-fabric-dram", 360, None);
 
     assert_eq!(
         json.pointer("/simulation/memory_system")
             .and_then(Value::as_str),
         Some("cache-fabric-dram")
     );
-    assert_o3_live_lsq_overlap(&json);
-    assert_cache_fabric_dram_lsq_resources(&json);
+    assert_completed_scalar_memory_lifecycle(&json);
+    assert_cache_fabric_dram_scalar_memory_resources(&json);
 }
 
-fn o3_live_lsq_overlap_json(path: &Path, memory_system: &str, max_tick: &str) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            max_tick,
-            "--stats-format",
-            "json",
-            "--execute",
-            "--debug-flags",
-            "O3",
-            "--memory-system",
-            memory_system,
-            "--dump-memory",
-            "0x80000060:8",
-        ])
-        .output()
-        .unwrap();
+#[test]
+fn rem6_run_o3_detailed_scalar_load_is_resident_before_response() {
+    let path =
+        detailed_o3_scalar_memory_lifecycle_binary("m5-switch-cpu-o3-scalar-memory-resident");
+    let completed = scalar_memory_lifecycle_json(&path, "cache-fabric-dram", 360, None);
+    let completed_load = scalar_memory_event_at_pc(&completed, SCALAR_LOAD_PC);
+    let issue_tick = event_u64(completed_load, "issue_tick");
+    let writeback_tick = event_u64(completed_load, "writeback_tick");
+    let stop_tick = issue_tick.saturating_add(writeback_tick.saturating_sub(issue_tick) / 2);
+    assert!(issue_tick < stop_tick && stop_tick < writeback_tick);
+
+    let json = scalar_memory_lifecycle_json(&path, "cache-fabric-dram", stop_tick, None);
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_at_tick_limit")
+    );
+    assert_eq!(
+        json.pointer("/simulation/final_tick")
+            .and_then(Value::as_u64),
+        Some(stop_tick)
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a00000000000000")
+    );
+
+    let rob = json
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries/0")
+        .unwrap_or_else(|| panic!("early run should expose one resident ROB row: {json}"));
+    let lsq = json
+        .pointer("/cores/0/o3_runtime/snapshot/lsq/entries/0")
+        .unwrap_or_else(|| panic!("early run should expose one resident LSQ row: {json}"));
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        rob.pointer("/pc").and_then(Value::as_str),
+        Some(SCALAR_LOAD_PC)
+    );
+    assert_eq!(rob.pointer("/ready").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        rob.pointer("/live_staged").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(lsq.pointer("/kind").and_then(Value::as_str), Some("load"));
+    assert_eq!(
+        lsq.pointer("/address").and_then(Value::as_str),
+        Some("0x80000060")
+    );
+    assert_eq!(lsq.pointer("/bytes").and_then(Value::as_u64), Some(4));
+    assert_eq!(
+        lsq.pointer("/completed").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(rob.pointer("/sequence"), lsq.pointer("/sequence"));
+}
+
+#[test]
+fn rem6_run_o3_timing_scalar_memory_has_no_live_o3_lsq() {
+    let path =
+        detailed_o3_scalar_memory_lifecycle_binary("m5-switch-cpu-o3-scalar-memory-timing-control");
+    let json = scalar_memory_lifecycle_json(&path, "direct", 220, Some("timing"));
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a0000002b000000")
+    );
+    assert!(json.pointer("/cores/0/o3_runtime").is_none());
+    assert!(json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("run JSON stats array");
+    let o3_paths = stats
+        .iter()
+        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
+        .filter(|path| {
+            path.starts_with("sim.cpu0.o3.")
+                || [
+                    "system.cpu.rob.",
+                    "system.cpu.lsq0.",
+                    "system.cpu.rename.",
+                    "system.cpu.iq.",
+                    "system.cpu.iew.",
+                    "system.cpu.commit.",
+                    "system.cpu.ftq.",
+                ]
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        o3_paths.is_empty(),
+        "timing mode should not expose core or gem5-style O3 stat paths: {o3_paths:?}"
+    );
+    for path in [
+        "sim.debug.o3_trace.records",
+        "sim.debug.o3_trace.instructions",
+        "sim.debug.o3_trace.max_lsq_occupancy",
+    ] {
+        assert_json_stat(&json, path, "Count", 0, "monotonic");
+    }
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.execution_mode.timing",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.execution_mode.detailed",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.debug.o3_trace.execution_mode_authority.mode.timing",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+fn scalar_memory_lifecycle_json(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    switch_mode: Option<&str>,
+) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        &max_tick.to_string(),
+        "--stats-format",
+        "json",
+        "--execute",
+        "--debug-flags",
+        "O3",
+        "--memory-system",
+        memory_system,
+        "--dump-memory",
+        "0x80000060:8",
+    ]);
+    if let Some(switch_mode) = switch_mode {
+        command.args(["--m5-switch-cpu-mode", switch_mode]);
+    }
+    let output = command.output().unwrap();
 
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
-    json
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
-fn assert_o3_live_lsq_overlap(json: &Value) {
+fn assert_completed_scalar_memory_lifecycle(json: &Value) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host")
@@ -68,120 +220,140 @@ fn assert_o3_live_lsq_overlap(json: &Value) {
     assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("2a0000002b000000"),
-        "O3 live-LSQ overlap run should preserve forwarded load data and the younger store result"
+        "scalar memory lifecycle should preserve completed load/store data and the younger store"
     );
-
     assert_json_stat(
-        &json,
-        "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        json,
+        "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
         1,
         "monotonic",
     );
-    assert_json_stat_at_least(
-        &json,
-        "sim.cpu0.o3.max_lsq_occupancy",
-        "Count",
-        2,
-        "monotonic",
-    );
-    assert_json_stat_at_least(
-        &json,
+    assert_json_stat(
+        json,
         "system.cpu.lsq0.maxOccupancy",
         "Count",
-        2,
+        1,
         "monotonic",
     );
-    assert_json_stat(&json, "system.cpu.lsq0.loadBytes", "Byte", 4, "monotonic");
-    assert_json_stat(&json, "system.cpu.lsq0.storeBytes", "Byte", 8, "monotonic");
+    assert_json_stat(json, "system.cpu.lsq0.loadBytes", "Byte", 4, "monotonic");
+    assert_json_stat(json, "system.cpu.lsq0.storeBytes", "Byte", 8, "monotonic");
 
-    let o3_runtime = json
+    let runtime = json
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
     assert_eq!(
-        o3_runtime
-            .pointer("/snapshot/lsq/count")
+        runtime
+            .pointer("/snapshot/rob/count")
             .and_then(Value::as_u64),
-        Some(0),
-        "LSQ should drain after ordered memory operations retire: {o3_runtime}"
-    );
-    assert!(
-        o3_runtime
-            .pointer("/lsq/max_occupancy")
-            .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 2),
-        "O3 runtime JSON should expose live LSQ overlap: {o3_runtime}"
-    );
-    let max_lsq_event = o3_runtime
-        .pointer("/event_window/max_lsq_occupancy")
-        .unwrap_or_else(|| {
-            panic!("O3 runtime event window should expose max LSQ row: {o3_runtime}")
-        });
-    assert!(
-        max_lsq_event
-            .pointer("/lsq_occupancy")
-            .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 2),
-        "event window should identify the live LSQ overlap row: {max_lsq_event}"
+        Some(0)
     );
     assert_eq!(
-        max_lsq_event.pointer("/pc").and_then(Value::as_str),
-        Some("0x80000014"),
-        "max LSQ occupancy should occur when the load overlaps the older resident store: {max_lsq_event}"
+        runtime
+            .pointer("/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/rob/max_occupancy")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/lsq/max_occupancy")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/event_window/max_lsq_occupancy/lsq_occupancy")
+            .and_then(Value::as_u64),
+        Some(1)
     );
 
-    let max_structural_event = o3_runtime
-        .pointer("/event_window/max_structural_pressure")
-        .unwrap_or_else(|| {
-            panic!(
-                "O3 runtime event window should expose max structural-pressure row: {o3_runtime}"
-            )
-        });
+    let first_store = scalar_memory_event_at_pc(json, SCALAR_STORE_PC);
+    assert_scalar_memory_event(first_store, "store", "0x80000060", 0, 4);
+    let load = scalar_memory_event_at_pc(json, SCALAR_LOAD_PC);
+    assert_scalar_memory_event(load, "load", "0x80000060", 4, 0);
+    let younger_store = scalar_memory_event_at_pc(json, YOUNGER_STORE_PC);
+    assert_scalar_memory_event(younger_store, "store", "0x80000064", 0, 4);
+}
+
+fn assert_scalar_memory_event(
+    event: &Value,
+    operation: &str,
+    address: &str,
+    load_bytes: u64,
+    store_bytes: u64,
+) {
+    let issue_tick = event_u64(event, "issue_tick");
+    let writeback_tick = event_u64(event, "writeback_tick");
+    let commit_tick = event_u64(event, "commit_tick");
     assert!(
-        max_structural_event
-            .pointer("/rob_occupancy")
-            .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 1),
-        "structural-pressure row should be tied to real O3 ROB residency: {max_structural_event}"
+        issue_tick < writeback_tick,
+        "request issue must precede response: {event}"
     );
     assert!(
-        max_structural_event
-            .pointer("/lsq_occupancy")
-            .and_then(Value::as_u64)
-            .is_some_and(|occupancy| occupancy >= 1),
-        "structural-pressure row should include live LSQ residency: {max_structural_event}"
+        writeback_tick <= commit_tick,
+        "response must precede commit: {event}"
     );
-    assert!(
-        max_structural_event
-            .pointer("/rename_map_entries")
-            .and_then(Value::as_u64)
-            .is_some_and(|entries| entries >= 3),
-        "structural-pressure row should include live rename-map state: {max_structural_event}"
+    assert_eq!(event_u64(event, "lsq_data_response_tick"), writeback_tick);
+    assert_eq!(
+        event_u64(event, "lsq_data_latency_ticks"),
+        writeback_tick.saturating_sub(issue_tick)
     );
-    assert_json_stat_at_least(
-        json,
-        "sim.cpu0.o3.event_window.max_structural_pressure.rob_occupancy",
-        "Count",
-        1,
-        "monotonic",
+    assert_eq!(
+        event.pointer("/rob_occupancy").and_then(Value::as_u64),
+        Some(1)
     );
-    assert_json_stat_at_least(
-        json,
-        "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.lsq_occupancy",
-        "Count",
-        1,
-        "monotonic",
+    assert_eq!(
+        event.pointer("/lsq_occupancy").and_then(Value::as_u64),
+        Some(1)
     );
-    assert_json_stat_at_least(
-        json,
-        "sim.cpu0.o3.event_summary.event_window.max_structural_pressure.rename_map_entries",
-        "Count",
-        3,
-        "monotonic",
+    assert_eq!(
+        event.pointer("/lsq_operation").and_then(Value::as_str),
+        Some(operation)
+    );
+    assert_eq!(
+        event.pointer("/lsq_load_bytes").and_then(Value::as_u64),
+        Some(load_bytes)
+    );
+    assert_eq!(
+        event.pointer("/lsq_store_bytes").and_then(Value::as_u64),
+        Some(store_bytes)
+    );
+    let address_pointer = if operation == "load" {
+        "/lsq_load_address"
+    } else {
+        "/lsq_store_address"
+    };
+    assert_eq!(
+        event.pointer(address_pointer).and_then(Value::as_str),
+        Some(address)
     );
 }
 
-fn assert_cache_fabric_dram_lsq_resources(json: &Value) {
+fn scalar_memory_event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
+    json.pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        })
+        .unwrap_or_else(|| panic!("O3 trace should include scalar memory event at {pc}: {json}"))
+}
+
+fn event_u64(event: &Value, field: &str) -> u64 {
+    event
+        .get(field)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("O3 event should expose {field}: {event}"))
+}
+
+fn assert_cache_fabric_dram_scalar_memory_resources(json: &Value) {
     for (pointer, label) in [
         (
             "/memory_resources/cache/activity",
@@ -206,7 +378,7 @@ fn assert_cache_fabric_dram_lsq_resources(json: &Value) {
             json.pointer(pointer)
                 .and_then(Value::as_u64)
                 .is_some_and(|value| value > 0),
-            "cache-fabric-dram live-LSQ run should expose {label}: {json}"
+            "cache-fabric-dram scalar memory run should expose {label}: {json}"
         );
     }
 

@@ -218,6 +218,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
+            state.o3_runtime.discard_live_scalar_memory_lifecycle();
             state.o3_runtime.discard_live_speculative_executions();
         }
     }

@@ -253,7 +253,21 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        let record = self.capture_record();
+        let record = self.capture_checked_record()?;
+        self.write_record(registry, &record)?;
+        Ok(record)
+    }
+
+    fn capture_checked_record(&self) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
+        self.validate_capture()?;
+        Ok(self.capture_record())
+    }
+
+    fn write_record(
+        &self,
+        registry: &mut CheckpointRegistry,
+        record: &RiscvCoreCheckpointRecord,
+    ) -> Result<(), CheckpointError> {
         let o3_pending_state_payload =
             o3_pending_state_payload_from_runtime(record.o3_runtime_payload());
         registry.write_chunk(
@@ -330,7 +344,17 @@ impl RiscvCoreCheckpointPort {
             O3_RUNTIME_STATE_CHUNK,
             encode_o3_runtime_payload(record.o3_runtime_payload()),
         )?;
-        Ok(record)
+        Ok(())
+    }
+
+    fn validate_capture(&self) -> Result<(), CheckpointError> {
+        if self.core.data_access_lifecycle_is_quiescent() {
+            Ok(())
+        } else {
+            Err(CheckpointError::ComponentNotQuiescent {
+                component: self.component.clone(),
+            })
+        }
     }
 
     pub fn restore_from(
@@ -743,10 +767,15 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
-        self.ports
+        let captured = self
+            .ports
             .values()
-            .map(|port| port.capture_into(registry))
-            .collect()
+            .map(|port| port.capture_checked_record().map(|record| (port, record)))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in &captured {
+            port.write_record(registry, record)?;
+        }
+        Ok(captured.into_iter().map(|(_, record)| record).collect())
     }
 
     pub fn restore_all_from(

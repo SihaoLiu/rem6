@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn, RiscvCoreDriveAction};
+use rem6_isa_riscv::MemoryAccessKind;
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
@@ -806,30 +807,59 @@ impl RiscvSystemRunDriver {
             })
             .collect::<Vec<_>>();
 
-        let detailed_retired = {
+        let detailed_cpus = {
             let controller = self.trap_port.controller();
             let controller = controller.lock().expect("system host controller lock");
-            retired
+            cluster
+                .core_ids()
                 .into_iter()
-                .filter(|(cpu, _instruction)| {
+                .filter(|cpu| {
                     controller
                         .executor()
                         .execution_mode(&trap_event::execution_mode_target_for_cpu(*cpu))
                         .is_some_and(|mode| mode == ExecutionMode::Detailed)
                 })
-                .collect::<Vec<_>>()
+                .collect::<BTreeSet<_>>()
         };
-
         let mut updated_cpus = BTreeSet::new();
-        for (cpu, instruction) in detailed_retired {
-            cluster
-                .core(cpu)
-                .map_err(SystemError::RiscvCluster)?
-                .record_o3_retired_instruction_with_trace(
+        for event in turn.core_events() {
+            if matches!(
+                event.action(),
+                RiscvCoreDriveAction::DataAccessIssued { .. }
+            ) && detailed_cpus.contains(&event.cpu())
+            {
+                let core = cluster
+                    .core(event.cpu())
+                    .map_err(SystemError::RiscvCluster)?;
+                if !core.o3_scalar_memory_lifecycle_is_quiescent() {
+                    updated_cpus.insert(event.cpu());
+                }
+            }
+        }
+        for (cpu, instruction) in retired {
+            if !detailed_cpus.contains(&cpu) {
+                continue;
+            }
+            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+            if is_deferred_o3_scalar_memory(instruction) {
+                assert!(
+                    core.defer_o3_scalar_memory_execution(instruction),
+                    "detailed scalar memory execution must own the deferred O3 issue slot"
+                );
+            } else {
+                core.record_o3_retired_instruction_with_trace(
                     instruction,
                     self.o3_runtime_trace_enabled,
                 );
-            updated_cpus.insert(cpu);
+                updated_cpus.insert(cpu);
+            }
+        }
+        for cpu in detailed_cpus {
+            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+            while core.record_ready_o3_scalar_memory_event_with_trace(self.o3_runtime_trace_enabled)
+            {
+                updated_cpus.insert(cpu);
+            }
         }
         if self.o3_runtime_trace_enabled {
             updated_cpus.extend(cluster.core_ids());
@@ -927,4 +957,11 @@ impl RiscvSystemRunDriver {
         }
         Ok(())
     }
+}
+
+fn is_deferred_o3_scalar_memory(instruction: &rem6_cpu::RiscvCpuExecutionEvent) -> bool {
+    matches!(
+        instruction.execution().memory_access(),
+        Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
+    )
 }

@@ -592,6 +592,9 @@ impl RiscvCoreState {
     pub(super) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
+        if !self.outstanding_data.is_empty() || self.o3_runtime.has_live_scalar_memory() {
+            return None;
+        }
         self.events.iter().find_map(|event| {
             let fetch_request = event.fetch().request_id();
             if self.issued_data_for_fetches.contains(&fetch_request) {
@@ -1096,37 +1099,39 @@ impl RiscvCore {
     where
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
-        let Some(issue) =
-            self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
-        else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return self
-                .schedule_store_conditional_failure(scheduler, issue)
-                .map(Some);
-        }
-        let request = self.apply_pma_data_request_attributes(
-            issue.fetch_request,
-            issue.physical_address,
-            issue.size,
-            issue.memory_request()?,
-        )?;
+        self.data_issue_attempt(|| {
+            let Some(issue) =
+                self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
+            else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return self
+                    .schedule_store_conditional_failure(scheduler, issue)
+                    .map(Some);
+            }
+            let request = self.apply_pma_data_request_attributes(
+                issue.fetch_request,
+                issue.physical_address,
+                issue.size,
+                issue.memory_request()?,
+            )?;
 
-        let core = self.clone();
-        let event = transport
-            .submit(
-                scheduler,
-                issue.memory_route(),
-                request,
-                trace,
-                responder,
-                move |delivery| core.record_data_response(delivery),
-            )
-            .map_err(RiscvCpuError::Transport)?;
+            let core = self.clone();
+            let event = transport
+                .submit(
+                    scheduler,
+                    issue.memory_route(),
+                    request,
+                    trace,
+                    responder,
+                    move |delivery| core.record_data_response(delivery),
+                )
+                .map_err(RiscvCpuError::Transport)?;
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+            self.record_data_issue(issue);
+            Ok(Some(event))
+        })
     }
 
     pub fn issue_next_translated_data_access_parallel<F>(
@@ -1142,33 +1147,35 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(prepared) = self.prepare_translated_data_parallel_access(
-            scheduler.now(),
-            transport,
-            trace,
-            page_map,
-            responder,
-        )?
-        else {
-            return Ok(None);
-        };
+        self.data_issue_attempt(|| {
+            let Some(prepared) = self.prepare_translated_data_parallel_access(
+                scheduler.now(),
+                transport,
+                trace,
+                page_map,
+                responder,
+            )?
+            else {
+                return Ok(None);
+            };
 
-        match prepared {
-            PreparedDataParallelAccess::Transaction { issue, transaction } => {
-                let event = transport
-                    .submit_parallel_batch(scheduler, [transaction])
-                    .map_err(RiscvCpuError::Transport)?
-                    .into_iter()
-                    .next()
-                    .expect("single translated data transaction returns one event");
+            match prepared {
+                PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                    let event = transport
+                        .submit_parallel_batch(scheduler, [transaction])
+                        .map_err(RiscvCpuError::Transport)?
+                        .into_iter()
+                        .next()
+                        .expect("single translated data transaction returns one event");
 
-                self.record_data_issue(issue);
-                Ok(Some(event))
+                    self.record_data_issue(issue);
+                    Ok(Some(event))
+                }
+                PreparedDataParallelAccess::ConditionalFailed { issue } => self
+                    .schedule_store_conditional_failure_parallel(scheduler, issue)
+                    .map(Some),
             }
-            PreparedDataParallelAccess::ConditionalFailed { issue } => self
-                .schedule_store_conditional_failure_parallel(scheduler, issue)
-                .map(Some),
-        }
+        })
     }
 
     pub fn issue_next_translated_mmio_data_access_parallel(
@@ -1177,31 +1184,33 @@ impl RiscvCore {
         bus: &MmioBus,
         page_map: &TranslationPageMap,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
-        let Some(issue) =
-            self.prepare_next_translated_mmio_data_access(scheduler, bus, page_map)?
-        else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return self
-                .schedule_store_conditional_failure_parallel(scheduler, issue)
-                .map(Some);
-        }
-        let request = issue.mmio_request()?;
-        let bus = bus.clone();
-        let core = self.clone();
-        let request_id = issue.request_id;
-        let event = scheduler
-            .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
-                bus.submit_parallel(context, request, move |completion| {
-                    core.record_mmio_completion(request_id, completion);
+        self.data_issue_attempt(|| {
+            let Some(issue) =
+                self.prepare_next_translated_mmio_data_access(scheduler, bus, page_map)?
+            else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return self
+                    .schedule_store_conditional_failure_parallel(scheduler, issue)
+                    .map(Some);
+            }
+            let request = issue.mmio_request()?;
+            let bus = bus.clone();
+            let core = self.clone();
+            let request_id = issue.request_id;
+            let event = scheduler
+                .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
+                    bus.submit_parallel(context, request, move |completion| {
+                        core.record_mmio_completion(request_id, completion);
+                    })
+                    .expect("validated translated parallel MMIO data access submission");
                 })
-                .expect("validated translated parallel MMIO data access submission");
-            })
-            .map_err(RiscvCpuError::Scheduler)?;
+                .map_err(RiscvCpuError::Scheduler)?;
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+            self.record_data_issue(issue);
+            Ok(Some(event))
+        })
     }
 
     pub(crate) fn prepare_translated_data_parallel_access<F>(
@@ -1217,34 +1226,37 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(issue) = self.prepare_next_translated_data_access(tick, transport, page_map)?
-        else {
-            return Ok(None);
-        };
-        if self.store_conditional_fails(&issue) {
-            return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
-                issue,
-            }));
-        }
-        let request = self.apply_pma_data_request_attributes(
-            issue.fetch_request,
-            issue.physical_address,
-            issue.size,
-            issue.memory_request()?,
-        )?;
-        let core = self.clone();
-        let transaction = ParallelMemoryTransaction::new(
-            issue.memory_route(),
-            request,
-            trace,
-            responder,
-            move |delivery| core.record_data_response(delivery),
-        );
+        self.data_issue_attempt(|| {
+            let Some(issue) =
+                self.prepare_next_translated_data_access(tick, transport, page_map)?
+            else {
+                return Ok(None);
+            };
+            if self.store_conditional_fails(&issue) {
+                return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
+                    issue,
+                }));
+            }
+            let request = self.apply_pma_data_request_attributes(
+                issue.fetch_request,
+                issue.physical_address,
+                issue.size,
+                issue.memory_request()?,
+            )?;
+            let core = self.clone();
+            let transaction = ParallelMemoryTransaction::new(
+                issue.memory_route(),
+                request,
+                trace,
+                responder,
+                move |delivery| core.record_data_response(delivery),
+            );
 
-        Ok(Some(PreparedDataParallelAccess::Transaction {
-            issue,
-            transaction,
-        }))
+            Ok(Some(PreparedDataParallelAccess::Transaction {
+                issue,
+                transaction,
+            }))
+        })
     }
 
     fn prepare_next_translated_data_access(

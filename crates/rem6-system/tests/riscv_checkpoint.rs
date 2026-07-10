@@ -1,5 +1,5 @@
 use rem6_checkpoint::{
-    CheckpointChunk, CheckpointComponentId, CheckpointRegistry, CheckpointState,
+    CheckpointChunk, CheckpointComponentId, CheckpointError, CheckpointRegistry, CheckpointState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -7,10 +7,10 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     BiModeBranchPredictor, BiModeBranchPredictorCheckpointPayload, BiModeBranchPredictorConfig,
     BiModeBranchPredictorError, BranchPredictor, BranchPredictorCheckpointPayload,
-    BranchPredictorConfig, BranchPredictorError, CpuCore, CpuFetchConfig, CpuId, CpuResetState,
-    GShareBranchPredictor, GShareBranchPredictorCheckpointPayload, GShareBranchPredictorConfig,
-    GShareBranchPredictorError, InOrderPipelineSnapshot, LTageBranchPredictorConfig,
-    LoopBranchPredictorConfig, MultiperspectivePerceptron,
+    BranchPredictorConfig, BranchPredictorError, CpuCore, CpuDataConfig, CpuFetchConfig, CpuId,
+    CpuResetState, GShareBranchPredictor, GShareBranchPredictorCheckpointPayload,
+    GShareBranchPredictorConfig, GShareBranchPredictorError, InOrderPipelineSnapshot,
+    LTageBranchPredictorConfig, LoopBranchPredictorConfig, MultiperspectivePerceptron,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronConfig,
     MultiperspectivePerceptronError, O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId,
     O3LoadStoreQueueEntry, O3PendingStateCheckpointPayload, O3PendingStateSnapshot,
@@ -187,6 +187,122 @@ fn fetch_and_execute_one(
     .unwrap();
     scheduler.run_until_idle_conservative();
     core.execute_next_completed_fetch().unwrap().unwrap();
+}
+
+#[test]
+fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
+    let cpu0_component = CheckpointComponentId::new("cpu0").unwrap();
+    let cpu1_component = CheckpointComponentId::new("cpu1").unwrap();
+    let cpu0 = riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("memory1.ifetch"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("memory1.dmem"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1 = RiscvCore::with_data(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(1),
+                PartitionId::new(1),
+                AgentId::new(8),
+                Address::new(0x9000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu1.ifetch"),
+                fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+        CpuDataConfig::new(endpoint("cpu1.dmem"), data_route, layout()),
+    );
+    cpu1.set_detailed_live_retire_gate_enabled(true);
+    fetch_and_execute_one(
+        &cpu1,
+        loaded_store(0x9000, i_type(0, 0, 0x2, 12, 0x03)),
+        &mut scheduler,
+        &transport,
+    );
+    let bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(cpu0_component.clone(), cpu0),
+        RiscvCoreCheckpointPort::new(cpu1_component.clone(), cpu1.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+
+    assert_eq!(
+        bank.capture_all_into(&mut registry),
+        Err(CheckpointError::ComponentNotQuiescent {
+            component: cpu1_component.clone(),
+        })
+    );
+    assert_eq!(registry.chunk(&cpu0_component, "pc"), None);
+    assert_eq!(registry.chunk(&cpu1_component, "pc"), None);
+
+    cpu1.set_detailed_live_retire_gate_enabled(false);
+    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert_eq!(
+        bank.capture_all_into(&mut registry),
+        Err(CheckpointError::ComponentNotQuiescent {
+            component: cpu1_component.clone(),
+        })
+    );
+    assert_eq!(registry.chunk(&cpu0_component, "pc"), None);
+    assert_eq!(registry.chunk(&cpu1_component, "pc"), None);
+    cpu1.set_detailed_live_retire_gate_enabled(true);
+
+    cpu1.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(cpu1.o3_runtime_snapshot().load_store_queue().len(), 1);
+    cpu1.set_detailed_live_retire_gate_enabled(false);
+    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert_eq!(
+        bank.capture_all_into(&mut registry),
+        Err(CheckpointError::ComponentNotQuiescent {
+            component: cpu1_component.clone(),
+        })
+    );
+    assert_eq!(registry.chunk(&cpu0_component, "pc"), None);
+    assert_eq!(registry.chunk(&cpu1_component, "pc"), None);
+
+    assert!(cpu1.has_pending_data_access());
+    cpu1.redirect_pc(Address::new(0x9100));
+    assert!(!cpu1.has_pending_data_access());
+    bank.capture_all_into(&mut registry).unwrap();
+    assert!(registry.chunk(&cpu0_component, "pc").is_some());
+    assert!(registry.chunk(&cpu1_component, "pc").is_some());
 }
 
 #[test]

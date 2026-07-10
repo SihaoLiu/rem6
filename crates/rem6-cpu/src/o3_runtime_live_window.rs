@@ -55,8 +55,14 @@ impl O3RuntimeState {
         current_ready_tick: u64,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) {
+        if is_deferred_o3_scalar_memory_instruction(current) {
+            return;
+        }
         self.stage_live_instruction(current_pc, current, current_ready_tick);
         for (pc, instruction) in younger {
+            if is_deferred_o3_scalar_memory_instruction(instruction) {
+                break;
+            }
             self.stage_live_instruction(pc, instruction, 0);
         }
         self.stats
@@ -80,6 +86,17 @@ impl O3RuntimeState {
         else {
             return;
         };
+        if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
+            let boundary_sequence = self.snapshot.reorder_buffer[index].sequence();
+            self.snapshot.reorder_buffer.drain(index..);
+            self.live_speculative_executions
+                .retain(|speculative| speculative.sequence < boundary_sequence);
+            self.live_retired_instructions
+                .retain(|instruction| instruction.request != execution.fetch().request_id());
+            self.stats
+                .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+            return;
+        }
         let entry = self.snapshot.reorder_buffer[index];
         let speculative_issue_tick =
             self.take_live_speculative_issue_tick(entry, execution, consumed_requests);
@@ -125,6 +142,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions(&mut self) {
+        self.discard_live_scalar_memory_lifecycle();
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -336,7 +354,7 @@ impl O3RuntimeState {
         );
     }
 
-    fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {
+    pub(super) fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {
         if let Some(existing) = self.snapshot.rename_map.iter_mut().find(|existing| {
             existing.register_class() == entry.register_class()
                 && existing.architectural() == entry.architectural()
@@ -416,7 +434,7 @@ fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryRequestId]) 
             .all(|requests| requests[0].sequence() < requests[1].sequence())
 }
 
-fn staged_rename_entry(entry: O3ReorderBufferEntry) -> Option<O3RenameMapEntry> {
+pub(super) fn staged_rename_entry(entry: O3ReorderBufferEntry) -> Option<O3RenameMapEntry> {
     let (register_class, architectural) = entry.rename_destination()?;
     Some(O3RenameMapEntry::new(
         register_class,
@@ -453,7 +471,8 @@ fn execution_writes_rename_destination(
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, Register, RegisterWrite, RiscvExecutionRecord, RiscvTrap, RiscvTrapKind,
+        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvTrap,
+        RiscvTrapKind,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId};
@@ -478,8 +497,41 @@ mod tests {
         }
     }
 
+    fn load_x4() -> RiscvInstruction {
+        RiscvInstruction::Load {
+            rd: Register::new(4).unwrap(),
+            rs1: Register::new(10).unwrap(),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+            signed: false,
+        }
+    }
+
     fn request(sequence: u64) -> MemoryRequestId {
         MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    #[test]
+    fn scalar_memory_stops_live_retire_window_before_memory_and_younger_rows() {
+        let mut runtime = O3RuntimeState::default();
+
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            [
+                (Address::new(0x8004), load_x4()),
+                (Address::new(0x8008), addi(5, 4)),
+            ],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
+        assert_eq!(
+            runtime.snapshot().reorder_buffer()[0].pc(),
+            Address::new(0x8000)
+        );
+        assert_eq!(integer_mapping(&runtime, 4), None);
+        assert_eq!(integer_mapping(&runtime, 5), None);
     }
 
     fn retire_live(

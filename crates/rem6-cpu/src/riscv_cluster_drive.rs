@@ -31,6 +31,44 @@ pub(crate) enum PreparedParallelAction {
     },
 }
 
+pub(crate) struct PreparedParallelActions {
+    actions: Vec<PreparedParallelAction>,
+}
+
+impl PreparedParallelActions {
+    pub(crate) const fn new() -> Self {
+        Self {
+            actions: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, action: PreparedParallelAction) {
+        self.actions.push(action);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.actions.len()
+    }
+
+    pub(crate) fn drain(&mut self) -> std::vec::Drain<'_, PreparedParallelAction> {
+        self.actions.drain(..)
+    }
+}
+
+impl Drop for PreparedParallelActions {
+    fn drop(&mut self) {
+        for action in &self.actions {
+            match action {
+                PreparedParallelAction::Data { core, .. }
+                | PreparedParallelAction::LocalDataFailure { core, .. } => {
+                    core.clear_deferred_o3_scalar_memory_execution();
+                }
+                PreparedParallelAction::Ready(_) | PreparedParallelAction::Fetch { .. } => {}
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn push_prepared_parallel_fetch_action<F>(
     cpu: CpuId,
@@ -39,7 +77,7 @@ pub(crate) fn push_prepared_parallel_fetch_action<F>(
     transport: &MemoryTransport,
     fetch_trace: MemoryTrace,
     fetch_responder: F,
-    prepared_actions: &mut Vec<PreparedParallelAction>,
+    prepared_actions: &mut PreparedParallelActions,
     transaction_cpus: &mut Vec<CpuId>,
     transactions: &mut Vec<ParallelMemoryTransaction>,
     fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
@@ -99,7 +137,7 @@ pub(crate) fn push_prepared_completed_fetch_drive_event(
     cpu: CpuId,
     core: &RiscvCore,
     scheduler: &mut PartitionedScheduler,
-    prepared_actions: &mut Vec<PreparedParallelAction>,
+    prepared_actions: &mut PreparedParallelActions,
 ) -> Result<bool, RiscvClusterError> {
     if let Some(event) = completed_fetch_drive_event(cpu, core, scheduler)? {
         prepared_actions.push(PreparedParallelAction::Ready(event));

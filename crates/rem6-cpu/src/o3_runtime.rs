@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_isa_riscv::{MemoryAccessKind, Register};
+use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
@@ -22,6 +22,8 @@ mod o3_runtime_checkpoint_branch_mismatch;
 mod o3_runtime_helpers;
 #[path = "o3_runtime_live_window.rs"]
 mod o3_runtime_live_window;
+#[path = "o3_runtime_memory.rs"]
+mod o3_runtime_memory;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
 #[path = "o3_runtime_snapshot_entries.rs"]
@@ -38,7 +40,13 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
-use o3_runtime_live_window::{O3LiveRetiredInstruction, O3LiveSpeculativeExecution};
+use o3_runtime_live_window::{
+    staged_rename_entry, O3LiveRetiredInstruction, O3LiveSpeculativeExecution,
+};
+use o3_runtime_memory::{
+    is_deferred_o3_scalar_memory_access, is_deferred_o3_scalar_memory_instruction,
+    is_terminal_o3_scalar_memory_event, O3LiveScalarMemory, O3LiveScalarMemoryOutcome,
+};
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
@@ -158,6 +166,8 @@ pub struct O3RuntimeState {
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
+    deferred_scalar_memory_execution: Option<MemoryRequestId>,
+    live_scalar_memory: Option<O3LiveScalarMemory>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -184,6 +194,8 @@ impl O3RuntimeState {
         self.dependency_producers_with_consumers.clear();
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
+        self.deferred_scalar_memory_execution = None;
+        self.live_scalar_memory = None;
         Ok(())
     }
 
@@ -284,6 +296,8 @@ impl O3RuntimeState {
             .max(self.snapshot.reorder_buffer.len());
         self.stats.observe_rob_occupancy(live_rob_occupancy);
         self.stats
+            .observe_lsq_occupancy(self.snapshot.load_store_queue.len());
+        self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
         self.dependency_producers_with_consumers.clear();
         for instruction in &self.live_retired_instructions {
@@ -316,7 +330,30 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
         trace_enabled: bool,
     ) {
-        let mut trace_record = self.record_runtime_state(execution);
+        let live_scalar_memory = self.consume_live_scalar_memory_retirement(execution);
+        if live_scalar_memory.is_none() && is_terminal_o3_scalar_memory_event(execution) {
+            return;
+        }
+        if live_scalar_memory.as_ref().is_some_and(|live| {
+            matches!(
+                live.outcome,
+                O3LiveScalarMemoryOutcome::Retried | O3LiveScalarMemoryOutcome::Failed
+            )
+        }) {
+            return;
+        }
+        let completed_live_scalar_memory = live_scalar_memory
+            .as_ref()
+            .filter(|live| live.outcome == O3LiveScalarMemoryOutcome::Completed);
+        let legacy_scalar_memory = live_scalar_memory
+            .as_ref()
+            .is_some_and(|live| live.outcome == O3LiveScalarMemoryOutcome::LegacyFallback);
+        let mut trace_record = self.record_runtime_state(execution, completed_live_scalar_memory);
+        if legacy_scalar_memory {
+            self.snapshot
+                .load_store_queue
+                .retain(|entry| entry.sequence() != trace_record.sequence());
+        }
         self.stats
             .record_retired_instruction(execution, trace_record);
         let observation = self.record_store_forwarding_window(
@@ -330,10 +367,22 @@ impl O3RuntimeState {
             observation.address_mismatch,
             observation.byte_mismatch,
         );
-        self.record_data_access_sequence(execution, trace_record.sequence());
+        if completed_live_scalar_memory.is_none() {
+            self.record_data_access_sequence(execution, trace_record.sequence());
+        }
         if trace_enabled {
-            self.record_trace_data_access_sequence(execution, trace_record.sequence());
+            if completed_live_scalar_memory.is_none() {
+                self.record_trace_data_access_sequence(execution, trace_record.sequence());
+            }
             self.trace_records.push(trace_record);
+        }
+        if let Some(live) = completed_live_scalar_memory {
+            if let (Some(access), Some(data)) = (
+                execution.execution().memory_access(),
+                live.load_data.as_deref(),
+            ) {
+                self.record_completed_load_data(live.fetch_request, access, data);
+            }
         }
     }
 
@@ -471,6 +520,8 @@ impl Default for O3RuntimeState {
             dependency_producers_with_consumers: BTreeSet::new(),
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
+            deferred_scalar_memory_execution: None,
+            live_scalar_memory: None,
             next_sequence: 0,
             next_physical_register: 1,
         }
@@ -1502,6 +1553,16 @@ impl crate::RiscvCore {
         self.with_o3_runtime(|runtime| {
             runtime.record_retired_instruction_with_trace(execution, trace_enabled);
         });
+    }
+
+    pub fn record_ready_o3_scalar_memory_event_with_trace(&self, trace_enabled: bool) -> bool {
+        self.with_o3_runtime(|runtime| {
+            let Some(execution) = runtime.take_ready_live_scalar_memory_event() else {
+                return false;
+            };
+            runtime.record_retired_instruction_with_trace(&execution, trace_enabled);
+            true
+        })
     }
 
     pub fn record_o3_completed_load_data(

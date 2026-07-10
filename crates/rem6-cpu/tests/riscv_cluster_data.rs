@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster,
-    RiscvClusterDriveEvent, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
-    RiscvDataAccessEventKind,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineError,
+    InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCluster,
+    RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+    RiscvCpuError, RiscvDataAccessEventKind,
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_isa_riscv::Register;
@@ -186,6 +187,245 @@ fn responder(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static {
     move |delivery, _context| memory_response(&store, &delivery)
+}
+
+#[test]
+fn parallel_driver_clears_prepared_scalar_marker_when_later_fetch_prepare_fails() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu0_data,
+        }),
+    ])
+    .unwrap();
+    let cpu0 = cluster.core(CpuId::new(0)).unwrap();
+    cpu0.write_register(reg(10), 0x9000);
+    cpu0.set_detailed_live_retire_gate_enabled(true);
+    let store = store_with_programs_and_data(
+        &[(0x8000, i_type(0, 10, 0x3, 5, 0x03))],
+        &[(0x9000, 41_u64.to_le_bytes().to_vec())],
+    );
+    let fetch_store = store.clone();
+    cpu0.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&fetch_store, &delivery),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    cpu0.execute_next_completed_fetch().unwrap().unwrap();
+    assert!(!cpu0.o3_scalar_memory_lifecycle_is_quiescent());
+
+    let error = cluster
+        .drive_ready_cores_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvClusterError::Core { cpu, .. } if cpu == CpuId::new(1)
+    ));
+    assert!(cpu0.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(cpu0.has_unissued_data_access());
+    assert!(!cpu0.has_pending_data_access());
+}
+
+#[test]
+fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let cpu0 = cluster.core(CpuId::new(0)).unwrap();
+    let cpu1 = cluster.core(CpuId::new(1)).unwrap();
+    cpu1.write_register(reg(10), 0x9000);
+    cpu1.set_detailed_live_retire_gate_enabled(true);
+    let store = store_with_programs_and_data(
+        &[(0x8100, i_type(0, 10, 0x3, 5, 0x03))],
+        &[(0x9000, 41_u64.to_le_bytes().to_vec())],
+    );
+    let fetch_store = store.clone();
+    cpu1.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&fetch_store, &delivery),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    cpu1.execute_next_completed_fetch().unwrap().unwrap();
+    cpu0.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        RiscvCore::default_in_order_pipeline_snapshot()
+            .config()
+            .clone(),
+        u64::MAX,
+        [InOrderPipelineInstruction::new(
+            99,
+            InOrderPipelineStage::Fetch1,
+        )],
+    ))
+    .unwrap();
+
+    let error = cluster
+        .drive_ready_cores_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvClusterError::Core {
+            cpu,
+            error: RiscvCpuError::InOrderPipeline(
+                InOrderPipelineError::CycleCursorOverflow { cycle: u64::MAX }
+            )
+        } if cpu == CpuId::new(0)
+    ));
+    assert!(cpu1.has_pending_data_access());
+    assert_eq!(cpu1.o3_runtime_snapshot().load_store_queue().len(), 1);
+    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!scheduler.is_idle());
 }
 
 #[test]

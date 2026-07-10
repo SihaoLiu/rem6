@@ -153,10 +153,7 @@ impl RiscvCore {
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_staged_instructions();
         state.live_retire_gate.clear_pending_for_pc_redirect();
-        state.issued_data_for_fetches.clear();
-        state.pending_data_translations.clear();
-        state.ready_translated_data.clear();
-        state.outstanding_data.clear();
+        state.discard_data_accesses_for_control_boundary();
         state.pending_trap = None;
         state.pending_trap_event = None;
         state.reservation = None;

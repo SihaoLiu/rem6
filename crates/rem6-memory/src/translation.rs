@@ -691,6 +691,10 @@ impl TranslationQueue {
         self.entries.is_empty()
     }
 
+    pub fn clear_pending(&mut self) {
+        self.entries.clear();
+    }
+
     pub fn enqueue(
         &mut self,
         issue_tick: u64,

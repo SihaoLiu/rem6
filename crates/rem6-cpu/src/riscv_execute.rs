@@ -344,6 +344,10 @@ impl RiscvCore {
         state
             .o3_runtime
             .retire_live_staged_instruction(&event, consumed_requests, retire_tick);
+        let detailed = state.live_retire_gate.detailed_policy_enabled();
+        assert!(state
+            .o3_runtime
+            .defer_scalar_memory_if_detailed(detailed, &event));
         if redirects_fetch {
             state.o3_runtime.discard_live_staged_instructions();
         }

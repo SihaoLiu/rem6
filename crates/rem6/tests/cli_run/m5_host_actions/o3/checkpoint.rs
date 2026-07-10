@@ -99,7 +99,7 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
         ("snapshot_lsq_entries", 0),
         ("snapshot_rename_map_entries", 3),
         ("stats_max_rob_occupancy", 1),
-        ("stats_max_lsq_occupancy", 2),
+        ("stats_max_lsq_occupancy", 1),
         ("stats_rename_map_entries", 3),
     ] {
         assert_eq!(
@@ -242,7 +242,7 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
         &json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        2,
+        1,
         "monotonic",
     );
     assert_json_stat(

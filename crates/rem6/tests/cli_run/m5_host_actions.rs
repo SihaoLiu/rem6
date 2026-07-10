@@ -2140,7 +2140,7 @@ fn detailed_o3_live_rob_dump_stats_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
-fn detailed_o3_live_lsq_overlap_binary(name: &str) -> std::path::PathBuf {
+fn detailed_o3_scalar_memory_lifecycle_binary(name: &str) -> std::path::PathBuf {
     let data_start = 96_i32;
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;

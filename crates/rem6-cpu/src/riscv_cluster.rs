@@ -12,7 +12,7 @@ use rem6_transport::{
 use crate::riscv_cluster_drive::{
     completed_fetch_drive_event, push_completed_fetch_drive_event,
     push_prepared_completed_fetch_drive_event, push_prepared_parallel_fetch_action,
-    PreparedParallelAction,
+    PreparedParallelAction, PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -64,7 +64,7 @@ fn push_prepared_data_action(
     cpu: CpuId,
     core: &RiscvCore,
     prepared: Option<PreparedDataParallelAccess>,
-    prepared_actions: &mut Vec<PreparedParallelAction>,
+    prepared_actions: &mut PreparedParallelActions,
     transaction_cpus: &mut Vec<CpuId>,
     transactions: &mut Vec<ParallelMemoryTransaction>,
 ) -> bool {
@@ -327,7 +327,7 @@ impl RiscvCluster {
             + 'static,
     {
         self.reconcile_reservation_invalidations();
-        let mut prepared_actions = Vec::new();
+        let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -425,7 +425,7 @@ impl RiscvCluster {
             + 'static,
     {
         self.reconcile_reservation_invalidations();
-        let mut prepared_actions = Vec::new();
+        let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -541,7 +541,7 @@ impl RiscvCluster {
             + 'static,
     {
         self.reconcile_reservation_invalidations();
-        let mut prepared_actions = Vec::new();
+        let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         let mut committed_instructions = 0u64;
@@ -669,7 +669,7 @@ impl RiscvCluster {
             + 'static,
     {
         self.reconcile_reservation_invalidations();
-        let mut prepared_actions = Vec::new();
+        let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -808,7 +808,7 @@ impl RiscvCluster {
             + 'static,
     {
         self.reconcile_reservation_invalidations();
-        let mut prepared_actions = Vec::new();
+        let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -950,7 +950,7 @@ impl RiscvCluster {
         &self,
         scheduler: &mut PartitionedScheduler,
         transport: &MemoryTransport,
-        prepared_actions: Vec<PreparedParallelAction>,
+        mut prepared_actions: PreparedParallelActions,
         transaction_cpus: Vec<CpuId>,
         transactions: Vec<ParallelMemoryTransaction>,
     ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError> {
@@ -970,7 +970,8 @@ impl RiscvCluster {
         };
 
         let mut actions = Vec::with_capacity(prepared_actions.len());
-        for prepared in prepared_actions {
+        let mut first_error = None;
+        for prepared in prepared_actions.drain() {
             match prepared {
                 PreparedParallelAction::Ready(event) => actions.push(event),
                 PreparedParallelAction::Fetch {
@@ -980,14 +981,19 @@ impl RiscvCluster {
                     fetch_ahead,
                     transaction_index,
                 } => {
-                    core.record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, fetch_ahead)
-                        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
-                    actions.push(RiscvClusterDriveEvent::new(
-                        cpu,
-                        RiscvCoreDriveAction::FetchIssued {
-                            event: events[transaction_index],
-                        },
-                    ));
+                    match core
+                        .record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, fetch_ahead)
+                    {
+                        Ok(()) => actions.push(RiscvClusterDriveEvent::new(
+                            cpu,
+                            RiscvCoreDriveAction::FetchIssued {
+                                event: events[transaction_index],
+                            },
+                        )),
+                        Err(error) => {
+                            first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
+                        }
+                    }
                 }
                 PreparedParallelAction::Data {
                     cpu,
@@ -1004,18 +1010,23 @@ impl RiscvCluster {
                     ));
                 }
                 PreparedParallelAction::LocalDataFailure { cpu, core, issue } => {
-                    let event = core
+                    match core
                         .schedule_prepared_store_conditional_failure_parallel(scheduler, issue)
-                        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
-                    actions.push(RiscvClusterDriveEvent::new(
-                        cpu,
-                        RiscvCoreDriveAction::DataAccessIssued { event },
-                    ));
+                    {
+                        Ok(event) => actions.push(RiscvClusterDriveEvent::new(
+                            cpu,
+                            RiscvCoreDriveAction::DataAccessIssued { event },
+                        )),
+                        Err(error) => {
+                            core.clear_deferred_o3_scalar_memory_execution();
+                            first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
+                        }
+                    }
                 }
             }
         }
 
-        Ok(actions)
+        first_error.map_or(Ok(actions), Err)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -463,9 +463,58 @@ fn riscv_core_translated_driver_waits_for_data_translation_before_next_fetch() {
 }
 
 #[test]
+fn riscv_core_redirect_discards_pending_data_translation_frontend_entry() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    assert!(core
+        .issue_next_translated_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| panic!("translation miss should not issue data memory"),
+        )
+        .unwrap()
+        .is_none());
+    assert!(core.has_pending_data_access());
+    assert_eq!(core.ready_data_translation_requests(u64::MAX).len(), 1);
+
+    core.redirect_pc(Address::new(0x9000));
+
+    assert!(!core.has_pending_data_access());
+    assert!(core.ready_data_translation_requests(u64::MAX).is_empty());
+    scheduler
+        .schedule_after(core.partition(), 1, |_context| {})
+        .unwrap();
+    scheduler.run_until_idle_conservative();
+    assert!(core
+        .issue_next_translated_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| panic!("redirected load should not issue data memory"),
+        )
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.set_detailed_live_retire_gate_enabled(true);
     core.write_register(reg(2), 0x4000);
     core.set_privilege_mode(RiscvPrivilegeMode::User);
     core.set_machine_exception_delegation(1 << 13);
@@ -484,6 +533,7 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::InstructionExecuted(_))
     ));
+    assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
 
     let action = drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map)
         .expect("translation fault should be reported as a trap event");
@@ -514,6 +564,7 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
     assert_eq!(core.pc(), Address::new(0xa000));
     assert_eq!(core.read_register(reg(5)), 0);
     assert!(!core.has_pending_data_access());
+    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
     let execution_events = core.execution_events();
     assert_eq!(execution_events.len(), 1);
     assert_eq!(

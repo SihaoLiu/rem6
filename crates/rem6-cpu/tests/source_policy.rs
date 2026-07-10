@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
+const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -131,6 +132,47 @@ fn o3_pending_checkpoint_payload_stays_in_codec_boundary() {
         assert!(
             allowed.contains(&relative.as_ref()),
             "O3 pending checkpoint payload must stay in codec and projection modules, but {relative} depends on it"
+        );
+    }
+}
+
+#[test]
+fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/o3_runtime.rs");
+    let root = fs::read_to_string(root_path).unwrap();
+
+    assert!(
+        root.contains("mod o3_runtime_memory;"),
+        "src/o3_runtime.rs must delegate scalar memory lifecycle state to src/o3_runtime_memory.rs"
+    );
+
+    let module_path = crate_dir.join("src/o3_runtime_memory.rs");
+    assert!(
+        module_path.exists(),
+        "scalar O3 memory lifecycle code belongs in src/o3_runtime_memory.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let lines = module.lines().count();
+    assert!(
+        lines <= MAX_O3_RUNTIME_MEMORY_LINES,
+        "src/o3_runtime_memory.rs exceeds {MAX_O3_RUNTIME_MEMORY_LINES} lines: {lines}"
+    );
+
+    for anchor in [
+        "struct O3LiveScalarMemory",
+        "fn stage_live_scalar_memory_issue",
+        "fn complete_live_scalar_memory_response",
+        "fn take_ready_live_scalar_memory_event",
+        "fn consume_live_scalar_memory_retirement",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_memory.rs is missing lifecycle owner `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "src/o3_runtime.rs still owns scalar memory lifecycle `{anchor}`"
         );
     }
 }
