@@ -415,6 +415,7 @@ sim.debug.o3_trace.event.iew_branch_mispredicts
 /debug/o3_trace/0/event_summary/event_window/max_lsq_occupancy/pc
 /debug/o3_trace/0/event_summary/event_window/max_rename_map_entries/sequence
 /debug/o3_trace/0/event_summary/event_window/max_structural_pressure/rob_occupancy
+/debug/o3_trace/0/event_summary/event_window/max_lsq_data_latency/lsq_ordering
 sim.cpu0.o3.event_summary.event_window.records
 sim.cpu0.o3.event_summary.event_window.span_ticks
 sim.cpu0.o3.event_summary.event_window.first.pc
@@ -426,6 +427,10 @@ sim.cpu0.o3.event_summary.event_window.max_rename_map_entries.pc
 sim.cpu0.o3.event_summary.event_window.max_structural_pressure.rename_map_entries
 sim.cpu0.o3.event_summary.event_window.max_structural_pressure.writeback_tick
 sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.commit_tick
+sim.cpu0.o3.event_summary.event_window.max_lsq_data_latency.lsq_ordering.acquire_release
+sim.cpu0.o3.event_window.max_lsq_data_latency.lsq_ordering.acquire_release
+sim.debug.o3_trace.event_window.max_lsq_data_latency.lsq_ordering.acquire_release
+sim.debug.o3_trace.cpu.cpu0.event_window.max_lsq_data_latency.lsq_ordering.acquire_release
 /debug/o3_trace/0/event_summary/iew/producer_inst
 /debug/o3_trace/0/event_summary/iew/consumer_inst
 /debug/o3_trace/0/event_summary/iew/writeback_rate_ppm
@@ -673,6 +678,7 @@ sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.writeba
 sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.issue_to_commit_ticks
 sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rob_commits_at_tick
 sim.host_actions.stats_dump.cpu0.o3.event_window.max_structural_pressure.rob_commit_blocked
+sim.host_actions.stats_dump.cpu0.o3.event_window.max_lsq_data_latency.lsq_ordering.acquire_release
 sim.host_actions.stats_dump.cpu0.o3.snapshot.rob.count
 sim.host_actions.stats_dump.cpu0.o3.snapshot.lsq.count
 sim.host_actions.stats_dump.cpu0.o3.snapshot.rename_map.count
@@ -758,6 +764,7 @@ system.cpu1.commit.committedInstType.IntDiv
 /cores/0/o3_runtime/commit/committed_inst_type/vector_float_misc
 /cores/0/o3_runtime/event_window/max_rob_occupancy/tick
 /cores/0/o3_runtime/event_window/max_structural_pressure/lsq_occupancy
+/cores/0/o3_runtime/event_window/max_lsq_data_latency/lsq_ordering
 /cores/0/o3_runtime/rob/allocations
 /cores/0/o3_runtime/rename/writes
 /cores/0/o3_runtime/snapshot/rob/count
