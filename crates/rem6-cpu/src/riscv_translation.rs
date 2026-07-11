@@ -617,7 +617,7 @@ impl RiscvCoreState {
             return Some((fetch_request, access));
         }
         (self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
-            && self.o3_runtime.can_stage_second_scalar_memory(event))
+            && self.o3_runtime.can_stage_scalar_memory(event))
         .then_some((fetch_request, access))
     }
 }

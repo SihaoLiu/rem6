@@ -286,6 +286,78 @@ fn detailed_scalar_load_does_not_refetch_completed_younger_with_branch_lookahead
 }
 
 #[test]
+fn detailed_scalar_load_window_fetches_third_with_two_entry_lookahead() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let younger = i_type(64, 2, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, younger.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_scalar_load_window_does_not_refetch_pending_third() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let younger = i_type(64, 2, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, younger.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    let third = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(2),
+        Address::new(0x8008),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(third));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_keeps_third_fetch_suppressed_by_default() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let younger = i_type(64, 2, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, younger.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_blocks_third_fetch_on_address_dependency() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let dependent = i_type(0, 5, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, dependent.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn timing_scalar_load_does_not_enable_detailed_fetch_ahead() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());

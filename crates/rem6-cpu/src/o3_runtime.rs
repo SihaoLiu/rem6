@@ -24,8 +24,8 @@ mod o3_runtime_helpers;
 mod o3_runtime_live_window;
 #[path = "o3_runtime_memory.rs"]
 mod o3_runtime_memory;
-#[path = "o3_runtime_memory_pair.rs"]
-mod o3_runtime_memory_pair;
+#[path = "o3_runtime_memory_window.rs"]
+mod o3_runtime_memory_window;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
 #[path = "o3_runtime_snapshot_entries.rs"]

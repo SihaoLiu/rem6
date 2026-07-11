@@ -2,10 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_isa_riscv::{
-    FloatRegister, MemoryAccessKind, Register, RiscvCounterSnapshot, RiscvHartState,
-    RiscvInstruction, RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError,
-    RiscvPmpSnapshot, RiscvPmpTable, RiscvPrivilegeMode, RiscvTrap, RiscvVectorConfig,
-    VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    FloatRegister, MemoryAccessKind, Register, RiscvCounterSnapshot, RiscvHartState, RiscvPmaError,
+    RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
+    RiscvPrivilegeMode, RiscvTrap, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{
@@ -76,6 +75,7 @@ mod riscv_live_retire_window;
 mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_reservation;
 mod riscv_sc_progress;
+mod riscv_scalar_memory_window;
 mod riscv_selected_branch_speculation;
 mod riscv_sv39_memory_walker;
 mod riscv_tage_sc_l_checkpoint;
@@ -396,7 +396,7 @@ impl RiscvCore {
         let has_pending = !state.outstanding_data.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty();
-        has_pending && !state.can_overlap_one_detailed_scalar_memory()
+        has_pending && !state.can_extend_detailed_scalar_memory_window()
     }
 
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
@@ -821,82 +821,6 @@ struct RiscvCoreState {
 }
 
 impl RiscvCoreState {
-    fn can_overlap_one_detailed_scalar_memory(&self) -> bool {
-        let Some(outstanding) = self.outstanding_data.values().next() else {
-            return false;
-        };
-        let Some(range) = outstanding.memory_range() else {
-            return false;
-        };
-        self.data_translation.is_none()
-            && self.pending_data_translations.is_empty()
-            && self.ready_translated_data.is_empty()
-            && self.outstanding_data.len() == 1
-            && matches!(
-                self.pma
-                    .is_uncacheable(range.start().get(), range.size().bytes()),
-                Ok(false)
-            )
-            && self.o3_runtime.has_open_scalar_memory_overlap_slot()
-    }
-
-    fn can_overlap_detailed_scalar_memory_instruction(
-        &self,
-        instruction: RiscvInstruction,
-    ) -> bool {
-        if !self.can_overlap_one_detailed_scalar_memory() {
-            return false;
-        }
-        if !matches!(instruction, RiscvInstruction::Load { .. }) {
-            return false;
-        }
-        let Some(range) = self.cacheable_scalar_memory_instruction_range(instruction) else {
-            return false;
-        };
-        self.o3_runtime
-            .can_defer_second_scalar_memory_instruction(instruction, range)
-    }
-
-    fn cacheable_scalar_memory_instruction_range(
-        &self,
-        instruction: RiscvInstruction,
-    ) -> Option<AddressRange> {
-        let range = self.scalar_memory_instruction_range(instruction)?;
-        match self
-            .pma
-            .is_uncacheable(range.start().get(), range.size().bytes())
-        {
-            Ok(false) => Some(range),
-            Ok(true) | Err(_) => None,
-        }
-    }
-
-    fn scalar_memory_instruction_range(
-        &self,
-        instruction: RiscvInstruction,
-    ) -> Option<AddressRange> {
-        let (rs1, offset, width) = match instruction {
-            RiscvInstruction::Load {
-                rs1, offset, width, ..
-            }
-            | RiscvInstruction::Store {
-                rs1, offset, width, ..
-            } => (rs1, offset, width),
-            _ => return None,
-        };
-        let base = self.hart.read(rs1);
-        let address = if offset.value() >= 0 {
-            base.checked_add(offset.value() as u64)?
-        } else {
-            base.checked_sub(offset.value().unsigned_abs())?
-        };
-        AddressRange::new(
-            Address::new(address),
-            AccessSize::new(width.bytes() as u64).ok()?,
-        )
-        .ok()
-    }
-
     fn new(pc: u64, hart_id: u64) -> Self {
         Self {
             hart: RiscvHartState::with_hart_id(pc, hart_id),

@@ -19,6 +19,8 @@ use crate::{
 
 #[path = "riscv_data_issue_tests/forwarding.rs"]
 mod forwarding;
+#[path = "riscv_data_issue_tests/multi_load.rs"]
+mod multi_load;
 
 #[test]
 fn retry_response_discards_pending_o3_trace_data_access_outcome() {

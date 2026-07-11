@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 
 const OLDER_LOAD_PC: &str = "0x8000000c";
@@ -6,6 +8,12 @@ const DATA_ADDRESS: &str = "0x80000080";
 const YOUNGER_DATA_ADDRESS: &str = "0x800000c0";
 const EXPECTED_RESULTS_LOWER: &str = "2a000000000000002a00000063000000";
 const EXPECTED_RESULTS_UPPER: &str = "2b00000065000000";
+const THIRD_LOAD_PC: &str = "0x80000014";
+const THREE_LOAD_DATA_ADDRESS: &str = "0x80000100";
+const THREE_LOAD_MIDDLE_ADDRESS: &str = "0x80000140";
+const THREE_LOAD_YOUNGER_ADDRESS: &str = "0x80000180";
+const THREE_LOAD_RESULTS_LOWER: &str = "2a000000000000002a00000063000000";
+const THREE_LOAD_RESULTS_UPPER: &str = "770000002b000000650000007a000000";
 
 #[test]
 fn rem6_run_o3_detailed_two_scalar_loads_overlap_before_first_response_direct() {
@@ -154,6 +162,389 @@ fn rem6_run_o3_timing_two_scalar_loads_preserve_architecture_without_o3_window()
         unexpected.is_empty(),
         "timing mode should suppress two-load O3 aliases: {unexpected:?}"
     );
+}
+
+#[test]
+fn rem6_run_o3_detailed_three_scalar_loads_overlap_before_first_response_direct() {
+    let path = three_scalar_load_binary("o3-three-scalar-loads-direct");
+    let json = three_scalar_load_json(&path, "direct", 1100, None);
+
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("direct")
+    );
+    assert_completed_three_scalar_loads(&json);
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64).unwrap_or(0),
+            0,
+            "direct three-load run should not exercise {pointer}: {json}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_o3_detailed_three_scalar_loads_overlap_through_cache_fabric_dram() {
+    let path = three_scalar_load_binary("o3-three-scalar-loads-cache-fabric-dram");
+    let json = three_scalar_load_json(&path, "cache-fabric-dram", 1700, None);
+
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    assert_completed_three_scalar_loads(&json);
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/transport/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert!(
+            json.pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "hierarchy-backed three-load run should expose {pointer}: {json}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_o3_detailed_three_scalar_loads_remain_resident_at_tick_limit() {
+    let path = three_scalar_load_binary("o3-three-scalar-loads-resident");
+    let completed = three_scalar_load_json(&path, "direct", 1100, None);
+    let events = [
+        event_at_pc(&completed, OLDER_LOAD_PC),
+        event_at_pc(&completed, YOUNGER_LOAD_PC),
+        event_at_pc(&completed, THIRD_LOAD_PC),
+    ];
+    let third_issue_tick = event_u64(events[2], "issue_tick");
+    let first_response_tick = events
+        .iter()
+        .map(|event| event_u64(event, "lsq_data_response_tick"))
+        .min()
+        .expect("three load response ticks");
+    let stop_tick =
+        third_issue_tick.saturating_add(first_response_tick.saturating_sub(third_issue_tick) / 2);
+    assert!(third_issue_tick < stop_tick && stop_tick < first_response_tick);
+
+    let json = three_scalar_load_json(&path, "direct", stop_tick, None);
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_at_tick_limit")
+    );
+    assert_eq!(
+        json.pointer("/simulation/final_tick")
+            .and_then(Value::as_u64),
+        Some(stop_tick)
+    );
+    let rob = json
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("resident three-load run should expose ROB rows: {json}"));
+    for pc in [OLDER_LOAD_PC, YOUNGER_LOAD_PC, THIRD_LOAD_PC] {
+        let entry = rob
+            .iter()
+            .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(pc))
+            .unwrap_or_else(|| panic!("resident three-load ROB should include {pc}: {json}"));
+        assert_eq!(
+            entry.pointer("/ready").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            entry.pointer("/live_staged").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+    let lsq = json
+        .pointer("/cores/0/o3_runtime/snapshot/lsq/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("resident three-load run should expose LSQ rows: {json}"));
+    assert_eq!(lsq.len(), 3);
+    assert_eq!(
+        lsq.iter()
+            .filter_map(|entry| entry.pointer("/address").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        vec![
+            THREE_LOAD_DATA_ADDRESS,
+            THREE_LOAD_MIDDLE_ADDRESS,
+            THREE_LOAD_YOUNGER_ADDRESS,
+        ]
+    );
+    assert!(lsq.iter().all(|entry| {
+        entry.pointer("/kind").and_then(Value::as_str) == Some("load")
+            && entry.pointer("/bytes").and_then(Value::as_u64) == Some(4)
+            && entry.pointer("/completed").and_then(Value::as_bool) == Some(false)
+    }));
+}
+
+#[test]
+fn rem6_run_o3_timing_three_scalar_loads_preserve_architecture_without_o3_window() {
+    let path = three_scalar_load_binary("o3-three-scalar-loads-timing");
+    let json = three_scalar_load_json(&path, "direct", 1100, Some("timing"));
+
+    assert_three_load_architecture(&json);
+    assert!(json.pointer("/cores/0/o3_runtime").is_none());
+    assert!(json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+    let unexpected = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("run JSON stats array")
+        .iter()
+        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
+        .filter(|path| {
+            path.starts_with("sim.cpu0.o3.")
+                || [
+                    "system.cpu.rob.",
+                    "system.cpu.lsq0.",
+                    "system.cpu.rename.",
+                    "system.cpu.iq.",
+                    "system.cpu.iew.",
+                    "system.cpu.commit.",
+                    "system.cpu.ftq.",
+                ]
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "timing mode should suppress three-load O3 aliases: {unexpected:?}"
+    );
+}
+
+fn assert_completed_three_scalar_loads(json: &Value) {
+    assert_three_load_architecture(json);
+    assert_json_stat_at_least(
+        json,
+        "sim.cpu0.o3.max_rob_occupancy",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        "sim.cpu0.o3.max_lsq_occupancy",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_json_stat(
+        json,
+        "system.cpu.lsq0.maxOccupancy",
+        "Count",
+        3,
+        "monotonic",
+    );
+
+    let events = [
+        event_at_pc(json, OLDER_LOAD_PC),
+        event_at_pc(json, YOUNGER_LOAD_PC),
+        event_at_pc(json, THIRD_LOAD_PC),
+    ];
+    let first_response_tick = events
+        .iter()
+        .map(|event| event_u64(event, "lsq_data_response_tick"))
+        .min()
+        .expect("three load response ticks");
+    assert!(
+        events
+            .iter()
+            .all(|event| event_u64(event, "issue_tick") < first_response_tick),
+        "all three loads should issue before the first response: {events:?}"
+    );
+    assert!(events
+        .windows(2)
+        .all(|pair| event_u64(pair[0], "commit_tick") <= event_u64(pair[1], "commit_tick")));
+    assert_eq!(data_memory_request_count(json), 9);
+    assert_eq!(data_requests_sent_before_first_response(json), 3);
+
+    let data_trace = json
+        .pointer("/debug/data_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("three-load run should expose Data trace: {json}"));
+    assert_eq!(data_trace.len(), 9);
+    let observed = data_trace
+        .iter()
+        .map(|record| {
+            (
+                record.pointer("/kind").and_then(Value::as_str).unwrap(),
+                record.pointer("/address").and_then(Value::as_str).unwrap(),
+                record.pointer("/size").and_then(Value::as_u64).unwrap(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        observed,
+        BTreeSet::from([
+            ("load", THREE_LOAD_DATA_ADDRESS, 4),
+            ("load", THREE_LOAD_MIDDLE_ADDRESS, 4),
+            ("load", THREE_LOAD_YOUNGER_ADDRESS, 4),
+            ("store", "0x80000108", 4),
+            ("store", "0x8000010c", 4),
+            ("store", "0x80000110", 4),
+            ("store", "0x80000114", 4),
+            ("store", "0x80000118", 4),
+            ("store", "0x8000011c", 4),
+        ])
+    );
+}
+
+fn assert_three_load_architecture(json: &Value) {
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some(THREE_LOAD_RESULTS_LOWER)
+    );
+    assert_eq!(
+        json.pointer("/memory/1/hex").and_then(Value::as_str),
+        Some(THREE_LOAD_RESULTS_UPPER)
+    );
+    assert_eq!(
+        json.pointer("/memory/2/hex").and_then(Value::as_str),
+        Some("63000000")
+    );
+    assert_eq!(
+        json.pointer("/memory/3/hex").and_then(Value::as_str),
+        Some("77000000")
+    );
+    for (register, value) in [
+        ("x12", "0x2a"),
+        ("x13", "0x63"),
+        ("x14", "0x77"),
+        ("x15", "0x2b"),
+        ("x16", "0x65"),
+        ("x17", "0x7a"),
+    ] {
+        assert_eq!(
+            json.pointer(&format!("/cores/0/registers/{register}"))
+                .and_then(Value::as_str),
+            Some(value),
+            "final register {register} should preserve three-load semantics: {json}"
+        );
+    }
+}
+
+fn three_scalar_load_json(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    switch_mode: Option<&str>,
+) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        &max_tick.to_string(),
+        "--stats-format",
+        "json",
+        "--execute",
+        "--riscv-branch-lookahead",
+        "2",
+        "--debug-flags",
+        "O3,Data,Memory",
+        "--memory-system",
+        memory_system,
+        "--memory-route-delay",
+        "16",
+        "--dump-memory",
+        "0x80000100:16",
+        "--dump-memory",
+        "0x80000110:16",
+        "--dump-memory",
+        "0x80000140:4",
+        "--dump-memory",
+        "0x80000180:4",
+    ]);
+    if let Some(switch_mode) = switch_mode {
+        command.args(["--m5-switch-cpu-mode", switch_mode]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn data_memory_request_count(json: &Value) -> usize {
+    json.pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("run JSON Memory trace")
+        .iter()
+        .filter(|record| record.pointer("/channel").and_then(Value::as_str) == Some("data"))
+        .map(|record| {
+            (
+                record
+                    .pointer("/request_agent")
+                    .and_then(Value::as_u64)
+                    .expect("memory trace request agent"),
+                record
+                    .pointer("/request")
+                    .and_then(Value::as_u64)
+                    .expect("memory trace request sequence"),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn data_requests_sent_before_first_response(json: &Value) -> usize {
+    let trace = json
+        .pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("run JSON Memory trace");
+    let first_response_tick = trace
+        .iter()
+        .filter(|record| {
+            record.pointer("/channel").and_then(Value::as_str) == Some("data")
+                && record.pointer("/kind").and_then(Value::as_str) == Some("response_arrived")
+        })
+        .filter_map(|record| record.pointer("/tick").and_then(Value::as_u64))
+        .min()
+        .expect("data response trace record");
+    trace
+        .iter()
+        .filter(|record| {
+            record.pointer("/channel").and_then(Value::as_str) == Some("data")
+                && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
+                && record
+                    .pointer("/tick")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|tick| tick < first_response_tick)
+        })
+        .map(|record| {
+            (
+                record
+                    .pointer("/request_agent")
+                    .and_then(Value::as_u64)
+                    .expect("memory trace request agent"),
+                record
+                    .pointer("/request")
+                    .and_then(Value::as_u64)
+                    .expect("memory trace request sequence"),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
 }
 
 fn assert_completed_two_scalar_loads(json: &Value) {
@@ -317,6 +708,44 @@ fn two_scalar_load_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0x2a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x63]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn three_scalar_load_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 256_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0, 10, 0b010, 12, 0x03),
+        i_type(64, 10, 0b010, 13, 0x03),
+        i_type(128, 10, 0b010, 14, 0x03),
+        i_type(1, 12, 0x0, 15, 0x13),
+        i_type(2, 13, 0x0, 16, 0x13),
+        i_type(3, 14, 0x0, 17, 0x13),
+        s_type(8, 12, 10, 0b010),
+        s_type(12, 13, 10, 0b010),
+        s_type(16, 14, 10, 0b010),
+        s_type(20, 15, 10, 0b010),
+        s_type(24, 16, 10, 0b010),
+        s_type(28, 17, 10, 0b010),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.push(0x2a);
+    while words.len() * 4 < data_start as usize + 64 {
+        words.push(0);
+    }
+    words.push(0x63);
+    while words.len() * 4 < data_start as usize + 128 {
+        words.push(0);
+    }
+    words.push(0x77);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

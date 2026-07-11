@@ -37,19 +37,28 @@ pub(super) fn scalar_memory_has_younger_fetch(
     instruction: RiscvInstruction,
 ) -> bool {
     allows_scalar_memory_fetch_ahead(state, instruction)
-        && fetch_events.iter().any(|event| {
-            event.pc() == younger_pc
-                && event.request_id().agent() == memory_request.agent()
-                && event.request_id().sequence() > memory_request.sequence()
-                && !state.executed_fetches.contains(&event.request_id())
-                && match event.kind() {
-                    CpuFetchEventKind::Completed => true,
-                    CpuFetchEventKind::Issued => {
-                        !super::fetch_request_has_response(fetch_events, event)
-                    }
-                    CpuFetchEventKind::Retry | CpuFetchEventKind::Failed => false,
+        && has_live_younger_fetch_at(state, fetch_events, memory_request, younger_pc)
+}
+
+fn has_live_younger_fetch_at(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    memory_request: rem6_memory::MemoryRequestId,
+    pc: Address,
+) -> bool {
+    fetch_events.iter().any(|event| {
+        event.pc() == pc
+            && event.request_id().agent() == memory_request.agent()
+            && event.request_id().sequence() > memory_request.sequence()
+            && !state.executed_fetches.contains(&event.request_id())
+            && match event.kind() {
+                CpuFetchEventKind::Completed => true,
+                CpuFetchEventKind::Issued => {
+                    !super::fetch_request_has_response(fetch_events, event)
                 }
-        })
+                CpuFetchEventKind::Retry | CpuFetchEventKind::Failed => false,
+            }
+    })
 }
 
 pub(super) fn scalar_memory_waits_for_younger_fetch(
@@ -104,10 +113,16 @@ pub(super) fn third_fetch_candidate(
     else {
         return ThirdFetchCandidate::Blocked;
     };
-    if !matches!(
+    let scalar_load_window = state.branch_lookahead >= 2
+        && matches!(current.decoded().instruction(), RiscvInstruction::Load { rd, .. } if !rd.is_zero())
+        && state
+            .cacheable_scalar_memory_instruction_range(current.decoded().instruction())
+            .is_some();
+    let fu_window = matches!(
         o3_fu_latency_class(current.decoded().instruction()),
         Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
-    ) {
+    );
+    if !scalar_load_window && !fu_window {
         return ThirdFetchCandidate::NotApplicable;
     }
     let younger_pc = Address::new(
@@ -136,16 +151,39 @@ pub(super) fn third_fetch_candidate(
             ThirdFetchCandidate::NotApplicable
         };
     };
-    let Some((_destination, sources)) =
-        o3_speculative_scalar_alu_operands(younger.decoded().instruction())
-    else {
-        return ThirdFetchCandidate::Blocked;
-    };
-    let current_destination = o3_scalar_integer_destination(current.decoded().instruction());
-    if current_destination.is_some_and(|destination| {
-        !destination.is_zero() && sources.iter().any(|source| *source == destination)
-    }) {
-        return ThirdFetchCandidate::Blocked;
+    if scalar_load_window {
+        let RiscvInstruction::Load { rd: current_rd, .. } = current.decoded().instruction() else {
+            unreachable!("scalar load window requires a load")
+        };
+        let RiscvInstruction::Load {
+            rd: younger_rd,
+            rs1: younger_rs1,
+            ..
+        } = younger.decoded().instruction()
+        else {
+            return ThirdFetchCandidate::Blocked;
+        };
+        if younger_rd.is_zero()
+            || younger_rd == current_rd
+            || younger_rs1 == current_rd
+            || state
+                .cacheable_scalar_memory_instruction_range(younger.decoded().instruction())
+                .is_none()
+        {
+            return ThirdFetchCandidate::Blocked;
+        }
+    } else {
+        let Some((_destination, sources)) =
+            o3_speculative_scalar_alu_operands(younger.decoded().instruction())
+        else {
+            return ThirdFetchCandidate::Blocked;
+        };
+        let current_destination = o3_scalar_integer_destination(current.decoded().instruction());
+        if current_destination
+            .is_some_and(|destination| !destination.is_zero() && sources.contains(&destination))
+        {
+            return ThirdFetchCandidate::Blocked;
+        }
     }
     let third_pc = Address::new(
         younger
@@ -153,14 +191,12 @@ pub(super) fn third_fetch_candidate(
             .get()
             .wrapping_add(u64::from(younger.decoded().bytes())),
     );
-    if oldest_completed_fetch_at(
-        &state.executed_fetches,
+    if has_live_younger_fetch_at(
+        state,
         fetch_events,
         younger.last_consumed_request(),
         third_pc,
-    )
-    .is_some()
-    {
+    ) {
         return ThirdFetchCandidate::Blocked;
     }
     ThirdFetchCandidate::Ready(third_pc)

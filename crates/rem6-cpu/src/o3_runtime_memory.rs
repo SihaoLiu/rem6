@@ -1,7 +1,5 @@
 use super::*;
 
-const MAX_LIVE_SCALAR_MEMORIES: usize = 2;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveScalarMemory {
     pub(super) fetch_request: MemoryRequestId,
@@ -147,8 +145,7 @@ impl O3RuntimeState {
         match self.deferred_scalar_memory_execution {
             Some(pending) => pending == fetch_request,
             None => {
-                if !self.live_scalar_memories.is_empty()
-                    && !self.can_stage_second_scalar_memory(execution)
+                if !self.live_scalar_memories.is_empty() && !self.can_stage_scalar_memory(execution)
                 {
                     return false;
                 }
@@ -190,7 +187,7 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         issue_tick: u64,
     ) -> bool {
-        if self.live_scalar_memories.len() >= MAX_LIVE_SCALAR_MEMORIES {
+        if !self.has_scalar_memory_window_capacity() {
             return false;
         }
         let Some(access) = execution.execution().memory_access() else {
@@ -199,8 +196,7 @@ impl O3RuntimeState {
         if !is_deferred_o3_scalar_memory_access(Some(access)) {
             return false;
         }
-        if !self.live_scalar_memories.is_empty() && !self.can_stage_second_scalar_memory(execution)
-        {
+        if !self.live_scalar_memories.is_empty() && !self.can_stage_scalar_memory(execution) {
             return false;
         }
         if self
