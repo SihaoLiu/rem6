@@ -120,6 +120,94 @@ fn rem6_run_checkpoints_and_restores_live_retire_gate_with_attached_scheduler() 
     let runtime = chunk
         .pointer("/o3_runtime")
         .unwrap_or_else(|| panic!("missing decoded live-gate O3 payload: {chunk}"));
+    let checkpoint = json
+        .pointer("/host_actions/checkpoints/0")
+        .unwrap_or_else(|| panic!("missing live-gate checkpoint metadata: {json}"));
+    let checkpoint_chunk = restore_component_chunk(checkpoint, "cpu0", "o3-runtime-state");
+    let checkpoint_runtime = checkpoint_chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing captured live-gate O3 payload: {checkpoint_chunk}"));
+    let checkpoint_gate = live_retire_gate_checkpoint_fields(checkpoint_runtime);
+    let restored_gate = live_retire_gate_checkpoint_fields(runtime);
+    assert_eq!(
+        restored_gate, checkpoint_gate,
+        "restored O3 payload must preserve the captured live-gate request and absolute ready tick"
+    );
+    assert!(
+        checkpoint_gate.1 > 0,
+        "captured live-gate request sequence must identify real fetch work: {checkpoint_runtime}"
+    );
+    assert!(
+        checkpoint_gate.2 > restore_tick,
+        "captured live-gate ready tick must remain in the future across immediate restore: checkpoint_tick={checkpoint_tick} restore_tick={restore_tick} runtime={checkpoint_runtime}"
+    );
+    let o3_events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 events for restored live gate: {json}"));
+    let divide = o3_events
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        .unwrap_or_else(|| panic!("missing restored DIV event: {o3_events:?}"));
+    let divide_issue_tick = divide
+        .pointer("/issue_tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("restored DIV event must expose issue_tick: {divide}"));
+    let divide_writeback_tick = divide
+        .pointer("/writeback_tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("restored DIV event must expose writeback_tick: {divide}"));
+    assert_eq!(
+        checkpoint_gate.2, divide_writeback_tick,
+        "checkpoint ready tick must be the restored DIV writeback boundary: runtime={checkpoint_runtime} divide={divide}"
+    );
+    assert_eq!(
+        divide_writeback_tick.checked_sub(divide_issue_tick),
+        Some(19),
+        "restored DIV event must retain the configured 19-tick live-gate latency: {divide}"
+    );
+
+    let debug_restores = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .filter(|record| {
+                    record.pointer("/kind").and_then(Value::as_str) == Some("checkpoint_restore")
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| panic!("missing HostAction checkpoint-restore trace: {json}"));
+    assert_eq!(
+        debug_restores.len(),
+        1,
+        "expected exactly one HostAction checkpoint-restore trace: {debug_restores:?}"
+    );
+    let debug_restore = debug_restores[0];
+    let debug_chunk = restore_component_chunk(debug_restore, "cpu0", "o3-runtime-state");
+    let debug_runtime = debug_chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing debug restored live-gate O3 payload: {debug_chunk}"));
+    assert_eq!(
+        live_retire_gate_checkpoint_fields(debug_runtime),
+        checkpoint_gate,
+        "HostAction debug JSON must preserve the checkpoint-time live-gate authority"
+    );
+
+    for field in [
+        "live_retire_gate_request_agent",
+        "live_retire_gate_request_sequence",
+        "live_retire_gate_ready_tick",
+    ] {
+        for prefix in [
+            "sim.host_actions.checkpoint.component.cpu0.chunk.o3_runtime_state.o3_runtime",
+            "sim.host_actions.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.o3_runtime",
+            "sim.debug.host_action_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.o3_runtime",
+        ] {
+            assert_json_stat_absent(&json, &format!("{prefix}.{field}"));
+        }
+    }
     assert!(
         runtime
             .pointer("/snapshot_rob_entries")
@@ -211,6 +299,19 @@ fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
         Some(false),
         "post-detailed O3 runtime checkpoint chunk should decode cleanly: {after_detailed_chunk}"
     );
+    for chunk in [baseline_chunk, after_detailed_chunk] {
+        for field in [
+            "live_retire_gate_request_agent",
+            "live_retire_gate_request_sequence",
+            "live_retire_gate_ready_tick",
+        ] {
+            assert_eq!(
+                chunk.pointer(&format!("/o3_runtime/{field}")),
+                Some(&Value::Null),
+                "inactive O3 checkpoints must expose null {field}: {chunk}"
+            );
+        }
+    }
     let checkpoint_cpu0_component_chunks = host_actions
         .pointer("/checkpoints")
         .and_then(Value::as_array)
@@ -1042,6 +1143,22 @@ fn restore_component_chunk<'a>(restore: &'a Value, component: &str, chunk: &str)
                 .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
         })
         .unwrap_or_else(|| panic!("missing restore component/chunk {component}/{chunk}: {restore}"))
+}
+
+fn live_retire_gate_checkpoint_fields(runtime: &Value) -> (u64, u64, u64) {
+    let field = |name: &str| {
+        runtime
+            .pointer(&format!("/{name}"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!("missing live-retire-gate checkpoint field {name}: {runtime}")
+            })
+    };
+    (
+        field("live_retire_gate_request_agent"),
+        field("live_retire_gate_request_sequence"),
+        field("live_retire_gate_ready_tick"),
+    )
 }
 
 #[test]

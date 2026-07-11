@@ -288,6 +288,7 @@ fn o3_runtime_checkpoint_decodes_v19_without_live_retire_gate() {
     let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
 
     assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(decoded.pending_live_retire_gate(), None);
     assert_eq!(decoded.stats().live_retire_gate_scheduled_waits(), 0);
     assert_eq!(decoded.stats().live_retire_gate_wait_ticks(), 0);
     assert_eq!(decoded.stats().live_retire_gate_max_wait_ticks(), 0);

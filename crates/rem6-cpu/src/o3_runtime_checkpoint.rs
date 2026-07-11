@@ -334,6 +334,13 @@ impl O3RuntimeCheckpointPayload {
         &self.dependency_producers_with_consumers
     }
 
+    pub const fn pending_live_retire_gate(&self) -> Option<(MemoryRequestId, Tick)> {
+        match self.live_retire_gate {
+            Some(gate) => Some((gate.request(), gate.ready_tick())),
+            None => None,
+        }
+    }
+
     pub(crate) const fn live_retire_gate(&self) -> Option<O3LiveRetireGateCheckpointPayload> {
         self.live_retire_gate
     }

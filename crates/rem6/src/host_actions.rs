@@ -502,6 +502,9 @@ mod tests {
             .as_ref()
             .expect("o3-runtime-state chunk should have O3 decode summary");
         assert!(o3_runtime.decode_error);
+        assert_eq!(o3_runtime.live_retire_gate_request_agent, None);
+        assert_eq!(o3_runtime.live_retire_gate_request_sequence, None);
+        assert_eq!(o3_runtime.live_retire_gate_ready_tick, None);
         assert_eq!(o3_runtime.snapshot_rob_entries, None);
         assert_eq!(o3_runtime.stats_max_rob_occupancy, None);
 
@@ -511,6 +514,16 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(true)
         );
+        for field in [
+            "live_retire_gate_request_agent",
+            "live_retire_gate_request_sequence",
+            "live_retire_gate_ready_tick",
+        ] {
+            assert_eq!(
+                json.pointer(&format!("/components/0/chunks/0/o3_runtime/{field}")),
+                Some(&Value::Null)
+            );
+        }
         assert_eq!(
             json.pointer("/components/0/chunks/0/o3_runtime/snapshot_rob_entries"),
             Some(&Value::Null)
@@ -628,6 +641,9 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) decode_error: bool,
+    pub(crate) live_retire_gate_request_agent: Option<u64>,
+    pub(crate) live_retire_gate_request_sequence: Option<u64>,
+    pub(crate) live_retire_gate_ready_tick: Option<u64>,
     pub(crate) snapshot_rob_entries: Option<u64>,
     pub(crate) snapshot_lsq_entries: Option<u64>,
     pub(crate) snapshot_rename_map_entries: Option<u64>,
@@ -730,6 +746,9 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
     fn decode_error() -> Self {
         Self {
             decode_error: true,
+            live_retire_gate_request_agent: None,
+            live_retire_gate_request_sequence: None,
+            live_retire_gate_ready_tick: None,
             snapshot_rob_entries: None,
             snapshot_lsq_entries: None,
             snapshot_rename_map_entries: None,
@@ -769,6 +788,18 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
 
     pub(crate) fn numeric_fields(&self) -> Vec<(&'static str, Option<u64>)> {
         vec![
+            (
+                "live_retire_gate_request_agent",
+                self.live_retire_gate_request_agent,
+            ),
+            (
+                "live_retire_gate_request_sequence",
+                self.live_retire_gate_request_sequence,
+            ),
+            (
+                "live_retire_gate_ready_tick",
+                self.live_retire_gate_ready_tick,
+            ),
             ("snapshot_rob_entries", self.snapshot_rob_entries),
             ("snapshot_lsq_entries", self.snapshot_lsq_entries),
             (
@@ -977,11 +1008,18 @@ fn decode_o3_runtime_checkpoint_chunk(
     };
     let snapshot = decoded.snapshot();
     let stats = decoded.stats();
+    let pending_live_retire_gate = decoded.pending_live_retire_gate();
+    let live_retire_gate_request = pending_live_retire_gate.map(|(request, _)| request);
     let integer_mul = O3RuntimeFuLatencyClass::ScalarIntegerMul;
     let integer_div = O3RuntimeFuLatencyClass::ScalarIntegerDiv;
     let float_misc = O3RuntimeFuLatencyClass::ScalarFloatMisc;
     Some(Rem6HostO3RuntimeCheckpointChunkSummary {
         decode_error: false,
+        live_retire_gate_request_agent: live_retire_gate_request
+            .map(|request| u64::from(request.agent().get())),
+        live_retire_gate_request_sequence: live_retire_gate_request
+            .map(|request| request.sequence()),
+        live_retire_gate_ready_tick: pending_live_retire_gate.map(|(_, ready_tick)| ready_tick),
         snapshot_rob_entries: Some(snapshot.reorder_buffer().len() as u64),
         snapshot_lsq_entries: Some(snapshot.load_store_queue().len() as u64),
         snapshot_rename_map_entries: Some(snapshot.rename_map().len() as u64),

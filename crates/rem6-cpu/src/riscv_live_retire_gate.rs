@@ -511,5 +511,6 @@ mod tests {
         let decoded = O3RuntimeCheckpointPayload::decode(&payload.encode()).unwrap();
 
         assert_eq!(decoded.live_retire_gate(), Some(pending));
+        assert_eq!(decoded.pending_live_retire_gate(), Some((request, 123)));
     }
 }
