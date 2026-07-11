@@ -300,6 +300,26 @@ impl GuestEventChannel {
             .map_err(SystemError::Scheduler)
     }
 
+    pub(crate) fn emit_with_scheduler_checkpoint<F>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+        handler: F,
+    ) -> Result<PartitionEventId, SystemError>
+    where
+        F: FnOnce(GuestEventDelivery, &mut SchedulerContext<'_>) + Send + 'static,
+    {
+        let source_partition = context.partition();
+        let host_partition = self.host_partition;
+        context
+            .schedule_remote_after(self.host_partition, self.host_latency, move |context| {
+                let delivery =
+                    GuestEventDelivery::new(context.now(), source_partition, host_partition, event);
+                handler(delivery, context);
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
     pub fn emit_parallel<F>(
         &self,
         context: &mut ParallelSchedulerContext<'_>,

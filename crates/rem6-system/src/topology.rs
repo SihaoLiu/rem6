@@ -703,7 +703,8 @@ impl RiscvTopologySystem {
             Arc::clone(&controller),
         )
         .map_err(RiscvTopologySystemError::System)?;
-        let trap_port = RiscvTrapEventPort::new(host_port, config.source());
+        let trap_port = RiscvTrapEventPort::new(host_port, config.source())
+            .with_scheduler_checkpoint_component(config.scheduler_checkpoint_component().clone());
         self.host = Some(RiscvTopologyHost {
             controller,
             driver: RiscvSystemRunDriver::new(trap_port),

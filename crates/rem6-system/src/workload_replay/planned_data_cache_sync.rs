@@ -12,6 +12,7 @@ use rem6_workload::{HostEventIntent, WorkloadHostEvent};
 use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::memory_backend::WorkloadMemoryBackend;
 use super::{RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay};
+use crate::workload_replay_host::PlannedHostDeliveryContext;
 use crate::{GuestEventDelivery, SystemActionOutcome, SystemHostController};
 
 #[derive(Clone, Copy)]
@@ -225,12 +226,16 @@ pub(super) fn planned_host_data_cache_sync_handler(
     memory: WorkloadMemoryBackend,
     data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     errors: Arc<Mutex<Vec<RiscvWorkloadReplayError>>>,
-) -> impl Fn(&WorkloadHostEvent, GuestEventDelivery, &Arc<Mutex<SystemHostController>>)
-       + Clone
+) -> impl for<'a> Fn(
+    &WorkloadHostEvent,
+    GuestEventDelivery,
+    &Arc<Mutex<SystemHostController>>,
+    PlannedHostDeliveryContext<'a>,
+) + Clone
        + Send
        + Sync
        + 'static {
-    move |event, delivery, controller| match event.intent() {
+    move |event, delivery, controller, delivery_context| match event.intent() {
         HostEventIntent::Checkpoint { .. } => {
             if let Err(error) =
                 sync_data_cache_lines_to_memory(data_cache.as_ref(), &memory, delivery.tick())
@@ -238,16 +243,10 @@ pub(super) fn planned_host_data_cache_sync_handler(
                 record_planned_host_data_cache_sync_error(&errors, error);
                 return;
             }
-            controller
-                .lock()
-                .expect("system host controller lock")
-                .handle_delivery(delivery);
+            delivery_context.deliver(delivery, controller);
         }
         HostEventIntent::RestoreCheckpoint { .. } => {
-            let outcomes = controller
-                .lock()
-                .expect("system host controller lock")
-                .handle_delivery(delivery);
+            let outcomes = delivery_context.deliver(delivery, controller);
             let restored = outcomes
                 .iter()
                 .any(|outcome| matches!(outcome, SystemActionOutcome::CheckpointRestored { .. }));
@@ -259,10 +258,7 @@ pub(super) fn planned_host_data_cache_sync_handler(
             }
         }
         _ => {
-            controller
-                .lock()
-                .expect("system host controller lock")
-                .handle_delivery(delivery);
+            delivery_context.deliver(delivery, controller);
         }
     }
 }

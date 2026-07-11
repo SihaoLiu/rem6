@@ -2467,6 +2467,15 @@ fn workload_replay_executes_planned_host_actions() {
                     && transfer.payload_bytes() > 0
             })
     )));
+    let planned_state_transfer_dispatch_ticks = outcome
+        .run()
+        .turns()
+        .iter()
+        .filter_map(rem6_cpu::RiscvClusterTurn::serial_scheduler_summary)
+        .map(|summary| summary.final_tick())
+        .filter(|tick| matches!(tick, 1 | 2))
+        .collect::<Vec<_>>();
+    assert_eq!(planned_state_transfer_dispatch_ticks, vec![1, 1, 2]);
     plan.verify_result(outcome.result()).unwrap();
 }
 

@@ -319,12 +319,15 @@ impl RiscvWorkloadReplay {
             &traffic_trace_data_cache_routes,
         )?;
         let planned_host_data_cache_sync_errors = Arc::new(Mutex::new(Vec::new()));
+        let scheduler_checkpoint_component = CheckpointComponentId::new("scheduler0")
+            .expect("static scheduler checkpoint component is nonempty");
         schedule_planned_host_events_with_handler(
             &self.plan,
             &mut scheduler,
             &controller,
             PartitionId::new(topology.host().partition()),
             GuestSourceId::new(topology.host().source()),
+            scheduler_checkpoint_component.clone(),
             planned_host_data_cache_sync_handler(
                 memory.clone(),
                 data_cache.clone(),
@@ -351,7 +354,8 @@ impl RiscvWorkloadReplay {
             )
             .map_err(RiscvWorkloadReplayError::System)?,
             GuestSourceId::new(topology.host().source()),
-        );
+        )
+        .with_scheduler_checkpoint_component(scheduler_checkpoint_component);
         let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
         if let Some(handoff) = self.plan.linux_boot_handoff() {
             driver = driver

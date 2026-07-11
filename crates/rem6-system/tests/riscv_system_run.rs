@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     RiscvCluster, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
@@ -1334,7 +1335,8 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
     let trap_port = RiscvTrapEventPort::new(
         SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
         source,
-    );
+    )
+    .with_scheduler_checkpoint_component(CheckpointComponentId::new("scheduler0").unwrap());
     let driver = RiscvSystemRunDriver::new(trap_port);
     let mut next_event_id = 140_u64;
 

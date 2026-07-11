@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::{BootElfArchitecture, BootImage};
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
     InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster, RiscvCore,
@@ -903,7 +904,10 @@ fn execute_riscv(
         .map_err(execute_error)?,
         GuestSourceId::new(1),
     )
-    .with_m5_switch_cpu_mode(config.m5_switch_cpu_mode());
+    .with_m5_switch_cpu_mode(config.m5_switch_cpu_mode())
+    .with_scheduler_checkpoint_component(
+        CheckpointComponentId::new("scheduler0").map_err(execute_error)?,
+    );
     let probe_config = StackDistProbeConfig::builder(line_layout.bytes(), line_layout.bytes())
         .build()
         .map_err(stats_error)?;

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_checkpoint::CheckpointComponentId;
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerCheckpointAccess};
 use rem6_workload::{
     HostEventIntent, WorkloadExecutionMode, WorkloadGuestHostCallResponse, WorkloadHostEvent,
     WorkloadReplayPlan,
@@ -9,10 +10,38 @@ use rem6_workload::{
 use crate::workload_replay::RiscvWorkloadReplayError;
 use crate::{
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
-    GuestEventKind, GuestHostCallResponse, GuestSourceId, SystemHostController,
+    GuestEventKind, GuestHostCallResponse, GuestSourceId, SystemActionOutcome,
+    SystemHostController,
 };
 
 const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
+
+pub(crate) enum PlannedHostDeliveryContext<'a> {
+    Plain,
+    SchedulerCheckpoint {
+        component: CheckpointComponentId,
+        scheduler: SchedulerCheckpointAccess<'a>,
+    },
+}
+
+impl PlannedHostDeliveryContext<'_> {
+    pub(crate) fn deliver(
+        self,
+        delivery: GuestEventDelivery,
+        controller: &Arc<Mutex<SystemHostController>>,
+    ) -> Vec<SystemActionOutcome> {
+        let mut controller = controller.lock().expect("system host controller lock");
+        match self {
+            Self::Plain => controller.handle_delivery(delivery),
+            Self::SchedulerCheckpoint {
+                component,
+                scheduler,
+            } => {
+                controller.handle_delivery_with_scheduler_checkpoint(delivery, component, scheduler)
+            }
+        }
+    }
+}
 
 pub(crate) fn schedule_planned_host_events_with_handler<H>(
     plan: &WorkloadReplayPlan,
@@ -20,11 +49,16 @@ pub(crate) fn schedule_planned_host_events_with_handler<H>(
     controller: &Arc<Mutex<SystemHostController>>,
     host_partition: PartitionId,
     host_source: GuestSourceId,
+    scheduler_checkpoint_component: CheckpointComponentId,
     handle_delivery: H,
 ) -> Result<(), RiscvWorkloadReplayError>
 where
-    H: Fn(&WorkloadHostEvent, GuestEventDelivery, &Arc<Mutex<SystemHostController>>)
-        + Clone
+    H: for<'a> Fn(
+            &WorkloadHostEvent,
+            GuestEventDelivery,
+            &Arc<Mutex<SystemHostController>>,
+            PlannedHostDeliveryContext<'a>,
+        ) + Clone
         + Send
         + Sync
         + 'static,
@@ -35,23 +69,68 @@ where
         let Some(guest_event) = planned_host_guest_event(event, index, host_source) else {
             continue;
         };
-        let controller = Arc::clone(controller);
+        let delivery_controller = Arc::clone(controller);
         let event = event.clone();
         let handle_delivery = handle_delivery.clone();
-        scheduler
-            .schedule_parallel_at(host_partition, event.tick(), move |context| {
-                let delivery = GuestEventDelivery::new(
-                    context.now(),
-                    host_partition,
-                    host_partition,
-                    guest_event,
-                );
-                handle_delivery(&event, delivery, &controller);
-            })
-            .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        if planned_host_event_requires_scheduler_checkpoint(&event) {
+            let component = scheduler_checkpoint_component.clone();
+            let scheduled = scheduler
+                .schedule_at(host_partition, event.tick(), move |context| {
+                    let delivery = GuestEventDelivery::new(
+                        context.now(),
+                        host_partition,
+                        host_partition,
+                        guest_event,
+                    );
+                    handle_delivery(
+                        &event,
+                        delivery,
+                        &delivery_controller,
+                        PlannedHostDeliveryContext::SchedulerCheckpoint {
+                            component,
+                            scheduler: context.checkpoint_access(),
+                        },
+                    );
+                })
+                .map_err(RiscvWorkloadReplayError::Scheduler)?;
+            let event = scheduler
+                .pending_event_snapshot(scheduled)
+                .expect("newly scheduled planned host control is pending");
+            controller
+                .lock()
+                .expect("system host controller lock")
+                .executor_mut()
+                .register_scheduler_checkpoint_control_event(scheduler.instance_id(), event);
+        } else {
+            scheduler
+                .schedule_parallel_at(host_partition, event.tick(), move |context| {
+                    let delivery = GuestEventDelivery::new(
+                        context.now(),
+                        host_partition,
+                        host_partition,
+                        guest_event,
+                    );
+                    handle_delivery(
+                        &event,
+                        delivery,
+                        &delivery_controller,
+                        PlannedHostDeliveryContext::Plain,
+                    );
+                })
+                .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        }
     }
 
     Ok(())
+}
+
+fn planned_host_event_requires_scheduler_checkpoint(event: &WorkloadHostEvent) -> bool {
+    matches!(
+        event.intent(),
+        HostEventIntent::SwitchExecutionMode { .. }
+            | HostEventIntent::Checkpoint { .. }
+            | HostEventIntent::RestoreCheckpoint { .. }
+    )
 }
 
 fn register_planned_guest_host_call_responses(
@@ -136,4 +215,92 @@ fn guest_host_call_response(response: &WorkloadGuestHostCallResponse) -> GuestHo
         response.return_values().to_vec(),
         response.payload().to_vec(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rem6_boot::BootImage;
+    use rem6_memory::Address;
+    use rem6_stats::StatsRegistry;
+    use rem6_workload::{WorkloadId, WorkloadManifest};
+
+    use super::*;
+    use crate::{
+        HostEventPolicy, SchedulerCheckpointBank, SchedulerCheckpointPort, SystemActionOutcome,
+    };
+
+    #[test]
+    fn planned_checkpoint_preserves_future_scheduler_control() {
+        let boot = BootImage::new(Address::new(0x1000))
+            .add_segment(Address::new(0x1000), vec![0; 4])
+            .unwrap();
+        let manifest = WorkloadManifest::builder(
+            WorkloadId::new("planned-checkpoint-controls").unwrap(),
+            boot,
+        )
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::Checkpoint {
+                label: "planned".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            2,
+            HostEventIntent::RestoreCheckpoint {
+                label: "planned".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+        let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+        let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+        let component = CheckpointComponentId::new("scheduler0").unwrap();
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .attach_scheduler_checkpoint_bank(
+                SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+                    component.clone(),
+                    Arc::clone(&scheduler),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let mut scheduler = scheduler.lock().unwrap();
+
+        schedule_planned_host_events_with_handler(
+            &plan,
+            &mut scheduler,
+            &controller,
+            PartitionId::new(0),
+            GuestSourceId::new(1),
+            component,
+            |_, delivery, controller, delivery_context| {
+                delivery_context.deliver(delivery, controller);
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle();
+        drop(scheduler);
+
+        let controller = controller.lock().unwrap();
+        assert!(controller.action_errors().is_empty());
+        assert!(matches!(
+            controller.run().action_outcomes(),
+            [
+                SystemActionOutcome::Checkpoint { manifest, .. },
+                SystemActionOutcome::CheckpointRestored {
+                    manifest: restored,
+                    ..
+                }
+            ] if manifest.label() == "planned" && restored.label() == "planned"
+        ));
+    }
 }

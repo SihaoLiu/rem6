@@ -1,14 +1,19 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{
-    CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvClusterDriveEvent, RiscvClusterTurn,
-    RiscvCore, RiscvCoreDriveAction,
+    CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
+    RiscvClusterDriveEvent, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+    RiscvCpuExecutionEvent,
 };
-use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
+use rem6_isa_riscv::{
+    RiscvExecutionRecord, RiscvInstruction, RiscvSystemEvent, RiscvTrap, RiscvTrapKind,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
+    PartitionedMemoryStore,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -33,6 +38,30 @@ fn layout() -> CacheLineLayout {
 
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
+}
+
+fn riscv_system_event(cpu: u32, sequence: u64, event: RiscvSystemEvent) -> RiscvClusterDriveEvent {
+    let instruction = RiscvInstruction::Ecall;
+    let pc = 0x8000 + u64::from(cpu) * 0x100;
+    RiscvClusterDriveEvent::new(
+        CpuId::new(cpu),
+        RiscvCoreDriveAction::InstructionExecuted(Box::new(RiscvCpuExecutionEvent::new(
+            CpuFetchEvent::completed(
+                CpuFetchRecord::new(
+                    sequence,
+                    PartitionId::new(cpu),
+                    MemoryRouteId::new(u64::from(cpu)),
+                    endpoint(&format!("cpu{cpu}.ifetch")),
+                    MemoryRequestId::new(AgentId::new(cpu + 1), sequence),
+                    Address::new(pc),
+                    AccessSize::new(4).unwrap(),
+                ),
+                word(0x0000_0073),
+            ),
+            instruction,
+            RiscvExecutionRecord::with_system_event(instruction, pc, pc + 4, event),
+        ))),
+    )
 }
 
 #[test]
@@ -1460,7 +1489,8 @@ fn riscv_system_event_switch_cpu_targets_originating_core() {
         StatsRegistry::new(),
     )));
     let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
-    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let trap_port = RiscvTrapEventPort::new(host_port, source)
+        .with_scheduler_checkpoint_component(CheckpointComponentId::new("scheduler0").unwrap());
     let emit_tick = scheduler.now();
     let scheduled = trap_port
         .schedule_riscv_system_events_from_turn(
@@ -1496,18 +1526,75 @@ fn riscv_system_event_switch_cpu_targets_originating_core() {
             ),
         )]
     );
+    let [SystemActionOutcome::ExecutionModeSwitched {
+        tick,
+        event,
+        source: actual_source,
+        target,
+        previous_mode,
+        mode,
+        stats_epoch,
+        stats_reset_tick,
+        state_transfer: None,
+    }] = controller.run().action_outcomes()
+    else {
+        panic!(
+            "unexpected action outcomes: {:?}",
+            controller.run().action_outcomes()
+        );
+    };
+    assert_eq!(*tick, emit_tick + 2);
+    assert_eq!(*event, GuestEventId::new(81));
+    assert_eq!(*actual_source, source);
+    assert_eq!(target, &ExecutionModeTarget::new("cpu1"));
+    assert_eq!(*previous_mode, None);
+    assert_eq!(*mode, ExecutionMode::Detailed);
+    assert_eq!(*stats_epoch, 0);
+    assert_eq!(*stats_reset_tick, 0);
+}
+
+#[test]
+fn unbound_state_transfer_turn_rejects_before_scheduling_ordinary_events() {
+    let host = PartitionId::new(2);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 1, controller).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, GuestSourceId::new(1));
+    let mut scheduler = PartitionedScheduler::new(3).unwrap();
+    let turn = RiscvClusterTurn::core(vec![
+        riscv_system_event(
+            0,
+            1,
+            RiscvSystemEvent::Gem5DumpStats {
+                pc: 0x8000,
+                delay: 0,
+                period: 0,
+            },
+        ),
+        riscv_system_event(
+            1,
+            2,
+            RiscvSystemEvent::Gem5Checkpoint {
+                pc: 0x8100,
+                delay: 0,
+                period: 0,
+            },
+        ),
+    ]);
+
+    let error = trap_port
+        .schedule_riscv_system_events_from_turn(&mut scheduler, &turn, |cpu| {
+            GuestEventId::new(100 + u64::from(cpu.get()))
+        })
+        .unwrap_err();
+
     assert_eq!(
-        controller.run().action_outcomes(),
-        &[SystemActionOutcome::ExecutionModeSwitched {
-            tick: emit_tick + 2,
-            event: GuestEventId::new(81),
-            source,
-            target: ExecutionModeTarget::new("cpu1"),
-            previous_mode: None,
-            mode: ExecutionMode::Detailed,
-            stats_epoch: 0,
-            stats_reset_tick: 0,
-            state_transfer: None,
-        }]
+        error,
+        SystemError::SchedulerCheckpoint(
+            rem6_system::SchedulerCheckpointError::BorrowedSchedulerContextRequired
+        )
     );
+    assert!(scheduler.is_idle());
 }

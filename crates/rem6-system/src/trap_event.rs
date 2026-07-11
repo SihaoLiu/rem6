@@ -1,5 +1,8 @@
+mod scheduler_checkpoint_delivery;
+
 use std::sync::{Arc, Mutex};
 
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction};
 use rem6_isa_riscv::{RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
@@ -10,9 +13,11 @@ use rem6_kernel::{
 use crate::{
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
     GuestEventId, GuestEventKind, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
-    RiscvSbiFirmware, RiscvSbiOutcome, RiscvSyscallEmulation, RiscvSyscallOutcome, SystemError,
-    SystemHostController, SystemRunController,
+    RiscvSbiFirmware, RiscvSbiOutcome, RiscvSyscallEmulation, RiscvSyscallOutcome,
+    SchedulerCheckpointError, SystemError, SystemHostController, SystemRunController,
 };
+
+use self::scheduler_checkpoint_delivery::handle_host_delivery_with_scheduler_checkpoint;
 
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
 
@@ -116,6 +121,7 @@ impl SystemHostEventPort {
         context: &mut SchedulerContext<'_>,
         event: GuestEvent,
     ) -> Result<PartitionEventId, SystemError> {
+        reject_raw_scheduler_checkpoint_event(&event)?;
         let controller = Arc::clone(&self.controller);
         self.channel.emit(context, event, move |delivery| {
             controller
@@ -130,6 +136,7 @@ impl SystemHostEventPort {
         context: &mut ParallelSchedulerContext<'_>,
         event: GuestEvent,
     ) -> Result<PartitionEventId, SystemError> {
+        reject_raw_scheduler_checkpoint_event(&event)?;
         let controller = Arc::clone(&self.controller);
         self.channel.emit_parallel(context, event, move |delivery| {
             controller
@@ -165,6 +172,40 @@ impl SystemHostEventPort {
                 );
             })
             .map_err(SystemError::Scheduler)
+    }
+
+    fn emit_with_scheduler_checkpoint(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+        period: Tick,
+        component: CheckpointComponentId,
+    ) -> Result<PartitionEventId, SystemError> {
+        let delivery_controller = Arc::clone(&self.controller);
+        let registration_controller = Arc::clone(&self.controller);
+        let scheduler_event = self.channel.emit_with_scheduler_checkpoint(
+            context,
+            event,
+            move |delivery, context| {
+                handle_host_delivery_with_scheduler_checkpoint(
+                    context,
+                    delivery,
+                    period,
+                    component,
+                    delivery_controller,
+                );
+            },
+        )?;
+        let scheduler = context.checkpoint_access();
+        let event = scheduler
+            .pending_event_snapshot(scheduler_event)
+            .expect("new scheduler checkpoint control delivery is pending");
+        registration_controller
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .register_scheduler_checkpoint_control_event(scheduler.instance_id(), event);
+        Ok(scheduler_event)
     }
 
     fn emit_with_period_parallel(
@@ -318,6 +359,7 @@ pub struct RiscvTrapEventPort {
     host: SystemHostEventPort,
     source: GuestSourceId,
     m5_switch_cpu_mode: ExecutionMode,
+    scheduler_checkpoint_component: Option<CheckpointComponentId>,
 }
 
 impl RiscvTrapEventPort {
@@ -326,11 +368,17 @@ impl RiscvTrapEventPort {
             host,
             source,
             m5_switch_cpu_mode: ExecutionMode::Detailed,
+            scheduler_checkpoint_component: None,
         }
     }
 
     pub const fn with_m5_switch_cpu_mode(mut self, mode: ExecutionMode) -> Self {
         self.m5_switch_cpu_mode = mode;
+        self
+    }
+
+    pub fn with_scheduler_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.scheduler_checkpoint_component = Some(component);
         self
     }
 
@@ -385,8 +433,20 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
         period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
-        self.host
-            .emit_with_period(context, GuestEvent::new(event, self.source, kind), period)
+        let uses_scheduler_checkpoint =
+            guest_event_uses_scheduler_checkpoint_context(&kind, period);
+        let event = GuestEvent::new(event, self.source, kind);
+        if uses_scheduler_checkpoint {
+            let component = self.scheduler_checkpoint_component.clone().ok_or(
+                SystemError::SchedulerCheckpoint(
+                    SchedulerCheckpointError::BorrowedSchedulerContextRequired,
+                ),
+            )?;
+            return self
+                .host
+                .emit_with_scheduler_checkpoint(context, event, period, component);
+        }
+        self.host.emit_with_period(context, event, period)
     }
 
     fn emit_guest_event_kind_with_period_parallel(
@@ -396,6 +456,11 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
         period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
+        if guest_event_uses_scheduler_checkpoint_context(&kind, period) {
+            return Err(SystemError::SchedulerCheckpoint(
+                SchedulerCheckpointError::BorrowedSchedulerContextRequired,
+            ));
+        }
         self.host.emit_with_period_parallel(
             context,
             GuestEvent::new(event, self.source, kind),
@@ -772,6 +837,15 @@ impl RiscvTrapEventPort {
             ) else {
                 continue;
             };
+            if guest_event_uses_scheduler_checkpoint_context(
+                &system_event.kind,
+                system_event.period,
+            ) && self.scheduler_checkpoint_component.is_none()
+            {
+                return Err(SystemError::SchedulerCheckpoint(
+                    SchedulerCheckpointError::BorrowedSchedulerContextRequired,
+                ));
+            }
             let source = execution.fetch().partition();
             let source_tick = scheduler
                 .partition_now(source)
@@ -832,7 +906,15 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
     ) -> Result<PartitionEventId, SystemError> {
         self.validate_scheduled_emit(scheduler, source, source_tick)?;
-        self.schedule_prevalidated_system_event(scheduler, event, source, source_tick, kind, 0)
+        let scheduler_event = self.schedule_prevalidated_system_event(
+            scheduler,
+            event,
+            source,
+            source_tick,
+            kind,
+            0,
+        )?;
+        Ok(scheduler_event)
     }
 
     fn schedule_host_checkpoint_event_kind_parallel(
@@ -844,14 +926,33 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
     ) -> Result<PartitionEventId, SystemError> {
         self.validate_parallel_scheduled_emit(scheduler, source, source_tick)?;
-        self.schedule_prevalidated_system_event_parallel(
+        let scheduler_event = self.schedule_prevalidated_system_event_parallel(
             scheduler,
             event,
             source,
             source_tick,
             kind,
             0,
-        )
+        )?;
+        Ok(scheduler_event)
+    }
+
+    fn register_scheduler_checkpoint_control_event(
+        &self,
+        scheduler: &PartitionedScheduler,
+        event: PartitionEventId,
+    ) {
+        if self.scheduler_checkpoint_component.is_none() {
+            return;
+        }
+        let event = scheduler
+            .pending_event_snapshot(event)
+            .expect("new scheduler checkpoint control event is pending");
+        self.controller()
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .register_scheduler_checkpoint_control_event(scheduler.instance_id(), event);
     }
 
     fn schedule_pending_core_traps_with_riscv_emulation_and_mode<I, F>(
@@ -1094,13 +1195,24 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
         period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
+        let register_scheduler_checkpoint =
+            guest_event_uses_scheduler_checkpoint_context(&kind, period);
+        if register_scheduler_checkpoint && self.scheduler_checkpoint_component.is_none() {
+            return Err(SystemError::SchedulerCheckpoint(
+                SchedulerCheckpointError::BorrowedSchedulerContextRequired,
+            ));
+        }
         let port = self.clone();
-        scheduler
+        let scheduler_event = scheduler
             .schedule_at(source, source_tick, move |context| {
                 port.emit_guest_event_kind_with_period(context, event, kind, period)
                     .expect("validated RISC-V system event scheduling");
             })
-            .map_err(SystemError::Scheduler)
+            .map_err(SystemError::Scheduler)?;
+        if register_scheduler_checkpoint {
+            self.register_scheduler_checkpoint_control_event(scheduler, scheduler_event);
+        }
+        Ok(scheduler_event)
     }
 
     fn schedule_prevalidated_system_event_parallel(
@@ -1112,6 +1224,16 @@ impl RiscvTrapEventPort {
         kind: GuestEventKind,
         period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
+        if guest_event_uses_scheduler_checkpoint_context(&kind, period) {
+            return self.schedule_prevalidated_system_event(
+                scheduler,
+                event,
+                source,
+                source_tick,
+                kind,
+                period,
+            );
+        }
         let port = self.clone();
         scheduler
             .schedule_parallel_at(source, source_tick, move |context| {
@@ -1317,6 +1439,29 @@ fn gem5_fail_stop_code(code: u64) -> i32 {
     code.min(i32::MAX as u64) as i32
 }
 
+fn guest_event_uses_scheduler_checkpoint_context(kind: &GuestEventKind, _period: Tick) -> bool {
+    guest_event_requires_scheduler_checkpoint_context(kind)
+}
+
+fn guest_event_requires_scheduler_checkpoint_context(kind: &GuestEventKind) -> bool {
+    matches!(
+        kind,
+        GuestEventKind::Checkpoint { .. }
+            | GuestEventKind::RestoreCheckpoint { .. }
+            | GuestEventKind::ExecutionModeSwitch { .. }
+    )
+}
+
+fn reject_raw_scheduler_checkpoint_event(event: &GuestEvent) -> Result<(), SystemError> {
+    if guest_event_requires_scheduler_checkpoint_context(event.kind()) {
+        Err(SystemError::SchedulerCheckpoint(
+            SchedulerCheckpointError::BorrowedSchedulerContextRequired,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {
     GuestTrap::new(guest_trap_kind_from_riscv(trap.kind()), trap.pc())
 }
@@ -1330,5 +1475,324 @@ pub const fn guest_trap_kind_from_riscv(kind: RiscvTrapKind) -> GuestTrapKind {
         RiscvTrapKind::LoadPageFault { .. } => GuestTrapKind::LoadPageFault,
         RiscvTrapKind::StorePageFault { .. } => GuestTrapKind::StorePageFault,
         RiscvTrapKind::Interrupt { code } => GuestTrapKind::Interrupt { code },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rem6_kernel::ScheduledEventKind;
+    use rem6_stats::StatsRegistry;
+
+    use crate::scheduler_checkpoint::{SchedulerCheckpointBank, SchedulerCheckpointPort};
+    use crate::{HostAction, HostActionRecord};
+
+    use super::*;
+
+    #[test]
+    fn scheduler_checkpoint_context_is_limited_to_state_transfer_events() {
+        assert!(guest_event_uses_scheduler_checkpoint_context(
+            &GuestEventKind::Checkpoint {
+                label: "capture".to_string(),
+            },
+            0,
+        ));
+        assert!(guest_event_uses_scheduler_checkpoint_context(
+            &GuestEventKind::RestoreCheckpoint {
+                label: "capture".to_string(),
+            },
+            0,
+        ));
+        assert!(guest_event_uses_scheduler_checkpoint_context(
+            &GuestEventKind::ExecutionModeSwitch {
+                target: ExecutionModeTarget::new("cpu0"),
+                mode: ExecutionMode::Detailed,
+            },
+            0,
+        ));
+        assert!(!guest_event_uses_scheduler_checkpoint_context(
+            &GuestEventKind::StatsDump,
+            0,
+        ));
+        assert!(guest_event_uses_scheduler_checkpoint_context(
+            &GuestEventKind::Checkpoint {
+                label: "periodic".to_string(),
+            },
+            1,
+        ));
+    }
+
+    #[test]
+    fn periodic_checkpoint_preserves_registered_recurrence_with_attached_scheduler() {
+        let component = CheckpointComponentId::new("scheduler0").unwrap();
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let host_port =
+            SystemHostEventPort::with_controller(PartitionId::new(1), 1, Arc::clone(&controller))
+                .unwrap();
+        let trap_port = RiscvTrapEventPort::new(host_port, GuestSourceId::new(1))
+            .with_scheduler_checkpoint_component(component.clone());
+        let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(2).unwrap()));
+        let bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+            component,
+            Arc::clone(&scheduler),
+        )])
+        .unwrap();
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .attach_scheduler_checkpoint_bank(bank)
+            .unwrap();
+        let mut scheduler = scheduler.lock().unwrap();
+        trap_port
+            .schedule_prevalidated_system_event_parallel(
+                &mut scheduler,
+                GuestEventId::new(1),
+                PartitionId::new(0),
+                0,
+                GuestEventKind::Checkpoint {
+                    label: "periodic".to_string(),
+                },
+                100,
+            )
+            .unwrap();
+        trap_port
+            .schedule_host_checkpoint_event_parallel(
+                &mut scheduler,
+                GuestEventId::new(2),
+                PartitionId::new(0),
+                2,
+                "after-periodic".to_string(),
+            )
+            .unwrap();
+
+        let first = scheduler.run_next_epoch();
+        let second = scheduler.run_next_epoch();
+        let third = scheduler.run_next_epoch();
+
+        assert_eq!(first.executed_events(), 2);
+        assert_eq!(second.executed_events(), 1);
+        assert_eq!(third.executed_events(), 1);
+        assert_eq!(controller.lock().unwrap().run().action_outcomes().len(), 2);
+        let pending = scheduler.snapshot();
+        assert_eq!(pending.total_pending_events(), 1);
+        assert_eq!(pending.partitions()[1].pending_events()[0].tick(), 101);
+    }
+
+    #[test]
+    fn raw_host_checkpoint_emit_requires_component_binding() {
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let port =
+            SystemHostEventPort::with_controller(PartitionId::new(0), 1, controller).unwrap();
+        let observed = Arc::new(Mutex::new(None));
+        let callback_observed = Arc::clone(&observed);
+        let mut scheduler = PartitionedScheduler::new(1).unwrap();
+        scheduler
+            .schedule_at(PartitionId::new(0), 0, move |context| {
+                let error = port
+                    .emit(
+                        context,
+                        GuestEvent::new(
+                            GuestEventId::new(1),
+                            GuestSourceId::new(1),
+                            GuestEventKind::Checkpoint {
+                                label: "raw".to_string(),
+                            },
+                        ),
+                    )
+                    .unwrap_err();
+                *callback_observed.lock().unwrap() = Some(error);
+            })
+            .unwrap();
+
+        scheduler.run_next_epoch();
+
+        assert_eq!(
+            observed.lock().unwrap().as_ref(),
+            Some(&SystemError::SchedulerCheckpoint(
+                SchedulerCheckpointError::BorrowedSchedulerContextRequired
+            ))
+        );
+    }
+
+    #[test]
+    fn checkpoint_schedule_requires_component_binding() {
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let host_port =
+            SystemHostEventPort::with_controller(PartitionId::new(1), 1, controller).unwrap();
+        let trap_port = RiscvTrapEventPort::new(host_port, GuestSourceId::new(1));
+        let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+        let error = trap_port
+            .schedule_host_checkpoint_event(
+                &mut scheduler,
+                GuestEventId::new(1),
+                PartitionId::new(0),
+                0,
+                "unbound".to_string(),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SystemError::SchedulerCheckpoint(
+                SchedulerCheckpointError::BorrowedSchedulerContextRequired
+            )
+        );
+        assert!(scheduler.is_idle());
+    }
+
+    #[test]
+    fn parallel_state_transfer_source_is_a_registered_serial_control_event() {
+        let component = CheckpointComponentId::new("scheduler0").unwrap();
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let host_port =
+            SystemHostEventPort::with_controller(PartitionId::new(1), 1, Arc::clone(&controller))
+                .unwrap();
+        let trap_port = RiscvTrapEventPort::new(host_port, GuestSourceId::new(1))
+            .with_scheduler_checkpoint_component(component.clone());
+        let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(2).unwrap()));
+        let bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+            component.clone(),
+            Arc::clone(&scheduler),
+        )])
+        .unwrap();
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .attach_scheduler_checkpoint_bank(bank)
+            .unwrap();
+        let mut scheduler_guard = scheduler.lock().unwrap();
+        let checkpoint_source = trap_port
+            .schedule_prevalidated_system_event_parallel(
+                &mut scheduler_guard,
+                GuestEventId::new(1),
+                PartitionId::new(0),
+                5,
+                GuestEventKind::Checkpoint {
+                    label: "guest".to_string(),
+                },
+                0,
+            )
+            .unwrap();
+        let ordinary_source = trap_port
+            .schedule_prevalidated_system_event_parallel(
+                &mut scheduler_guard,
+                GuestEventId::new(2),
+                PartitionId::new(0),
+                6,
+                GuestEventKind::StatsDump,
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            scheduler_guard
+                .pending_event_snapshot(checkpoint_source)
+                .unwrap()
+                .kind(),
+            ScheduledEventKind::Serial
+        );
+        assert_eq!(
+            scheduler_guard
+                .pending_event_snapshot(ordinary_source)
+                .unwrap()
+                .kind(),
+            ScheduledEventKind::Parallel
+        );
+        scheduler_guard.cancel_event(ordinary_source).unwrap();
+        drop(scheduler_guard);
+        let record = HostActionRecord::new(
+            0,
+            PartitionId::new(1),
+            PartitionId::new(1),
+            GuestEventId::new(3),
+            GuestSourceId::new(1),
+            HostAction::Checkpoint {
+                label: "project-control-source".to_string(),
+            },
+        );
+
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .apply(&record)
+            .unwrap();
+
+        assert!(controller
+            .lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&component, "scheduler")
+            .is_some());
+    }
+
+    #[test]
+    fn borrowed_scheduler_restore_aborts_the_outer_serial_epoch() {
+        let component = CheckpointComponentId::new("scheduler0").unwrap();
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let host_port =
+            SystemHostEventPort::with_controller(PartitionId::new(0), 1, Arc::clone(&controller))
+                .unwrap();
+        let trap_port = RiscvTrapEventPort::new(host_port, GuestSourceId::new(1))
+            .with_scheduler_checkpoint_component(component.clone());
+        let scheduler = Arc::new(Mutex::new(
+            PartitionedScheduler::with_min_remote_delay(2, 20).unwrap(),
+        ));
+        let bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+            component,
+            Arc::clone(&scheduler),
+        )])
+        .unwrap();
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .attach_scheduler_checkpoint_bank(bank)
+            .unwrap();
+        let mut scheduler_guard = scheduler.lock().unwrap();
+        trap_port
+            .schedule_host_checkpoint_event(
+                &mut scheduler_guard,
+                GuestEventId::new(1),
+                PartitionId::new(0),
+                2,
+                "baseline".to_string(),
+            )
+            .unwrap();
+        trap_port
+            .schedule_host_checkpoint_restore_event(
+                &mut scheduler_guard,
+                GuestEventId::new(2),
+                PartitionId::new(0),
+                8,
+                "baseline".to_string(),
+            )
+            .unwrap();
+
+        let summary = scheduler_guard.run_next_epoch();
+
+        assert_eq!(summary.executed_events(), 4);
+        assert_eq!(summary.final_tick(), 3);
+        assert_eq!(scheduler_guard.now(), 3);
+        assert_eq!(controller.lock().unwrap().run().action_outcomes().len(), 2);
     }
 }
