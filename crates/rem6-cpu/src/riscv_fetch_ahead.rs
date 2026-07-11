@@ -47,12 +47,13 @@ impl RiscvCore {
         }
         completed.sort_by_key(|event| event.request_id().sequence());
 
-        let fetch = match detailed_o3::third_fetch_candidate(&state, &fetch_events, &completed) {
-            detailed_o3::ThirdFetchCandidate::Ready(pc) => {
+        let fetch = match detailed_o3::additional_fetch_candidate(&state, &fetch_events, &completed)
+        {
+            detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
             }
-            detailed_o3::ThirdFetchCandidate::Blocked => return None,
-            detailed_o3::ThirdFetchCandidate::NotApplicable => {
+            detailed_o3::DetailedFetchAheadCandidate::Blocked => return None,
+            detailed_o3::DetailedFetchAheadCandidate::NotApplicable => {
                 if completed.len() >= completed_fetch_window(&state) {
                     return None;
                 }

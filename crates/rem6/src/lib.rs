@@ -857,6 +857,7 @@ fn execute_riscv(
         }
         core.reset_in_order_pipeline_config(in_order_pipeline_config.clone());
         core.set_branch_lookahead(config.riscv_branch_lookahead());
+        core.set_o3_scalar_memory_depth(config.riscv_o3_scalar_memory_depth());
         core.set_branch_predictor_kind(config.riscv_branch_predictor());
         cores.push(core);
     }

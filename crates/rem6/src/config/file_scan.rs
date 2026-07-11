@@ -26,6 +26,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--riscv-se-file",
             "--riscv-pc-count-target",
             "--riscv-branch-lookahead",
+            "--riscv-o3-scalar-memory-depth",
             "--riscv-branch-predictor",
             "--riscv-in-order-width",
             "--riscv-execution-mode",

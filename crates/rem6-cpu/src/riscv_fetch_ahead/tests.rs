@@ -2,16 +2,22 @@ use super::*;
 use crate::{
     BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchTargetBuffer,
     BranchTargetBufferConfig, BranchTargetProvider, CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId,
-    CpuResetState, InOrderPipelineError, InOrderPipelineInstruction, InOrderPipelineSnapshot,
-    InOrderPipelineStage, MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
-    MultiperspectivePerceptronFeature, OutstandingFetch, RiscvBranchPredictorKind,
-    TournamentBranchPredictor, TournamentBranchPredictorConfig,
-    DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    CpuResetState, CpuTranslationFrontend, InOrderPipelineError, InOrderPipelineInstruction,
+    InOrderPipelineSnapshot, InOrderPipelineStage, MultiperspectivePerceptron,
+    MultiperspectivePerceptronConfig, MultiperspectivePerceptronFeature, OutstandingFetch,
+    RiscvBranchPredictorKind, RiscvCpuExecutionEvent, TournamentBranchPredictor,
+    TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
-use rem6_isa_riscv::{Register, RiscvPmaRange};
+use rem6_isa_riscv::{
+    Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvPmaRange,
+};
 use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, AgentId, CacheLineLayout, MemoryRequestId, TranslationQueueConfig,
+    TranslationTlbConfig,
+};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 mod btb;
@@ -148,6 +154,44 @@ fn core_with_completed_fetches(
     core
 }
 
+fn scalar_load_execution_event(
+    pc: u64,
+    sequence: u64,
+    rd: u8,
+    rs1: u8,
+    address: u64,
+) -> RiscvCpuExecutionEvent {
+    let instruction = RiscvInstruction::Load {
+        rd: Register::new(rd).unwrap(),
+        rs1: Register::new(rs1).unwrap(),
+        offset: Immediate::new(0),
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    let access = MemoryAccessKind::Load {
+        rd: Register::new(rd).unwrap(),
+        address,
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    RiscvCpuExecutionEvent::new(
+        crate::CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                4,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                request(sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            vec![0; 4],
+        ),
+        instruction,
+        RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+    )
+}
+
 #[test]
 fn detailed_o3_gate_fetches_third_row_after_independent_scalar_younger() {
     let div = r_type(1, 1, 2, 0x4, 3, 0x33);
@@ -252,6 +296,7 @@ fn detailed_scalar_load_does_not_refetch_pending_younger_with_branch_lookahead()
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(3);
     let younger = CpuFetchRecord::new(
         5,
         PartitionId::new(0),
@@ -281,6 +326,7 @@ fn detailed_scalar_load_does_not_refetch_completed_younger_with_branch_lookahead
     ]);
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(3);
 
     assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
@@ -302,6 +348,21 @@ fn detailed_scalar_load_window_fetches_third_with_two_entry_lookahead() {
 }
 
 #[test]
+fn explicit_scalar_memory_depth_survives_later_branch_lookahead() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let younger = i_type(64, 2, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, younger.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(2);
+    core.set_branch_lookahead(2);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_scalar_load_window_does_not_refetch_pending_third() {
     let older = i_type(0, 2, 0x2, 5, 0x03);
     let younger = i_type(64, 2, 0x2, 6, 0x03);
@@ -311,6 +372,7 @@ fn detailed_scalar_load_window_does_not_refetch_pending_third() {
     ]);
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(3);
     let third = CpuFetchRecord::new(
         5,
         PartitionId::new(0),
@@ -344,6 +406,68 @@ fn detailed_scalar_load_window_keeps_third_fetch_suppressed_by_default() {
 }
 
 #[test]
+fn detailed_scalar_load_window_depth_one_suppresses_younger_fetch() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(1);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_zero_destination_scalar_load_does_not_bypass_window_depth() {
+    let load = i_type(0, 2, 0x2, 0, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_depth_two_counts_live_older_row() {
+    let current = i_type(64, 2, 0x2, 6, 0x03);
+    let core = core_with_completed_fetches([(1, 0x8004, current.to_le_bytes().to_vec())]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(2);
+    let older = scalar_load_execution_event(0x8000, 0, 5, 2, 0x9000);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.set_pc(0x8004);
+        assert!(state
+            .o3_runtime
+            .stage_live_scalar_memory_issue(&older, request(20), 31));
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn translated_scalar_load_window_does_not_fetch_fourth() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let third = i_type(128, 2, 0x2, 7, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.state.lock().expect("riscv core lock").data_translation =
+        Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_scalar_load_window_blocks_third_fetch_on_address_dependency() {
     let older = i_type(0, 2, 0x2, 5, 0x03);
     let dependent = i_type(0, 5, 0x2, 6, 0x03);
@@ -353,6 +477,123 @@ fn detailed_scalar_load_window_blocks_third_fetch_on_address_dependency() {
     ]);
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(3);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_fetches_fourth_at_explicit_depth() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let third = i_type(128, 2, 0x2, 7, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_scalar_load_window_assembles_split_third_before_fetching_fourth() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let third = i_type(128, 2, 0x2, 7, 0x03).to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, third[..2].to_vec()),
+        (3, 0x800a, third[2..].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_scalar_load_window_does_not_refetch_incomplete_split_third() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let third = i_type(128, 2, 0x2, 7, 0x03).to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, third[..2].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_does_not_fetch_beyond_completed_branch() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let branch = b_type(8, 1, 2, 0x0);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, branch.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_does_not_refetch_pending_fourth() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let third = i_type(128, 2, 0x2, 7, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    let fourth = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(3),
+        Address::new(0x800c),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(fourth));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_window_blocks_fourth_after_any_older_dependency() {
+    let older = i_type(0, 2, 0x2, 5, 0x03);
+    let middle = i_type(64, 2, 0x2, 6, 0x03);
+    let dependent_third = i_type(0, 5, 0x2, 7, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, middle.to_le_bytes().to_vec()),
+        (2, 0x8008, dependent_third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
 
     assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }

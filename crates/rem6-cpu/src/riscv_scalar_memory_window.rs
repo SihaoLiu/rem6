@@ -1,4 +1,4 @@
-use rem6_isa_riscv::RiscvInstruction;
+use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::RiscvCoreState;
@@ -18,7 +18,7 @@ impl RiscvCoreState {
                     )
                 })
             })
-            && self.o3_runtime.has_open_scalar_memory_window_slot()
+            && self.o3_runtime.can_consider_scalar_memory_younger()
     }
 
     pub(super) fn can_overlap_detailed_scalar_memory_instruction(
@@ -26,9 +26,6 @@ impl RiscvCoreState {
         instruction: RiscvInstruction,
     ) -> bool {
         if !self.can_extend_detailed_scalar_memory_window() {
-            return false;
-        }
-        if !matches!(instruction, RiscvInstruction::Load { .. }) {
             return false;
         }
         let Some(range) = self.cacheable_scalar_memory_instruction_range(instruction) else {
@@ -77,4 +74,24 @@ impl RiscvCoreState {
         )
         .ok()
     }
+}
+
+pub(crate) fn independent_scalar_load_destination<I>(
+    instruction: RiscvInstruction,
+    older_destinations: I,
+) -> Option<Register>
+where
+    I: IntoIterator<Item = Register>,
+{
+    let RiscvInstruction::Load { rd, rs1, .. } = instruction else {
+        return None;
+    };
+    if rd.is_zero()
+        || older_destinations
+            .into_iter()
+            .any(|older| rd == older || rs1 == older)
+    {
+        return None;
+    }
+    Some(rd)
 }

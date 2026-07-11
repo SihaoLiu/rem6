@@ -8,11 +8,13 @@ use crate::{
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
         completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
+        RiscvCompletedFetchInstruction,
     },
+    riscv_scalar_memory_window::independent_scalar_load_destination,
     CpuFetchEvent, CpuFetchEventKind, RiscvCoreState,
 };
 
-pub(super) enum ThirdFetchCandidate {
+pub(super) enum DetailedFetchAheadCandidate {
     NotApplicable,
     Blocked,
     Ready(Address),
@@ -92,13 +94,13 @@ pub(super) fn scalar_memory_waits_for_younger_fetch(
         && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
 }
 
-pub(super) fn third_fetch_candidate(
+pub(super) fn additional_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     completed: &[&CpuFetchEvent],
-) -> ThirdFetchCandidate {
+) -> DetailedFetchAheadCandidate {
     if !state.live_retire_gate.detailed_policy_enabled() {
-        return ThirdFetchCandidate::NotApplicable;
+        return DetailedFetchAheadCandidate::NotApplicable;
     }
     let architectural = Address::new(state.hart.pc());
     let Some(current) = completed
@@ -106,24 +108,27 @@ pub(super) fn third_fetch_candidate(
         .copied()
         .find(|event| event.pc() == architectural)
     else {
-        return ThirdFetchCandidate::NotApplicable;
+        return DetailedFetchAheadCandidate::NotApplicable;
     };
     let Some(current) =
         completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, current)
     else {
-        return ThirdFetchCandidate::Blocked;
+        return DetailedFetchAheadCandidate::Blocked;
     };
-    let scalar_load_window = state.branch_lookahead >= 2
-        && matches!(current.decoded().instruction(), RiscvInstruction::Load { rd, .. } if !rd.is_zero())
-        && state
-            .cacheable_scalar_memory_instruction_range(current.decoded().instruction())
-            .is_some();
+    let scalar_load_window =
+        matches!(
+            current.decoded().instruction(),
+            RiscvInstruction::Load { .. }
+        ) && allows_scalar_memory_fetch_ahead(state, current.decoded().instruction());
+    if scalar_load_window {
+        return scalar_load_window_candidate(state, fetch_events, &current);
+    }
     let fu_window = matches!(
         o3_fu_latency_class(current.decoded().instruction()),
         Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
     );
-    if !scalar_load_window && !fu_window {
-        return ThirdFetchCandidate::NotApplicable;
+    if !fu_window {
+        return DetailedFetchAheadCandidate::NotApplicable;
     }
     let younger_pc = Address::new(
         current
@@ -146,44 +151,21 @@ pub(super) fn third_fetch_candidate(
         younger_pc,
     ) else {
         return if has_younger_prefix {
-            ThirdFetchCandidate::Blocked
+            DetailedFetchAheadCandidate::Blocked
         } else {
-            ThirdFetchCandidate::NotApplicable
+            DetailedFetchAheadCandidate::NotApplicable
         };
     };
-    if scalar_load_window {
-        let RiscvInstruction::Load { rd: current_rd, .. } = current.decoded().instruction() else {
-            unreachable!("scalar load window requires a load")
-        };
-        let RiscvInstruction::Load {
-            rd: younger_rd,
-            rs1: younger_rs1,
-            ..
-        } = younger.decoded().instruction()
-        else {
-            return ThirdFetchCandidate::Blocked;
-        };
-        if younger_rd.is_zero()
-            || younger_rd == current_rd
-            || younger_rs1 == current_rd
-            || state
-                .cacheable_scalar_memory_instruction_range(younger.decoded().instruction())
-                .is_none()
-        {
-            return ThirdFetchCandidate::Blocked;
-        }
-    } else {
-        let Some((_destination, sources)) =
-            o3_speculative_scalar_alu_operands(younger.decoded().instruction())
-        else {
-            return ThirdFetchCandidate::Blocked;
-        };
-        let current_destination = o3_scalar_integer_destination(current.decoded().instruction());
-        if current_destination
-            .is_some_and(|destination| !destination.is_zero() && sources.contains(&destination))
-        {
-            return ThirdFetchCandidate::Blocked;
-        }
+    let Some((_destination, sources)) =
+        o3_speculative_scalar_alu_operands(younger.decoded().instruction())
+    else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    let current_destination = o3_scalar_integer_destination(current.decoded().instruction());
+    if current_destination
+        .is_some_and(|destination| !destination.is_zero() && sources.contains(&destination))
+    {
+        return DetailedFetchAheadCandidate::Blocked;
     }
     let third_pc = Address::new(
         younger
@@ -197,7 +179,79 @@ pub(super) fn third_fetch_candidate(
         younger.last_consumed_request(),
         third_pc,
     ) {
-        return ThirdFetchCandidate::Blocked;
+        return DetailedFetchAheadCandidate::Blocked;
     }
-    ThirdFetchCandidate::Ready(third_pc)
+    DetailedFetchAheadCandidate::Ready(third_pc)
+}
+
+fn scalar_load_window_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    current: &RiscvCompletedFetchInstruction,
+) -> DetailedFetchAheadCandidate {
+    let limit = state.o3_runtime.scalar_memory_window_limit();
+    let Some(mut destinations) = state.o3_runtime.scalar_load_window_destinations() else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    let Some(current_destination) = independent_scalar_load_destination(
+        current.decoded().instruction(),
+        destinations.iter().copied(),
+    ) else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    destinations.push(current_destination);
+    let mut previous_request = current.last_consumed_request();
+    let mut next_pc = Address::new(
+        current
+            .pc()
+            .get()
+            .wrapping_add(u64::from(current.decoded().bytes())),
+    );
+    let mut window_rows = destinations.len();
+
+    loop {
+        if window_rows >= limit {
+            return DetailedFetchAheadCandidate::Blocked;
+        }
+        let has_completed_prefix = oldest_completed_fetch_at(
+            &state.executed_fetches,
+            fetch_events,
+            previous_request,
+            next_pc,
+        )
+        .is_some();
+        let Some(next) = completed_fetch_instruction_from_events(
+            &state.executed_fetches,
+            fetch_events,
+            previous_request,
+            next_pc,
+        ) else {
+            if has_completed_prefix
+                || has_live_younger_fetch_at(state, fetch_events, previous_request, next_pc)
+            {
+                return DetailedFetchAheadCandidate::Blocked;
+            }
+            return DetailedFetchAheadCandidate::Ready(next_pc);
+        };
+        let Some(destination) = independent_scalar_load_destination(
+            next.decoded().instruction(),
+            destinations.iter().copied(),
+        ) else {
+            return DetailedFetchAheadCandidate::Blocked;
+        };
+        if state
+            .cacheable_scalar_memory_instruction_range(next.decoded().instruction())
+            .is_none()
+        {
+            return DetailedFetchAheadCandidate::Blocked;
+        }
+        destinations.push(destination);
+        window_rows += 1;
+        previous_request = next.last_consumed_request();
+        next_pc = Address::new(
+            next.pc()
+                .get()
+                .wrapping_add(u64::from(next.decoded().bytes())),
+        );
+    }
 }

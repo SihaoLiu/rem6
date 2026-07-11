@@ -53,13 +53,15 @@ pub use request::{
     ReadfileSource, SuiteResourceSelector,
 };
 use riscv_branch::{
-    parse_riscv_branch_predictor, parse_riscv_pc_count_target, valid_riscv_branch_lookahead,
+    parse_riscv_branch_lookahead, parse_riscv_branch_predictor, parse_riscv_pc_count_target,
+    validate_riscv_branch_lookahead,
 };
 use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub(crate) use riscv_timing::DEFAULT_RISCV_IN_ORDER_WIDTH;
 use riscv_timing::{
-    parse_execution_mode, parse_riscv_in_order_width, validate_riscv_in_order_width,
+    parse_execution_mode, parse_riscv_in_order_width, parse_riscv_o3_scalar_memory_depth,
+    validate_optional_riscv_o3_scalar_memory_depth, validate_riscv_in_order_width,
 };
 pub use trace_replay::{TraceReplayExternalAdapterKind, TraceReplayFabricRouterStageConfig};
 
@@ -87,6 +89,7 @@ pub struct Rem6RunConfig {
     riscv_se_files: Vec<RiscvSeFileRequest>,
     riscv_pc_count_targets: Vec<PcCountPair>,
     riscv_branch_lookahead: usize,
+    riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_branch_predictor: RiscvBranchPredictorKind,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<ExecutionMode>,
@@ -232,6 +235,7 @@ struct Rem6RunFileConfig {
     riscv_se_files: Option<Vec<String>>,
     riscv_pc_count_targets: Option<Vec<String>>,
     riscv_branch_lookahead: Option<usize>,
+    riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_branch_predictor: Option<String>,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<String>,
@@ -550,12 +554,11 @@ impl Rem6RunConfig {
                 value: "0".to_string(),
             });
         }
-        let mut riscv_branch_lookahead = file_config.riscv_branch_lookahead.unwrap_or(1);
-        if !valid_riscv_branch_lookahead(riscv_branch_lookahead) {
-            return Err(Rem6CliError::InvalidRiscvBranchLookahead {
-                value: riscv_branch_lookahead.to_string(),
-            });
-        }
+        let mut riscv_branch_lookahead =
+            validate_riscv_branch_lookahead(file_config.riscv_branch_lookahead.unwrap_or(1))?;
+        let mut riscv_o3_scalar_memory_depth = validate_optional_riscv_o3_scalar_memory_depth(
+            file_config.riscv_o3_scalar_memory_depth,
+        )?;
         let mut riscv_branch_predictor = file_config
             .riscv_branch_predictor
             .as_deref()
@@ -961,14 +964,13 @@ impl Rem6RunConfig {
                     riscv_pc_count_targets.push(parse_riscv_pc_count_target(&value)?);
                 }
                 "--riscv-branch-lookahead" => {
-                    let value = required_value(&flag, args.next())?;
-                    riscv_branch_lookahead = value
-                        .parse()
-                        .ok()
-                        .filter(|lookahead| valid_riscv_branch_lookahead(*lookahead))
-                        .ok_or_else(|| Rem6CliError::InvalidRiscvBranchLookahead {
-                            value: value.clone(),
-                        })?;
+                    riscv_branch_lookahead =
+                        parse_riscv_branch_lookahead(&required_value(&flag, args.next())?)?;
+                }
+                "--riscv-o3-scalar-memory-depth" => {
+                    riscv_o3_scalar_memory_depth = Some(parse_riscv_o3_scalar_memory_depth(
+                        &required_value(&flag, args.next())?,
+                    )?);
                 }
                 "--riscv-branch-predictor" => {
                     let value = required_value(&flag, args.next())?;
@@ -1402,6 +1404,7 @@ impl Rem6RunConfig {
             riscv_se_files,
             riscv_pc_count_targets,
             riscv_branch_lookahead,
+            riscv_o3_scalar_memory_depth,
             riscv_branch_predictor,
             riscv_in_order_width,
             riscv_execution_mode,

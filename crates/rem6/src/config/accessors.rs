@@ -101,6 +101,15 @@ impl Rem6RunConfig {
         self.riscv_branch_lookahead
     }
 
+    pub fn riscv_o3_scalar_memory_depth(&self) -> usize {
+        self.riscv_o3_scalar_memory_depth
+            .unwrap_or_else(|| self.riscv_branch_lookahead.saturating_add(1))
+    }
+
+    pub const fn riscv_o3_scalar_memory_depth_is_explicit(&self) -> bool {
+        self.riscv_o3_scalar_memory_depth.is_some()
+    }
+
     pub const fn riscv_branch_predictor(&self) -> RiscvBranchPredictorKind {
         self.riscv_branch_predictor
     }

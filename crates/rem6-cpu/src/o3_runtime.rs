@@ -65,6 +65,8 @@ use o3_store_forwarding::{
 };
 
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
+const DEFAULT_O3_SCALAR_MEMORY_DEPTH: usize = 2;
+const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeSnapshot {
@@ -176,6 +178,8 @@ pub struct O3RuntimeState {
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
     live_scalar_memories: Vec<O3LiveScalarMemory>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
+    scalar_memory_window_limit: usize,
+    scalar_memory_window_limit_explicit: bool,
     last_scalar_memory_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
@@ -531,6 +535,8 @@ impl Default for O3RuntimeState {
             deferred_scalar_memory_execution: None,
             live_scalar_memories: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),
+            scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
+            scalar_memory_window_limit_explicit: false,
             last_scalar_memory_commit_tick: None,
             next_sequence: 0,
             next_physical_register: 1,

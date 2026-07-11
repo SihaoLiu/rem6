@@ -721,7 +721,20 @@ impl RiscvCore {
     }
 
     pub fn set_branch_lookahead(&self, lookahead: usize) {
-        self.state.lock().expect("riscv core lock").branch_lookahead = lookahead.max(1);
+        let mut state = self.state.lock().expect("riscv core lock");
+        let lookahead = lookahead.max(1);
+        state.branch_lookahead = lookahead;
+        state
+            .o3_runtime
+            .set_branch_derived_scalar_memory_window_limit(lookahead.saturating_add(1));
+    }
+
+    pub fn set_o3_scalar_memory_depth(&self, depth: usize) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .set_scalar_memory_window_limit(depth);
     }
 
     pub fn set_branch_predictor_kind(&self, kind: RiscvBranchPredictorKind) {

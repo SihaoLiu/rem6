@@ -15,8 +15,22 @@ pub(super) fn parse_riscv_branch_predictor(value: &str) -> Option<RiscvBranchPre
     }
 }
 
-pub(super) const fn valid_riscv_branch_lookahead(value: usize) -> bool {
-    matches!(value, 1 | 2)
+pub(super) fn parse_riscv_branch_lookahead(value: &str) -> Result<usize, Rem6CliError> {
+    let lookahead = value
+        .parse()
+        .map_err(|_| Rem6CliError::InvalidRiscvBranchLookahead {
+            value: value.to_string(),
+        })?;
+    validate_riscv_branch_lookahead(lookahead)
+}
+
+pub(super) fn validate_riscv_branch_lookahead(value: usize) -> Result<usize, Rem6CliError> {
+    if !matches!(value, 1 | 2) {
+        return Err(Rem6CliError::InvalidRiscvBranchLookahead {
+            value: value.to_string(),
+        });
+    }
+    Ok(value)
 }
 
 pub(super) fn parse_riscv_pc_count_target(value: &str) -> Result<PcCountPair, Rem6CliError> {

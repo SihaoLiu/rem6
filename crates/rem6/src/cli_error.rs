@@ -86,6 +86,9 @@ pub enum Rem6CliError {
     InvalidRiscvBranchLookahead {
         value: String,
     },
+    InvalidRiscvO3ScalarMemoryDepth {
+        value: String,
+    },
     InvalidRiscvBranchPredictor {
         value: String,
     },
@@ -331,6 +334,7 @@ pub enum Rem6CliError {
     FabricRequiresExecution,
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
+    RiscvO3ScalarMemoryDepthRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
     RiscvInOrderWidthRequiresExecution,
     RiscvExecutionModeRequiresExecution,
@@ -364,6 +368,7 @@ pub enum Rem6CliError {
     FabricRequiresRiscv,
     RiscvPcCountTargetRequiresRiscv,
     RiscvBranchLookaheadRequiresRiscv,
+    RiscvO3ScalarMemoryDepthRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
     RiscvInOrderWidthRequiresRiscv,
     RiscvExecutionModeRequiresRiscv,
@@ -558,6 +563,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvBranchLookahead { value } => {
                 write!(formatter, "invalid RISC-V branch lookahead {value}")
+            }
+            Self::InvalidRiscvO3ScalarMemoryDepth { value } => {
+                write!(formatter, "invalid RISC-V O3 scalar memory depth {value}")
             }
             Self::InvalidRiscvBranchPredictor { value } => {
                 write!(formatter, "invalid RISC-V branch predictor {value}")
@@ -894,6 +902,12 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvBranchLookaheadRequiresExecution => {
                 write!(formatter, "--riscv-branch-lookahead requires --execute")
             }
+            Self::RiscvO3ScalarMemoryDepthRequiresExecution => {
+                write!(
+                    formatter,
+                    "--riscv-o3-scalar-memory-depth requires --execute"
+                )
+            }
             Self::RiscvBranchPredictorRequiresExecution => {
                 write!(formatter, "--riscv-branch-predictor requires --execute")
             }
@@ -1001,6 +1015,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvBranchLookaheadRequiresRiscv => {
                 write!(formatter, "--riscv-branch-lookahead requires --isa riscv")
+            }
+            Self::RiscvO3ScalarMemoryDepthRequiresRiscv => {
+                write!(
+                    formatter,
+                    "--riscv-o3-scalar-memory-depth requires --isa riscv"
+                )
             }
             Self::RiscvBranchPredictorRequiresRiscv => {
                 write!(formatter, "--riscv-branch-predictor requires --isa riscv")
