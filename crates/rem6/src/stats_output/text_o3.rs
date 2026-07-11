@@ -2,12 +2,15 @@ use rem6_cpu::{BranchTargetKind, O3RuntimeFuLatencyClass};
 use rem6_stats::StatSnapshot;
 
 use super::text::{
-    append_derived_count_per_count_stat, append_derived_count_per_cycle_stat,
-    append_derived_count_stat, append_derived_count_stat_if_absent,
-    append_derived_stat_from_snapshot_if_absent, gem5_cpu_alias_prefix, snapshot_value,
+    append_derived_alias_from_snapshot_if_absent, append_derived_count_stat,
+    append_derived_count_stat_if_absent, append_derived_stat_from_snapshot_if_absent,
+    gem5_cpu_alias_prefix, snapshot_value,
 };
 use crate::o3_branch_mismatch_aliases::{
     O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
+};
+use crate::o3_iew_aliases::{
+    O3IewGem5Alias, O3_IEW_GEM5_PHASE_ALIASES, O3_IEW_GEM5_RATE_ALIASES, O3_IEW_GEM5_TOTAL_ALIASES,
 };
 
 pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
@@ -172,76 +175,12 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 );
             }
         }
-        if let Some(insts_to_commit) =
-            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.insts_to_commit"))
-        {
-            append_gem5_o3_iew_total_alias_stats(
-                output,
-                snapshot,
-                &alias_prefix,
-                "instsToCommit",
-                insts_to_commit,
-            );
-        }
-        if let Some(writeback_count) =
-            snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.writeback_count"))
-        {
-            append_gem5_o3_iew_total_alias_stats(
-                output,
-                snapshot,
-                &alias_prefix,
-                "writebackCount",
-                writeback_count,
-            );
-            if let Some(cycles) = snapshot_value(snapshot, &format!("{alias_prefix}.numCycles")) {
-                append_derived_count_per_cycle_stat(
-                    output,
-                    &format!("{alias_prefix}.iew.wbRate"),
-                    writeback_count,
-                    cycles,
-                );
-            }
-        }
-        let producer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.producer_inst"));
-        let consumer_inst = snapshot_value(snapshot, &format!("sim.cpu{cpu}.o3.iew.consumer_inst"));
-        if let Some(producer_inst) = producer_inst {
-            append_gem5_o3_iew_total_alias_stats(
-                output,
-                snapshot,
-                &alias_prefix,
-                "producerInst",
-                producer_inst,
-            );
-        }
-        if let Some(consumer_inst) = consumer_inst {
-            append_gem5_o3_iew_total_alias_stats(
-                output,
-                snapshot,
-                &alias_prefix,
-                "consumerInst",
-                consumer_inst,
-            );
-        }
-        if let (Some(producer_inst), Some(consumer_inst)) = (producer_inst, consumer_inst) {
-            append_derived_count_per_count_stat(
-                output,
-                &format!("{alias_prefix}.iew.wbFanout"),
-                producer_inst,
-                consumer_inst,
-            );
-        }
-        for (source_suffix, alias_suffix) in [
-            ("issue_to_writeback_ticks", "issueToWritebackTicks"),
-            ("writeback_to_commit_ticks", "writebackToCommitTicks"),
-            ("issue_to_commit_ticks", "issueToCommitTicks"),
+        for aliases in [
+            O3_IEW_GEM5_TOTAL_ALIASES,
+            O3_IEW_GEM5_RATE_ALIASES,
+            O3_IEW_GEM5_PHASE_ALIASES,
         ] {
-            append_derived_stat_from_snapshot_if_absent(
-                output,
-                snapshot,
-                &format!("sim.cpu{cpu}.o3.event_summary.{source_suffix}"),
-                &format!("{alias_prefix}.iew.{alias_suffix}"),
-                "Tick",
-            );
+            append_gem5_o3_iew_alias_stats(output, snapshot, cpu, &alias_prefix, aliases);
         }
     }
 }
@@ -289,20 +228,29 @@ fn append_gem5_o3_lsq_count_bucket_alias_stats(
     }
 }
 
-fn append_gem5_o3_iew_total_alias_stats(
+fn append_gem5_o3_iew_alias_stats(
     output: &mut String,
     snapshot: &StatSnapshot,
+    cpu: u64,
     alias_prefix: &str,
-    alias_name: &str,
-    value: u64,
+    aliases: &[O3IewGem5Alias],
 ) {
-    for suffix in [".total", "::total"] {
-        append_derived_count_stat_if_absent(
+    for alias in aliases {
+        let source_path = format!("sim.cpu{cpu}.o3.{}", alias.source_suffix());
+        append_derived_alias_from_snapshot_if_absent(
             output,
             snapshot,
-            &format!("{alias_prefix}.iew.{alias_name}{suffix}"),
-            value,
+            &source_path,
+            &format!("{alias_prefix}.{}", alias.alias_suffix()),
         );
+        if let Some(bucket_alias_suffix) = alias.bucket_alias_suffix() {
+            append_derived_alias_from_snapshot_if_absent(
+                output,
+                snapshot,
+                &source_path,
+                &format!("{alias_prefix}.{bucket_alias_suffix}"),
+            );
+        }
     }
 }
 

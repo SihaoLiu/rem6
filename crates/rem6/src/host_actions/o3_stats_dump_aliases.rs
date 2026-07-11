@@ -5,6 +5,9 @@ use super::Rem6HostStatsDumpSampleSummary;
 use crate::o3_branch_mismatch_aliases::{
     O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
 };
+use crate::o3_iew_aliases::{
+    O3IewGem5Alias, O3_IEW_GEM5_PHASE_ALIASES, O3_IEW_GEM5_RATE_ALIASES, O3_IEW_GEM5_TOTAL_ALIASES,
+};
 
 pub(super) fn samples_with_gem5_aliases(
     record_samples: &[StatSample],
@@ -57,23 +60,12 @@ fn append_o3_stats_dump_rate_alias_samples(
     active_o3_cpus: &[u32],
     samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
 ) {
-    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
-    for sample in record_samples
-        .iter()
-        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
-    {
-        let Some((cpu, suffix)) = o3_stats_dump_rate_alias_suffix(sample.path()) else {
-            continue;
-        };
-        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
-        let alias_path = format!("{alias_prefix}.iew.{suffix}");
-        if samples.iter().any(|sample| sample.path == alias_path) {
-            continue;
-        }
-        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
-            sample, alias_path,
-        ));
-    }
+    append_o3_stats_dump_iew_alias_samples(
+        record_samples,
+        active_o3_cpus,
+        samples,
+        O3_IEW_GEM5_RATE_ALIASES,
+    );
 }
 
 fn o3_stats_dump_core_count(record_samples: &[StatSample], active_o3_cpus: &[u32]) -> u64 {
@@ -81,6 +73,14 @@ fn o3_stats_dump_core_count(record_samples: &[StatSample], active_o3_cpus: &[u32
         .iter()
         .find(|sample| sample.path() == "sim.cores")
         .map(StatSample::value)
+        .or_else(|| {
+            record_samples
+                .iter()
+                .filter(|sample| sample.path().starts_with("system.cpu"))
+                .filter_map(|sample| o3_stats_dump_sample_cpu(sample.path()))
+                .max()
+                .map(|cpu| u64::from(cpu).saturating_add(1).max(2))
+        })
         .unwrap_or_else(|| {
             active_o3_cpus
                 .iter()
@@ -98,59 +98,17 @@ fn o3_stats_dump_alias_prefix(core_count: u64, cpu: u32) -> String {
     }
 }
 
-fn o3_stats_dump_rate_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
-    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
-    let (cpu, suffix) = rest.split_once(".o3.iew.")?;
-    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let cpu = cpu.parse().ok()?;
-    let suffix = match suffix {
-        "writeback_rate_ppm" => "wbRate",
-        "producer_consumer_fanout_ppm" => "wbFanout",
-        _ => return None,
-    };
-    Some((cpu, suffix))
-}
-
 fn append_o3_stats_dump_phase_alias_samples(
     record_samples: &[StatSample],
     active_o3_cpus: &[u32],
     samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
 ) {
-    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
-    for sample in record_samples
-        .iter()
-        .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
-    {
-        let Some((cpu, suffix)) = o3_stats_dump_phase_alias_suffix(sample.path()) else {
-            continue;
-        };
-        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
-        let alias_path = format!("{alias_prefix}.iew.{suffix}");
-        if samples.iter().any(|sample| sample.path == alias_path) {
-            continue;
-        }
-        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
-            sample, alias_path,
-        ));
-    }
-}
-
-fn o3_stats_dump_phase_alias_suffix(path: &str) -> Option<(u32, &'static str)> {
-    let rest = path.strip_prefix("sim.host_actions.stats_dump.cpu")?;
-    let (cpu, suffix) = rest.split_once(".o3.event_summary.")?;
-    if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let cpu = cpu.parse().ok()?;
-    let suffix = match suffix {
-        "issue_to_writeback_ticks" => "issueToWritebackTicks",
-        "writeback_to_commit_ticks" => "writebackToCommitTicks",
-        "issue_to_commit_ticks" => "issueToCommitTicks",
-        _ => return None,
-    };
-    Some((cpu, suffix))
+    append_o3_stats_dump_iew_alias_samples(
+        record_samples,
+        active_o3_cpus,
+        samples,
+        O3_IEW_GEM5_PHASE_ALIASES,
+    );
 }
 
 fn append_o3_stats_dump_iew_total_bucket_alias_samples(
@@ -158,37 +116,74 @@ fn append_o3_stats_dump_iew_total_bucket_alias_samples(
     active_o3_cpus: &[u32],
     samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
 ) {
+    append_o3_stats_dump_iew_alias_samples(
+        record_samples,
+        active_o3_cpus,
+        samples,
+        O3_IEW_GEM5_TOTAL_ALIASES,
+    );
+}
+
+fn append_o3_stats_dump_iew_alias_samples(
+    record_samples: &[StatSample],
+    active_o3_cpus: &[u32],
+    samples: &mut Vec<Rem6HostStatsDumpSampleSummary>,
+    aliases: &[O3IewGem5Alias],
+) {
+    let core_count = o3_stats_dump_core_count(record_samples, active_o3_cpus);
     for sample in record_samples
         .iter()
         .filter(|sample| stats_dump_sample_is_active(sample, active_o3_cpus))
     {
-        let Some(alias_path) = o3_stats_dump_iew_total_bucket_alias_path(sample.path()) else {
+        let Some(alias_paths) = o3_stats_dump_iew_alias_paths(core_count, sample.path(), aliases)
+        else {
             continue;
         };
-        if samples.iter().any(|sample| sample.path == alias_path) {
-            continue;
+        for alias_path in alias_paths {
+            if samples.iter().any(|sample| sample.path == alias_path) {
+                continue;
+            }
+            samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
+                sample, alias_path,
+            ));
         }
-        samples.push(Rem6HostStatsDumpSampleSummary::from_sample_with_path(
-            sample, alias_path,
-        ));
     }
 }
 
-fn o3_stats_dump_iew_total_bucket_alias_path(path: &str) -> Option<String> {
-    let (prefix, suffix) = path.split_once(".iew.")?;
-    if !is_o3_stats_dump_cpu_alias_prefix(prefix) {
+fn o3_stats_dump_iew_alias_paths(
+    core_count: u64,
+    path: &str,
+    aliases: &[O3IewGem5Alias],
+) -> Option<Vec<String>> {
+    if let Some(rest) = path.strip_prefix("sim.host_actions.stats_dump.cpu") {
+        let (cpu, source_suffix) = rest.split_once(".o3.")?;
+        if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let cpu = cpu.parse().ok()?;
+        let alias = aliases
+            .iter()
+            .find(|alias| alias.source_suffix() == source_suffix)?;
+        let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu);
+        let mut alias_paths = vec![format!("{alias_prefix}.{}", alias.alias_suffix())];
+        if let Some(bucket_alias_suffix) = alias.bucket_alias_suffix() {
+            alias_paths.push(format!("{alias_prefix}.{bucket_alias_suffix}"));
+        }
+        return Some(alias_paths);
+    }
+
+    let (alias_prefix, alias_tail) = path.split_once(".iew.")?;
+    if !is_o3_stats_dump_cpu_alias_prefix(alias_prefix) {
         return None;
     }
-    match suffix {
-        "instsToCommit.total"
-        | "writebackCount.total"
-        | "producerInst.total"
-        | "consumerInst.total" => Some(format!(
-            "{prefix}.iew.{}::total",
-            suffix.strip_suffix(".total")?
-        )),
-        _ => None,
-    }
+    let alias = aliases.iter().find(|alias| {
+        alias
+            .alias_suffix()
+            .strip_prefix("iew.")
+            .is_some_and(|suffix| suffix == alias_tail)
+    })?;
+    let bucket_alias_suffix = alias.bucket_alias_suffix()?;
+    Some(vec![format!("{alias_prefix}.{bucket_alias_suffix}")])
 }
 
 fn append_o3_stats_dump_inst_type_bucket_alias_samples(
@@ -682,6 +677,14 @@ mod tests {
     }
 
     #[test]
+    fn iew_alias_lookup_rejects_unrelated_samples_without_core_enumeration() {
+        assert_eq!(
+            o3_stats_dump_iew_alias_paths(u64::MAX, "finalTick", O3_IEW_GEM5_TOTAL_ALIASES,),
+            None
+        );
+    }
+
+    #[test]
     fn stats_dump_aliases_preserve_family_order_and_suppress_inactive_cpus() {
         let record_samples = [
             StatSample::new(StatId::new(1), "sim.cores", "count", 2),
@@ -699,12 +702,24 @@ mod tests {
             ),
             StatSample::new(
                 StatId::new(4),
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.issue_to_writeback_ticks",
+                "tick",
+                12,
+            ),
+            StatSample::new(
+                StatId::new(5),
+                "sim.host_actions.stats_dump.cpu1.o3.event_summary.issue_to_writeback_ticks",
+                "tick",
+                24,
+            ),
+            StatSample::new(
+                StatId::new(6),
                 "system.cpu0.iew.instsToCommit.total",
                 "count",
                 7,
             ),
             StatSample::new(
-                StatId::new(5),
+                StatId::new(7),
                 "system.cpu1.iew.instsToCommit.total",
                 "count",
                 8,
@@ -722,12 +737,36 @@ mod tests {
             [
                 "sim.cores",
                 "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+                "sim.host_actions.stats_dump.cpu0.o3.event_summary.issue_to_writeback_ticks",
                 "system.cpu0.iew.instsToCommit.total",
                 "system.cpu0.iew.wbRate",
+                "system.cpu0.iew.issueToWritebackTicks",
                 "system.cpu0.iew.instsToCommit::total",
             ]
         );
-        assert_eq!(samples[3].value, 41);
-        assert_eq!(samples[4].value, 7);
+        assert_eq!(
+            (
+                samples[4].unit.as_str(),
+                samples[4].value,
+                samples[4].reset_policy.as_str(),
+            ),
+            ("ppm", 41, "resettable")
+        );
+        assert_eq!(
+            (
+                samples[5].unit.as_str(),
+                samples[5].value,
+                samples[5].reset_policy.as_str(),
+            ),
+            ("tick", 12, "resettable")
+        );
+        assert_eq!(
+            (
+                samples[6].unit.as_str(),
+                samples[6].value,
+                samples[6].reset_policy.as_str(),
+            ),
+            ("count", 7, "resettable")
+        );
     }
 }

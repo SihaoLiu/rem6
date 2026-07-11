@@ -5,6 +5,9 @@ use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_va
 use crate::o3_branch_mismatch_aliases::{
     O3_BRANCH_MISMATCH_KIND_ALIASES, O3_BRANCH_MISMATCH_SCALAR_ALIASES,
 };
+use crate::o3_iew_aliases::{
+    O3IewGem5Alias, O3_IEW_GEM5_PHASE_ALIASES, O3_IEW_GEM5_RATE_ALIASES, O3_IEW_GEM5_TOTAL_ALIASES,
+};
 
 pub(super) fn append_gem5_json_alias_stats(snapshot: &StatSnapshot, records: &mut Vec<String>) {
     let mut next_id = snapshot
@@ -278,58 +281,18 @@ fn append_gem5_o3_json_alias_stats(
             core_count == 1,
         );
         append_gem5_o3_lsq_count_bucket_json_alias_stats(snapshot, records, next_id, &alias_prefix);
-        for (source_suffix, alias_suffix) in [
-            ("iew.insts_to_commit", "iew.instsToCommit.total"),
-            ("iew.writeback_count", "iew.writebackCount.total"),
-            ("iew.producer_inst", "iew.producerInst.total"),
-            ("iew.consumer_inst", "iew.consumerInst.total"),
+        for aliases in [
+            O3_IEW_GEM5_TOTAL_ALIASES,
+            O3_IEW_GEM5_RATE_ALIASES,
+            O3_IEW_GEM5_PHASE_ALIASES,
         ] {
-            append_gem5_o3_json_alias_from_sample(
+            append_gem5_o3_iew_json_alias_stats(
                 snapshot,
                 records,
                 next_id,
                 cpu,
-                source_suffix,
                 &alias_prefix,
-                alias_suffix,
-            );
-        }
-        for (source_suffix, alias_suffix) in [
-            ("iew.writeback_rate_ppm", "iew.wbRate"),
-            ("iew.producer_consumer_fanout_ppm", "iew.wbFanout"),
-        ] {
-            append_gem5_o3_json_alias_from_sample(
-                snapshot,
-                records,
-                next_id,
-                cpu,
-                source_suffix,
-                &alias_prefix,
-                alias_suffix,
-            );
-        }
-        for (source_suffix, alias_suffix) in [
-            (
-                "event_summary.issue_to_writeback_ticks",
-                "iew.issueToWritebackTicks",
-            ),
-            (
-                "event_summary.writeback_to_commit_ticks",
-                "iew.writebackToCommitTicks",
-            ),
-            (
-                "event_summary.issue_to_commit_ticks",
-                "iew.issueToCommitTicks",
-            ),
-        ] {
-            append_gem5_o3_json_alias_from_sample(
-                snapshot,
-                records,
-                next_id,
-                cpu,
-                source_suffix,
-                &alias_prefix,
-                alias_suffix,
+                aliases,
             );
         }
         append_gem5_o3_branch_repair_json_alias_stats(snapshot, records, next_id, &alias_prefix);
@@ -348,6 +311,35 @@ fn append_gem5_o3_json_alias_stats(
             &alias_prefix,
         );
         append_gem5_o3_ftq_json_alias_stats(snapshot, records, next_id, cpu, &alias_prefix);
+    }
+}
+
+fn append_gem5_o3_iew_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    alias_prefix: &str,
+    aliases: &[O3IewGem5Alias],
+) {
+    for alias in aliases {
+        let source_path = format!("sim.cpu{cpu}.o3.{}", alias.source_suffix());
+        append_gem5_json_alias_from_paths(
+            snapshot,
+            records,
+            next_id,
+            &source_path,
+            &format!("{alias_prefix}.{}", alias.alias_suffix()),
+        );
+        if let Some(bucket_alias_suffix) = alias.bucket_alias_suffix() {
+            append_gem5_json_alias_from_paths(
+                snapshot,
+                records,
+                next_id,
+                &source_path,
+                &format!("{alias_prefix}.{bucket_alias_suffix}"),
+            );
+        }
     }
 }
 
@@ -978,20 +970,6 @@ fn gem5_o3_bucket_alias_suffix(alias_suffix: &str) -> Option<String> {
             alias_suffix
                 .strip_prefix("commit.committedInstType.")
                 .map(|op_class| format!("commit.committedInstType_0::{op_class}"))
-        })
-        .or_else(|| {
-            alias_suffix
-                .strip_suffix(".total")
-                .filter(|base| {
-                    matches!(
-                        *base,
-                        "iew.instsToCommit"
-                            | "iew.writebackCount"
-                            | "iew.producerInst"
-                            | "iew.consumerInst"
-                    )
-                })
-                .map(|base| format!("{base}::total"))
         })
 }
 

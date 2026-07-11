@@ -2284,13 +2284,21 @@ fn multicore_hart1_detailed_o3_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
-fn multicore_hart1_detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
+fn multicore_hart_detailed_o3_dump_stats_binary(
+    name: &str,
+    detailed_hart: u32,
+) -> std::path::PathBuf {
     let data_start = 128_i32;
+    let selected_hart_branch = match detailed_hart {
+        0 => b_type(8, 0, 5, 0x0), // beq x5, x0, hart 0 detailed path
+        1 => b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
+        _ => panic!("multicore O3 dump fixture only supports hart 0 or hart 1"),
+    };
     let mut words = vec![
         csr_read(0xf14, 5),   // csrr x5, mhartid
-        b_type(8, 0, 5, 0x1), // bne x5, x0, hart 1 detailed path
-        b_type(0, 0, 0, 0x0), // hart 0: spin until hart 1 exits
-        m5op(M5_SWITCH_CPU),  // hart 1: switch cpu1 to detailed
+        selected_hart_branch, // selected hart enters the detailed path
+        b_type(0, 0, 0, 0x0), // other hart spins until selected hart exits
+        m5op(M5_SWITCH_CPU),  // switch the selected CPU to detailed
     ];
     let auipc_pc = (words.len() * 4) as i32;
     words.extend([
@@ -2302,7 +2310,7 @@ fn multicore_hart1_detailed_o3_dump_stats_binary(name: &str) -> std::path::PathB
         0x0220_c1b3,                                    // div x3, x1, x2
         i_type(0, 6, 0b010, 12, 0x03),                  // lw x12, 0(x6)
         s_type(4, 12, 6, 0b010),                        // sw x12, 4(x6)
-        m5op(M5_DUMP_STATS),                            // dump cpu1 O3 runtime aliases
+        m5op(M5_DUMP_STATS),                            // dump selected CPU O3 runtime aliases
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
@@ -3748,9 +3756,12 @@ fn assert_text_cycle_stat(stdout: &str, path: &str, value: u64) {
     );
 }
 
-fn assert_text_ratio_stat(stdout: &str, path: &str, value: &str, unit: &str) {
+fn assert_text_ppm_stat(stdout: &str, path: &str, value: u64) {
     let line = text_stat_line(stdout, path);
-    let actual = line.split_whitespace().nth(1);
+    let actual = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok());
     assert_eq!(
         actual,
         Some(value),
@@ -3761,8 +3772,8 @@ fn assert_text_ratio_stat(stdout: &str, path: &str, value: &str, unit: &str) {
         "missing derived kind for {path} in line: {line}"
     );
     assert!(
-        line.contains(&format!("unit={unit}")),
-        "missing {unit} unit for {path} in line: {line}"
+        line.contains("unit=Ppm"),
+        "missing Ppm unit for {path} in line: {line}"
     );
     assert!(
         line.contains("reset_policy=monotonic"),
@@ -3828,11 +3839,6 @@ fn text_stat_u64(stdout: &str, path: &str) -> u64 {
         .nth(1)
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or_else(|| panic!("text stat {path} should have an integer value"))
-}
-
-fn fixed_ratio_text(numerator: u64, denominator: u64) -> String {
-    assert_ne!(denominator, 0, "ratio denominator must be nonzero");
-    format!("{:.6}", numerator as f64 / denominator as f64)
 }
 
 fn assert_text_stat_absent(stdout: &str, path: &str) {

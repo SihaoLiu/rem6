@@ -1197,39 +1197,33 @@ pub(super) fn append_derived_stat_from_snapshot_if_absent(
     }
 }
 
+pub(super) fn append_derived_alias_from_snapshot_if_absent(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    source_path: &str,
+    alias_path: &str,
+) {
+    if snapshot_value(snapshot, alias_path).is_some() {
+        return;
+    }
+    let Some(sample) = snapshot
+        .samples()
+        .iter()
+        .find(|sample| sample.path() == source_path)
+    else {
+        return;
+    };
+    output.push_str(&format!(
+        "{alias_path:<64} {:>20} # kind=derived unit={} reset_policy={}\n",
+        sample.value(),
+        sample.unit(),
+        sample.reset_policy()
+    ));
+}
+
 fn append_derived_ratio_stat(output: &mut String, path: &str, numerator: u64, denominator: u64) {
     output.push_str(&format!(
         "{path:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
-        format_fixed_ratio(numerator, denominator)
-    ));
-}
-
-pub(super) fn append_derived_count_per_cycle_stat(
-    output: &mut String,
-    path: &str,
-    count: u64,
-    cycles: u64,
-) {
-    if cycles == 0 {
-        return;
-    }
-    output.push_str(&format!(
-        "{path:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
-        format_fixed_ratio(count, cycles)
-    ));
-}
-
-pub(super) fn append_derived_count_per_count_stat(
-    output: &mut String,
-    path: &str,
-    numerator: u64,
-    denominator: u64,
-) {
-    if denominator == 0 {
-        return;
-    }
-    output.push_str(&format!(
-        "{path:<64} {:>20} # kind=derived unit=(Count/Count) reset_policy=monotonic\n",
         format_fixed_ratio(numerator, denominator)
     ));
 }
@@ -1570,19 +1564,18 @@ mod tests {
     }
 
     #[test]
-    fn stats_output_renders_zero_o3_wb_rate_when_writeback_stat_is_present() {
+    fn stats_output_projects_zero_o3_wb_rate_from_ppm_source() {
         let mut stats = StatsRegistry::new();
         let cores = counter!(&mut stats, "sim.cores", "Count");
-        let cycles = counter!(&mut stats, "system.cpu.numCycles", "Cycle");
         counter!(&mut stats, "sim.cpu0.o3.iew.writeback_count", "Count");
+        counter!(&mut stats, "sim.cpu0.o3.iew.writeback_rate_ppm", "Ppm");
         stats.increment(cores, 1).unwrap();
-        stats.increment(cycles, 12).unwrap();
 
         let text = stats_snapshot_text(&stats.snapshot(0));
 
         assert!(text.contains("system.cpu.iew.writebackCount::total"));
         assert!(text.contains("system.cpu.iew.wbRate"));
-        assert!(text.contains("0.000000 # kind=derived unit=(Count/Cycle)"));
+        assert!(text.contains("0 # kind=derived unit=Ppm"));
     }
 
     #[test]

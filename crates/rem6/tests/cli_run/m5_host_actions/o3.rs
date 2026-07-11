@@ -1023,8 +1023,9 @@ fn rem6_run_exposes_multicore_o3_float_misc_op_class_aliases_by_active_hart() {
 
 #[test]
 fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart() {
-    let path = multicore_hart1_detailed_o3_dump_stats_binary(
+    let path = multicore_hart_detailed_o3_dump_stats_binary(
         "m5-switch-cpu-hart1-detailed-o3-dump-structural-aliases",
+        1,
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
@@ -1151,6 +1152,109 @@ fn rem6_run_m5_dump_stats_filters_multicore_o3_structural_aliases_by_active_hart
         "system.cpu0.lsq0.maxOccupancy",
         "system.cpu0.iq.issuedInstType.MemRead",
         "system.cpu0.commit.committedInstType.MemWrite",
+    ] {
+        assert_stats_dump_sample_absent(dump, path);
+    }
+}
+
+#[test]
+fn rem6_run_m5_dump_stats_keeps_multicore_cpu0_o3_aliases_target_qualified() {
+    let path = multicore_hart_detailed_o3_dump_stats_binary(
+        "m5-switch-cpu-hart0-detailed-o3-dump-structural-aliases",
+        0,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "2",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let dump = json
+        .pointer("/host_actions/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing stats dump action: {json}"));
+
+    for (dotted_path, bucket_path) in [
+        (
+            "system.cpu0.iew.instsToCommit.total",
+            "system.cpu0.iew.instsToCommit::total",
+        ),
+        (
+            "system.cpu0.iew.writebackCount.total",
+            "system.cpu0.iew.writebackCount::total",
+        ),
+        (
+            "system.cpu0.iew.producerInst.total",
+            "system.cpu0.iew.producerInst::total",
+        ),
+        (
+            "system.cpu0.iew.consumerInst.total",
+            "system.cpu0.iew.consumerInst::total",
+        ),
+    ] {
+        let value = stats_dump_sample_value(dump, dotted_path);
+        assert_stats_dump_sample(dump, bucket_path, "counter", "Count", value, "resettable");
+    }
+    let writeback_rate_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+    );
+    let producer_consumer_fanout_ppm = stats_dump_sample_value(
+        dump,
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu0.iew.wbRate",
+        "counter",
+        "Ppm",
+        writeback_rate_ppm,
+        "resettable",
+    );
+    assert_stats_dump_sample(
+        dump,
+        "system.cpu0.iew.wbFanout",
+        "counter",
+        "Ppm",
+        producer_consumer_fanout_ppm,
+        "resettable",
+    );
+    for path in [
+        "system.cpu.iew.instsToCommit.total",
+        "system.cpu.iew.instsToCommit::total",
+        "system.cpu.iew.writebackCount.total",
+        "system.cpu.iew.writebackCount::total",
+        "system.cpu.iew.producerInst.total",
+        "system.cpu.iew.producerInst::total",
+        "system.cpu.iew.consumerInst.total",
+        "system.cpu.iew.consumerInst::total",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
+        "system.cpu1.iew.wbRate",
+        "system.cpu1.iew.wbFanout",
     ] {
         assert_stats_dump_sample_absent(dump, path);
     }
@@ -1565,6 +1669,8 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "sim.host_actions.stats_dump.cpu0.o3.fu_vector_float_misc_latency_cycles",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.host_actions.stats_dump.cpu0.o3.commit.committed_inst_type.int_mul",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.writeback_rate_ppm",
+        "sim.host_actions.stats_dump.cpu0.o3.iew.producer_consumer_fanout_ppm",
         "system.cpu.rob.writes",
         "system.cpu.rob.reads",
         "system.cpu.rename.renamedInsts",
@@ -1576,6 +1682,8 @@ fn rem6_run_m5_dump_stats_omits_o3_runtime_snapshot_after_timing_switch() {
         "system.cpu.iew.writebackCount.total",
         "system.cpu.iew.producerInst.total",
         "system.cpu.iew.consumerInst.total",
+        "system.cpu.iew.wbRate",
+        "system.cpu.iew.wbFanout",
         "system.cpu.lsq0.addedLoadsAndStores",
         "system.cpu.lsq0.loadBytes",
         "system.cpu.lsq0.storeBytes",
@@ -3346,22 +3454,15 @@ fn rem6_run_text_stats_alias_o3_runtime_stats_after_detailed_switch() {
     assert_text_count_stat(&stdout, "system.cpu.iew.producerInst::total", 3);
     assert_text_count_stat(&stdout, "system.cpu.iew.consumerInst.total", 4);
     assert_text_count_stat(&stdout, "system.cpu.iew.consumerInst::total", 4);
-    let writeback_count = text_stat_u64(&stdout, "system.cpu.iew.writebackCount::total");
-    let cycles = text_stat_u64(&stdout, "system.cpu.numCycles");
-    assert_text_ratio_stat(
-        &stdout,
-        "system.cpu.iew.wbRate",
-        &fixed_ratio_text(writeback_count, cycles),
-        "(Count/Cycle)",
-    );
+    let writeback_rate_ppm = text_stat_u64(&stdout, "sim.cpu0.o3.iew.writeback_rate_ppm");
+    assert_text_ppm_stat(&stdout, "system.cpu.iew.wbRate", writeback_rate_ppm);
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbRate");
-    let producer_insts = text_stat_u64(&stdout, "system.cpu.iew.producerInst::total");
-    let consumer_insts = text_stat_u64(&stdout, "system.cpu.iew.consumerInst::total");
-    assert_text_ratio_stat(
+    let producer_consumer_fanout_ppm =
+        text_stat_u64(&stdout, "sim.cpu0.o3.iew.producer_consumer_fanout_ppm");
+    assert_text_ppm_stat(
         &stdout,
         "system.cpu.iew.wbFanout",
-        &fixed_ratio_text(producer_insts, consumer_insts),
-        "(Count/Count)",
+        producer_consumer_fanout_ppm,
     );
     assert_text_stat_occurs_once(&stdout, "system.cpu.iew.wbFanout");
     assert_text_count_stat(&stdout, "system.cpu.lsq0.addedLoadsAndStores", 2);
@@ -3600,6 +3701,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_count");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.producer_inst");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.consumer_inst");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.writeback_rate_ppm");
+    assert_json_stat_absent(&json, "sim.cpu0.o3.iew.producer_consumer_fanout_ppm");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_taken_incorrect");
     assert_json_stat_absent(&json, "sim.cpu0.o3.iew.predicted_not_taken_incorrect");
     assert_json_stat_absent(&json, "system.cpu.iew.dispatchedInsts");
@@ -3611,6 +3714,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.iew.producerInst::total");
     assert_json_stat_absent(&json, "system.cpu.iew.consumerInst.total");
     assert_json_stat_absent(&json, "system.cpu.iew.consumerInst::total");
+    assert_json_stat_absent(&json, "system.cpu.iew.wbRate");
+    assert_json_stat_absent(&json, "system.cpu.iew.wbFanout");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemRead");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.MemWrite");
     assert_json_stat_absent(&json, "system.cpu.iq.issuedInstType.IntMult");
@@ -3760,6 +3865,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iew.writeback_count",
         "sim.cpu0.o3.iew.producer_inst",
         "sim.cpu0.o3.iew.consumer_inst",
+        "sim.cpu0.o3.iew.writeback_rate_ppm",
+        "sim.cpu0.o3.iew.producer_consumer_fanout_ppm",
         "system.cpu.iew.writebackCount.total",
         "system.cpu.iew.writebackCount::total",
         "system.cpu.iew.producerInst.total",

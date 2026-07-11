@@ -48,6 +48,7 @@ mod instruction_probe_summary;
 mod memory_resource_summary;
 mod multi_run_cli;
 mod o3_branch_mismatch_aliases;
+mod o3_iew_aliases;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_import_cli;
