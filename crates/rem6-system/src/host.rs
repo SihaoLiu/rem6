@@ -1,15 +1,19 @@
+mod action_apply;
 mod checkpoint_accessors;
 mod execution_mode_checkpoint;
 mod execution_mode_transfer;
 mod stats_sync;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
+use rem6_checkpoint::{
+    CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
+};
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
 use crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary;
+use crate::scheduler_checkpoint::SchedulerCheckpointBankGuard;
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
     DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget, FabricCheckpointBank,
@@ -21,13 +25,14 @@ use crate::{
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
     RiscvCoreCheckpointBank, RiscvO3RuntimeStats, RtcCheckpointBank, SchedulerCheckpointBank,
-    SinicFifoCheckpointBank, SinicFifoCheckpointPort, SinicRegisterCheckpointBank,
-    SinicRegisterCheckpointPort, Sp804CheckpointBank, Sp805CheckpointBank, StopRequest,
-    StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError, TimerCheckpointBank,
-    UartCheckpointBank, VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
-    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
-    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
-    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
+    SchedulerCheckpointError, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
+    SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
+    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
+    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
+    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointPort,
 };
 
 pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
@@ -322,6 +327,9 @@ pub struct SystemActionExecutor {
     gpu_checkpoints: Option<GpuCheckpointBank>,
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     scheduler_checkpoints: Option<SchedulerCheckpointBank>,
+    scheduler_checkpoint_control_events:
+        Vec<crate::scheduler_checkpoint::SchedulerCheckpointOwnedEvent>,
+    borrowed_scheduler_checkpoint_components: BTreeSet<CheckpointComponentId>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     storage_image_checkpoints: Option<StorageImageCheckpointBank>,
     guest_fd_checkpoints: Option<GuestFdCheckpointBank>,
@@ -355,6 +363,31 @@ pub struct SystemActionExecutor {
     execution_mode_checkpoint_registered: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BorrowedSchedulerRestoreMode {
+    Snapshot,
+    DiscardOnly,
+}
+
+fn borrowed_scheduler_restore_mode(
+    bank: Option<&SchedulerCheckpointBank>,
+    checkpoints: &CheckpointRegistry,
+    scheduler: &crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
+    owned_events: &[crate::scheduler_checkpoint::SchedulerCheckpointOwnedEvent],
+) -> Result<Option<BorrowedSchedulerRestoreMode>, SchedulerCheckpointError> {
+    let attached = bank
+        .map(|bank| bank.validate_borrowed_scheduler(scheduler))
+        .transpose()?
+        .unwrap_or(false);
+    if attached || scheduler.has_checkpoint_chunk(checkpoints) {
+        Ok(Some(BorrowedSchedulerRestoreMode::Snapshot))
+    } else if scheduler.has_pending_discard_claim(owned_events) {
+        Ok(Some(BorrowedSchedulerRestoreMode::DiscardOnly))
+    } else {
+        Ok(None)
+    }
+}
+
 impl SystemActionExecutor {
     pub fn new(stats: StatsRegistry) -> Self {
         Self::with_checkpoint(stats, CheckpointRegistry::new())
@@ -373,6 +406,8 @@ impl SystemActionExecutor {
             gpu_checkpoints: None,
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
+            scheduler_checkpoint_control_events: Vec::new(),
+            borrowed_scheduler_checkpoint_components: BTreeSet::new(),
             memory_checkpoints: None,
             storage_image_checkpoints: None,
             guest_fd_checkpoints: None,
@@ -785,15 +820,6 @@ impl SystemActionExecutor {
         Ok(())
     }
 
-    pub fn attach_scheduler_checkpoint_bank(
-        &mut self,
-        scheduler_checkpoints: SchedulerCheckpointBank,
-    ) -> Result<(), CheckpointError> {
-        scheduler_checkpoints.register_all(&mut self.checkpoints)?;
-        self.scheduler_checkpoints = Some(scheduler_checkpoints);
-        Ok(())
-    }
-
     pub fn attach_dram_memory_checkpoint_bank(
         &mut self,
         dram_memory_checkpoints: DramMemoryCheckpointBank,
@@ -1073,9 +1099,13 @@ impl SystemActionExecutor {
         }
     }
 
-    fn restore_checkpoint_manifest(
+    fn restore_checkpoint_manifest_with_scheduler(
         &mut self,
         manifest: &CheckpointManifest,
+        mut scheduler_checkpoint: Option<
+            &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
+        >,
+        mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<(), SystemError> {
         let mut staged_checkpoints = self.checkpoints.clone();
         if manifest_has_execution_mode_checkpoint(manifest) {
@@ -1085,23 +1115,57 @@ impl SystemActionExecutor {
                 Err(error) => return Err(SystemError::Checkpoint(error)),
             }
         }
+        if let Some(scheduler_checkpoint) = scheduler_checkpoint.as_ref() {
+            if scheduler_checkpoint.manifest_has_restorable_checkpoint_state(manifest) {
+                match staged_checkpoints.register(scheduler_checkpoint.component().clone()) {
+                    Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
+                    Err(error) => return Err(SystemError::Checkpoint(error)),
+                }
+            }
+        }
         staged_checkpoints
             .restore(manifest)
             .map_err(SystemError::Checkpoint)?;
+        if let Some(scheduler_checkpoint) = scheduler_checkpoint.as_ref() {
+            if scheduler_checkpoint.manifest_has_empty_checkpoint_state(manifest) {
+                staged_checkpoints.remove_component_if_empty(scheduler_checkpoint.component());
+            }
+        }
         let (staged_execution_modes, staged_execution_mode_checkpoint_registered) =
             self.stage_execution_mode_checkpoint_restore(&mut staged_checkpoints, manifest)?;
-        self.validate_checkpoint_banks(&staged_checkpoints)?;
-
+        self.validate_checkpoint_banks(
+            &staged_checkpoints,
+            scheduler_checkpoint.as_deref_mut(),
+            scheduler_checkpoint_bank.as_deref_mut(),
+        )?;
         self.checkpoints = staged_checkpoints;
         self.execution_modes = staged_execution_modes;
         self.execution_mode_checkpoint_registered = staged_execution_mode_checkpoint_registered;
-        self.restore_checkpoint_banks()
+        self.restore_checkpoint_banks(scheduler_checkpoint, scheduler_checkpoint_bank)
     }
 
     fn validate_checkpoint_banks(
         &self,
         checkpoints: &CheckpointRegistry,
+        mut scheduler_checkpoint: Option<
+            &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
+        >,
+        mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<(), SystemError> {
+        let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let borrowed_scheduler_restore_mode = scheduler_checkpoint
+            .as_ref()
+            .map(|scheduler| {
+                borrowed_scheduler_restore_mode(
+                    self.scheduler_checkpoints.as_ref(),
+                    checkpoints,
+                    scheduler,
+                    &owned_scheduler_events,
+                )
+            })
+            .transpose()
+            .map_err(SystemError::SchedulerCheckpoint)?
+            .flatten();
         if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
             accelerator_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1127,10 +1191,25 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::RiscvCheckpoint)?;
         }
-        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
-            scheduler_checkpoints
-                .validate_restore_from(checkpoints)
+        if self.scheduler_checkpoints.is_some() {
+            scheduler_checkpoint_bank
+                .as_deref_mut()
+                .expect("attached scheduler checkpoint bank is locked")
+                .validate_restore_from_with_owned_events(checkpoints, &owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if let Some(mode) = borrowed_scheduler_restore_mode {
+            let scheduler_checkpoint = scheduler_checkpoint
+                .as_deref_mut()
+                .expect("borrowed scheduler restore is present");
+            match mode {
+                BorrowedSchedulerRestoreMode::Snapshot => {
+                    scheduler_checkpoint.validate_restore_from(checkpoints, &owned_scheduler_events)
+                }
+                BorrowedSchedulerRestoreMode::DiscardOnly => scheduler_checkpoint
+                    .validate_discard_pending_owned_events(&owned_scheduler_events),
+            }
+            .map_err(SystemError::SchedulerCheckpoint)?;
         }
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
@@ -1278,8 +1357,29 @@ impl SystemActionExecutor {
         }
         Ok(())
     }
-
-    fn restore_checkpoint_banks(&mut self) -> Result<(), SystemError> {
+    fn restore_checkpoint_banks(
+        &mut self,
+        scheduler_checkpoint: Option<
+            &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
+        >,
+        scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
+    ) -> Result<(), SystemError> {
+        let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let borrowed_scheduler_restore_mode = scheduler_checkpoint
+            .as_ref()
+            .map(|scheduler| {
+                borrowed_scheduler_restore_mode(
+                    self.scheduler_checkpoints.as_ref(),
+                    &self.checkpoints,
+                    scheduler,
+                    &owned_scheduler_events,
+                )
+            })
+            .transpose()
+            .map_err(SystemError::SchedulerCheckpoint)?
+            .flatten();
+        let borrowed_scheduler_component = borrowed_scheduler_restore_mode
+            .map(|_| scheduler_checkpoint.as_ref().unwrap().component().clone());
         if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
             accelerator_checkpoints
                 .restore_all_from(&self.checkpoints)
@@ -1305,10 +1405,30 @@ impl SystemActionExecutor {
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::RiscvCheckpoint)?;
         }
-        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
-            scheduler_checkpoints
-                .restore_all_from(&self.checkpoints)
+        if self.scheduler_checkpoints.is_some() {
+            scheduler_checkpoint_bank
+                .expect("attached scheduler checkpoint bank is locked")
+                .restore_all_from_with_owned_events(&self.checkpoints, &owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if let Some(mode) = borrowed_scheduler_restore_mode {
+            let scheduler_checkpoint =
+                scheduler_checkpoint.expect("borrowed scheduler restore is present");
+            match mode {
+                BorrowedSchedulerRestoreMode::Snapshot => scheduler_checkpoint
+                    .restore_from(&self.checkpoints, &owned_scheduler_events)
+                    .map(|_| ()),
+                BorrowedSchedulerRestoreMode::DiscardOnly => {
+                    scheduler_checkpoint.discard_pending_owned_events(&owned_scheduler_events)
+                }
+            }
+            .map_err(SystemError::SchedulerCheckpoint)?;
+            if mode == BorrowedSchedulerRestoreMode::Snapshot {
+                self.track_borrowed_scheduler_checkpoint_component(
+                    borrowed_scheduler_component
+                        .expect("borrowed scheduler snapshot component is present"),
+                );
+            }
         }
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
@@ -1481,152 +1601,6 @@ impl SystemActionExecutor {
         }
         Ok(())
     }
-
-    pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
-        match record.action() {
-            HostAction::InjectCommand { command } => Ok(SystemActionOutcome::InjectedCommand {
-                tick: record.tick(),
-                event: record.event(),
-                source: record.source(),
-                command: command.clone(),
-            }),
-            HostAction::RecordGuestHostCall {
-                selector,
-                arguments,
-                payload,
-            } => Ok(SystemActionOutcome::GuestHostCall {
-                tick: record.tick(),
-                event: record.event(),
-                source: record.source(),
-                selector: *selector,
-                arguments: arguments.clone(),
-                payload: payload.clone(),
-                response: self.resolve_guest_host_call_response(*selector),
-            }),
-            HostAction::RecordRoiBegin { work_id, thread_id } => {
-                Ok(SystemActionOutcome::RoiBegin {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    work_id: *work_id,
-                    thread_id: *thread_id,
-                })
-            }
-            HostAction::RecordRoiEnd { work_id, thread_id } => Ok(SystemActionOutcome::RoiEnd {
-                tick: record.tick(),
-                event: record.event(),
-                source: record.source(),
-                work_id: *work_id,
-                thread_id: *thread_id,
-            }),
-            HostAction::ResetStats => {
-                if let Some(hook) = &self.pre_stats_sync {
-                    hook.sync(&mut self.stats, StatsSyncPhase::BeforeReset)?;
-                }
-                let outcome = self
-                    .stats
-                    .try_reset(record.tick())
-                    .map(SystemActionOutcome::StatsReset)
-                    .map_err(SystemError::Stats)?;
-                if let Some(hook) = &self.pre_stats_sync {
-                    hook.sync(&mut self.stats, StatsSyncPhase::AfterReset)?;
-                }
-                Ok(outcome)
-            }
-            HostAction::DumpStats => {
-                if let Some(hook) = &self.pre_stats_sync {
-                    hook.sync(&mut self.stats, StatsSyncPhase::BeforeDump)?;
-                }
-                let active_o3_cpus = self
-                    .riscv_o3_runtime_stats
-                    .as_ref()
-                    .map(RiscvO3RuntimeStats::active_cpu_indices)
-                    .unwrap_or_default();
-                self.stats
-                    .try_dump(record.tick())
-                    .map(|record| SystemActionOutcome::StatsDump {
-                        record,
-                        active_o3_cpus,
-                    })
-                    .map_err(SystemError::Stats)
-            }
-            HostAction::SwitchExecutionMode { target, mode } => {
-                let state_transfer =
-                    self.capture_execution_mode_switch_state_transfer(record, target)?;
-                let previous_mode = self.execution_modes.insert(target.clone(), *mode);
-                Ok(SystemActionOutcome::ExecutionModeSwitched {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    target: target.clone(),
-                    previous_mode,
-                    mode: *mode,
-                    stats_epoch: self.stats.epoch(),
-                    stats_reset_tick: self.stats.reset_tick(),
-                    state_transfer,
-                })
-            }
-            HostAction::Checkpoint { label } => {
-                if is_execution_mode_switch_state_transfer_label(label) {
-                    return Err(SystemError::ReservedCheckpointManifestLabel {
-                        label: label.clone(),
-                        prefix: EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX.to_string(),
-                    });
-                }
-                let mut staged_checkpoints = self.checkpoints.clone();
-                self.capture_attached_checkpoint_banks_into(
-                    &mut staged_checkpoints,
-                    record.tick(),
-                )?;
-                let execution_mode_registered =
-                    self.capture_execution_modes_into(&mut staged_checkpoints)?;
-                let manifest = staged_checkpoints
-                    .capture(label.clone(), record.tick())
-                    .map_err(SystemError::Checkpoint)?;
-                self.checkpoints = staged_checkpoints;
-                if execution_mode_registered {
-                    self.execution_mode_checkpoint_registered = true;
-                }
-                self.captured_manifests
-                    .insert(manifest.label().to_string(), manifest.clone());
-                Ok(SystemActionOutcome::Checkpoint {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    manifest,
-                })
-            }
-            HostAction::RestoreCheckpointByLabel { label } => {
-                let manifest = self.captured_manifests.get(label).cloned().ok_or_else(|| {
-                    SystemError::MissingCheckpointManifest {
-                        label: label.clone(),
-                    }
-                })?;
-                self.restore_checkpoint_manifest(&manifest)?;
-                Ok(SystemActionOutcome::CheckpointRestored {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    manifest,
-                })
-            }
-            HostAction::RestoreCheckpoint { manifest } => {
-                self.restore_checkpoint_manifest(manifest)?;
-                Ok(SystemActionOutcome::CheckpointRestored {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    manifest: manifest.clone(),
-                })
-            }
-            HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
-                record.tick(),
-                record.event(),
-                record.source(),
-                *code,
-            ))),
-        }
-    }
 }
 
 fn is_execution_mode_switch_state_transfer_label(label: &str) -> bool {
@@ -1782,6 +1756,31 @@ impl SystemHostController {
                 Vec::new()
             }
         }
+    }
+
+    pub(crate) fn handle_delivery_with_scheduler_checkpoint(
+        &mut self,
+        delivery: GuestEventDelivery,
+        component: CheckpointComponentId,
+        mut scheduler: rem6_kernel::SchedulerCheckpointAccess<'_>,
+    ) -> Vec<SystemActionOutcome> {
+        let records = self.run.handle_delivery(delivery);
+        let mut outcomes = Vec::with_capacity(records.len());
+        for record in &records {
+            match self.executor.apply_with_scheduler_checkpoint(
+                record,
+                component.clone(),
+                scheduler.reborrow(),
+            ) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(error) => {
+                    self.action_errors.push(error);
+                    return Vec::new();
+                }
+            }
+        }
+        self.run.outcomes.extend(outcomes.iter().cloned());
+        outcomes
     }
 
     pub fn consume_stats_reset_outcomes(&mut self) -> bool {

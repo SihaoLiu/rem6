@@ -1,7 +1,11 @@
-use rem6_checkpoint::CheckpointRegistry;
-use rem6_kernel::Tick;
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
+use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 
-use crate::{ExecutionModeTarget, HostActionRecord, SystemError};
+use crate::scheduler_checkpoint::{
+    remove_scheduler_checkpoint_chunk, SchedulerCheckpointBankGuard, SchedulerCheckpointContext,
+    SchedulerCheckpointOwnedEvent,
+};
+use crate::{ExecutionModeTarget, HostActionRecord, SchedulerCheckpointBank, SystemError};
 
 use super::{
     ExecutionModeSwitchStateTransfer, SystemActionExecutor,
@@ -9,17 +13,53 @@ use super::{
 };
 
 impl SystemActionExecutor {
-    pub(super) fn capture_execution_mode_switch_state_transfer(
+    pub fn attach_scheduler_checkpoint_bank(
+        &mut self,
+        scheduler_checkpoints: SchedulerCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        let components = scheduler_checkpoints.components();
+        let mut staged_checkpoints = self.checkpoints.clone();
+        for component in &components {
+            if self
+                .borrowed_scheduler_checkpoint_components
+                .contains(component)
+            {
+                remove_scheduler_checkpoint_chunk(&mut staged_checkpoints, component);
+            }
+        }
+        scheduler_checkpoints.register_all(&mut staged_checkpoints)?;
+        self.checkpoints = staged_checkpoints;
+        self.scheduler_checkpoints = Some(scheduler_checkpoints);
+        for component in components {
+            self.borrowed_scheduler_checkpoint_components
+                .remove(&component);
+        }
+        Ok(())
+    }
+
+    pub(super) fn capture_execution_mode_switch_state_transfer_with_scheduler(
         &mut self,
         record: &HostActionRecord,
         target: &ExecutionModeTarget,
+        mut scheduler_checkpoint: Option<&mut SchedulerCheckpointContext<'_>>,
+        scheduler_checkpoint_bank: Option<&SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<Option<ExecutionModeSwitchStateTransfer>, SystemError> {
-        if !self.has_execution_mode_switch_state_transfer_banks() {
+        let has_state_transfer_banks = self.has_execution_mode_switch_state_transfer_banks();
+        if !has_state_transfer_banks && scheduler_checkpoint.is_none() {
             return Ok(None);
         }
 
         let mut staged_checkpoints = self.checkpoints.clone();
-        self.capture_attached_checkpoint_banks_into(&mut staged_checkpoints, record.tick())?;
+        let captured_borrowed_scheduler = self
+            .capture_attached_checkpoint_banks_into_with_scheduler(
+                &mut staged_checkpoints,
+                record.tick(),
+                scheduler_checkpoint.as_deref_mut(),
+                scheduler_checkpoint_bank,
+            )?;
+        if !has_state_transfer_banks && !captured_borrowed_scheduler {
+            return Ok(None);
+        }
         let execution_mode_registered =
             self.capture_execution_modes_into(&mut staged_checkpoints)?;
 
@@ -45,14 +85,53 @@ impl SystemActionExecutor {
         )))
     }
 
-    pub(super) fn capture_attached_checkpoint_banks_into(
-        &self,
+    pub(super) fn capture_attached_checkpoint_banks_into_with_scheduler(
+        &mut self,
         staged_checkpoints: &mut CheckpointRegistry,
         tick: Tick,
-    ) -> Result<(), SystemError> {
-        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
-            scheduler_checkpoints
-                .validate_quiescent_capture()
+        mut scheduler_checkpoint: Option<&mut SchedulerCheckpointContext<'_>>,
+        scheduler_checkpoint_bank: Option<&SchedulerCheckpointBankGuard<'_>>,
+    ) -> Result<bool, SystemError> {
+        for component in &self.borrowed_scheduler_checkpoint_components {
+            if self
+                .scheduler_checkpoints
+                .as_ref()
+                .is_some_and(|bank| bank.has_component(component))
+            {
+                continue;
+            }
+            remove_scheduler_checkpoint_chunk(staged_checkpoints, component);
+        }
+        if let Some(scheduler_checkpoint) = scheduler_checkpoint.as_ref() {
+            scheduler_checkpoint.remove_checkpoint_chunk(staged_checkpoints);
+        }
+        let borrowed_scheduler_is_attached = match (
+            self.scheduler_checkpoints.as_ref(),
+            scheduler_checkpoint.as_ref(),
+        ) {
+            (Some(bank), Some(scheduler)) => bank
+                .validate_borrowed_scheduler(scheduler)
+                .map_err(SystemError::SchedulerCheckpoint)?,
+            _ => false,
+        };
+        let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let capture_borrowed_scheduler = scheduler_checkpoint.as_ref().is_some_and(|scheduler| {
+            borrowed_scheduler_is_attached
+                || scheduler.has_pending_discard_claim(&owned_scheduler_events)
+        });
+        let borrowed_scheduler_component = capture_borrowed_scheduler
+            .then(|| scheduler_checkpoint.as_ref().unwrap().component().clone());
+        if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
+            scheduler_checkpoint_bank
+                .validate_quiescent_capture_with_owned_events(&owned_scheduler_events)
+                .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if capture_borrowed_scheduler {
+            let scheduler_checkpoint = scheduler_checkpoint
+                .as_deref_mut()
+                .expect("borrowed scheduler capture is present");
+            scheduler_checkpoint
+                .validate_capture(&owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
         }
         if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
@@ -80,10 +159,20 @@ impl SystemActionExecutor {
                 .capture_all_into(staged_checkpoints)
                 .map_err(SystemError::Checkpoint)?;
         }
-        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
-            scheduler_checkpoints
-                .capture_all_into(staged_checkpoints)
+        if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
+            scheduler_checkpoint_bank
+                .capture_all_into_with_owned_events(staged_checkpoints, &owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if capture_borrowed_scheduler {
+            let scheduler_checkpoint =
+                scheduler_checkpoint.expect("borrowed scheduler capture is present");
+            scheduler_checkpoint
+                .capture_into(staged_checkpoints, &owned_scheduler_events)
+                .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if let Some(component) = borrowed_scheduler_component {
+            self.track_borrowed_scheduler_checkpoint_component(component);
         }
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
@@ -229,7 +318,56 @@ impl SystemActionExecutor {
                 .capture_all_into(staged_checkpoints)
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
-        Ok(())
+        Ok(capture_borrowed_scheduler)
+    }
+
+    pub(super) fn owned_scheduler_checkpoint_events(&self) -> Vec<SchedulerCheckpointOwnedEvent> {
+        let mut events = self.scheduler_checkpoint_control_events.clone();
+        events.extend(
+            self.riscv_checkpoints
+                .as_ref()
+                .into_iter()
+                .flat_map(|checkpoints| checkpoints.pending_live_retire_gate_wakes())
+                .map(|(scheduler, event)| {
+                    SchedulerCheckpointOwnedEvent::discard_on_restore(scheduler, event)
+                }),
+        );
+        events
+    }
+
+    pub(crate) fn register_scheduler_checkpoint_control_event(
+        &mut self,
+        scheduler: SchedulerInstanceId,
+        event: PendingEventSnapshot,
+    ) {
+        let event = SchedulerCheckpointOwnedEvent::preserve_on_restore(scheduler, event);
+        if !self
+            .scheduler_checkpoint_control_events
+            .iter()
+            .copied()
+            .any(|candidate| candidate.same_identity(event))
+        {
+            self.scheduler_checkpoint_control_events.push(event);
+        }
+    }
+
+    pub(crate) fn retain_scheduler_checkpoint_control_events(
+        &mut self,
+        scheduler: SchedulerInstanceId,
+        snapshot: &rem6_kernel::SchedulerSnapshot,
+    ) {
+        self.scheduler_checkpoint_control_events
+            .retain(|event| event.retain_for_scheduler(scheduler, snapshot));
+    }
+
+    pub(crate) fn retain_attached_scheduler_checkpoint_control_events(
+        &mut self,
+        scheduler_checkpoint_bank: Option<&SchedulerCheckpointBankGuard<'_>>,
+    ) {
+        if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
+            scheduler_checkpoint_bank
+                .retain_pending_owned_events(&mut self.scheduler_checkpoint_control_events);
+        }
     }
 
     fn has_execution_mode_switch_state_transfer_banks(&self) -> bool {
@@ -267,6 +405,23 @@ impl SystemActionExecutor {
             || self.virtio_pci_common_checkpoints.is_some()
             || self.virtio_pci_notify_checkpoints.is_some()
             || self.virtio_pci_device_config_checkpoints.is_some()
+    }
+
+    pub(super) fn track_borrowed_scheduler_checkpoint_component(
+        &mut self,
+        component: CheckpointComponentId,
+    ) {
+        if self
+            .scheduler_checkpoints
+            .as_ref()
+            .is_some_and(|bank| bank.has_component(&component))
+        {
+            self.borrowed_scheduler_checkpoint_components
+                .remove(&component);
+        } else {
+            self.borrowed_scheduler_checkpoint_components
+                .insert(component);
+        }
     }
 }
 
