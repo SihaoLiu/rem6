@@ -12294,7 +12294,7 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         ("fu_integer_mul_latency_cycles", 2),
         ("fu_integer_div_instructions", 1),
         ("fu_integer_div_latency_cycles", 19),
-        ("max_rob_occupancy", 2),
+        ("max_rob_occupancy", 1),
         ("max_lsq_occupancy", 0),
         ("rename_map_entries", 3),
     ] {

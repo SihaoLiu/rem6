@@ -258,8 +258,8 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
     let younger_commit_blocked = json_bool_field(younger_add, "/rob_commit_blocked");
     assert_eq!(
         json_u64_field(resident_divide, "/rename_map_entries"),
-        5,
-        "the divide event should include committed x1/x2 plus live x3/x4/x5 mappings: {resident_divide}"
+        6,
+        "the divide event should include committed x1/x2 plus live x3/x4/x5/x12 mappings: {resident_divide}"
     );
     assert!(
         divide_writeback > divide_issue,
@@ -281,15 +281,15 @@ fn rem6_run_o3_detailed_mode_exposes_live_rob_overlap() {
         younger_add
             .pointer("/rob_occupancy")
             .and_then(Value::as_u64),
-        Some(2),
-        "the independent younger event should retire ahead of the remaining forwarded row: {younger_add}"
+        Some(3),
+        "the independent younger event should retire ahead of the forwarded and AUIPC rows: {younger_add}"
     );
     assert_eq!(
         forwarded_add
             .pointer("/rob_occupancy")
             .and_then(Value::as_u64),
-        Some(1),
-        "the forwarded dependent event should retire from the final ROB row: {forwarded_add}"
+        Some(2),
+        "the forwarded dependent event should retire ahead of the final AUIPC row: {forwarded_add}"
     );
     assert!(
         divide_commit >= divide_writeback,

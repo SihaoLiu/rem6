@@ -2,13 +2,10 @@ use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::Address;
 
 use crate::{
-    o3_fu_latency::o3_fu_latency_class,
-    o3_runtime::{o3_scalar_integer_destination, o3_speculative_scalar_alu_operands},
-    o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
         completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
-        RiscvCompletedFetchInstruction,
+        RiscvCompletedFetchInstruction, ScalarIntegerFuLiveWindow, ScalarIntegerFuYoungerBoundary,
     },
     riscv_scalar_memory_window::independent_scalar_load_destination,
     CpuFetchEvent, CpuFetchEventKind, RiscvCoreState,
@@ -123,65 +120,64 @@ pub(super) fn additional_fetch_candidate(
     if scalar_memory_window {
         return scalar_memory_window_candidate(state, fetch_events, &current);
     }
-    let fu_window = matches!(
-        o3_fu_latency_class(current.decoded().instruction()),
-        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
-    );
-    if !fu_window {
+    let Some(window) = ScalarIntegerFuLiveWindow::new(current.decoded().instruction()) else {
         return DetailedFetchAheadCandidate::NotApplicable;
-    }
-    let younger_pc = Address::new(
+    };
+    scalar_integer_fu_window_candidate(state, fetch_events, &current, window)
+}
+
+fn scalar_integer_fu_window_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    current: &RiscvCompletedFetchInstruction,
+    mut window: ScalarIntegerFuLiveWindow,
+) -> DetailedFetchAheadCandidate {
+    let mut previous_request = current.last_consumed_request();
+    let mut next_pc = Address::new(
         current
             .pc()
             .get()
             .wrapping_add(u64::from(current.decoded().bytes())),
     );
-    let current_request = current.last_consumed_request();
-    let has_younger_prefix = oldest_completed_fetch_at(
-        &state.executed_fetches,
-        fetch_events,
-        current_request,
-        younger_pc,
-    )
-    .is_some();
-    let Some(younger) = completed_fetch_instruction_from_events(
-        &state.executed_fetches,
-        fetch_events,
-        current_request,
-        younger_pc,
-    ) else {
-        return if has_younger_prefix {
-            DetailedFetchAheadCandidate::Blocked
-        } else {
-            DetailedFetchAheadCandidate::NotApplicable
+    while !window.is_full() {
+        let has_completed_prefix = oldest_completed_fetch_at(
+            &state.executed_fetches,
+            fetch_events,
+            previous_request,
+            next_pc,
+        )
+        .is_some();
+        let Some(younger) = completed_fetch_instruction_from_events(
+            &state.executed_fetches,
+            fetch_events,
+            previous_request,
+            next_pc,
+        ) else {
+            return if has_completed_prefix
+                || has_live_younger_fetch_at(state, fetch_events, previous_request, next_pc)
+            {
+                DetailedFetchAheadCandidate::Blocked
+            } else {
+                DetailedFetchAheadCandidate::Ready(next_pc)
+            };
         };
-    };
-    let Some((_destination, sources)) =
-        o3_speculative_scalar_alu_operands(younger.decoded().instruction())
-    else {
-        return DetailedFetchAheadCandidate::Blocked;
-    };
-    let current_destination = o3_scalar_integer_destination(current.decoded().instruction());
-    if current_destination
-        .is_some_and(|destination| !destination.is_zero() && sources.contains(&destination))
-    {
-        return DetailedFetchAheadCandidate::Blocked;
+        match window.classify_younger(younger.decoded().instruction()) {
+            ScalarIntegerFuYoungerBoundary::Continue => {}
+            ScalarIntegerFuYoungerBoundary::StopAfter | ScalarIntegerFuYoungerBoundary::Reject => {
+                return DetailedFetchAheadCandidate::Blocked;
+            }
+        }
+
+        previous_request = younger.last_consumed_request();
+        next_pc = Address::new(
+            younger
+                .pc()
+                .get()
+                .wrapping_add(u64::from(younger.decoded().bytes())),
+        );
     }
-    let third_pc = Address::new(
-        younger
-            .pc()
-            .get()
-            .wrapping_add(u64::from(younger.decoded().bytes())),
-    );
-    if has_live_younger_fetch_at(
-        state,
-        fetch_events,
-        younger.last_consumed_request(),
-        third_pc,
-    ) {
-        return DetailedFetchAheadCandidate::Blocked;
-    }
-    DetailedFetchAheadCandidate::Ready(third_pc)
+
+    DetailedFetchAheadCandidate::Blocked
 }
 
 fn scalar_memory_window_candidate(

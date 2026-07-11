@@ -566,6 +566,14 @@ mod tests {
         }
     }
 
+    fn add(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+        RiscvInstruction::Add {
+            rd: Register::new(rd).unwrap(),
+            rs1: Register::new(rs1).unwrap(),
+            rs2: Register::new(rs2).unwrap(),
+        }
+    }
+
     fn load_x4() -> RiscvInstruction {
         RiscvInstruction::Load {
             rd: Register::new(4).unwrap(),
@@ -685,6 +693,7 @@ mod tests {
             [
                 (Address::new(0x8004), addi(4, 0)),
                 (Address::new(0x8008), addi(5, 4)),
+                (Address::new(0x800c), add(6, 4, 5)),
             ],
         );
         let live_snapshot = runtime.snapshot();
@@ -699,6 +708,7 @@ mod tests {
         assert!(restored.snapshot().reorder_buffer()[0].is_live_staged());
         assert!(restored.snapshot().reorder_buffer()[1].is_live_staged());
         assert!(restored.snapshot().reorder_buffer()[2].is_live_staged());
+        assert!(restored.snapshot().reorder_buffer()[3].is_live_staged());
 
         let restored_destinations = restored
             .snapshot()
@@ -706,12 +716,12 @@ mod tests {
             .iter()
             .filter_map(|entry| entry.destination())
             .collect::<BTreeSet<_>>();
-        restored.stage_live_retire_window(Address::new(0x800c), addi(6, 0), 0, None);
+        restored.stage_live_retire_window(Address::new(0x8010), addi(7, 0), 0, None);
         let next_destination = restored
             .snapshot()
             .reorder_buffer()
             .iter()
-            .find(|entry| entry.pc() == Address::new(0x800c))
+            .find(|entry| entry.pc() == Address::new(0x8010))
             .and_then(|entry| entry.destination())
             .unwrap();
         assert!(
@@ -858,6 +868,117 @@ mod tests {
             &[RegisterWrite::new(Register::new(4).unwrap(), 1)]
         );
         assert_eq!(consumer_candidate.issue_tick(10), 11);
+    }
+
+    #[test]
+    fn speculative_scalar_chain_wakes_transitively_with_fan_in() {
+        let mut runtime = O3RuntimeState::default();
+        let first = addi(4, 0);
+        let second = addi(5, 4);
+        let third = add(6, 4, 5);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), third),
+            ],
+        );
+
+        let first_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), first)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            first_candidate,
+            &[request(2)],
+            10,
+            RiscvExecutionRecord::new(
+                first,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(4).unwrap(), 5)],
+                None,
+            ),
+        );
+        let second_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), second)
+            .unwrap();
+        assert_eq!(second_candidate.issue_tick(10), 11);
+        runtime.record_live_speculative_execution(
+            second_candidate,
+            &[request(3)],
+            10,
+            RiscvExecutionRecord::new(
+                second,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(Register::new(5).unwrap(), 16)],
+                None,
+            ),
+        );
+
+        let third_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x800c), third)
+            .expect("both speculative producers should wake the fan-in consumer");
+
+        assert_eq!(
+            third_candidate.forwarded_register_writes(),
+            &[
+                RegisterWrite::new(Register::new(4).unwrap(), 5),
+                RegisterWrite::new(Register::new(5).unwrap(), 16),
+            ]
+        );
+        assert_eq!(third_candidate.issue_tick(10), 12);
+    }
+
+    #[test]
+    fn invalidated_first_speculative_row_discards_two_downstream_rows() {
+        let mut runtime = O3RuntimeState::default();
+        let first = addi(4, 0);
+        let second = addi(5, 4);
+        let third = add(6, 4, 5);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), third),
+            ],
+        );
+        for (pc, instruction, request_id, destination, value) in [
+            (0x8004, first, 2, 4, 5),
+            (0x8008, second, 3, 5, 16),
+            (0x800c, third, 4, 6, 21),
+        ] {
+            let candidate = runtime
+                .live_speculative_issue_candidate(Address::new(pc), instruction)
+                .unwrap();
+            runtime.record_live_speculative_execution(
+                candidate,
+                &[request(request_id)],
+                10,
+                RiscvExecutionRecord::new(
+                    instruction,
+                    pc,
+                    pc + 4,
+                    vec![RegisterWrite::new(
+                        Register::new(destination).unwrap(),
+                        value,
+                    )],
+                    None,
+                ),
+            );
+        }
+        assert_eq!(runtime.live_speculative_executions.len(), 3);
+        let mismatched = execution_event(first, 0x8004, 2, 4);
+
+        runtime.retire_live_staged_instruction(&mismatched, &[request(2)], 20);
+
+        assert!(runtime.live_speculative_executions.is_empty());
     }
 
     #[test]

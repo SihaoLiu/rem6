@@ -7632,13 +7632,19 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
     let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let addi = i_type(9, 0, 0x0, 4, 0x13);
     let forwarded_addi = i_type(1, 4, 0x0, 5, 0x13);
+    let fan_in_add = (5 << 20) | (4 << 15) | (6 << 7) | 0x33;
     let core = RiscvCore::new(core(route, 0x8000));
     core.write_register(reg(1), 84);
     core.write_register(reg(2), 7);
     core.set_status(RiscvStatusWord::new(0).with_mie(true));
     core.set_detailed_live_retire_gate_enabled(true);
-    let store = loaded_program_store(0x8000, &[div, addi, forwarded_addi], &[]);
+    let store = loaded_program_store(0x8000, &[div, addi, forwarded_addi, fan_in_add], &[]);
 
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
     assert!(matches!(
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -7659,7 +7665,7 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
         None
     );
     let live_snapshot = core.o3_runtime_snapshot();
-    assert_eq!(live_snapshot.reorder_buffer().len(), 3);
+    assert_eq!(live_snapshot.reorder_buffer().len(), 4);
     assert!(live_snapshot.rename_map().iter().any(|entry| {
         entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
     }));
@@ -7668,6 +7674,9 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
     }));
     assert!(live_snapshot.rename_map().iter().any(|entry| {
         entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 5
+    }));
+    assert!(live_snapshot.rename_map().iter().any(|entry| {
+        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 6
     }));
 
     let interrupt_bit = 1_u64 << 1;
@@ -7686,11 +7695,12 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
     assert_eq!(core.read_register(reg(3)), 0);
     assert_eq!(core.read_register(reg(4)), 0);
     assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
     let redirected_snapshot = core.o3_runtime_snapshot();
     assert!(redirected_snapshot.reorder_buffer().is_empty());
     assert!(!redirected_snapshot.rename_map().iter().any(|entry| {
         entry.register_class() == O3RegisterClass::Integer
-            && matches!(entry.architectural(), 3 | 4 | 5)
+            && matches!(entry.architectural(), 3 | 4 | 5 | 6)
     }));
 }
 
@@ -7714,12 +7724,23 @@ fn riscv_core_independent_live_younger_remains_non_architectural_until_retiremen
     let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let addi = i_type(9, 0, 0x0, 4, 0x13);
     let forwarded_addi = i_type(1, 4, 0x0, 5, 0x13);
+    let fan_in_add = (5 << 20) | (4 << 15) | (6 << 7) | 0x33;
+    let trailing_nop = i_type(0, 0, 0x0, 0, 0x13);
     let core = RiscvCore::new(core(route, 0x8000));
     core.write_register(reg(1), 84);
     core.write_register(reg(2), 7);
     core.set_detailed_live_retire_gate_enabled(true);
-    let store = loaded_program_store(0x8000, &[div, addi, forwarded_addi], &[]);
+    let store = loaded_program_store(
+        0x8000,
+        &[div, addi, forwarded_addi, fan_in_add, trailing_nop],
+        &[],
+    );
 
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
     assert!(matches!(
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -7739,10 +7760,11 @@ fn riscv_core_independent_live_younger_remains_non_architectural_until_retiremen
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         None
     );
-    assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 3);
+    assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 4);
     assert_eq!(core.read_register(reg(3)), 0);
     assert_eq!(core.read_register(reg(4)), 0);
     assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
     assert_eq!(core.pc(), Address::new(0x8000));
 
     scheduler.run_until_idle_conservative();
@@ -7751,18 +7773,26 @@ fn riscv_core_independent_live_younger_remains_non_architectural_until_retiremen
     assert_eq!(core.read_register(reg(3)), 12);
     assert_eq!(core.read_register(reg(4)), 0);
     assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
     assert_eq!(core.pc(), Address::new(0x8004));
 
     let younger = drive_until_execution_event(&core, store.clone(), &mut scheduler, &transport);
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(4)), 9);
     assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 0);
     assert_eq!(core.pc(), Address::new(0x8008));
 
-    let forwarded = drive_until_execution_event(&core, store, &mut scheduler, &transport);
+    let forwarded = drive_until_execution_event(&core, store.clone(), &mut scheduler, &transport);
     assert_eq!(forwarded.fetch_pc(), Address::new(0x8008));
     assert_eq!(core.read_register(reg(5)), 10);
+    assert_eq!(core.read_register(reg(6)), 0);
     assert_eq!(core.pc(), Address::new(0x800c));
+
+    let fan_in = drive_until_execution_event(&core, store, &mut scheduler, &transport);
+    assert_eq!(fan_in.fetch_pc(), Address::new(0x800c));
+    assert_eq!(core.read_register(reg(6)), 19);
+    assert_eq!(core.pc(), Address::new(0x8010));
 }
 
 #[test]

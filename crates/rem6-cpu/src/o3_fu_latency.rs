@@ -5,6 +5,15 @@ use rem6_isa_riscv::{
 
 use crate::o3_runtime_trace::O3RuntimeFuLatencyClass;
 
+pub(crate) const O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS: usize = 4;
+
+pub(crate) const fn o3_scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bool {
+    matches!(
+        o3_fu_latency_class(instruction),
+        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
+    )
+}
+
 pub(crate) const fn o3_fu_latency_class(
     instruction: RiscvInstruction,
 ) -> Option<O3RuntimeFuLatencyClass> {

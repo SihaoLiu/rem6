@@ -244,6 +244,143 @@ fn detailed_o3_gate_fetches_third_row_after_independent_scalar_younger() {
 }
 
 #[test]
+fn detailed_o3_gate_fetches_fourth_row_after_two_younger_scalar_alus() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let producer = i_type(5, 0, 0x0, 4, 0x13);
+    let consumer = i_type(11, 4, 0x0, 5, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, producer.to_le_bytes().to_vec()),
+        (2, 0x8008, consumer.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_o3_gate_assembles_split_second_younger_before_fetching_fourth_row() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let producer = i_type(5, 0, 0x0, 4, 0x13);
+    let consumer = i_type(11, 4, 0x0, 5, 0x13);
+    let bytes = consumer.to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, producer.to_le_bytes().to_vec()),
+        (2, 0x8008, bytes[..2].to_vec()),
+        (3, 0x800a, bytes[2..].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_o3_gate_does_not_duplicate_a_pending_first_younger_fetch() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let core = core_with_completed_fetch(div.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    let younger = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(1),
+        Address::new(0x8004),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(younger));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_o3_gate_allows_head_destination_shadowing_before_a_later_read() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let shadow = i_type(5, 0, 0x0, 3, 0x13);
+    let consumer = i_type(11, 3, 0x0, 5, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, shadow.to_le_bytes().to_vec()),
+        (2, 0x8008, consumer.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_o3_gate_does_not_fetch_beyond_four_scalar_fu_rows() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let first = i_type(5, 0, 0x0, 4, 0x13);
+    let second = i_type(11, 4, 0x0, 5, 0x13);
+    let third = r_type(0, 5, 4, 0x0, 6, 0x33);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second.to_le_bytes().to_vec()),
+        (3, 0x800c, third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_o3_gate_does_not_duplicate_a_pending_second_younger_fetch() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let first = i_type(5, 0, 0x0, 4, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    let second = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(2),
+        Address::new(0x8008),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(second));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_o3_gate_stops_after_an_unshadowed_head_dependency() {
+    let div = r_type(1, 1, 2, 0x4, 3, 0x33);
+    let independent = i_type(5, 0, 0x0, 4, 0x13);
+    let dependent = i_type(11, 3, 0x0, 5, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, div.to_le_bytes().to_vec()),
+        (1, 0x8004, independent.to_le_bytes().to_vec()),
+        (2, 0x8008, dependent.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_scalar_load_fetches_one_sequential_younger_before_data_issue() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
