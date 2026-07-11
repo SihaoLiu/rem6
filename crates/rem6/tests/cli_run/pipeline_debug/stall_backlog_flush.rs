@@ -54,12 +54,35 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_branch_flush() {
             .pointer("/debug/pipeline_trace")
             .and_then(Value::as_array)
             .expect("Pipeline debug trace");
+        assert_pipeline_trace_redirect_flush_conservation(trace);
         assert!(
             trace.iter().any(|record| {
                 record.get("flush_cause").and_then(Value::as_str) == Some("branch_prediction")
                     && !record_array(record, "flushed").is_empty()
             }),
             "both rows must execute a real branch flush: {trace:?}"
+        );
+        let branch_flush_records = trace
+            .iter()
+            .filter(|record| {
+                record.get("flush_cause").and_then(Value::as_str) == Some("branch_prediction")
+            })
+            .count() as u64;
+        assert_eq!(
+            json_stat_value(
+                &json,
+                "sim.debug.pipeline_trace.flush_cause.branch_prediction.records"
+            ),
+            branch_flush_records,
+            "branch flush-cause stats must equal raw Pipeline trace rows: {trace:?}"
+        );
+        assert_eq!(
+            json_stat_value(
+                &json,
+                "sim.cpu0.pipeline.in_order.flush_cause.branch_prediction.records"
+            ),
+            branch_flush_records,
+            "core branch flush-cause stats must equal raw Pipeline trace rows: {trace:?}"
         );
         let observed =
             raw_backlog_flush_totals(trace, "fetch_wait", "ordering_blocked", "branch_prediction");
@@ -105,6 +128,29 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_branch_flush() {
                 &cpu_pair_path,
                 &stdout,
                 CPU0_FETCH_WAIT_STAT_PAIR,
+            );
+        }
+    }
+}
+
+fn assert_pipeline_trace_redirect_flush_conservation(trace: &[Value]) {
+    for record in trace {
+        let flushed = record_array(record, "flushed");
+        let flush_cause = record.get("flush_cause").unwrap_or(&Value::Null);
+        let redirect_cause = record.get("redirect_cause").unwrap_or(&Value::Null);
+        if flushed.is_empty() {
+            assert!(
+                flush_cause.is_null(),
+                "a cycle without flushed rows must not expose a flush cause: {record}"
+            );
+        } else {
+            assert!(
+                !flush_cause.is_null(),
+                "a cycle with flushed rows must expose a typed flush cause: {record}"
+            );
+            assert_eq!(
+                flush_cause, redirect_cause,
+                "flushed rows must use the plan-owned redirect cause: {record}"
             );
         }
     }

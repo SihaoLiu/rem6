@@ -369,6 +369,59 @@ fn cli_stats_output_o3_runtime_stays_focused() {
 }
 
 #[test]
+fn pipeline_outputs_consume_typed_redirect_flush_authority() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pipeline_stats = fs::read_to_string(crate_dir.join("src/pipeline_stats.rs")).unwrap();
+    let pipeline_debug =
+        fs::read_to_string(crate_dir.join("src/debug_output/pipeline.rs")).unwrap();
+    let branch_debug = fs::read_to_string(crate_dir.join("src/debug_output/branch.rs")).unwrap();
+    let flush_cause = source_section(
+        &pipeline_stats,
+        "fn in_order_pipeline_flush_cause_from_record(",
+        "fn in_order_pipeline_stage_flushed_for_redirect_cause(",
+    );
+    let pipeline_records = source_section(
+        &pipeline_debug,
+        "pub(super) fn pipeline_trace_records(",
+        "impl Rem6PipelineTraceRecord {",
+    );
+    let branch_records = source_section(
+        &branch_debug,
+        "pub(super) fn branch_trace_records(",
+        "impl Rem6BranchTraceRecord {",
+    );
+
+    assert!(
+        flush_cause.contains("record.summary().flush_cause()"),
+        "pipeline stats must consume the cycle summary's typed flush cause"
+    );
+    assert!(
+        !pipeline_stats.contains("prediction.flushed()"),
+        "pipeline stats must not read scheduler output from branch-prediction records"
+    );
+    assert!(
+        pipeline_records.contains("flush_cause: pipeline_redirect_cause(summary.flush_cause())")
+            && pipeline_records
+                .contains("redirect_cause: pipeline_redirect_cause(summary.redirect_cause())"),
+        "Pipeline debug records must consume typed cycle causes"
+    );
+    assert!(
+        !pipeline_debug.contains("fn pipeline_flush_cause("),
+        "Pipeline debug must not reconstruct flush cause from derived counters"
+    );
+    assert!(
+        branch_records.contains("redirect.sequence() == prediction.sequence()")
+            && branch_records.contains(".map_or(&[] as &[_], |_| cycle.plan().flushed())")
+            && branch_records.contains("flushed_sequences: flushed"),
+        "Branch debug flushed sequences must come from the matching cycle plan"
+    );
+    assert!(
+        !branch_debug.contains("flushed_sequences: prediction"),
+        "Branch debug must not depend on a branch-owned flushed-row copy"
+    );
+}
+
+#[test]
 fn stats_compat_root_keeps_current_ratchet() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/stats_compat.rs");
     let lines = line_count(&path);
@@ -950,6 +1003,16 @@ fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
 
 fn line_count(path: &Path) -> usize {
     fs::read_to_string(path).unwrap().lines().count()
+}
+
+fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let (_, section) = source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("missing source section start `{start}`"));
+    let (section, _) = section
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing source section end `{end}`"));
+    section
 }
 
 fn architecture_doc_paths(repo_root: &Path) -> Vec<String> {

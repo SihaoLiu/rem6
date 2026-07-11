@@ -36,16 +36,6 @@ impl Rem6InOrderPipelineStageSummary {
         }
     }
 
-    fn presence(self) -> Self {
-        Self {
-            fetch1: u64::from(self.fetch1 > 0),
-            fetch2: u64::from(self.fetch2 > 0),
-            decode: u64::from(self.decode > 0),
-            execute: u64::from(self.execute > 0),
-            commit: u64::from(self.commit > 0),
-        }
-    }
-
     fn saturating_mul(self, scalar: u64) -> Self {
         Self {
             fetch1: self.fetch1.saturating_mul(scalar),
@@ -340,16 +330,9 @@ pub(super) fn in_order_pipeline_stage_flushed_cycles(
 pub(super) fn in_order_pipeline_stage_branch_prediction_flushed(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
-    core.in_order_pipeline_cycle_records().into_iter().fold(
-        Rem6InOrderPipelineStageSummary::default(),
-        |summary, record| {
-            record
-                .branch_predictions()
-                .iter()
-                .fold(summary, |summary, prediction| {
-                    summary.saturating_add(stage_summary_from_instructions(prediction.flushed()))
-                })
-        },
+    in_order_pipeline_stage_flushed_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::BranchPrediction,
     )
 }
 
@@ -362,17 +345,9 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
 pub(super) fn in_order_pipeline_stage_branch_prediction_records(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
-    core.in_order_pipeline_cycle_records().into_iter().fold(
-        Rem6InOrderPipelineStageSummary::default(),
-        |summary, record| {
-            let cycle_summary = record.branch_predictions().iter().fold(
-                Rem6InOrderPipelineStageSummary::default(),
-                |summary, prediction| {
-                    summary.saturating_add(stage_summary_from_instructions(prediction.flushed()))
-                },
-            );
-            summary.saturating_add(cycle_summary.presence())
-        },
+    in_order_pipeline_stage_records_for_redirect_cause(
+        core,
+        InOrderPipelineRedirectCause::BranchPrediction,
     )
 }
 
@@ -462,17 +437,7 @@ fn in_order_pipeline_flush_records_for_redirect_cause(
 fn in_order_pipeline_flush_cause_from_record(
     record: &InOrderPipelineCycleRecord,
 ) -> Option<InOrderPipelineRedirectCause> {
-    let summary = record.summary();
-    match (
-        summary.branch_prediction_flushed_count(),
-        summary.trap_redirect_flush_cycle_count(),
-        summary.interrupt_redirect_flush_cycle_count(),
-    ) {
-        (0, 0, 0) => None,
-        (0, 0, _) => Some(InOrderPipelineRedirectCause::Interrupt),
-        (0, _, _) => Some(InOrderPipelineRedirectCause::Trap),
-        _ => Some(InOrderPipelineRedirectCause::BranchPrediction),
-    }
+    record.summary().flush_cause()
 }
 
 fn in_order_pipeline_stage_flushed_for_redirect_cause(
@@ -481,11 +446,10 @@ fn in_order_pipeline_stage_flushed_for_redirect_cause(
 ) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),
-        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
-            Some(record_cause) if record_cause == cause => {
-                summary.saturating_add(stage_summary_from_instructions(record.plan().flushed()))
-            }
-            Some(_) | None => summary,
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_instructions(
+                record.plan().flushed_for_cause(cause),
+            ))
         },
     )
 }
@@ -496,11 +460,10 @@ fn in_order_pipeline_stage_records_for_redirect_cause(
 ) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         Rem6InOrderPipelineStageSummary::default(),
-        |summary, record| match record.plan().redirect().map(|redirect| redirect.cause()) {
-            Some(record_cause) if record_cause == cause => summary.saturating_add(
-                stage_presence_summary_from_instructions(record.plan().flushed()),
-            ),
-            Some(_) | None => summary,
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_instructions(
+                record.plan().flushed_for_cause(cause),
+            ))
         },
     )
 }

@@ -1,4 +1,4 @@
-use rem6_cpu::{InOrderPipelineStage, RiscvCluster};
+use rem6_cpu::{InOrderPipelineRedirectCause, InOrderPipelineStage, RiscvCluster};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6BranchTraceRecord {
@@ -29,6 +29,14 @@ pub(super) fn branch_trace_records(
         };
         for cycle in core.in_order_pipeline_cycle_records() {
             records.extend(cycle.branch_predictions().iter().map(|prediction| {
+                let flushed = cycle
+                    .plan()
+                    .redirect()
+                    .filter(|redirect| {
+                        redirect.cause() == InOrderPipelineRedirectCause::BranchPrediction
+                            && redirect.sequence() == prediction.sequence()
+                    })
+                    .map_or(&[] as &[_], |_| cycle.plan().flushed());
                 Rem6BranchTraceRecord {
                     cpu: cpu.get(),
                     cycle: cycle.cycle(),
@@ -42,8 +50,7 @@ pub(super) fn branch_trace_records(
                     resolved_target_pc: prediction.resolved_target_pc(),
                     mispredicted: prediction.mispredicted(),
                     repair_target_pc: prediction.repair_target_pc(),
-                    flushed_sequences: prediction
-                        .flushed()
+                    flushed_sequences: flushed
                         .iter()
                         .map(|instruction| instruction.sequence())
                         .collect(),

@@ -1,8 +1,8 @@
 use rem6_cpu::{
     InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCheckpointPayload,
     InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
-    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
-    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderPipelineRedirectCause, InOrderPipelineRunSummary, InOrderPipelineScheduler,
+    InOrderPipelineSnapshot, InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
 const IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET: usize = 33;
@@ -148,7 +148,7 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
     assert_eq!(evidence.resolved_target_pc(), Some(0x2000));
     assert!(!evidence.mispredicted());
     assert_eq!(evidence.repair_target_pc(), None);
-    assert!(evidence.flushed().is_empty());
+    assert!(record.plan().flushed().is_empty());
 
     let summary = record.summary();
     assert_eq!(summary.branch_prediction_count(), 1);
@@ -158,6 +158,8 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
     assert_eq!(summary.conditional_branch_predicted_taken_count(), 1);
     assert_eq!(summary.conditional_branch_misprediction_count(), 0);
     assert_eq!(summary.branch_prediction_flushed_count(), 0);
+    assert_eq!(summary.redirect_cause(), None);
+    assert_eq!(summary.flush_cause(), None);
 }
 
 #[test]
@@ -197,7 +199,8 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
     assert!(evidence.mispredicted());
     assert_eq!(evidence.repair_target_pc(), Some(0x2000));
     assert_eq!(
-        evidence
+        record
+            .plan()
             .flushed()
             .iter()
             .map(|instruction| instruction.sequence())
@@ -220,6 +223,14 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
     assert_eq!(summary.conditional_branch_predicted_taken_count(), 0);
     assert_eq!(summary.conditional_branch_misprediction_count(), 1);
     assert_eq!(summary.branch_prediction_flushed_count(), 2);
+    assert_eq!(
+        summary.redirect_cause(),
+        Some(InOrderPipelineRedirectCause::BranchPrediction)
+    );
+    assert_eq!(
+        summary.flush_cause(),
+        Some(InOrderPipelineRedirectCause::BranchPrediction)
+    );
     let run_summary = InOrderPipelineRunSummary::from_cycle_records([record]);
     assert_eq!(run_summary.flushed_count(), 2);
     assert_eq!(run_summary.flush_cycle_count(), 1);
@@ -624,6 +635,8 @@ fn in_order_pipeline_cycle_summary_counts_recorded_work() {
     assert_eq!(summary.ordering_blocked_count(), 1);
     assert!(summary.state_changed());
     assert_eq!(summary.redirect_target_pc(), None);
+    assert_eq!(summary.redirect_cause(), None);
+    assert_eq!(summary.flush_cause(), None);
 }
 
 #[test]
@@ -654,7 +667,39 @@ fn in_order_pipeline_cycle_summary_records_redirect_target() {
     assert!(summary.state_changed());
     assert_eq!(summary.redirect_target_pc(), Some(0x2000));
     assert_eq!(summary.branch_prediction_redirect_count(), 1);
+    assert_eq!(summary.branch_prediction_flushed_count(), 2);
     assert_eq!(summary.trap_redirect_count(), 0);
+    assert_eq!(
+        summary.redirect_cause(),
+        Some(InOrderPipelineRedirectCause::BranchPrediction)
+    );
+    assert_eq!(
+        summary.flush_cause(),
+        Some(InOrderPipelineRedirectCause::BranchPrediction)
+    );
+}
+
+#[test]
+fn in_order_pipeline_redirect_without_younger_work_has_no_flush_cause() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([instruction(30, InOrderPipelineStage::Execute)])
+        .unwrap();
+    let redirect =
+        InOrderBranchRedirect::branch_prediction(30, InOrderPipelineStage::Execute, 0x2000);
+
+    let summary = state
+        .try_advance_cycle_recorded_with_redirect(Some(redirect))
+        .unwrap()
+        .summary();
+
+    assert_eq!(
+        summary.redirect_cause(),
+        Some(InOrderPipelineRedirectCause::BranchPrediction)
+    );
+    assert_eq!(summary.flush_cause(), None);
+    assert_eq!(summary.flushed_count(), 0);
+    assert_eq!(summary.branch_prediction_flushed_count(), 0);
 }
 
 #[test]
@@ -682,6 +727,46 @@ fn in_order_pipeline_cycle_summary_records_trap_redirect_flush_counts() {
     assert_eq!(summary.trap_redirect_flushed_count(), 2);
     assert_eq!(summary.trap_redirect_flush_cycle_count(), 1);
     assert_eq!(summary.branch_prediction_flushed_count(), 0);
+    assert_eq!(
+        summary.redirect_cause(),
+        Some(InOrderPipelineRedirectCause::Trap)
+    );
+    assert_eq!(
+        summary.flush_cause(),
+        Some(InOrderPipelineRedirectCause::Trap)
+    );
+}
+
+#[test]
+fn in_order_pipeline_cycle_summary_records_interrupt_redirect_flush_counts() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Commit),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let redirect = InOrderBranchRedirect::interrupt(30, InOrderPipelineStage::Commit, 0x100);
+
+    let summary = state
+        .try_advance_cycle_recorded_with_redirect(Some(redirect))
+        .unwrap()
+        .summary();
+
+    assert_eq!(summary.interrupt_redirect_count(), 1);
+    assert_eq!(summary.interrupt_redirect_flushed_count(), 2);
+    assert_eq!(summary.interrupt_redirect_flush_cycle_count(), 1);
+    assert_eq!(summary.branch_prediction_flushed_count(), 0);
+    assert_eq!(
+        summary.redirect_cause(),
+        Some(InOrderPipelineRedirectCause::Interrupt)
+    );
+    assert_eq!(
+        summary.flush_cause(),
+        Some(InOrderPipelineRedirectCause::Interrupt)
+    );
 }
 
 #[test]
@@ -753,7 +838,8 @@ fn in_order_pipeline_run_summary_aggregates_redirect_flush_and_ordering_counts()
     assert_eq!(summary.redirect_count(), 1);
     assert_eq!(summary.flushed_count(), 2);
     assert_eq!(summary.flush_cycle_count(), 1);
-    assert_eq!(summary.branch_prediction_flush_cycle_count(), 0);
+    assert_eq!(summary.branch_prediction_flushed_count(), 2);
+    assert_eq!(summary.branch_prediction_flush_cycle_count(), 1);
     assert_eq!(summary.branch_prediction_redirect_count(), 1);
     assert_eq!(summary.trap_redirect_count(), 0);
     assert_eq!(summary.resource_blocked_count(), 1);

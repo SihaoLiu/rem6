@@ -90,6 +90,77 @@ fn in_order_pipeline_lives_in_focused_module() {
 }
 
 #[test]
+fn in_order_redirect_flush_authority_stays_in_pipeline_plan() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(crate_dir.join("src/in_order_pipeline.rs")).unwrap();
+    let branch_record = source_section(
+        &source,
+        "pub struct InOrderBranchPredictionRecord {",
+        "pub struct InOrderPipelineAdvance {",
+    );
+    let plan = source_section(
+        &source,
+        "pub struct InOrderPipelinePlan {",
+        "pub struct InOrderPipelineSnapshot {",
+    );
+    let cycle_summary = source_section(
+        &source,
+        "pub struct InOrderPipelineCycleSummary {",
+        "pub struct InOrderPipelineRunSummary {",
+    );
+    let prediction_cycle = source_section(
+        &source,
+        "pub fn try_advance_cycle_recorded_with_prediction(",
+        "pub(crate) fn try_advance_cycle_recorded_retiring_sequence(",
+    );
+    let retiring_cycle = source_section(
+        &source,
+        "pub(crate) fn try_advance_cycle_recorded_retiring_sequence(",
+        "pub fn try_advance_cycle(",
+    );
+
+    assert!(
+        !branch_record.contains("flushed:") && !branch_record.contains("fn flushed("),
+        "branch-prediction records must not duplicate scheduler-owned flushed rows"
+    );
+    assert!(
+        branch_record.contains("from_prediction")
+            && branch_record.contains("prediction.repair_target_pc()?"),
+        "branch-prediction repair evidence must derive from the prediction itself"
+    );
+    assert!(
+        !source.contains("InOrderBranchPredictionRecord::from_plan"),
+        "recorded cycles must not rebuild branch evidence from the scheduler plan"
+    );
+    for constructor in [prediction_cycle, retiring_cycle] {
+        assert!(
+            constructor.contains(".map(InOrderBranchPredictionRecord::from_prediction)")
+                && constructor.contains(".transpose()?"),
+            "recorded branch-prediction cycles must construct evidence from the prediction"
+        );
+    }
+    for anchor in [
+        "pub fn redirect_cause(",
+        "pub fn flush_cause(",
+        "pub fn flushed_for_cause(",
+    ] {
+        assert!(
+            plan.contains(anchor),
+            "in-order pipeline plan is missing redirect/flush authority `{anchor}`"
+        );
+    }
+    for anchor in [
+        "redirect_cause: Option<InOrderPipelineRedirectCause>",
+        "flush_cause: Option<InOrderPipelineRedirectCause>",
+    ] {
+        assert!(
+            cycle_summary.contains(anchor),
+            "in-order cycle summary is missing typed cause `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn cpu_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
@@ -246,4 +317,14 @@ fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
 
 fn line_count(path: &Path) -> usize {
     fs::read_to_string(path).unwrap().lines().count()
+}
+
+fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let (_, section) = source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("missing source section start `{start}`"));
+    let (section, _) = section
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing source section end `{end}`"));
+    section
 }

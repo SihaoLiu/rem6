@@ -348,18 +348,14 @@ impl InOrderBranchPrediction {
 pub struct InOrderBranchPredictionRecord {
     prediction: InOrderBranchPrediction,
     repair_target_pc: Option<u64>,
-    flushed: Vec<InOrderPipelineInstruction>,
 }
 
 impl InOrderBranchPredictionRecord {
-    fn from_plan(prediction: InOrderBranchPrediction, plan: &InOrderPipelinePlan) -> Self {
-        let repair_target_pc = plan.redirect().map(|redirect| redirect.target_pc());
-
-        Self {
+    fn from_prediction(prediction: InOrderBranchPrediction) -> Result<Self, InOrderPipelineError> {
+        Ok(Self {
             prediction,
-            repair_target_pc,
-            flushed: plan.flushed().to_vec(),
-        }
+            repair_target_pc: prediction.repair_target_pc()?,
+        })
     }
 
     pub const fn sequence(&self) -> u64 {
@@ -400,10 +396,6 @@ impl InOrderBranchPredictionRecord {
 
     pub const fn repair_target_pc(&self) -> Option<u64> {
         self.repair_target_pc
-    }
-
-    pub fn flushed(&self) -> &[InOrderPipelineInstruction] {
-        &self.flushed
     }
 }
 
@@ -485,6 +477,29 @@ impl InOrderPipelinePlan {
 
     pub fn redirect(&self) -> Option<&InOrderBranchRedirect> {
         self.redirect.as_ref()
+    }
+
+    pub fn redirect_cause(&self) -> Option<InOrderPipelineRedirectCause> {
+        self.redirect().map(|redirect| redirect.cause())
+    }
+
+    pub fn flush_cause(&self) -> Option<InOrderPipelineRedirectCause> {
+        if self.flushed.is_empty() {
+            None
+        } else {
+            self.redirect_cause()
+        }
+    }
+
+    pub fn flushed_for_cause(
+        &self,
+        cause: InOrderPipelineRedirectCause,
+    ) -> &[InOrderPipelineInstruction] {
+        if self.flush_cause() == Some(cause) {
+            &self.flushed
+        } else {
+            &[]
+        }
     }
 
     pub fn advanced_sequences(&self) -> impl Iterator<Item = u64> + '_ {
@@ -700,6 +715,8 @@ pub struct InOrderPipelineCycleSummary {
     trap_redirect_flushed_count: usize,
     trap_redirect_flush_cycle_count: usize,
     state_changed: bool,
+    redirect_cause: Option<InOrderPipelineRedirectCause>,
+    flush_cause: Option<InOrderPipelineRedirectCause>,
     redirect_target_pc: Option<u64>,
 }
 
@@ -1167,6 +1184,14 @@ impl InOrderPipelineCycleSummary {
         self.state_changed
     }
 
+    pub const fn redirect_cause(self) -> Option<InOrderPipelineRedirectCause> {
+        self.redirect_cause
+    }
+
+    pub const fn flush_cause(self) -> Option<InOrderPipelineRedirectCause> {
+        self.flush_cause
+    }
+
     pub const fn redirect_target_pc(self) -> Option<u64> {
         self.redirect_target_pc
     }
@@ -1233,35 +1258,28 @@ impl InOrderPipelineCycleRecord {
             .iter()
             .filter(|prediction| prediction.is_conditional() && prediction.mispredicted())
             .count();
+        let redirect_cause = self.plan.redirect_cause();
+        let flush_cause = self.plan.flush_cause();
         let branch_prediction_flushed_count = self
-            .branch_predictions
-            .iter()
-            .map(|prediction| prediction.flushed().len())
-            .sum();
-        let redirect_cause = self.plan.redirect().map(|redirect| redirect.cause());
+            .plan
+            .flushed_for_cause(InOrderPipelineRedirectCause::BranchPrediction)
+            .len();
         let branch_prediction_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::BranchPrediction));
         let interrupt_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Interrupt));
-        let interrupt_redirect_flushed_count = match redirect_cause {
-            Some(InOrderPipelineRedirectCause::Interrupt) => self.plan.flushed().len(),
-            Some(
-                InOrderPipelineRedirectCause::BranchPrediction | InOrderPipelineRedirectCause::Trap,
-            )
-            | None => 0,
-        };
+        let interrupt_redirect_flushed_count = self
+            .plan
+            .flushed_for_cause(InOrderPipelineRedirectCause::Interrupt)
+            .len();
         let interrupt_redirect_flush_cycle_count =
             usize::from(interrupt_redirect_flushed_count > 0);
         let trap_redirect_count =
             usize::from(redirect_cause == Some(InOrderPipelineRedirectCause::Trap));
-        let trap_redirect_flushed_count = match redirect_cause {
-            Some(InOrderPipelineRedirectCause::Trap) => self.plan.flushed().len(),
-            Some(
-                InOrderPipelineRedirectCause::BranchPrediction
-                | InOrderPipelineRedirectCause::Interrupt,
-            )
-            | None => 0,
-        };
+        let trap_redirect_flushed_count = self
+            .plan
+            .flushed_for_cause(InOrderPipelineRedirectCause::Trap)
+            .len();
         let trap_redirect_flush_cycle_count = usize::from(trap_redirect_flushed_count > 0);
 
         InOrderPipelineCycleSummary {
@@ -1287,6 +1305,8 @@ impl InOrderPipelineCycleRecord {
             trap_redirect_flushed_count,
             trap_redirect_flush_cycle_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),
+            redirect_cause,
+            flush_cause,
             redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),
         }
     }
@@ -1453,7 +1473,8 @@ impl InOrderPipelineState {
             .flatten();
         let plan = self.advance_cycle_with_redirect(redirect)?;
         let branch_predictions = prediction
-            .map(|prediction| InOrderBranchPredictionRecord::from_plan(prediction, &plan))
+            .map(InOrderBranchPredictionRecord::from_prediction)
+            .transpose()?
             .into_iter()
             .collect();
         let after = self.snapshot();
@@ -1485,7 +1506,8 @@ impl InOrderPipelineState {
         let plan =
             self.advance_cycle_with_redirect_and_retire_sequence(redirect, Some(sequence))?;
         let branch_predictions = prediction
-            .map(|prediction| InOrderBranchPredictionRecord::from_plan(prediction, &plan))
+            .map(InOrderBranchPredictionRecord::from_prediction)
+            .transpose()?
             .into_iter()
             .collect();
         let after = self.snapshot();
