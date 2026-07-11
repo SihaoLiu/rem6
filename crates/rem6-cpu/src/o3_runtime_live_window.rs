@@ -1,6 +1,9 @@
 use rem6_isa_riscv::{RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
 
 use super::*;
+use crate::riscv_o3_window_policy::{
+    RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveRetiredInstruction {
@@ -79,30 +82,45 @@ impl O3RuntimeState {
         let Some(live) = self.live_scalar_memories.last() else {
             return;
         };
-        if live.fetch_request != fetch_request
-            || live.outcome != O3LiveScalarMemoryOutcome::Resident
+        let live_fetch_request = live.fetch_request;
+        let live_sequence = live.sequence;
+        let live_outcome = live.outcome;
+        let live_instruction = live.execution.instruction();
+        if live_fetch_request != fetch_request
+            || live_outcome != O3LiveScalarMemoryOutcome::Resident
+            || self.live_scalar_memories.len() != 1
             || !self
                 .snapshot
                 .reorder_buffer
                 .iter()
-                .any(|entry| entry.sequence() == live.sequence && entry.is_live_staged())
+                .any(|entry| entry.sequence() == live_sequence && entry.is_live_staged())
             || self
                 .snapshot
                 .reorder_buffer
                 .iter()
-                .any(|entry| entry.is_live_staged() && entry.sequence() > live.sequence)
+                .any(|entry| entry.is_live_staged() && entry.sequence() > live_sequence)
         {
             return;
         }
-
-        let Some((pc, instruction)) = younger.into_iter().next() else {
+        let Some(mut window) = RiscvScalarIntegerLiveWindow::from_scalar_load_head(
+            live_instruction,
+            self.scalar_memory_window_limit,
+        ) else {
             return;
         };
-        if o3_speculative_scalar_alu_operands(instruction).is_none() {
-            return;
-        }
-        if let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) {
+        // Revalidate the caller-selected prefix before allocating live rows.
+        for (pc, instruction) in younger {
+            let decision = window.classify_younger(instruction);
+            if decision == RiscvScalarIntegerYoungerDecision::Reject {
+                break;
+            }
+            let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) else {
+                break;
+            };
             self.live_scalar_memory_younger_sequences.insert(sequence);
+            if decision == RiscvScalarIntegerYoungerDecision::AdmitStop {
+                break;
+            }
         }
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
@@ -646,6 +664,154 @@ mod tests {
         assert!(runtime
             .live_speculative_issue_candidate(Address::new(0x8004), dependent)
             .is_none());
+    }
+
+    #[test]
+    fn scalar_load_head_stages_three_younger_scalar_alus() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        let first = addi(5, 0);
+        let second = addi(6, 5);
+        let third = add(7, 5, 6);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), third),
+            ],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 4);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
+        assert_eq!(runtime.live_scalar_memory_younger_sequences.len(), 3);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [0x8000, 0x8004, 0x8008, 0x800c]
+                .into_iter()
+                .map(Address::new)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn scalar_load_head_younger_alus_wake_transitively_with_fan_in() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        let first = addi(5, 0);
+        let second = addi(6, 5);
+        let third = add(7, 5, 6);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), third),
+            ],
+        );
+
+        let first_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), first)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            first_candidate,
+            &[request(11)],
+            10,
+            RiscvExecutionRecord::new(
+                first,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(Register::new(5).unwrap(), 5)],
+                None,
+            ),
+        );
+        let second_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), second)
+            .expect("the first younger ALU should wake the second");
+        assert_eq!(second_candidate.issue_tick(10), 11);
+        runtime.record_live_speculative_execution(
+            second_candidate,
+            &[request(12)],
+            10,
+            RiscvExecutionRecord::new(
+                second,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(Register::new(6).unwrap(), 16)],
+                None,
+            ),
+        );
+
+        let third_candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x800c), third)
+            .expect("both younger ALU producers should wake the fan-in row");
+
+        assert_eq!(
+            third_candidate.forwarded_register_writes(),
+            &[
+                RegisterWrite::new(Register::new(5).unwrap(), 5),
+                RegisterWrite::new(Register::new(6).unwrap(), 16),
+            ]
+        );
+        assert_eq!(third_candidate.issue_tick(10), 12);
+    }
+
+    #[test]
+    fn scalar_load_head_dependency_row_remains_blocked_before_load_writeback() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        let independent = addi(5, 0);
+        let dependent = addi(6, 4);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), independent),
+                (Address::new(0x8008), dependent),
+            ],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), independent)
+            .is_some());
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), dependent)
+            .is_none());
+    }
+
+    #[test]
+    fn scalar_load_head_discard_removes_every_younger_row() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), addi(5, 0)),
+                (Address::new(0x8008), addi(6, 5)),
+                (Address::new(0x800c), add(7, 5, 6)),
+            ],
+        );
+
+        runtime.discard_live_staged_instructions();
+
+        assert!(runtime.snapshot().reorder_buffer().is_empty());
+        assert!(runtime.snapshot().load_store_queue().is_empty());
+        assert!(runtime.live_scalar_memory_younger_sequences.is_empty());
+        assert!(runtime.live_speculative_executions.is_empty());
     }
 
     fn retire_live(

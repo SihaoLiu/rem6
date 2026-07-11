@@ -1,70 +1,16 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::{Register, RiscvDecodedInstruction, RiscvInstruction};
+use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvInstruction};
 use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
-    o3_fu_latency::{o3_scalar_integer_fu_live_window_head, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS},
-    o3_runtime::{o3_scalar_integer_destination, o3_speculative_scalar_alu_operands},
+    o3_fu_latency::O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
+    riscv_o3_window_policy::{RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision},
     CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
 };
-
-pub(crate) struct ScalarIntegerFuLiveWindow {
-    head_destination: Option<Register>,
-    head_destination_shadowed: bool,
-    rows: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScalarIntegerFuYoungerBoundary {
-    Continue,
-    StopAfter,
-    Reject,
-}
-
-impl ScalarIntegerFuLiveWindow {
-    pub(crate) fn new(head: RiscvInstruction) -> Option<Self> {
-        o3_scalar_integer_fu_live_window_head(head).then(|| Self {
-            head_destination: o3_scalar_integer_destination(head)
-                .filter(|destination| !destination.is_zero()),
-            head_destination_shadowed: false,
-            rows: 1,
-        })
-    }
-
-    pub(crate) fn is_full(&self) -> bool {
-        self.rows >= O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS
-    }
-
-    pub(crate) fn classify_younger(
-        &mut self,
-        instruction: RiscvInstruction,
-    ) -> ScalarIntegerFuYoungerBoundary {
-        if self.is_full() {
-            return ScalarIntegerFuYoungerBoundary::Reject;
-        }
-        let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
-            return ScalarIntegerFuYoungerBoundary::Reject;
-        };
-        if destination.is_zero() {
-            return ScalarIntegerFuYoungerBoundary::Reject;
-        }
-        let depends_on_unshadowed_head = self
-            .head_destination
-            .is_some_and(|head| !self.head_destination_shadowed && sources.contains(&head));
-        self.rows += 1;
-        if depends_on_unshadowed_head {
-            return ScalarIntegerFuYoungerBoundary::StopAfter;
-        }
-        if self.head_destination == Some(destination) {
-            self.head_destination_shadowed = true;
-        }
-        ScalarIntegerFuYoungerBoundary::Continue
-    }
-}
 
 pub(super) struct RiscvLiveRetireWindowRequest<'a> {
     request: MemoryRequestId,
@@ -227,20 +173,9 @@ fn stage_o3_live_retire_window(
         next_pc,
         O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS.saturating_sub(1),
     );
-    let mut accepted_younger = Vec::new();
-    if let Some(mut window) = ScalarIntegerFuLiveWindow::new(decoded.instruction()) {
-        for younger in younger {
-            match window.classify_younger(younger.decoded.instruction()) {
-                ScalarIntegerFuYoungerBoundary::Continue => accepted_younger.push(younger),
-                ScalarIntegerFuYoungerBoundary::StopAfter => {
-                    accepted_younger.push(younger);
-                    break;
-                }
-                ScalarIntegerFuYoungerBoundary::Reject => break,
-            }
-        }
-    }
-    let younger = accepted_younger;
+    let younger = RiscvScalarIntegerLiveWindow::from_fu_head(decoded.instruction())
+        .map(|window| accepted_scalar_integer_younger_window(window, younger))
+        .unwrap_or_default();
     state.o3_runtime.stage_live_retire_window(
         pc,
         decoded.instruction(),
@@ -268,13 +203,21 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     if !state.live_retire_gate.detailed_policy_enabled() {
         return;
     }
+    let row_limit = state
+        .o3_runtime
+        .scalar_memory_window_limit()
+        .min(O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
     let younger = completed_fetch_instruction_window(
         state,
         fetch_events,
         execution.fetch().request_id(),
         Address::new(execution.execution().next_pc()),
-        1,
+        row_limit.saturating_sub(1),
     );
+    let younger =
+        RiscvScalarIntegerLiveWindow::from_scalar_load_head(execution.instruction(), row_limit)
+            .map(|window| accepted_scalar_integer_younger_window(window, younger))
+            .unwrap_or_default();
     state.o3_runtime.stage_live_scalar_memory_younger_window(
         execution.fetch().request_id(),
         younger
@@ -282,6 +225,24 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
     record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+}
+
+fn accepted_scalar_integer_younger_window(
+    mut window: RiscvScalarIntegerLiveWindow,
+    younger: impl IntoIterator<Item = RiscvCompletedFetchInstruction>,
+) -> Vec<RiscvCompletedFetchInstruction> {
+    let mut accepted = Vec::new();
+    for younger in younger {
+        match window.classify_younger(younger.decoded.instruction()) {
+            RiscvScalarIntegerYoungerDecision::AdmitContinue => accepted.push(younger),
+            RiscvScalarIntegerYoungerDecision::AdmitStop => {
+                accepted.push(younger);
+                break;
+            }
+            RiscvScalarIntegerYoungerDecision::Reject => break,
+        }
+    }
+    accepted
 }
 
 fn record_o3_live_speculative_younger_executions(
@@ -402,12 +363,15 @@ pub(crate) fn completed_fetch_instruction_starting_with(
 
 #[cfg(test)]
 mod tests {
+    use rem6_isa_riscv::{
+        Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord,
+    };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
     use super::*;
-    use crate::CpuFetchRecord;
+    use crate::{riscv_live_retire_gate::RiscvLiveRetireGatePolicy, CpuFetchRecord};
 
     #[test]
     fn live_younger_selection_matches_oldest_retirement_request_order() {
@@ -595,6 +559,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn scalar_load_head_staging_collects_three_younger_scalar_alus() {
+        let execution = scalar_load_execution(7, 10, 12, 2, 0x9000);
+        let events = vec![
+            completed_fetch_with_data(
+                7,
+                11,
+                Address::new(0x8004),
+                0x0050_0693_u32.to_le_bytes().to_vec(),
+            ),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x00b6_8713_u32.to_le_bytes().to_vec(),
+            ),
+            completed_fetch_with_data(
+                7,
+                13,
+                Address::new(0x800c),
+                0x00e6_87b3_u32.to_le_bytes().to_vec(),
+            ),
+        ];
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .live_retire_gate
+            .set_policy(RiscvLiveRetireGatePolicy::detailed());
+        state.o3_runtime.set_scalar_memory_window_limit(4);
+        assert!(state
+            .o3_runtime
+            .stage_live_scalar_memory_issue(&execution, request(7, 20), 31));
+
+        stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
+
+        assert_eq!(
+            state.o3_runtime.snapshot().reorder_buffer().len(),
+            4,
+            "staged snapshot: {:?}",
+            state.o3_runtime.snapshot()
+        );
+        assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
+        assert_eq!(
+            state
+                .o3_runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [0x8000, 0x8004, 0x8008, 0x800c]
+                .into_iter()
+                .map(Address::new)
+                .collect::<Vec<_>>()
+        );
+    }
+
     fn request(agent: u32, sequence: u64) -> MemoryRequestId {
         MemoryRequestId::new(AgentId::new(agent), sequence)
     }
@@ -621,6 +641,43 @@ mod tests {
                 size,
             ),
             data,
+        )
+    }
+
+    fn scalar_load_execution(
+        agent: u32,
+        sequence: u64,
+        rd: u8,
+        rs1: u8,
+        address: u64,
+    ) -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Load {
+            rd: Register::new(rd).unwrap(),
+            rs1: Register::new(rs1).unwrap(),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        RiscvCpuExecutionEvent::new(
+            completed_fetch_with_data(
+                agent,
+                sequence,
+                Address::new(0x8000),
+                0x0001_2603_u32.to_le_bytes().to_vec(),
+            ),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                0x8000,
+                0x8004,
+                Vec::new(),
+                Some(MemoryAccessKind::Load {
+                    rd: Register::new(rd).unwrap(),
+                    address,
+                    width: MemoryWidth::Word,
+                    signed: false,
+                }),
+            ),
         )
     }
 }

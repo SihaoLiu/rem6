@@ -392,6 +392,153 @@ fn detailed_scalar_load_fetches_one_sequential_younger_before_data_issue() {
 }
 
 #[test]
+fn detailed_scalar_load_fu_window_fetches_third_after_independent_alu() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let first = i_type(5, 0, 0x0, 13, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_fetches_fourth_after_transitive_alu() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let first = i_type(5, 0, 0x0, 13, 0x13);
+    let second = i_type(11, 13, 0x0, 14, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_stops_at_four_total_rows() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let first = i_type(5, 0, 0x0, 13, 0x13);
+    let second = i_type(11, 13, 0x0, 14, 0x13);
+    let third = r_type(0, 14, 13, 0x0, 15, 0x33);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second.to_le_bytes().to_vec()),
+        (3, 0x800c, third.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_allows_shadow_before_later_read() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let shadow = i_type(5, 0, 0x0, 12, 0x13);
+    let consumer = i_type(11, 12, 0x0, 13, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, shadow.to_le_bytes().to_vec()),
+        (2, 0x8008, consumer.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_stops_after_unshadowed_load_dependency() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let independent = i_type(5, 0, 0x0, 13, 0x13);
+    let dependent = i_type(11, 12, 0x0, 14, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, independent.to_le_bytes().to_vec()),
+        (2, 0x8008, dependent.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_does_not_refetch_pending_second_alu() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let first = i_type(5, 0, 0x0, 13, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    let second = CpuFetchRecord::new(
+        5,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        request(2),
+        Address::new(0x8008),
+        AccessSize::new(4).unwrap(),
+    );
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(crate::CpuFetchEvent::issued(second));
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_does_not_refetch_incomplete_split_second_alu() {
+    let load = i_type(0, 2, 0x2, 12, 0x03);
+    let first = i_type(5, 0, 0x0, 13, 0x13);
+    let second = i_type(11, 13, 0x0, 14, 0x13).to_le_bytes();
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second[..2].to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_scalar_load_fu_window_does_not_follow_a_younger_load() {
+    let older = i_type(0, 2, 0x2, 12, 0x03);
+    let younger = i_type(64, 2, 0x2, 13, 0x03);
+    let alu = i_type(5, 0, 0x0, 14, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older.to_le_bytes().to_vec()),
+        (1, 0x8004, younger.to_le_bytes().to_vec()),
+        (2, 0x8008, alu.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_scalar_store_fetches_one_sequential_younger_before_data_issue() {
     let store = s_type(0, 3, 2, 0x2);
     let core = core_with_completed_fetch(store.to_le_bytes().to_vec());
@@ -534,7 +681,7 @@ fn detailed_scalar_load_does_not_refetch_pending_younger_with_branch_lookahead()
 }
 
 #[test]
-fn detailed_scalar_load_does_not_refetch_completed_younger_with_branch_lookahead() {
+fn detailed_scalar_load_advances_past_completed_younger_alu_with_branch_lookahead() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let addi = i_type(7, 0, 0x0, 6, 0x13);
     let core = core_with_completed_fetches([
@@ -545,7 +692,9 @@ fn detailed_scalar_load_does_not_refetch_completed_younger_with_branch_lookahead
     core.set_branch_lookahead(2);
     core.set_o3_scalar_memory_depth(3);
 
-    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
 }
 
 #[test]

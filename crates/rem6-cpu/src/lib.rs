@@ -73,6 +73,7 @@ mod riscv_in_order_config;
 mod riscv_live_retire_gate;
 mod riscv_live_retire_window;
 mod riscv_multiperspective_perceptron_checkpoint;
+mod riscv_o3_window_policy;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_scalar_memory_window;

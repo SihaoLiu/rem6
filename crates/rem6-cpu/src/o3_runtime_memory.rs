@@ -684,9 +684,9 @@ mod tests {
     }
 
     #[test]
-    fn retry_response_removes_live_rows_and_readies_one_abort_event() {
+    fn retry_response_removes_load_head_younger_rows_and_readies_one_abort_event() {
         let mut runtime = O3RuntimeState::default();
-        let execution = scalar_store_event(0x8004, 11);
+        let execution = scalar_load_event(0x8004, 11);
         let data_request = memory_request(21);
         assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 37));
         stage_independent_younger(&mut runtime, &execution);
