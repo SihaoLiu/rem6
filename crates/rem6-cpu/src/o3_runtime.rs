@@ -169,8 +169,7 @@ pub struct O3RuntimeState {
     stats: O3RuntimeStats,
     trace_records: Vec<O3RuntimeTraceRecord>,
     dirty_trace_record_indices: BTreeSet<usize>,
-    data_access_sequences: BTreeMap<MemoryRequestId, u64>,
-    trace_data_access_sequences: BTreeMap<MemoryRequestId, u64>,
+    pending_data_accesses: BTreeMap<MemoryRequestId, O3PendingDataAccess>,
     store_forwarding_window: O3StoreForwardingWindow,
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
@@ -183,6 +182,11 @@ pub struct O3RuntimeState {
     last_scalar_memory_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3PendingDataAccess {
+    trace_sequence: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -201,8 +205,7 @@ impl O3RuntimeState {
         self.snapshot = snapshot;
         self.trace_records.clear();
         self.dirty_trace_record_indices.clear();
-        self.data_access_sequences.clear();
-        self.trace_data_access_sequences.clear();
+        self.pending_data_accesses.clear();
         self.store_forwarding_window = O3StoreForwardingWindow::default();
         self.dependency_producers_with_consumers.clear();
         self.live_retired_instructions.clear();
@@ -263,7 +266,10 @@ impl O3RuntimeState {
 
     #[cfg(test)]
     pub(crate) fn pending_trace_data_access_outcomes(&self) -> usize {
-        self.trace_data_access_sequences.len()
+        self.pending_data_accesses
+            .values()
+            .filter(|pending| pending.trace_sequence.is_some())
+            .count()
     }
 
     pub(crate) fn record_data_access_outcome(
@@ -272,32 +278,29 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
     ) {
-        let runtime_sequence = self
-            .data_access_sequences
-            .remove(&execution.fetch().request_id());
-        let trace_sequence = self
-            .trace_data_access_sequences
-            .remove(&execution.fetch().request_id());
-        if let Some(sequence) = trace_sequence {
+        let Some(pending) = self
+            .pending_data_accesses
+            .remove(&execution.fetch().request_id())
+        else {
+            return;
+        };
+        if let Some(sequence) = pending.trace_sequence {
             self.mark_trace_data_access_outcome(sequence, response_tick, latency_ticks);
         }
-        if runtime_sequence.is_some() {
-            if let Some(access) = execution.execution().memory_access() {
-                self.stats
-                    .record_lsq_operation_latency(o3_lsq_operation(access), latency_ticks);
-            }
-            if o3_store_conditional_failed(execution) {
-                self.stats.record_store_conditional_failure();
-                if let Some(sequence) = trace_sequence {
-                    self.mark_trace_store_conditional_failed(sequence);
-                }
+        if let Some(access) = execution.execution().memory_access() {
+            self.stats
+                .record_lsq_operation_latency(o3_lsq_operation(access), latency_ticks);
+        }
+        if o3_store_conditional_failed(execution) {
+            self.stats.record_store_conditional_failure();
+            if let Some(sequence) = pending.trace_sequence {
+                self.mark_trace_store_conditional_failed(sequence);
             }
         }
     }
 
     pub(crate) fn discard_data_access_outcome(&mut self, fetch_request: MemoryRequestId) {
-        self.data_access_sequences.remove(&fetch_request);
-        self.trace_data_access_sequences.remove(&fetch_request);
+        self.pending_data_accesses.remove(&fetch_request);
     }
 
     pub fn reset_stats(&mut self) {
@@ -327,8 +330,9 @@ impl O3RuntimeState {
         }
         self.trace_records.clear();
         self.dirty_trace_record_indices.clear();
-        self.data_access_sequences.clear();
-        self.trace_data_access_sequences.clear();
+        for pending in self.pending_data_accesses.values_mut() {
+            pending.trace_sequence = None;
+        }
         self.store_forwarding_window = O3StoreForwardingWindow::default();
     }
 
@@ -380,12 +384,12 @@ impl O3RuntimeState {
             observation.forwarded_bytes,
         );
         if completed_live_scalar_memory.is_none() {
-            self.record_data_access_sequence(execution, trace_record.sequence());
+            self.record_pending_data_access(
+                execution,
+                trace_enabled.then_some(trace_record.sequence()),
+            );
         }
         if trace_enabled {
-            if completed_live_scalar_memory.is_none() {
-                self.record_trace_data_access_sequence(execution, trace_record.sequence());
-            }
             self.trace_records.push(trace_record);
         }
         if let Some(live) = completed_live_scalar_memory {
@@ -471,21 +475,16 @@ impl O3RuntimeState {
         }
     }
 
-    fn record_data_access_sequence(&mut self, execution: &RiscvCpuExecutionEvent, sequence: u64) {
-        if execution.execution().memory_access().is_some() {
-            self.data_access_sequences
-                .insert(execution.fetch().request_id(), sequence);
-        }
-    }
-
-    fn record_trace_data_access_sequence(
+    fn record_pending_data_access(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
-        trace_sequence: u64,
+        trace_sequence: Option<u64>,
     ) {
         if execution.execution().memory_access().is_some() {
-            self.trace_data_access_sequences
-                .insert(execution.fetch().request_id(), trace_sequence);
+            self.pending_data_accesses.insert(
+                execution.fetch().request_id(),
+                O3PendingDataAccess { trace_sequence },
+            );
         }
     }
 
@@ -526,8 +525,7 @@ impl Default for O3RuntimeState {
             stats: O3RuntimeStats::default(),
             trace_records: Vec::new(),
             dirty_trace_record_indices: BTreeSet::new(),
-            data_access_sequences: BTreeMap::new(),
-            trace_data_access_sequences: BTreeMap::new(),
+            pending_data_accesses: BTreeMap::new(),
             store_forwarding_window: O3StoreForwardingWindow::default(),
             dependency_producers_with_consumers: BTreeSet::new(),
             live_retired_instructions: Vec::new(),
@@ -945,54 +943,8 @@ mod tests {
     use super::*;
     use crate::{CpuFetchEvent, CpuFetchRecord};
 
-    #[test]
-    fn failed_store_conditional_trace_mark_uses_dynamic_sequence_identity() {
-        let mut runtime = O3RuntimeState::default();
-        let mut first = store_conditional_event(0x8000, 10);
-        let second = store_conditional_event(0x8000, 11);
-
-        runtime.record_retired_instruction_with_trace(&first, true);
-        runtime.record_retired_instruction_with_trace(&second, true);
-        first.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
-        runtime.record_data_access_outcome(&first, 41, 7);
-
-        let trace = runtime.trace_records();
-        assert_eq!(trace.len(), 2);
-        assert!(trace[0].lsq_store_conditional_failed());
-        assert_eq!(trace[0].lsq_data_response_tick(), 41);
-        assert_eq!(trace[0].lsq_data_latency_ticks(), 7);
-        assert!(!trace[1].lsq_store_conditional_failed());
-        assert_eq!(trace[1].lsq_data_response_tick(), 0);
-        assert_eq!(trace[1].lsq_data_latency_ticks(), 0);
-    }
-
-    #[test]
-    fn data_response_trace_updates_current_instruction_commit_tick() {
-        let mut runtime = O3RuntimeState::default();
-        let event = store_conditional_event(0x8000, 10);
-        runtime.record_retired_instruction_with_trace(&event, true);
-        runtime.record_data_access_outcome(&event, 41, 7);
-        let record = runtime.trace_records()[0];
-        assert_eq!((record.writeback_tick(), record.commit_tick()), (41, 41));
-    }
-
-    #[test]
-    fn failed_store_conditional_pending_trace_identity_can_be_discarded() {
-        let mut runtime = O3RuntimeState::default();
-        let mut event = store_conditional_event(0x8000, 10);
-
-        runtime.record_retired_instruction_with_trace(&event, true);
-        assert_eq!(runtime.trace_data_access_sequences.len(), 1);
-
-        runtime.discard_data_access_outcome(event.fetch().request_id());
-        assert!(runtime.trace_data_access_sequences.is_empty());
-
-        event.set_data_access_event_kind(RiscvDataAccessEventKind::ConditionalFailed);
-        runtime.record_data_access_outcome(&event, 41, 7);
-        assert!(!runtime.trace_records()[0].lsq_store_conditional_failed());
-        assert_eq!(runtime.trace_records()[0].lsq_data_response_tick(), 0);
-        assert_eq!(runtime.trace_records()[0].lsq_data_latency_ticks(), 0);
-    }
+    #[path = "pending_data.rs"]
+    mod pending_data;
 
     #[test]
     fn failed_store_conditional_stats_count_failed_operation() {

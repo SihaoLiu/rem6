@@ -935,6 +935,9 @@ impl RiscvCoreState {
             .filter(|event| event.execution().memory_access().is_some())
             .map(|event| event.fetch().request_id())
             .collect::<Vec<_>>();
+        for fetch_request in &stale_data_fetches {
+            self.o3_runtime.discard_data_access_outcome(*fetch_request);
+        }
         self.issued_data_for_fetches.extend(stale_data_fetches);
         if let Some(frontend) = self.data_translation.as_mut() {
             frontend.clear_pending();

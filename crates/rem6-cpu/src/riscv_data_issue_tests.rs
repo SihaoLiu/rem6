@@ -76,6 +76,46 @@ fn retry_response_discards_pending_o3_trace_data_access_outcome() {
 }
 
 #[test]
+fn control_boundary_after_stats_reset_discards_pending_o3_data_access_outcome() {
+    let (_scheduler, _transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    let instruction = rem6_isa_riscv::RiscvInstruction::Load {
+        rd: reg(5),
+        rs1: reg(2),
+        offset: Immediate::new(0),
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    let access = MemoryAccessKind::Load {
+        rd: reg(5),
+        address: 0x9000,
+        width: MemoryWidth::Word,
+        signed: false,
+    };
+    let event = RiscvCpuExecutionEvent::new(
+        fetch_event(0x8000, 1),
+        instruction,
+        RiscvExecutionRecord::new(instruction, 0x8000, 0x8004, Vec::new(), Some(access)),
+    );
+    core.record_o3_retired_instruction_with_trace(&event, true);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.events.push(event.clone());
+        state.o3_runtime.reset_stats();
+    }
+
+    core.redirect_pc(Address::new(0x9000));
+
+    let mut state = core.state.lock().expect("riscv core lock");
+    state.o3_runtime.record_data_access_outcome(&event, 41, 7);
+    assert_eq!(state.o3_runtime.stats().lsq_data_latency_samples(), 0);
+    assert_eq!(state.o3_runtime.stats().lsq_data_latency_ticks(), 0);
+}
+
+#[test]
 fn detailed_scalar_load_submission_stages_live_o3_rob_and_lsq_rows() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(

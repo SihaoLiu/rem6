@@ -346,9 +346,7 @@ impl O3RuntimeState {
         );
         if remove_rows {
             for stale in self.live_scalar_memories.iter().skip(index + 1) {
-                self.data_access_sequences.remove(&stale.fetch_request);
-                self.trace_data_access_sequences
-                    .remove(&stale.fetch_request);
+                self.pending_data_accesses.remove(&stale.fetch_request);
             }
             self.live_scalar_memories.truncate(index + 1);
             self.discard_live_scalar_memory_window_rows(sequence);
@@ -404,8 +402,7 @@ impl O3RuntimeState {
             return None;
         }
         let fetch_request = live.fetch_request;
-        self.data_access_sequences.remove(&fetch_request);
-        self.trace_data_access_sequences.remove(&fetch_request);
+        self.pending_data_accesses.remove(&fetch_request);
         let live = self.live_scalar_memories.remove(0);
         if live.outcome == O3LiveScalarMemoryOutcome::Completed {
             self.last_scalar_memory_commit_tick = live.commit_tick;
@@ -429,8 +426,7 @@ impl O3RuntimeState {
         self.deferred_scalar_memory_execution = None;
         let live = std::mem::take(&mut self.live_scalar_memories);
         for live in &live {
-            self.data_access_sequences.remove(&live.fetch_request);
-            self.trace_data_access_sequences.remove(&live.fetch_request);
+            self.pending_data_accesses.remove(&live.fetch_request);
         }
         let boundary_sequence = live
             .first()

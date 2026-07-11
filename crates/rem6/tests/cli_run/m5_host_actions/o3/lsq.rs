@@ -8,6 +8,8 @@ mod event_window_dump;
 mod event_window_ordering;
 #[path = "lsq/forwarding.rs"]
 mod forwarding;
+#[path = "lsq/reset_response.rs"]
+mod reset_response;
 #[path = "lsq/runtime.rs"]
 mod runtime;
 
