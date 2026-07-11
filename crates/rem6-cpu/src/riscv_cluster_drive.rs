@@ -5,7 +5,9 @@ use rem6_transport::{
 
 use crate::riscv_cluster::RiscvClusterError;
 use crate::riscv_cluster_run::RiscvClusterDriveEvent;
-use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataIssueCleanup};
+use crate::riscv_data_issue::{
+    OutstandingDataAccess, PreparedDataIssueCleanup, PreparedDataParallelAccess,
+};
 use crate::riscv_fetch_ahead::PreparedRiscvFetchAheadSpeculation;
 use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction};
 
@@ -26,6 +28,12 @@ pub(crate) enum PreparedParallelAction {
         cleanup: PreparedDataIssueCleanup,
     },
     LocalDataFailure {
+        cpu: CpuId,
+        core: RiscvCore,
+        issue: OutstandingDataAccess,
+        cleanup: PreparedDataIssueCleanup,
+    },
+    LocalDataForwarding {
         cpu: CpuId,
         core: RiscvCore,
         issue: OutstandingDataAccess,
@@ -55,6 +63,54 @@ impl PreparedParallelActions {
     pub(crate) fn drain(&mut self) -> std::vec::Drain<'_, PreparedParallelAction> {
         self.actions.drain(..)
     }
+}
+
+pub(crate) fn push_prepared_data_action(
+    cpu: CpuId,
+    core: &RiscvCore,
+    prepared: Option<PreparedDataParallelAccess>,
+    prepared_actions: &mut PreparedParallelActions,
+    transaction_cpus: &mut Vec<CpuId>,
+    transactions: &mut Vec<ParallelMemoryTransaction>,
+) -> bool {
+    let Some(prepared) = prepared else {
+        return false;
+    };
+    match prepared {
+        PreparedDataParallelAccess::Transaction {
+            issue,
+            transaction,
+            cleanup,
+        } => {
+            let transaction_index = transactions.len();
+            transaction_cpus.push(cpu);
+            transactions.push(transaction);
+            prepared_actions.push(PreparedParallelAction::Data {
+                cpu,
+                core: core.clone(),
+                issue,
+                transaction_index,
+                cleanup,
+            });
+        }
+        PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
+            prepared_actions.push(PreparedParallelAction::LocalDataFailure {
+                cpu,
+                core: core.clone(),
+                issue,
+                cleanup,
+            });
+        }
+        PreparedDataParallelAccess::Forwarded { issue, cleanup } => {
+            prepared_actions.push(PreparedParallelAction::LocalDataForwarding {
+                cpu,
+                core: core.clone(),
+                issue,
+                cleanup,
+            });
+        }
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]

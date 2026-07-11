@@ -23,8 +23,11 @@ use crate::{
     RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
+mod forwarding;
+mod prepared;
 mod request_helpers;
 
+pub(crate) use prepared::{PreparedDataIssueCleanup, PreparedDataParallelAccess};
 pub(crate) use request_helpers::{
     access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
     vector_store_request_payload,
@@ -51,6 +54,11 @@ impl RiscvCore {
             let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
                 return Ok(None);
             };
+            if issue.has_forwarded_load_data() {
+                return self
+                    .schedule_forwarded_load_completion(scheduler, issue)
+                    .map(Some);
+            }
             if self.store_conditional_fails(&issue) {
                 return self
                     .schedule_store_conditional_failure(scheduler, issue)
@@ -120,6 +128,11 @@ impl RiscvCore {
                 cleanup.disarm();
                 Ok(Some(event))
             }
+            PreparedDataParallelAccess::Forwarded { issue, cleanup } => {
+                let event = self.schedule_forwarded_load_completion_parallel(scheduler, issue)?;
+                cleanup.disarm();
+                Ok(Some(event))
+            }
         }
     }
 
@@ -139,6 +152,9 @@ impl RiscvCore {
             let Some(issue) = self.prepare_data_access(tick, transport)? else {
                 return Ok(None);
             };
+            if issue.has_forwarded_load_data() {
+                return Ok(Some(PreparedDataParallelAccess::forwarded(self, issue)));
+            }
             if self.store_conditional_fails(&issue) {
                 return Ok(Some(PreparedDataParallelAccess::conditional_failed(
                     self, issue,
@@ -316,6 +332,7 @@ impl RiscvCore {
             self.check_pmp_data_access(fetch_request, &access, size, address)?;
             self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
         }
+        let forwarded_load_data = self.forwarded_scalar_load_data(fetch_request, &access);
 
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
 
@@ -333,6 +350,7 @@ impl RiscvCore {
             physical_address: address,
             request_byte_offset,
             line_layout: Some(line_layout),
+            forwarded_load_data,
         }))
     }
 
@@ -384,6 +402,7 @@ impl RiscvCore {
             physical_address: address,
             request_byte_offset: 0,
             line_layout: None,
+            forwarded_load_data: None,
         }))
     }
 
@@ -614,7 +633,7 @@ impl RiscvCore {
             tick,
             RiscvDataAccessEventKind::ConditionalFailed,
         );
-        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None);
+        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, false);
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -665,6 +684,7 @@ impl RiscvCore {
                     completed_event,
                     delivery.tick(),
                     data.as_deref(),
+                    false,
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
@@ -683,6 +703,7 @@ impl RiscvCore {
                     retry_event,
                     delivery.tick(),
                     None,
+                    false,
                 );
                 state
                     .data_events
@@ -720,6 +741,7 @@ impl RiscvCore {
                     completed_event,
                     delivery.tick(),
                     None,
+                    false,
                 );
                 state
                     .data_events
@@ -737,7 +759,7 @@ impl RiscvCore {
         };
         let failed_event =
             mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Failed);
-        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None);
+        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None, false);
         state
             .data_events
             .push(RiscvDataAccessEvent::failed(access.record(tick)));
@@ -787,6 +809,7 @@ impl RiscvCore {
                     completed_event,
                     completion.tick(),
                     data.as_deref(),
+                    false,
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
@@ -805,6 +828,7 @@ impl RiscvCore {
                     retry_event,
                     completion.tick(),
                     None,
+                    false,
                 );
                 state.data_events.push(RiscvDataAccessEvent::retry(
                     access.record(completion.tick()),
@@ -926,6 +950,7 @@ fn record_o3_data_access_outcome(
     execution: Option<RiscvCpuExecutionEvent>,
     response_tick: Tick,
     load_data: Option<&[u8]>,
+    forwarded: bool,
 ) {
     let Some(execution) = execution else {
         state
@@ -944,13 +969,26 @@ fn record_o3_data_access_outcome(
             .younger_live_scalar_memory_requests(access.fetch_request, access.request)
     })
     .unwrap_or_default();
-    if state.o3_runtime.complete_live_scalar_memory_response(
-        &execution,
-        access.request,
-        response_tick,
-        latency_ticks,
-        load_data,
-    ) {
+    let completed_live_scalar_memory = if forwarded {
+        load_data.is_some_and(|data| {
+            state.o3_runtime.complete_live_scalar_memory_forwarding(
+                &execution,
+                access.request,
+                response_tick,
+                latency_ticks,
+                data,
+            )
+        })
+    } else {
+        state.o3_runtime.complete_live_scalar_memory_response(
+            &execution,
+            access.request,
+            response_tick,
+            latency_ticks,
+            load_data,
+        )
+    };
+    if completed_live_scalar_memory {
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);
             state.issued_data_for_fetches.remove(&fetch_request);
@@ -1032,6 +1070,7 @@ pub(crate) struct OutstandingDataAccess {
     pub(crate) physical_address: Address,
     pub(crate) request_byte_offset: usize,
     pub(crate) line_layout: Option<CacheLineLayout>,
+    pub(crate) forwarded_load_data: Option<Vec<u8>>,
 }
 
 impl OutstandingDataAccess {
@@ -1246,73 +1285,6 @@ impl IssuedDataAccess {
             self.physical_address,
         )
         .with_request_byte_offset(self.request_byte_offset)
-    }
-}
-
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum PreparedDataParallelAccess {
-    Transaction {
-        issue: OutstandingDataAccess,
-        transaction: ParallelMemoryTransaction,
-        cleanup: PreparedDataIssueCleanup,
-    },
-    ConditionalFailed {
-        issue: OutstandingDataAccess,
-        cleanup: PreparedDataIssueCleanup,
-    },
-}
-
-impl PreparedDataParallelAccess {
-    pub(crate) fn transaction(
-        core: &RiscvCore,
-        issue: OutstandingDataAccess,
-        transaction: ParallelMemoryTransaction,
-    ) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
-        Self::Transaction {
-            issue,
-            transaction,
-            cleanup,
-        }
-    }
-
-    pub(crate) fn conditional_failed(core: &RiscvCore, issue: OutstandingDataAccess) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
-        Self::ConditionalFailed { issue, cleanup }
-    }
-}
-
-pub(crate) struct PreparedDataIssueCleanup {
-    core: RiscvCore,
-    fetch_request: MemoryRequestId,
-    armed: bool,
-}
-
-impl PreparedDataIssueCleanup {
-    fn new(core: &RiscvCore, fetch_request: MemoryRequestId) -> Self {
-        Self {
-            core: core.clone(),
-            fetch_request,
-            armed: true,
-        }
-    }
-
-    pub(crate) fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for PreparedDataIssueCleanup {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        self.core
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .o3_runtime
-            .abort_deferred_scalar_memory_execution(self.fetch_request);
     }
 }
 

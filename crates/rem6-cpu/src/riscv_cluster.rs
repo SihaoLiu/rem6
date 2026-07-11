@@ -11,8 +11,8 @@ use rem6_transport::{
 
 use crate::riscv_cluster_drive::{
     completed_fetch_drive_event, push_completed_fetch_drive_event,
-    push_prepared_completed_fetch_drive_event, push_prepared_parallel_fetch_action,
-    PreparedParallelAction, PreparedParallelActions,
+    push_prepared_completed_fetch_drive_event, push_prepared_data_action,
+    push_prepared_parallel_fetch_action, PreparedParallelAction, PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -20,7 +20,6 @@ use crate::riscv_cluster_run::{RiscvClusterDriveEvent, RiscvClusterTurn};
 use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
-use crate::riscv_data_issue::PreparedDataParallelAccess;
 use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
@@ -58,46 +57,6 @@ fn prepare_fetch_ahead_speculation(
 ) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvClusterError> {
     core.prepare_fetch_ahead_speculation(decision)
         .map_err(|error| RiscvClusterError::Core { cpu, error })
-}
-
-fn push_prepared_data_action(
-    cpu: CpuId,
-    core: &RiscvCore,
-    prepared: Option<PreparedDataParallelAccess>,
-    prepared_actions: &mut PreparedParallelActions,
-    transaction_cpus: &mut Vec<CpuId>,
-    transactions: &mut Vec<ParallelMemoryTransaction>,
-) -> bool {
-    let Some(prepared) = prepared else {
-        return false;
-    };
-    match prepared {
-        PreparedDataParallelAccess::Transaction {
-            issue,
-            transaction,
-            cleanup,
-        } => {
-            let transaction_index = transactions.len();
-            transaction_cpus.push(cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Data {
-                cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-                cleanup,
-            });
-        }
-        PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
-            prepared_actions.push(PreparedParallelAction::LocalDataFailure {
-                cpu,
-                core: core.clone(),
-                issue,
-                cleanup,
-            });
-        }
-    }
-    true
 }
 
 impl RiscvCluster {
@@ -1038,6 +997,23 @@ impl RiscvCluster {
                         }
                     }
                 }
+                PreparedParallelAction::LocalDataForwarding {
+                    cpu,
+                    core,
+                    issue,
+                    cleanup,
+                } => match core.schedule_forwarded_load_completion_parallel(scheduler, issue) {
+                    Ok(event) => {
+                        cleanup.disarm();
+                        actions.push(RiscvClusterDriveEvent::new(
+                            cpu,
+                            RiscvCoreDriveAction::DataAccessIssued { event },
+                        ));
+                    }
+                    Err(error) => {
+                        first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
+                    }
+                },
             }
         }
 

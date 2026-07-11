@@ -357,6 +357,7 @@ impl O3RuntimeState {
         let observation = self.record_store_forwarding_window(
             execution,
             trace_enabled.then_some(trace_record.sequence()),
+            completed_live_scalar_memory.is_some_and(|live| live.forwarded),
         );
         trace_record.set_store_load_forwarding(
             observation.candidate,
@@ -388,6 +389,7 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         trace_sequence: Option<u64>,
+        forwarded: bool,
     ) -> O3StoreForwardingObservation {
         let record = execution.execution();
         match record.memory_access() {
@@ -398,6 +400,7 @@ impl O3RuntimeState {
                     record.register_writes(),
                     self.store_forwarding_window.store,
                     trace_sequence,
+                    forwarded,
                 );
                 self.store_forwarding_window.pending_load_match = pending_load_match;
                 self.store_forwarding_window.store = None;
@@ -1590,17 +1593,6 @@ impl crate::RiscvCore {
             crate::riscv_checker::sync_checker_hart(&mut state);
         }
         Some(execution)
-    }
-
-    pub fn record_o3_completed_load_data(
-        &self,
-        fetch_request: MemoryRequestId,
-        access: &MemoryAccessKind,
-        data: &[u8],
-    ) {
-        self.with_o3_runtime(|runtime| {
-            runtime.record_completed_load_data(fetch_request, access, data);
-        });
     }
 
     pub fn default_o3_runtime_checkpoint_payload() -> O3RuntimeCheckpointPayload {

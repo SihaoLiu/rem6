@@ -1090,6 +1090,7 @@ impl O3RuntimeStats {
         register_writes: &[RegisterWrite],
         prior_store: Option<O3StoreForwardingEntry>,
         trace_sequence: Option<u64>,
+        forwarded: bool,
     ) -> (
         O3StoreForwardingObservation,
         Option<O3PendingLoadForwardingMatch>,
@@ -1116,6 +1117,9 @@ impl O3RuntimeStats {
                 },
                 None,
             );
+        }
+        if !forwarded {
+            return (O3StoreForwardingObservation::default(), None);
         }
 
         self.lsq_store_to_load_forwarding_candidates = self

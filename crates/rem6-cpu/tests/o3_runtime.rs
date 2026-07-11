@@ -1112,7 +1112,7 @@ fn o3_runtime_stats_ignore_x0_memory_destinations_for_rename_writes() {
 }
 
 #[test]
-fn o3_runtime_stats_count_same_address_store_load_forwarding_match() {
+fn o3_runtime_stats_do_not_claim_unowned_store_load_forwarding_match() {
     let core = RiscvCore::new(core(0x8000));
     let store = RiscvInstruction::Store {
         rs1: reg(10),
@@ -1158,22 +1158,11 @@ fn o3_runtime_stats_count_same_address_store_load_forwarding_match() {
             }),
         ),
     ));
-    core.record_o3_completed_load_data(
-        memory_request(21),
-        &MemoryAccessKind::Load {
-            rd: reg(12),
-            address: 0x9000,
-            width: MemoryWidth::Word,
-            signed: false,
-        },
-        &[0x5a, 0, 0, 0],
-    );
-
     let stats = core.o3_runtime_stats();
     assert_eq!(stats.lsq_loads(), 1);
     assert_eq!(stats.lsq_stores(), 1);
-    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
-    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
+    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 0);
+    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 0);
 }
 
 #[test]
@@ -1194,112 +1183,24 @@ fn o3_runtime_reset_stats_clears_store_forwarding_window() {
     ));
 
     core.reset_o3_runtime_stats();
+    let mismatched_load = MemoryAccessKind::Load {
+        rd: reg(12),
+        address: 0x9004,
+        width: MemoryWidth::Word,
+        signed: false,
+    };
     core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
         fetch_event(0x8004, 21),
         load,
-        RiscvExecutionRecord::new(load, 0x8004, 0x8008, Vec::new(), Some(scalar_load_access())),
+        RiscvExecutionRecord::new(load, 0x8004, 0x8008, Vec::new(), Some(mismatched_load)),
     ));
-    core.record_o3_completed_load_data(memory_request(21), &scalar_load_access(), &[0x5a, 0, 0, 0]);
 
     let stats = core.o3_runtime_stats();
     assert_eq!(stats.lsq_loads(), 1);
     assert_eq!(stats.lsq_stores(), 0);
     assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 0);
     assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 0);
-}
-
-#[test]
-fn o3_runtime_reset_stats_clears_pending_store_load_match() {
-    let core = RiscvCore::new(core(0x8000));
-    let store = scalar_store_instruction();
-    let load = scalar_load_instruction();
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8000, 20),
-        store,
-        RiscvExecutionRecord::new(
-            store,
-            0x8000,
-            0x8004,
-            Vec::new(),
-            Some(scalar_store_access(0x5a)),
-        ),
-    ));
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8004, 21),
-        load,
-        RiscvExecutionRecord::new(load, 0x8004, 0x8008, Vec::new(), Some(scalar_load_access())),
-    ));
-
-    core.reset_o3_runtime_stats();
-    core.record_o3_completed_load_data(memory_request(21), &scalar_load_access(), &[0x5a, 0, 0, 0]);
-
-    let stats = core.o3_runtime_stats();
-    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 0);
-    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 0);
-}
-
-#[test]
-fn o3_runtime_completed_load_match_uses_fetch_request_identity() {
-    let core = RiscvCore::new(core(0x8000));
-    let store = scalar_store_instruction();
-    let load = scalar_load_instruction();
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8000, 20),
-        store,
-        RiscvExecutionRecord::new(
-            store,
-            0x8000,
-            0x8004,
-            Vec::new(),
-            Some(scalar_store_access(0x5a)),
-        ),
-    ));
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8004, 21),
-        load,
-        RiscvExecutionRecord::new(load, 0x8004, 0x8008, Vec::new(), Some(scalar_load_access())),
-    ));
-
-    core.record_o3_completed_load_data(memory_request(99), &scalar_load_access(), &[0x5a, 0, 0, 0]);
-    assert_eq!(
-        core.o3_runtime_stats()
-            .lsq_store_to_load_forwarding_matches(),
-        0
-    );
-
-    core.record_o3_completed_load_data(memory_request(21), &scalar_load_access(), &[0x5a, 0, 0, 0]);
-
-    let stats = core.o3_runtime_stats();
-    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
-    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
-}
-
-#[test]
-fn o3_runtime_completed_load_mismatch_keeps_candidate_without_match() {
-    let core = RiscvCore::new(core(0x8000));
-    let store = scalar_store_instruction();
-    let load = scalar_load_instruction();
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8000, 20),
-        store,
-        RiscvExecutionRecord::new(
-            store,
-            0x8000,
-            0x8004,
-            Vec::new(),
-            Some(scalar_store_access(0x5a)),
-        ),
-    ));
-    core.record_o3_retired_instruction(&RiscvCpuExecutionEvent::new(
-        fetch_event(0x8004, 21),
-        load,
-        RiscvExecutionRecord::new(load, 0x8004, 0x8008, Vec::new(), Some(scalar_load_access())),
-    ));
-    core.record_o3_completed_load_data(memory_request(21), &scalar_load_access(), &[0xa5, 0, 0, 0]);
-
-    let stats = core.o3_runtime_stats();
-    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
-    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 0);
+    assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 0);
 }
 
 #[test]
@@ -1725,15 +1626,6 @@ fn scalar_store_access(value: u64) -> MemoryAccessKind {
         address: 0x9000,
         width: MemoryWidth::Word,
         value,
-    }
-}
-
-fn scalar_load_access() -> MemoryAccessKind {
-    MemoryAccessKind::Load {
-        rd: reg(12),
-        address: 0x9000,
-        width: MemoryWidth::Word,
-        signed: false,
     }
 }
 

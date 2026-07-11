@@ -290,7 +290,7 @@ fn mixed_scalar_load_overlap_binary(name: &str) -> std::path::PathBuf {
         u_type(0, 10, 0x17),
         i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
         i_type(42, 0, 0x0, 11, 0x13),
-        s_type(0, 11, 10, 0b010),
+        i_type(0, 0, 0x0, 0, 0x13),
         i_type(0, 10, 0b010, 12, 0x03),
         i_type(7, 0, 0x0, 14, 0x13),
         i_type(1, 12, 0x0, 13, 0x13),
@@ -301,7 +301,7 @@ fn mixed_scalar_load_overlap_binary(name: &str) -> std::path::PathBuf {
     while words.len() * 4 < data_start as usize {
         words.push(0);
     }
-    words.extend([0, 0, 0, 0]);
+    words.extend([42, 0, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

@@ -1184,6 +1184,9 @@ impl RiscvCore {
                 cleanup.disarm();
                 Ok(Some(event))
             }
+            PreparedDataParallelAccess::Forwarded { .. } => {
+                unreachable!("translated data access cannot use untranslated store forwarding")
+            }
         }
     }
 
@@ -1524,6 +1527,7 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             request_byte_offset: translated.request_byte_offset,
             line_layout: None,
+            forwarded_load_data: None,
         }))
     }
 
@@ -1609,6 +1613,7 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             request_byte_offset: translated.request_byte_offset,
             line_layout: Some(line_layout),
+            forwarded_load_data: None,
         })
     }
 }

@@ -15,6 +15,7 @@ pub(super) struct O3LiveScalarMemory {
     pub(super) latency_ticks: Option<u64>,
     pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
+    pub(super) forwarded: bool,
     pub(super) outcome: O3LiveScalarMemoryOutcome,
     pub(super) event_taken: bool,
 }
@@ -243,6 +244,7 @@ impl O3RuntimeState {
             latency_ticks: None,
             commit_tick: None,
             load_data: None,
+            forwarded: false,
             outcome: O3LiveScalarMemoryOutcome::Resident,
             event_taken: false,
         });
@@ -256,6 +258,43 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
         load_data: Option<&[u8]>,
+    ) -> bool {
+        self.complete_live_scalar_memory(
+            execution,
+            data_request,
+            response_tick,
+            latency_ticks,
+            load_data,
+            false,
+        )
+    }
+
+    pub(crate) fn complete_live_scalar_memory_forwarding(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        response_tick: u64,
+        latency_ticks: u64,
+        load_data: &[u8],
+    ) -> bool {
+        self.complete_live_scalar_memory(
+            execution,
+            data_request,
+            response_tick,
+            latency_ticks,
+            Some(load_data),
+            true,
+        )
+    }
+
+    fn complete_live_scalar_memory(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        response_tick: u64,
+        latency_ticks: u64,
+        load_data: Option<&[u8]>,
+        forwarded: bool,
     ) -> bool {
         let Some(index) = self.live_scalar_memories.iter().position(|live| {
             live.data_request == data_request
@@ -302,6 +341,7 @@ impl O3RuntimeState {
         live.latency_ticks = Some(latency_ticks);
         live.commit_tick = None;
         live.load_data = load_data.map(ToOwned::to_owned);
+        live.forwarded = forwarded;
         live.outcome = outcome;
         live.event_taken = false;
         let remove_rows = matches!(

@@ -14096,8 +14096,8 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
         ("store_load_forwarding_matches", 1),
         ("fu_latency_instructions", 0),
         ("fu_latency_cycles", 0),
-        ("max_rob_occupancy", 1),
-        ("max_lsq_occupancy", 1),
+        ("max_rob_occupancy", 2),
+        ("max_lsq_occupancy", 2),
         ("rename_map_entries", 3),
     ] {
         assert_eq!(
