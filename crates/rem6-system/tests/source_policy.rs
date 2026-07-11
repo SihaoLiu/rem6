@@ -259,9 +259,10 @@ fn riscv_syscall_table_lives_in_focused_module() {
 }
 
 #[test]
-fn riscv_checkpoint_projects_legacy_o3_pending_state_from_runtime() {
+fn riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let checkpoint_rs = fs::read_to_string(crate_dir.join("src/riscv_checkpoint.rs")).unwrap();
+    let o3_payload_path = crate_dir.join("src/riscv_checkpoint/o3_payload.rs");
     let record = source_section(
         &checkpoint_rs,
         "pub struct RiscvCoreCheckpointRecord {",
@@ -272,11 +273,7 @@ fn riscv_checkpoint_projects_legacy_o3_pending_state_from_runtime() {
         "struct RiscvCoreCheckpointRecordParts {",
         "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
     );
-    let capture = source_section(
-        &checkpoint_rs,
-        "pub fn capture_into(",
-        "pub fn restore_from(",
-    );
+    let write_record = source_section(&checkpoint_rs, "fn write_record(", "fn validate_capture(");
 
     for definition in [record, record_parts] {
         assert!(
@@ -285,14 +282,50 @@ fn riscv_checkpoint_projects_legacy_o3_pending_state_from_runtime() {
         );
     }
     assert!(
-        capture.contains(
-            "o3_pending_state_payload_from_runtime(record.o3_runtime_payload())"
-        ),
-        "checkpoint capture must project the legacy pending chunk from the captured runtime payload"
+        checkpoint_rs.contains("mod o3_payload;"),
+        "RISC-V checkpoint manifest compatibility must live in src/riscv_checkpoint/o3_payload.rs"
     );
     assert!(
-        capture.contains("O3_PENDING_STATE_CHUNK"),
-        "checkpoint capture must continue emitting the legacy pending chunk"
+        !checkpoint_rs.contains("O3PendingStateCheckpointPayload")
+            && !checkpoint_rs.contains("\"o3-pending-state\""),
+        "legacy O3 pending payload types and chunk literals must stay out of the root checkpoint module"
+    );
+    assert!(
+        o3_payload_path.exists(),
+        "RISC-V O3 checkpoint payload compatibility belongs in src/riscv_checkpoint/o3_payload.rs"
+    );
+    let o3_payload = fs::read_to_string(o3_payload_path).unwrap();
+    assert!(
+        write_record.contains("registry.remove_chunk(&self.component, O3_PENDING_STATE_CHUNK)"),
+        "current capture must prune stale legacy O3 pending chunks"
+    );
+    assert_eq!(
+        write_record.matches("O3_PENDING_STATE_CHUNK").count(),
+        1,
+        "current capture may reference the legacy O3 pending chunk only for pruning"
+    );
+    assert!(
+        write_record.contains("O3_RUNTIME_STATE_CHUNK"),
+        "current capture must emit the complete O3 runtime authority"
+    );
+    assert!(
+        !write_record.contains("encode_o3_pending_state_payload")
+            && !write_record.contains("o3_pending_state_payload_from_runtime"),
+        "current capture must not derive or emit a second O3 pending-state authority"
+    );
+    for anchor in [
+        "O3PendingStateCheckpointPayload",
+        "decode_o3_runtime_authority",
+        "MismatchedO3PendingStateSnapshot",
+    ] {
+        assert!(
+            o3_payload.contains(anchor),
+            "legacy O3 checkpoint decode module is missing `{anchor}`"
+        );
+    }
+    assert!(
+        checkpoint_rs.contains("decode_o3_runtime_authority("),
+        "RISC-V checkpoint restore must delegate O3 authority selection"
     );
 }
 

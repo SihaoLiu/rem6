@@ -131,7 +131,7 @@ fn o3_pending_checkpoint_payload_stays_in_codec_boundary() {
         }
         assert!(
             allowed.contains(&relative.as_ref()),
-            "O3 pending checkpoint payload must stay in codec and projection modules, but {relative} depends on it"
+            "O3 pending checkpoint payload must stay in codec and runtime-composition modules, but {relative} depends on it"
         );
     }
 }

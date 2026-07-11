@@ -82,6 +82,32 @@ fn riscv_core_checkpoint_restores_runtime_only_and_no_o3_chunk_variants() {
     }
 }
 
+#[test]
+fn riscv_core_checkpoint_accepts_matching_legacy_pending_beside_runtime() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let pending = simple_pending_payload(0x717, 72);
+    let runtime = runtime_payload_with_pending(pending.clone());
+    let sentinel = runtime_payload_with_pending(simple_pending_payload(0x818, 82));
+
+    core.restore_o3_runtime_checkpoint_payload(runtime.clone())
+        .unwrap();
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component, O3_PENDING_STATE_CHUNK, pending.encode())
+        .unwrap();
+    core.restore_o3_runtime_checkpoint_payload(sentinel)
+        .unwrap();
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored.o3_runtime_payload(), &runtime);
+    assert_eq!(core.o3_runtime_checkpoint_payload(), runtime);
+}
+
 #[derive(Clone, Copy)]
 enum MalformedO3Chunk {
     Runtime,

@@ -1068,7 +1068,7 @@ fn riscv_core_checkpoint_captures_and_restores_multiperspective_perceptron_state
 }
 
 #[test]
-fn riscv_core_checkpoint_projects_legacy_o3_pending_chunk_from_runtime() {
+fn riscv_core_checkpoint_emits_only_runtime_o3_authority_and_prunes_stale_pending() {
     let component = CheckpointComponentId::new("cpu0").unwrap();
     let mut registry = CheckpointRegistry::new();
     let core = riscv_core();
@@ -1096,15 +1096,22 @@ fn riscv_core_checkpoint_projects_legacy_o3_pending_chunk_from_runtime() {
     core.restore_o3_runtime_checkpoint_payload(runtime_payload.clone())
         .unwrap();
     port.register(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "o3-pending-state",
+            pending_payload_from_runtime(&RiscvCore::default_o3_runtime_checkpoint_payload())
+                .encode(),
+        )
+        .unwrap();
     let captured = port.capture_into(&mut registry).unwrap();
 
     assert_eq!(captured.o3_runtime_payload(), &runtime_payload);
-    let payload = registry.chunk(&component, "o3-pending-state").unwrap();
-    let compatibility_pending = O3PendingStateCheckpointPayload::decode(payload).unwrap();
-    assert_eq!(compatibility_pending, pending_payload);
+    assert!(registry.chunk(&component, "o3-pending-state").is_none());
+    let payload = registry.chunk(&component, "o3-runtime-state").unwrap();
     assert_eq!(
-        compatibility_pending,
-        pending_payload_from_runtime(captured.o3_runtime_payload())
+        O3RuntimeCheckpointPayload::decode(payload).unwrap(),
+        runtime_payload
     );
 
     core.restore_o3_runtime_checkpoint_payload(RiscvCore::default_o3_runtime_checkpoint_payload())

@@ -8,10 +8,9 @@ use rem6_cpu::{
     BranchPredictorCheckpointPayload, BranchPredictorError, CpuId,
     GShareBranchPredictorCheckpointPayload, GShareBranchPredictorError,
     InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
-    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError,
-    O3PendingStateCheckpointPayload, O3PipelineError, O3RuntimeCheckpointPayload, O3RuntimeError,
-    O3RuntimeSnapshot, O3RuntimeStats, RiscvCore, RiscvHartRunState,
-    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
+    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError, O3PipelineError,
+    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats, RiscvCore,
+    RiscvHartRunState, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{
@@ -23,6 +22,10 @@ use rem6_memory::Address;
 
 use crate::ExecutionModeTarget;
 
+mod o3_payload;
+
+use o3_payload::{decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK, O3_RUNTIME_STATE_CHUNK};
+
 const FREGS_CHUNK: &str = "fregs";
 const BIMODE_BRANCH_PREDICTOR_CHUNK: &str = "bimode-branch-predictor";
 const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
@@ -30,8 +33,6 @@ const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const MULTIPERSPECTIVE_PERCEPTRON_CHUNK: &str = "multiperspective-perceptron";
-const O3_PENDING_STATE_CHUNK: &str = "o3-pending-state";
-const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
 const PC_CHUNK: &str = "pc";
 const TAGE_SC_L_BRANCH_PREDICTOR_CHUNK: &str = "tage-sc-l-branch-predictor";
 const TOURNAMENT_BRANCH_PREDICTOR_CHUNK: &str = "tournament-branch-predictor";
@@ -269,8 +270,7 @@ impl RiscvCoreCheckpointPort {
         registry: &mut CheckpointRegistry,
         record: &RiscvCoreCheckpointRecord,
     ) -> Result<(), CheckpointError> {
-        let o3_pending_state_payload =
-            o3_pending_state_payload_from_runtime(record.o3_runtime_payload());
+        registry.remove_chunk(&self.component, O3_PENDING_STATE_CHUNK);
         registry.write_chunk(
             &self.component,
             PC_CHUNK,
@@ -334,11 +334,6 @@ impl RiscvCoreCheckpointPort {
             encode_multiperspective_perceptron_payload(
                 record.multiperspective_perceptron_payload(),
             ),
-        )?;
-        registry.write_chunk(
-            &self.component,
-            O3_PENDING_STATE_CHUNK,
-            encode_o3_pending_state_payload(&o3_pending_state_payload),
         )?;
         registry.write_chunk(
             &self.component,
@@ -499,50 +494,11 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
-        let runtime_chunk_present = registry
-            .chunk(&self.component, O3_RUNTIME_STATE_CHUNK)
-            .is_some();
-        let mut o3_runtime_payload = match registry.chunk(&self.component, O3_RUNTIME_STATE_CHUNK) {
-            Some(payload) => decode_o3_runtime_payload(&self.component, payload)?,
-            None => RiscvCore::default_o3_runtime_checkpoint_payload(),
-        };
-        let pending_chunk = registry.chunk(&self.component, O3_PENDING_STATE_CHUNK);
-        if runtime_chunk_present {
-            if let Some(payload) = pending_chunk {
-                let decoded_pending = decode_o3_pending_state_payload(&self.component, payload)?;
-                let runtime_pending = o3_pending_state_payload_from_runtime(&o3_runtime_payload);
-                if decoded_pending != runtime_pending {
-                    return Err(RiscvCoreCheckpointError::MismatchedO3PendingStateSnapshot {
-                        component: self.component.clone(),
-                    });
-                }
-            }
-        } else {
-            if let Some(payload) = pending_chunk {
-                let o3_pending_state_payload =
-                    decode_o3_pending_state_payload(&self.component, payload)?;
-                let snapshot = o3_runtime_payload.into_snapshot();
-                let snapshot = O3RuntimeSnapshot::new(
-                    snapshot.reorder_buffer().iter().copied(),
-                    snapshot.load_store_queue().iter().copied(),
-                    snapshot.rename_map().iter().copied(),
-                    o3_pending_state_payload.into_snapshot(),
-                )
-                .map_err(|error| {
-                    RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-                        component: self.component.clone(),
-                        error,
-                    }
-                })?;
-                o3_runtime_payload =
-                    O3RuntimeCheckpointPayload::from_snapshot(snapshot).map_err(|error| {
-                        RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-                            component: self.component.clone(),
-                            error,
-                        }
-                    })?;
-            }
-        }
+        let o3_runtime_payload = decode_o3_runtime_authority(
+            &self.component,
+            registry.chunk(&self.component, O3_RUNTIME_STATE_CHUNK),
+            registry.chunk(&self.component, O3_PENDING_STATE_CHUNK),
+        )?;
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
                 component: self.component.clone(),
@@ -1113,10 +1069,6 @@ fn encode_multiperspective_perceptron_payload(
     payload.encode()
 }
 
-fn encode_o3_pending_state_payload(payload: &O3PendingStateCheckpointPayload) -> Vec<u8> {
-    payload.encode()
-}
-
 fn encode_o3_runtime_payload(payload: &O3RuntimeCheckpointPayload) -> Vec<u8> {
     payload.encode()
 }
@@ -1191,37 +1143,6 @@ fn decode_multiperspective_perceptron_payload(
             error,
         }
     })
-}
-
-fn decode_o3_pending_state_payload(
-    component: &CheckpointComponentId,
-    payload: &[u8],
-) -> Result<O3PendingStateCheckpointPayload, RiscvCoreCheckpointError> {
-    O3PendingStateCheckpointPayload::decode(payload).map_err(|error| {
-        RiscvCoreCheckpointError::InvalidO3PendingStateSnapshot {
-            component: component.clone(),
-            error,
-        }
-    })
-}
-
-fn decode_o3_runtime_payload(
-    component: &CheckpointComponentId,
-    payload: &[u8],
-) -> Result<O3RuntimeCheckpointPayload, RiscvCoreCheckpointError> {
-    O3RuntimeCheckpointPayload::decode(payload).map_err(|error| {
-        RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-            component: component.clone(),
-            error,
-        }
-    })
-}
-
-fn o3_pending_state_payload_from_runtime(
-    payload: &O3RuntimeCheckpointPayload,
-) -> O3PendingStateCheckpointPayload {
-    O3PendingStateCheckpointPayload::from_snapshot(payload.snapshot().pending_state().clone())
-        .expect("validated O3 runtime payload has valid pending state")
 }
 
 fn decode_in_order_pipeline_snapshot(

@@ -555,6 +555,29 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         "detailed",
         "execution-mode-switch-cpu0",
     );
+    let cpu_chunks = [
+        "bimode-branch-predictor",
+        "branch-predictor",
+        "fregs",
+        "gshare-branch-predictor",
+        "hart-run-state",
+        "in-order-pipeline",
+        "multiperspective-perceptron",
+        "o3-runtime-state",
+        "pc",
+        "pmp",
+        "tage-sc-l-branch-predictor",
+        "tournament-branch-predictor",
+        "xregs",
+    ];
+    for switch_index in 0..2 {
+        assert_execution_mode_switch_transfer_component_chunks(
+            host_actions,
+            switch_index,
+            "cpu0",
+            &cpu_chunks,
+        );
+    }
     let stop_tick = host_actions
         .pointer("/stops/0/tick")
         .and_then(Value::as_u64)
@@ -641,7 +664,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         execution_mode_switch_transfer_component_total(host_actions, "cpu0", "payload_bytes"),
         "monotonic",
     );
-    for chunk in ["in-order-pipeline", "o3-pending-state", "o3-runtime-state"] {
+    for chunk in ["in-order-pipeline", "o3-runtime-state"] {
         let stat_chunk = stat_path_segment(chunk);
         assert_json_stat(
             &json,
@@ -670,6 +693,14 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
                 "payload_bytes",
             ),
             "monotonic",
+        );
+    }
+    for suffix in ["chunks", "payload_bytes"] {
+        assert_json_stat_absent(
+            &json,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.component.cpu0.chunk.o3_pending_state.{suffix}"
+            ),
         );
     }
 }
@@ -1785,6 +1816,7 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
         Some(1)
     );
     assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 3, 3);
+    assert_checkpoint_component_count(host_actions, 0, 2);
     assert_checkpoint_component_chunks(
         host_actions,
         0,
@@ -1798,7 +1830,6 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
             "hart-run-state",
             "in-order-pipeline",
             "multiperspective-perceptron",
-            "o3-pending-state",
             "o3-runtime-state",
             "pc",
             "pmp",
@@ -1874,6 +1905,7 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
         Some(1)
     );
     assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 11, 11);
+    assert_checkpoint_component_count(host_actions, 0, 2);
     assert_checkpoint_component_chunks(
         host_actions,
         0,
@@ -1887,7 +1919,6 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
             "hart-run-state",
             "in-order-pipeline",
             "multiperspective-perceptron",
-            "o3-pending-state",
             "o3-runtime-state",
             "pc",
             "pmp",
@@ -4098,6 +4129,47 @@ fn execution_mode_switch_transfer_component_total(
         .sum()
 }
 
+fn assert_execution_mode_switch_transfer_component_chunks(
+    host_actions: &Value,
+    switch_index: usize,
+    component: &str,
+    expected_chunks: &[&str],
+) {
+    let components = host_actions
+        .pointer(&format!(
+            "/execution_mode_switches/{switch_index}/state_transfer/components"
+        ))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer components {switch_index}"));
+    let component_summary = components
+        .iter()
+        .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing switch transfer component {component}"));
+    let chunks = component_summary
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing switch transfer chunks for {component}"));
+    assert_eq!(
+        component_summary
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64),
+        Some(expected_chunks.len() as u64),
+        "switch transfer component {component}: {component_summary}"
+    );
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.pointer("/name").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        expected_chunks
+            .iter()
+            .copied()
+            .map(Some)
+            .collect::<Vec<_>>(),
+        "switch transfer component {component}: {component_summary}"
+    );
+}
+
 fn execution_mode_switch_transfer_component_chunk_total(
     host_actions: &Value,
     component: &str,
@@ -4572,6 +4644,31 @@ fn assert_checkpoint(
             .and_then(Value::as_u64)
             .is_some_and(|bytes| bytes > 0),
         "checkpoint action {index}: {action}"
+    );
+}
+
+fn assert_checkpoint_component_count(
+    host_actions: &Value,
+    checkpoint_index: usize,
+    expected: usize,
+) {
+    let checkpoint = host_actions
+        .pointer(&format!("/checkpoints/{checkpoint_index}"))
+        .unwrap_or_else(|| panic!("missing checkpoint action {checkpoint_index}"));
+    assert_eq!(
+        checkpoint
+            .pointer("/component_count")
+            .and_then(Value::as_u64),
+        Some(expected as u64),
+        "checkpoint action {checkpoint_index}: {checkpoint}"
+    );
+    assert_eq!(
+        checkpoint
+            .pointer("/components")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(expected),
+        "checkpoint action {checkpoint_index}: {checkpoint}"
     );
 }
 
