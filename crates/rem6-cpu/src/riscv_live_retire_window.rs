@@ -207,6 +207,12 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         .o3_runtime
         .scalar_memory_window_limit()
         .min(O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
+    let Some(window) = state
+        .o3_runtime
+        .scalar_memory_integer_window(execution.fetch().request_id())
+    else {
+        return;
+    };
     let younger = completed_fetch_instruction_window(
         state,
         fetch_events,
@@ -214,16 +220,39 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         Address::new(execution.execution().next_pc()),
         row_limit.saturating_sub(1),
     );
-    let younger =
-        RiscvScalarIntegerLiveWindow::from_scalar_load_head(execution.instruction(), row_limit)
-            .map(|window| accepted_scalar_integer_younger_window(window, younger))
-            .unwrap_or_default();
+    let younger = accepted_scalar_integer_younger_window(window, younger);
     state.o3_runtime.stage_live_scalar_memory_younger_window(
         execution.fetch().request_id(),
         younger
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
+    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+}
+
+pub(crate) fn wake_o3_scalar_memory_younger_window(
+    state: &mut RiscvCoreState,
+    issue_tick: u64,
+    fetch_events: &[CpuFetchEvent],
+) {
+    if !state.live_retire_gate.detailed_policy_enabled() {
+        return;
+    }
+    let Some((tail_request, next_pc, younger_rows)) =
+        state.o3_runtime.live_scalar_memory_younger_wakeup_seed()
+    else {
+        return;
+    };
+    let younger = completed_fetch_instruction_window(
+        state,
+        fetch_events,
+        tail_request,
+        next_pc,
+        younger_rows,
+    );
+    if younger.len() != younger_rows {
+        return;
+    }
     record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
 }
 

@@ -16,12 +16,17 @@ use rem6_transport::{
 };
 
 use crate::{
-    o3_runtime::O3StoreLoadForwardingPlan, riscv_checker,
-    riscv_cross_line::supports_cross_line_data_access, riscv_data_access, riscv_execute,
-    riscv_live_retire_window::stage_o3_scalar_memory_younger_window, CpuId,
-    InOrderPipelineCycleRecord, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
-    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessEvent,
-    RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+    o3_runtime::O3StoreLoadForwardingPlan,
+    riscv_checker,
+    riscv_cross_line::supports_cross_line_data_access,
+    riscv_data_access, riscv_execute,
+    riscv_live_retire_window::{
+        stage_o3_scalar_memory_younger_window, wake_o3_scalar_memory_younger_window,
+    },
+    CpuFetchEvent, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
+    InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
+    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
+    RiscvLoadReservation,
 };
 
 mod forwarding;
@@ -649,12 +654,34 @@ impl RiscvCore {
             ));
     }
 
+    fn o3_scalar_load_wakeup_fetch_events(
+        &self,
+        request_id: MemoryRequestId,
+    ) -> Vec<CpuFetchEvent> {
+        let should_snapshot = {
+            let state = self.state.lock().expect("riscv core lock");
+            state.live_retire_gate.detailed_policy_enabled()
+                && state
+                    .outstanding_data
+                    .get(&request_id)
+                    .is_some_and(|access| matches!(access.access, MemoryAccessKind::Load { .. }))
+                && state
+                    .o3_runtime
+                    .live_scalar_memory_younger_wakeup_seed()
+                    .is_some()
+        };
+        should_snapshot
+            .then(|| self.core.fetch_events())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn record_data_response(&self, delivery: ResponseDelivery) {
+        let request_id = delivery.response().request_id();
+        let fetch_events = matches!(delivery.response().status(), ResponseStatus::Completed)
+            .then(|| self.o3_scalar_load_wakeup_fetch_events(request_id))
+            .unwrap_or_default();
         let mut state = self.state.lock().expect("riscv core lock");
-        let Some(access) = state
-            .outstanding_data
-            .remove(&delivery.response().request_id())
-        else {
+        let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
         };
 
@@ -698,6 +725,13 @@ impl RiscvCore {
                     data.as_deref(),
                     forwarded,
                 );
+                if matches!(access.access, MemoryAccessKind::Load { .. }) {
+                    wake_o3_scalar_memory_younger_window(
+                        &mut state,
+                        delivery.tick(),
+                        &fetch_events,
+                    );
+                }
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,

@@ -523,7 +523,7 @@ fn detailed_scalar_load_fu_window_does_not_refetch_incomplete_split_second_alu()
 }
 
 #[test]
-fn detailed_scalar_load_fu_window_does_not_follow_a_younger_load() {
+fn detailed_scalar_memory_prefix_continues_after_independent_alu() {
     let older = i_type(0, 2, 0x2, 12, 0x03);
     let younger = i_type(64, 2, 0x2, 13, 0x03);
     let alu = i_type(5, 0, 0x0, 14, 0x13);
@@ -535,7 +535,54 @@ fn detailed_scalar_load_fu_window_does_not_follow_a_younger_load() {
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(4);
 
-    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_store_load_prefix_continues_after_independent_alu() {
+    let store = s_type(0, 11, 10, 0x2);
+    let load = i_type(0, 10, 0x2, 12, 0x03);
+    let alu = i_type(5, 0, 0x0, 13, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, store.to_le_bytes().to_vec()),
+        (1, 0x8004, load.to_le_bytes().to_vec()),
+        (2, 0x8008, alu.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(10).unwrap(), 0x9000);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn detailed_scalar_memory_prefix_stops_after_dependency_on_any_load() {
+    for (source, label) in [(12, "first load"), (13, "second load")] {
+        let older = i_type(0, 2, 0x2, 12, 0x03);
+        let younger = i_type(64, 2, 0x2, 13, 0x03);
+        let dependent = i_type(5, source, 0x0, 14, 0x13);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, older.to_le_bytes().to_vec()),
+            (1, 0x8004, younger.to_le_bytes().to_vec()),
+            (2, 0x8008, dependent.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_scalar_memory_depth(4);
+
+        assert_eq!(
+            core.next_fetch_ahead_before_retire(),
+            None,
+            "dependency on the {label} must terminate the mixed window"
+        );
+    }
 }
 
 #[test]

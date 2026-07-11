@@ -4,6 +4,7 @@ use super::*;
 
 const OLDER_STORE_PC: &str = "0x80000010";
 const YOUNGER_LOAD_PC: &str = "0x80000014";
+const DEPENDENT_ALU_PC: &str = "0x80000018";
 const DATA_ADDRESS: &str = "0x80000100";
 const DISJOINT_LOAD_ADDRESS: &str = "0x80000140";
 const DISJOINT_RESULTS: &str = "2a000000630000006400000000000000";
@@ -12,7 +13,7 @@ const ALIAS_RESULTS: &str = "2a0000002a0000002b00000000000000";
 #[test]
 fn rem6_run_o3_detailed_store_then_disjoint_load_overlap_direct() {
     let path = store_load_binary("o3-store-load-direct", 64);
-    let json = store_load_json(&path, "direct", 900, None);
+    let json = store_load_json_with_depth(&path, "direct", 900, None, 3);
 
     assert_eq!(
         json.pointer("/simulation/memory_system")
@@ -20,12 +21,13 @@ fn rem6_run_o3_detailed_store_then_disjoint_load_overlap_direct() {
         Some("direct")
     );
     assert_completed_disjoint_store_load(&json);
+    assert_direct_memory_boundary(&json);
 }
 
 #[test]
 fn rem6_run_o3_detailed_store_then_disjoint_load_overlap_cache_fabric_dram() {
     let path = store_load_binary("o3-store-load-cache-fabric-dram", 64);
-    let json = store_load_json(&path, "cache-fabric-dram", 1400, None);
+    let json = store_load_json_with_depth(&path, "cache-fabric-dram", 1400, None, 3);
 
     assert_eq!(
         json.pointer("/simulation/memory_system")
@@ -164,16 +166,17 @@ fn rem6_run_o3_timing_store_load_preserves_architecture_without_o3_window() {
 #[test]
 fn rem6_run_o3_detailed_aliasing_store_load_forwards_without_second_memory_request_direct() {
     let path = store_load_binary("o3-store-load-alias", 0);
-    let json = store_load_json(&path, "direct", 900, None);
+    let json = store_load_json_with_depth(&path, "direct", 900, None, 3);
 
     assert_forwarded_alias_store_load(&json);
+    assert_direct_memory_boundary(&json);
 }
 
 #[test]
 fn rem6_run_o3_detailed_aliasing_store_load_forwards_without_second_memory_request_cache_fabric_dram(
 ) {
     let path = store_load_binary("o3-store-load-alias-cache-fabric-dram", 0);
-    let json = store_load_json(&path, "cache-fabric-dram", 1400, None);
+    let json = store_load_json_with_depth(&path, "cache-fabric-dram", 1400, None, 3);
 
     assert_forwarded_alias_store_load(&json);
     for pointer in [
@@ -189,16 +192,127 @@ fn rem6_run_o3_detailed_aliasing_store_load_forwards_without_second_memory_reque
             "hierarchy-backed forwarding run should expose {pointer}: {json}"
         );
     }
+    for path in [
+        "sim.memory.resources.cache.data.activity",
+        "sim.memory.resources.transport.data.activity",
+        "sim.memory.resources.fabric.activity",
+        "sim.memory.resources.dram.activity",
+    ] {
+        assert_json_stat_at_least(&json, path, "Count", 1, "monotonic");
+    }
+}
+
+#[test]
+fn rem6_run_o3_detailed_forwarded_load_dependent_alu_remains_resident_before_store_response() {
+    let path = store_load_binary("o3-store-load-alu-resident", 0);
+    let completed = store_load_json_with_depth(&path, "direct", 900, None, 3);
+    let older = event_at_pc(&completed, OLDER_STORE_PC);
+    let younger = event_at_pc(&completed, YOUNGER_LOAD_PC);
+    let dependent = event_at_pc(&completed, DEPENDENT_ALU_PC);
+    let dependent_issue_tick = event_u64(dependent, "issue_tick");
+    let older_response_tick = event_u64(older, "lsq_data_response_tick");
+    assert!(
+        event_u64(younger, "lsq_data_response_tick") < dependent_issue_tick
+            && dependent_issue_tick < older_response_tick
+    );
+    let stop_tick = dependent_issue_tick
+        .saturating_add(older_response_tick.saturating_sub(dependent_issue_tick) / 2);
+
+    let json = store_load_json_with_depth(&path, "direct", stop_tick, None, 3);
+
+    assert_forwarded_store_load_resident(
+        &json,
+        stop_tick,
+        &[OLDER_STORE_PC, YOUNGER_LOAD_PC, DEPENDENT_ALU_PC],
+    );
+    let rob = json
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .expect("resident store/load/ALU ROB rows");
+    assert_eq!(
+        rob.iter()
+            .map(|entry| entry.pointer("/ready").and_then(Value::as_bool))
+            .collect::<Vec<_>>(),
+        [Some(false), Some(true), Some(false)]
+    );
+    let rename_entries = json
+        .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
+        .and_then(Value::as_array)
+        .expect("resident store/load/ALU rename entries");
+    let expected_live_renames = [(12, &rob[1]), (13, &rob[2])]
+        .into_iter()
+        .map(|(architectural, rob)| {
+            (
+                architectural,
+                rob.pointer("/destination")
+                    .and_then(Value::as_u64)
+                    .expect("live ROB destination"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let observed_live_renames = rename_entries
+        .iter()
+        .filter_map(|entry| {
+            let architectural = entry.pointer("/architectural").and_then(Value::as_u64)?;
+            ([12, 13].contains(&architectural)
+                && entry.pointer("/register_class").and_then(Value::as_str) == Some("integer"))
+            .then(|| {
+                (
+                    architectural,
+                    entry
+                        .pointer("/physical")
+                        .and_then(Value::as_u64)
+                        .expect("live rename physical register"),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(observed_live_renames, expected_live_renames);
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.max_rob_occupancy",
+        "Count",
+        3,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_o3_detailed_depth_two_keeps_dependent_alu_out_of_store_load_window() {
+    let path = store_load_binary("o3-store-load-depth-two", 0);
+    let completed = store_load_json_with_depth(&path, "direct", 900, None, 2);
+    let older = event_at_pc(&completed, OLDER_STORE_PC);
+    let younger = event_at_pc(&completed, YOUNGER_LOAD_PC);
+    let dependent = event_at_pc(&completed, DEPENDENT_ALU_PC);
+    assert!(event_u64(younger, "lsq_data_response_tick") < event_u64(older, "commit_tick"));
+    assert!(event_u64(dependent, "issue_tick") >= event_u64(older, "commit_tick"));
+    let stop_tick = event_u64(younger, "lsq_data_response_tick").saturating_add(
+        event_u64(older, "lsq_data_response_tick")
+            .saturating_sub(event_u64(younger, "lsq_data_response_tick"))
+            / 2,
+    );
+
+    let json = store_load_json_with_depth(&path, "direct", stop_tick, None, 2);
+
+    assert_forwarded_store_load_resident(&json, stop_tick, &[OLDER_STORE_PC, YOUNGER_LOAD_PC]);
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.max_rob_occupancy",
+        "Count",
+        2,
+        "monotonic",
+    );
 }
 
 #[test]
 fn rem6_run_o3_detailed_store_load_width_mismatch_merges_store_byte() {
     let path = store_load_width_mismatch_binary("o3-store-load-width-mismatch");
-    let json = store_load_json(&path, "direct", 900, None);
+    let json = store_load_json_with_depth(&path, "direct", 900, None, 3);
 
     assert_final_architecture(&json, ALIAS_RESULTS, "0x2a", "0x2b");
     let older = event_at_pc(&json, OLDER_STORE_PC);
     let younger = event_at_pc(&json, YOUNGER_LOAD_PC);
+    let dependent = event_at_pc(&json, DEPENDENT_ALU_PC);
     assert!(
         event_u64(younger, "issue_tick") < event_u64(older, "lsq_data_response_tick"),
         "partially covered load should issue before the store response: older={older}, younger={younger}"
@@ -215,6 +329,10 @@ fn rem6_run_o3_detailed_store_load_width_mismatch_merges_store_byte() {
         );
     }
     assert_eq!(event_u64(younger, "store_load_forwarding_bytes"), 1);
+    assert_eq!(
+        event_u64(dependent, "issue_tick"),
+        event_u64(younger, "lsq_data_response_tick").saturating_add(1)
+    );
     for field in [
         "store_load_forwarding_suppressed",
         "store_load_forwarding_address_mismatch",
@@ -250,6 +368,7 @@ fn assert_forwarded_alias_store_load(json: &Value) {
     assert_final_architecture(json, ALIAS_RESULTS, "0x2a", "0x2b");
     let older = event_at_pc(&json, OLDER_STORE_PC);
     let younger = event_at_pc(&json, YOUNGER_LOAD_PC);
+    let dependent = event_at_pc(&json, DEPENDENT_ALU_PC);
     assert!(
         event_u64(younger, "issue_tick") < event_u64(older, "lsq_data_response_tick"),
         "forwarded load should issue before the older store response: older={older}, younger={younger}"
@@ -264,6 +383,19 @@ fn assert_forwarded_alias_store_load(json: &Value) {
         "forwarded pair must retire in program order: older={older}, younger={younger}"
     );
     assert_eq!(
+        event_u64(dependent, "issue_tick"),
+        event_u64(younger, "lsq_data_response_tick").saturating_add(1),
+        "dependent ALU should wake one modeled tick after the forwarded load response: younger={younger}, dependent={dependent}"
+    );
+    assert!(
+        event_u64(dependent, "writeback_tick") < event_u64(older, "lsq_data_response_tick"),
+        "dependent ALU should write back before the older store response: older={older}, dependent={dependent}"
+    );
+    assert!(
+        event_u64(younger, "commit_tick") <= event_u64(dependent, "commit_tick"),
+        "store/load/ALU chain must retire in program order: younger={younger}, dependent={dependent}"
+    );
+    assert_eq!(
         younger
             .pointer("/store_load_forwarding_candidate")
             .and_then(Value::as_bool),
@@ -274,6 +406,13 @@ fn assert_forwarded_alias_store_load(json: &Value) {
             .pointer("/store_load_forwarding_match")
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_json_stat(
+        json,
+        "sim.cpu0.o3.max_rob_occupancy",
+        "Count",
+        3,
+        "monotonic",
     );
     assert_json_stat(
         json,
@@ -332,13 +471,114 @@ fn assert_forwarded_alias_store_load(json: &Value) {
     );
 }
 
+fn assert_forwarded_store_load_resident(json: &Value, final_tick: u64, expected_pcs: &[&str]) {
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_at_tick_limit")
+    );
+    assert_eq!(
+        json.pointer("/simulation/final_tick")
+            .and_then(Value::as_u64),
+        Some(final_tick)
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a000000000000000000000000000000")
+    );
+    for register in ["x12", "x13"] {
+        let value = json
+            .pointer(&format!("/cores/0/registers/{register}"))
+            .and_then(Value::as_str);
+        assert!(
+            value.is_none() || value == Some("0x0"),
+            "resident store/load window must not publish {register}: {json}"
+        );
+    }
+    let rob = json
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .expect("resident store/load ROB rows");
+    assert_eq!(
+        rob.iter()
+            .map(|entry| entry.pointer("/pc").and_then(Value::as_str).unwrap())
+            .collect::<Vec<_>>(),
+        expected_pcs
+    );
+    assert!(rob
+        .iter()
+        .all(|entry| { entry.pointer("/live_staged").and_then(Value::as_bool) == Some(true) }));
+    let lsq = json
+        .pointer("/cores/0/o3_runtime/snapshot/lsq/entries")
+        .and_then(Value::as_array)
+        .expect("resident store/load LSQ rows");
+    assert_eq!(lsq.len(), 2);
+    assert_eq!(
+        lsq.iter()
+            .map(|entry| {
+                (
+                    entry.pointer("/kind").and_then(Value::as_str),
+                    entry.pointer("/address").and_then(Value::as_str),
+                    entry.pointer("/completed").and_then(Value::as_bool),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("store"), Some(DATA_ADDRESS), Some(false)),
+            (Some("load"), Some(DATA_ADDRESS), Some(true)),
+        ]
+    );
+    assert_json_stat(
+        json,
+        "sim.cpu0.o3.max_lsq_occupancy",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+fn assert_direct_memory_boundary(json: &Value) {
+    assert!(
+        json.pointer("/memory_resources/transport/data/activity")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value > 0),
+        "direct store/load/ALU run should retain transport activity: {json}"
+    );
+    assert_json_stat_at_least(
+        json,
+        "sim.memory.resources.transport.data.activity",
+        "Count",
+        1,
+        "monotonic",
+    );
+    for (pointer, path) in [
+        (
+            "/memory_resources/cache/data/activity",
+            "sim.memory.resources.cache.data.activity",
+        ),
+        (
+            "/memory_resources/fabric/activity",
+            "sim.memory.resources.fabric.activity",
+        ),
+        (
+            "/memory_resources/dram/activity",
+            "sim.memory.resources.dram.activity",
+        ),
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64).unwrap_or(0),
+            0
+        );
+        assert_json_stat(json, path, "Count", 0, "monotonic");
+    }
+}
+
 fn assert_completed_disjoint_store_load(json: &Value) {
     assert_final_architecture(json, DISJOINT_RESULTS, "0x63", "0x64");
-    assert_json_stat_at_least(
+    assert_json_stat(
         json,
         "sim.cpu0.o3.max_rob_occupancy",
         "Count",
-        2,
+        3,
         "monotonic",
     );
     assert_json_stat(
@@ -358,6 +598,7 @@ fn assert_completed_disjoint_store_load(json: &Value) {
 
     let older = event_at_pc(json, OLDER_STORE_PC);
     let younger = event_at_pc(json, YOUNGER_LOAD_PC);
+    let dependent = event_at_pc(json, DEPENDENT_ALU_PC);
     assert_eq!(
         older.pointer("/lsq_operation").and_then(Value::as_str),
         Some("store")
@@ -381,6 +622,15 @@ fn assert_completed_disjoint_store_load(json: &Value) {
     assert!(
         event_u64(older, "commit_tick") <= event_u64(younger, "commit_tick"),
         "store-load pair must retire in program order: older={older}, younger={younger}"
+    );
+    assert_eq!(
+        event_u64(dependent, "issue_tick"),
+        event_u64(younger, "lsq_data_response_tick").saturating_add(1),
+        "transport-completed load should wake the dependent ALU: younger={younger}, dependent={dependent}"
+    );
+    assert!(
+        event_u64(younger, "commit_tick") <= event_u64(dependent, "commit_tick"),
+        "store/load/ALU chain must retire in order: younger={younger}, dependent={dependent}"
     );
 }
 
@@ -415,6 +665,32 @@ fn store_load_json(
     max_tick: u64,
     switch_mode: Option<&str>,
 ) -> Value {
+    store_load_json_config(path, memory_system, max_tick, switch_mode, None)
+}
+
+fn store_load_json_with_depth(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    switch_mode: Option<&str>,
+    scalar_memory_depth: usize,
+) -> Value {
+    store_load_json_config(
+        path,
+        memory_system,
+        max_tick,
+        switch_mode,
+        Some(scalar_memory_depth),
+    )
+}
+
+fn store_load_json_config(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    switch_mode: Option<&str>,
+    scalar_memory_depth: Option<usize>,
+) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
         "run",
@@ -438,6 +714,12 @@ fn store_load_json(
         "--dump-memory",
         "0x80000140:4",
     ]);
+    if let Some(scalar_memory_depth) = scalar_memory_depth {
+        command.args([
+            "--riscv-o3-scalar-memory-depth",
+            &scalar_memory_depth.to_string(),
+        ]);
+    }
     if let Some(switch_mode) = switch_mode {
         command.args(["--m5-switch-cpu-mode", switch_mode]);
     }

@@ -190,7 +190,6 @@ fn scalar_memory_window_candidate(
     let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let standalone_load_head = window.rows() == 0;
     let mut destinations = window.load_destinations().to_vec();
     match current.decoded().instruction() {
         instruction @ RiscvInstruction::Load { .. } => {
@@ -248,11 +247,9 @@ fn scalar_memory_window_candidate(
             continue;
         }
 
-        if !standalone_load_head || window_rows != 1 {
-            return DetailedFetchAheadCandidate::Blocked;
-        }
-        let Some(mut alu_window) = RiscvScalarIntegerLiveWindow::from_scalar_load_head(
-            current.decoded().instruction(),
+        let Some(mut alu_window) = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            destinations.iter().copied(),
+            window_rows,
             limit,
         ) else {
             return DetailedFetchAheadCandidate::Blocked;

@@ -165,6 +165,7 @@ impl O3RuntimeState {
             if let Some(rename_destination) = rename_destination {
                 self.publish_live_rename_entry(rename_destination);
             }
+            self.validate_live_speculative_producer(live.sequence);
         }
         let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
         let mut trace_record = O3RuntimeTraceRecord::new(

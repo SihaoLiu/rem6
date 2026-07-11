@@ -1,9 +1,7 @@
 use rem6_isa_riscv::{RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
 
 use super::*;
-use crate::riscv_o3_window_policy::{
-    RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
-};
+use crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveRetiredInstruction {
@@ -79,21 +77,19 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) {
-        let Some(live) = self.live_scalar_memories.last() else {
+        let Some(mut window) = self.scalar_memory_integer_window(fetch_request) else {
             return;
         };
-        let live_fetch_request = live.fetch_request;
-        let live_sequence = live.sequence;
-        let live_outcome = live.outcome;
-        let live_instruction = live.execution.instruction();
-        if live_fetch_request != fetch_request
-            || live_outcome != O3LiveScalarMemoryOutcome::Resident
-            || self.live_scalar_memories.len() != 1
-            || !self
-                .snapshot
-                .reorder_buffer
-                .iter()
-                .any(|entry| entry.sequence() == live_sequence && entry.is_live_staged())
+        let live_sequence = self
+            .live_scalar_memories
+            .last()
+            .expect("scalar memory integer window has a live tail")
+            .sequence;
+        if !self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .any(|entry| entry.sequence() == live_sequence && entry.is_live_staged())
             || self
                 .snapshot
                 .reorder_buffer
@@ -102,12 +98,6 @@ impl O3RuntimeState {
         {
             return;
         }
-        let Some(mut window) = RiscvScalarIntegerLiveWindow::from_scalar_load_head(
-            live_instruction,
-            self.scalar_memory_window_limit,
-        ) else {
-            return;
-        };
         // Revalidate the caller-selected prefix before allocating live rows.
         for (pc, instruction) in younger {
             let decision = window.classify_younger(instruction);
@@ -214,6 +204,21 @@ impl O3RuntimeState {
 
     pub(crate) fn discard_live_speculative_executions(&mut self) {
         self.live_speculative_executions.clear();
+    }
+
+    pub(crate) fn live_scalar_memory_younger_wakeup_seed(
+        &self,
+    ) -> Option<(MemoryRequestId, Address, usize)> {
+        let younger_rows = self.live_scalar_memory_younger_sequences.len();
+        if younger_rows == 0 {
+            return None;
+        }
+        let tail = self.live_scalar_memories.last()?;
+        Some((
+            tail.fetch_request,
+            Address::new(tail.execution.execution().next_pc()),
+            younger_rows,
+        ))
     }
 
     pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {
@@ -376,16 +381,22 @@ impl O3RuntimeState {
             let Some(producer) = producer else {
                 continue;
             };
-            let issued = self
+            let speculative = self
                 .live_speculative_executions
                 .iter()
-                .find(|issued| issued.sequence == producer.sequence())?;
-            let write = issued
-                .execution
-                .register_writes()
-                .iter()
-                .find(|write| write.register() == source)?;
-            dependency_ready_tick = dependency_ready_tick.max(issued.issue_tick.saturating_add(1));
+                .find(|issued| issued.sequence == producer.sequence())
+                .and_then(|issued| {
+                    issued
+                        .execution
+                        .register_writes()
+                        .iter()
+                        .find(|write| write.register() == source)
+                        .cloned()
+                        .map(|write| (write, issued.issue_tick.saturating_add(1)))
+                });
+            let (write, producer_ready_tick) = speculative
+                .or_else(|| self.completed_live_scalar_load_source(producer.sequence(), source))?;
+            dependency_ready_tick = dependency_ready_tick.max(producer_ready_tick);
             if !producer_sequences.contains(&producer.sequence()) {
                 producer_sequences.push(producer.sequence());
             }
@@ -393,13 +404,47 @@ impl O3RuntimeState {
                 .iter()
                 .any(|forwarded: &RegisterWrite| forwarded.register() == source)
             {
-                forwarded_register_writes.push(write.clone());
+                forwarded_register_writes.push(write);
             }
         }
         Some((
             producer_sequences,
             forwarded_register_writes,
             dependency_ready_tick,
+        ))
+    }
+
+    fn completed_live_scalar_load_source(
+        &self,
+        sequence: u64,
+        source: rem6_isa_riscv::Register,
+    ) -> Option<(RegisterWrite, u64)> {
+        let live = self.live_scalar_memories.iter().find(|live| {
+            live.sequence == sequence
+                && live.outcome == O3LiveScalarMemoryOutcome::Completed
+                && !live.event_taken
+        })?;
+        let rob = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.sequence() == sequence)?;
+        if !rob.is_live_staged() || !rob.is_ready() {
+            return None;
+        }
+        let data = live.load_data.as_deref()?;
+        let writeback = live
+            .execution
+            .execution()
+            .memory_access()?
+            .read_response_writeback(data)
+            .ok()??;
+        if writeback.integer_register() != Some(source) {
+            return None;
+        }
+        Some((
+            RegisterWrite::new(source, writeback.value()),
+            live.response_tick?.saturating_add(1),
         ))
     }
 
@@ -482,7 +527,7 @@ impl O3RuntimeState {
         }
     }
 
-    fn validate_live_speculative_producer(&mut self, sequence: u64) {
+    pub(super) fn validate_live_speculative_producer(&mut self, sequence: u64) {
         for issued in &mut self.live_speculative_executions {
             issued
                 .producer_sequences
@@ -788,6 +833,63 @@ mod tests {
             .is_some());
         assert!(runtime
             .live_speculative_issue_candidate(Address::new(0x8008), dependent)
+            .is_none());
+    }
+
+    #[test]
+    fn completed_live_load_forwards_into_dependent_alu_candidate() {
+        let mut runtime = O3RuntimeState::default();
+        let load = scalar_load_event();
+        let dependent = addi(5, 4);
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8004), dependent)],
+        );
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+            .is_none());
+
+        let mut completed = load.clone();
+        completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(runtime.complete_live_scalar_memory_response(
+            &completed,
+            request(20),
+            41,
+            10,
+            Some(&0x2a_u32.to_le_bytes()),
+        ));
+
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+            .expect("completed load should wake its dependent scalar ALU");
+        assert_eq!(
+            candidate.forwarded_register_writes(),
+            &[RegisterWrite::new(Register::new(4).unwrap(), 0x2a)]
+        );
+        assert_eq!(candidate.issue_tick(10), 42);
+    }
+
+    #[test]
+    fn scalar_memory_prefix_stages_load_dependent_terminal_alu() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event();
+        let load = scalar_load_event();
+        let dependent = addi(5, 4);
+        assert!(runtime.stage_live_scalar_memory_issue(&store, request(19), 30));
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8004), dependent)],
+        );
+
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
+        assert_eq!(runtime.live_scalar_memory_younger_sequences.len(), 1);
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
             .is_none());
     }
 
@@ -1606,6 +1708,30 @@ mod tests {
                     address: 0x9000,
                     width: MemoryWidth::Word,
                     signed: false,
+                }),
+            ),
+        )
+    }
+
+    fn scalar_store_event() -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Store {
+            rs1: Register::new(10).unwrap(),
+            rs2: Register::new(11).unwrap(),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+        };
+        RiscvCpuExecutionEvent::new(
+            fetch_event(0x7ffc, 9),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                0x7ffc,
+                0x8000,
+                Vec::new(),
+                Some(MemoryAccessKind::Store {
+                    address: 0x9000,
+                    width: MemoryWidth::Word,
+                    value: 0x2a,
                 }),
             ),
         )

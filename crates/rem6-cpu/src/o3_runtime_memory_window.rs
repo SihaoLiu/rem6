@@ -5,7 +5,10 @@ use super::o3_store_forwarding::{
     O3StoreLoadRelation,
 };
 use super::*;
-use crate::riscv_scalar_memory_window::independent_scalar_load_destination;
+use crate::{
+    riscv_o3_window_policy::RiscvScalarIntegerLiveWindow,
+    riscv_scalar_memory_window::independent_scalar_load_destination,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3ScalarMemoryWindowAdmission {
@@ -88,6 +91,25 @@ impl O3RuntimeState {
             return None;
         }
         self.scalar_memory_window_state()
+    }
+
+    pub(crate) fn scalar_memory_integer_window(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<RiscvScalarIntegerLiveWindow> {
+        let tail = self.live_scalar_memories.last()?;
+        if tail.fetch_request != fetch_request
+            || tail.outcome != O3LiveScalarMemoryOutcome::Resident
+            || !matches!(tail.execution.instruction(), RiscvInstruction::Load { .. })
+        {
+            return None;
+        }
+        let window = self.scalar_memory_window_state()?;
+        RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            window.load_destinations.iter().copied(),
+            window.rows,
+            self.scalar_memory_window_limit,
+        )
     }
 
     pub(super) fn has_scalar_memory_window_capacity(&self) -> bool {
@@ -183,7 +205,7 @@ impl O3RuntimeState {
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
+        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
@@ -856,6 +878,66 @@ mod tests {
         assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
         assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
         assert_eq!(runtime.live_scalar_memories.len(), 1);
+    }
+
+    #[test]
+    fn older_store_retry_discards_forwarded_load_dependent_alu_chain() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let load = scalar_load_event(0x8004, 11, 12, 10, 0x9000);
+        let dependent = RiscvInstruction::Addi {
+            rd: reg(13),
+            rs1: reg(12),
+            imm: Immediate::new(1),
+        };
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8008), dependent)],
+        );
+
+        let mut completed_load = load.clone();
+        completed_load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(runtime.complete_live_scalar_memory_forwarding(
+            &completed_load,
+            memory_request(21),
+            32,
+            0,
+            &0x2a_u32.to_le_bytes(),
+        ));
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), dependent)
+            .expect("forwarded load should wake the dependent ALU");
+        runtime.record_live_speculative_execution(
+            candidate,
+            &[memory_request(12)],
+            32,
+            RiscvExecutionRecord::new(
+                dependent,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(reg(13), 0x2b)],
+                None,
+            ),
+        );
+        assert_eq!(runtime.live_speculative_executions.len(), 1);
+
+        let mut retry = store.clone();
+        retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
+        assert!(runtime.complete_live_scalar_memory_response(
+            &retry,
+            memory_request(20),
+            40,
+            9,
+            None,
+        ));
+
+        assert!(runtime.snapshot.reorder_buffer.is_empty());
+        assert!(runtime.snapshot.load_store_queue.is_empty());
+        assert!(runtime.live_scalar_memory_younger_sequences.is_empty());
+        assert!(runtime.live_speculative_executions.is_empty());
     }
 
     fn scalar_load_event(

@@ -7,8 +7,9 @@ use super::{
     OutstandingDataAccess,
 };
 use crate::{
-    o3_runtime::O3StoreLoadForwardingPlan, RiscvCore, RiscvCpuError, RiscvDataAccessEvent,
-    RiscvDataAccessEventKind,
+    o3_runtime::O3StoreLoadForwardingPlan,
+    riscv_live_retire_window::wake_o3_scalar_memory_younger_window, RiscvCore, RiscvCpuError,
+    RiscvDataAccessEvent, RiscvDataAccessEventKind,
 };
 
 impl RiscvCore {
@@ -76,6 +77,7 @@ impl RiscvCore {
         tick: Tick,
         data: Vec<u8>,
     ) {
+        let fetch_events = self.o3_scalar_load_wakeup_fetch_events(request_id);
         let mut state = self.state.lock().expect("riscv core lock");
         let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
@@ -98,6 +100,7 @@ impl RiscvCore {
             Some(&data),
             true,
         );
+        wake_o3_scalar_memory_younger_window(&mut state, tick, &fetch_events);
         state.data_events.push(RiscvDataAccessEvent::completed(
             access.record(tick),
             Some(data),
