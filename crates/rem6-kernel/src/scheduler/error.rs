@@ -44,6 +44,7 @@ pub enum SchedulerError {
         partition: PartitionId,
         tick: Tick,
     },
+    StaleParallelEpochPlan,
     ParallelWorkerPanicked {
         partition: PartitionId,
     },
@@ -150,6 +151,10 @@ impl fmt::Display for SchedulerError {
                 formatter,
                 "parallel epoch cannot dispatch serial event in partition {} at tick {tick}",
                 partition.index()
+            ),
+            Self::StaleParallelEpochPlan => write!(
+                formatter,
+                "parallel epoch plan does not match current scheduler state"
             ),
             Self::ParallelWorkerPanicked { partition } => write!(
                 formatter,

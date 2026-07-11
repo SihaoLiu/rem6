@@ -225,6 +225,13 @@ impl RiscvSystemRun {
             .collect()
     }
 
+    pub(crate) fn parallel_safe_scheduler_epochs(&self) -> Vec<&RiscvClusterSchedulerEpoch> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .filter(|epoch| epoch.is_parallel_safe())
+            .collect()
+    }
+
     pub fn parallel_scheduler_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
         self.parallel_scheduler_epochs()
             .into_iter()

@@ -19,14 +19,15 @@ pub use restore_schedule::{
     CheckpointRestoreWarmupEvent, CheckpointRestoreWarmupSummary, RestoreReplayEventKind,
 };
 pub use scheduler::{
-    ConservativeRunSummary, EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord,
-    ParallelEpochPlan, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
-    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteDeliveryWindow,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile,
-    ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
-    PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot, ReadyPartition,
-    RecordedConservativeRunSummary, RecordedRunSummary, RunSummary, ScheduledEventKind,
-    SchedulerContext, SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
+    ConservativeRunSummary, EpochPlan, MixedEventRun, ParallelBatchUtilizationRatio,
+    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelEpochPlannedBatch,
+    ParallelEpochPlannedWorkerRecord, ParallelPartitionActivity, ParallelProgressTransitionRecord,
+    ParallelRemoteDeliveryWindow, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId,
+    PartitionFrontier, PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot,
+    ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary, RunSummary,
+    ScheduledEventKind, SchedulerCheckpointAccess, SchedulerContext, SchedulerDispatchRecord,
+    SchedulerError, SchedulerInstanceId, SchedulerSnapshot, SchedulerStorageId,
 };
 pub use wait_for::{
     DeadlockDiagnostic, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind,

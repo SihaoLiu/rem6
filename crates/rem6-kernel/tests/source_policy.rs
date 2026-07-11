@@ -69,6 +69,19 @@ fn scheduler_snapshot_state_lives_in_focused_module() {
     }
 }
 
+#[test]
+fn runtime_scheduler_event_token_stays_internal() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let scheduler = fs::read_to_string(src_dir.join("scheduler.rs")).unwrap();
+    let snapshot = fs::read_to_string(src_dir.join("scheduler/state/snapshot.rs")).unwrap();
+    let lib = fs::read_to_string(src_dir.join("lib.rs")).unwrap();
+
+    assert!(scheduler.contains("pub(crate) struct SchedulerEventToken"));
+    assert!(!scheduler.contains("pub struct SchedulerEventToken"));
+    assert!(!snapshot.contains("pub fn token("));
+    assert!(!lib.contains("SchedulerEventToken"));
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

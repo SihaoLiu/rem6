@@ -192,14 +192,54 @@ impl PartitionedScheduler {
             })
             .collect::<Vec<_>>();
         let ready_partitions = super::sort_ready_partitions(ready_partitions);
-        let serial_blockers = self.serial_blockers_at_or_before(horizon);
+        let ready_event_tokens = ready_partitions
+            .iter()
+            .map(|ready| {
+                let event = self.partitions[ready.partition.index() as usize]
+                    .pending
+                    .peek()
+                    .expect("ready partition has a pending event");
+                (ready.partition, event.token)
+            })
+            .collect();
+        let serial_blockers_with_tokens = self.serial_blockers_with_tokens_at_or_before(horizon);
+        let serial_blockers = serial_blockers_with_tokens
+            .iter()
+            .map(|(record, _)| *record)
+            .collect();
+        let serial_blocker_tokens = serial_blockers_with_tokens
+            .into_iter()
+            .map(|(record, token)| (record.id(), token))
+            .collect();
 
-        Ok(Some(ParallelEpochPlan::new(
+        Ok(Some(ParallelEpochPlan::with_runtime_provenance(
+            Some(self.instance_id),
             horizon,
             ready_partitions,
+            ready_event_tokens,
             frontiers,
             serial_blockers,
+            serial_blocker_tokens,
             self.max_parallel_workers,
         )))
+    }
+
+    pub(super) fn validate_parallel_epoch_plan(
+        &self,
+        plan: &ParallelEpochPlan,
+    ) -> Result<(), SchedulerError> {
+        let current = if self.is_idle() {
+            None
+        } else {
+            self.plan_next_parallel_epoch_with_limit(Some(plan.horizon()))?
+        };
+        if current
+            .as_ref()
+            .is_some_and(|current| current.matches_runtime_plan(plan))
+        {
+            Ok(())
+        } else {
+            Err(SchedulerError::StaleParallelEpochPlan)
+        }
     }
 }

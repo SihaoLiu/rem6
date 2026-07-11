@@ -67,7 +67,7 @@ impl RiscvSystemRun {
     ) -> Vec<RiscvSystemParallelBatchWorkerLaneRecord> {
         collect_system_planned_worker_lanes(
             RiscvSystemParallelBatchScope::Scheduler,
-            self.parallel_scheduler_epochs()
+            self.parallel_safe_scheduler_epochs()
                 .into_iter()
                 .flat_map(|epoch| epoch.plan().parallel_batch_planned_workers()),
         )

@@ -1,4 +1,4 @@
-use crate::scheduler::{PartitionEventId, PartitionId};
+use crate::scheduler::{PartitionEventId, PartitionId, SchedulerEventToken};
 use crate::Tick;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -153,6 +153,7 @@ pub struct PendingEventSnapshot {
     pub(in crate::scheduler) id: PartitionEventId,
     pub(in crate::scheduler) tick: Tick,
     pub(in crate::scheduler) order: u64,
+    pub(in crate::scheduler) token: SchedulerEventToken,
     pub(in crate::scheduler) kind: ScheduledEventKind,
 }
 

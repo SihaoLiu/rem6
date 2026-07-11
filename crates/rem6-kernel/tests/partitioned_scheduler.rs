@@ -1,8 +1,9 @@
 use std::sync::{Arc, Barrier, Mutex};
 
 use rem6_kernel::{
-    ParallelRunProfile, PartitionEventId, PartitionId, PartitionSnapshot, PartitionedScheduler,
-    ScheduledEventKind, SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
+    LivelockTransitionKind, ParallelEpochPlan, ParallelRunProfile, PartitionEventId, PartitionId,
+    PartitionSnapshot, PartitionedScheduler, ScheduledEventKind, SchedulerDispatchRecord,
+    SchedulerError, SchedulerSnapshot, WaitForNode,
 };
 
 #[test]
@@ -68,6 +69,377 @@ fn scheduler_dispatches_partitions_in_deterministic_tick_order() {
             (4, cpu1, "cpu1"),
         ]
     );
+}
+
+#[test]
+fn mixed_event_dispatch_runs_parallel_and_serial_callbacks_without_cross_dispatch() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    let subject = WaitForNode::component("mixed-dispatch").unwrap();
+    let parallel_log = Arc::clone(&observed);
+    let parallel_subject = subject.clone();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, move |context| {
+            parallel_log.lock().unwrap().push("parallel");
+            context.record_progress_transition(
+                parallel_subject,
+                LivelockTransitionKind::ProtocolRetry,
+            );
+        })
+        .unwrap();
+    let serial_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(PartitionId::new(1), 0, move |_| {
+            serial_log.lock().unwrap().push("serial");
+        })
+        .unwrap();
+
+    let first_plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let first = scheduler.run_next_mixed_event(first_plan).unwrap();
+    let second_plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let second = scheduler.run_next_mixed_event(second_plan).unwrap();
+
+    assert_eq!(first.summary().executed_events(), 1);
+    let recorded = first
+        .parallel_recorded()
+        .expect("parallel mixed dispatch should remain recorded");
+    assert_eq!(recorded.progress_transition_count(), 1);
+    assert_eq!(recorded.progress_transitions()[0].subject(), &subject);
+    assert_eq!(second.summary().executed_events(), 1);
+    assert!(second.parallel_recorded().is_none());
+    assert_eq!(observed.lock().unwrap().as_slice(), &["parallel", "serial"]);
+    assert!(scheduler.is_idle());
+}
+
+#[test]
+fn mixed_serial_dispatch_leaves_restorable_quiescent_snapshot() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    let run = scheduler.run_next_mixed_event(plan).unwrap();
+
+    assert_eq!(run.summary().executed_events(), 1);
+    assert!(scheduler.is_idle());
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    restored.restore_quiescent(&checkpoint).unwrap();
+    assert_eq!(restored.now(), 5);
+}
+
+#[test]
+fn mixed_parallel_dispatch_leaves_restorable_quiescent_snapshot() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    let run = scheduler.run_next_mixed_event(plan).unwrap();
+
+    assert_eq!(run.summary().executed_events(), 1);
+    assert!(run.parallel_recorded().is_some());
+    assert!(scheduler.is_idle());
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    restored.restore_quiescent(&checkpoint).unwrap();
+    assert_eq!(restored.now(), 5);
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_stale_parallel_epoch_plan() {
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 3, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(1), 1, |_| {})
+        .unwrap();
+
+    let result = scheduler.run_next_mixed_event(plan);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(scheduler.snapshot().total_pending_events(), 2);
+    assert_eq!(scheduler.now(), 0);
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_same_tick_replacement_plan() {
+    let replacement_fired = Arc::new(Mutex::new(false));
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let original = scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    scheduler.cancel_event(original).unwrap();
+    let fired = Arc::clone(&replacement_fired);
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, move |_| {
+            *fired.lock().unwrap() = true;
+        })
+        .unwrap();
+    let replacement_plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    assert_eq!(plan, replacement_plan);
+
+    let result = scheduler.run_next_mixed_event(plan);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+    assert!(!*replacement_fired.lock().unwrap());
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_event_outside_plan_horizon() {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 3, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    assert!(plan.ready_partitions().is_empty());
+
+    let result = scheduler.run_next_mixed_event(plan);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+    assert_eq!(scheduler.now(), 0);
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_publicly_constructed_plan() {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    let authentic = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let fabricated = ParallelEpochPlan::new(
+        authentic.horizon(),
+        authentic.ready_partitions().to_vec(),
+        authentic.frontiers().to_vec(),
+        authentic.serial_blockers().to_vec(),
+        authentic.parallel_worker_limit(),
+    );
+
+    let result = scheduler.run_next_mixed_event(fabricated);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_replaced_non_head_serial_blocker() {
+    let replacement_fired = Arc::new(Mutex::new(false));
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let ready_id = scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    let blocker_id = scheduler
+        .schedule_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let ready = scheduler.pending_event_snapshot(ready_id).unwrap();
+    let blocker = scheduler.pending_event_snapshot(blocker_id).unwrap();
+    scheduler
+        .checkpoint_access()
+        .restore_projection(&checkpoint, &[blocker], &[ready])
+        .unwrap();
+    let fired = Arc::clone(&replacement_fired);
+    let replacement_id = scheduler
+        .schedule_at(PartitionId::new(0), 0, move |_| {
+            *fired.lock().unwrap() = true;
+        })
+        .unwrap();
+    assert_eq!(replacement_id, blocker_id);
+    assert_eq!(plan, scheduler.plan_next_parallel_epoch().unwrap().unwrap());
+
+    let result = scheduler.run_next_mixed_event(plan);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(scheduler.snapshot().total_pending_events(), 2);
+    assert!(!*replacement_fired.lock().unwrap());
+}
+
+#[test]
+fn mixed_event_dispatch_rejects_plan_from_another_scheduler_instance() {
+    let mut source = PartitionedScheduler::new(2).unwrap();
+    source
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    source.schedule_at(PartitionId::new(1), 0, |_| {}).unwrap();
+    let plan = source.plan_next_parallel_epoch().unwrap().unwrap();
+    let mut target = PartitionedScheduler::new(2).unwrap();
+    target
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    target.schedule_at(PartitionId::new(1), 0, |_| {}).unwrap();
+    assert_eq!(plan, target.plan_next_parallel_epoch().unwrap().unwrap());
+
+    let result = target.run_next_mixed_event(plan);
+
+    assert!(matches!(
+        result,
+        Err(SchedulerError::StaleParallelEpochPlan)
+    ));
+    assert_eq!(target.snapshot().total_pending_events(), 2);
+}
+
+#[test]
+fn serial_epoch_stops_at_callback_scheduler_restore() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(1, 20).unwrap();
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(0), 10, move |context| {
+            context
+                .checkpoint_access()
+                .restore_quiescent(&checkpoint)
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_next_epoch();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 0);
+    assert_eq!(scheduler.now(), 0);
+}
+
+#[test]
+fn discard_exact_events_aborts_active_serial_epoch() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 20).unwrap();
+    let discarded_id = scheduler
+        .schedule_at(PartitionId::new(0), 10, |_| {})
+        .unwrap();
+    let discarded = scheduler.pending_event_snapshot(discarded_id).unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(0), 5, move |context| {
+            context
+                .checkpoint_access()
+                .discard_exact_events(&[discarded])
+                .unwrap();
+        })
+        .unwrap();
+    let preserved_log = Arc::clone(&observed);
+    let preserved_id = scheduler
+        .schedule_at(PartitionId::new(1), 10, move |_| {
+            preserved_log.lock().unwrap().push("preserved");
+        })
+        .unwrap();
+
+    let summary = scheduler.run_next_epoch();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 5);
+    assert!(scheduler.pending_event_snapshot(discarded_id).is_none());
+    assert!(scheduler.pending_event_snapshot(preserved_id).is_some());
+    assert!(observed.lock().unwrap().is_empty());
+}
+
+#[test]
+fn discard_exact_events_to_idle_leaves_restorable_snapshot() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    let discarded_id = scheduler
+        .schedule_at(PartitionId::new(1), 7, |_| {})
+        .unwrap();
+    let discarded = scheduler.pending_event_snapshot(discarded_id).unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(0), 5, move |context| {
+            context
+                .checkpoint_access()
+                .discard_exact_events(&[discarded])
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_next_epoch();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 5);
+    assert!(scheduler.is_idle());
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    restored.restore_quiescent(&checkpoint).unwrap();
+    assert_eq!(restored.now(), 5);
+}
+
+#[test]
+fn checkpoint_projection_restore_discards_and_preserves_exact_owned_events() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let discarded = scheduler
+        .schedule_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    let retained_log = Arc::clone(&observed);
+    let retained = scheduler
+        .schedule_at(PartitionId::new(0), 9, move |_| {
+            retained_log.lock().unwrap().push("retained");
+        })
+        .unwrap();
+    let discarded = scheduler.pending_event_snapshot(discarded).unwrap();
+    let retained = scheduler.pending_event_snapshot(retained).unwrap();
+
+    scheduler
+        .checkpoint_access()
+        .restore_projection(&checkpoint, &[discarded], &[retained])
+        .unwrap();
+
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+    assert_eq!(
+        scheduler.pending_event_snapshot(retained.id()),
+        Some(retained)
+    );
+    let next = scheduler
+        .schedule_at(PartitionId::new(0), 10, |_| {})
+        .unwrap();
+    assert!(next.local() > retained.id().local());
+    scheduler.run_until_idle();
+    assert_eq!(observed.lock().unwrap().as_slice(), &["retained"]);
+}
+
+#[test]
+fn checkpoint_projection_validation_rejects_past_preserved_event_without_mutation() {
+    let mut source = PartitionedScheduler::new(1).unwrap();
+    source.schedule_at(PartitionId::new(0), 10, |_| {}).unwrap();
+    source.run_until_idle();
+    let checkpoint = source.quiescent_snapshot().unwrap();
+    let mut target = PartitionedScheduler::new(1).unwrap();
+    let preserved = target.schedule_at(PartitionId::new(0), 5, |_| {}).unwrap();
+    let preserved = target.pending_event_snapshot(preserved).unwrap();
+    let before = target.snapshot();
+
+    let error = target
+        .checkpoint_access()
+        .validate_projection_restore(&checkpoint, &[], &[preserved])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SchedulerError::InThePast {
+            partition: PartitionId::new(0),
+            now: 10,
+            requested: 5,
+        }
+    );
+    assert_eq!(target.snapshot(), before);
 }
 
 #[test]
@@ -779,6 +1151,30 @@ fn scheduler_quiescent_snapshot_rejects_pending_events() {
 }
 
 #[test]
+fn scheduler_snapshot_compatibility_does_not_weaken_strict_restore() {
+    let core = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    scheduler.schedule_parallel_at(core, 3, |_| {}).unwrap();
+    let target = PartitionedScheduler::with_min_remote_delay(2, 5)
+        .unwrap()
+        .quiescent_snapshot()
+        .unwrap();
+
+    scheduler
+        .validate_quiescent_snapshot_compatibility(&target)
+        .unwrap();
+    assert_eq!(
+        scheduler.validate_quiescent_restore(&target).unwrap_err(),
+        SchedulerError::RestoreWouldDiscardPendingEvents { pending_events: 1 }
+    );
+    assert_eq!(
+        scheduler.restore_quiescent(&target).unwrap_err(),
+        SchedulerError::RestoreWouldDiscardPendingEvents { pending_events: 1 }
+    );
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+}
+
+#[test]
 fn scheduler_recorded_parallel_epoch_reports_canonical_dispatch_order() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
 
@@ -1467,6 +1863,27 @@ fn scheduler_parallel_worker_panic_updates_global_time_to_executed_tick() {
     assert_eq!(scheduler.partition_now(core).unwrap(), 2);
     assert_eq!(scheduler.now(), 2);
     assert_eq!(scheduler.next_pending_tick(core).unwrap(), Some(5));
+}
+
+#[test]
+fn mixed_parallel_panic_leaves_restorable_quiescent_snapshot() {
+    let core = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    scheduler
+        .schedule_parallel_at(core, 5, |_| panic!("worker panic sentinel"))
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    assert_eq!(
+        scheduler.run_next_mixed_event(plan).err(),
+        Some(SchedulerError::ParallelWorkerPanicked { partition: core })
+    );
+
+    assert!(scheduler.is_idle());
+    let checkpoint = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_min_remote_delay(2, 10).unwrap();
+    restored.restore_quiescent(&checkpoint).unwrap();
+    assert_eq!(restored.now(), 5);
 }
 
 #[test]

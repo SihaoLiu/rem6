@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::scheduler::{ConservativeRunSummary, PartitionId, RunSummary};
+use crate::scheduler::{
+    ConservativeRunSummary, PartitionEventId, PartitionId, RunSummary, SchedulerEventToken,
+    SchedulerInstanceId,
+};
 use crate::{
     LivelockTransitionKind, ProgressMonitor, ProgressMonitorError, ProgressMonitorSnapshot, Tick,
     WaitForNode,
@@ -51,15 +54,30 @@ impl EpochPlan {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 pub struct ParallelEpochPlan {
+    scheduler_instance: Option<SchedulerInstanceId>,
     horizon: Tick,
     ready_partitions: Vec<ReadyPartition>,
+    ready_event_tokens: Vec<(PartitionId, SchedulerEventToken)>,
     frontiers: Vec<PartitionFrontier>,
     serial_blockers: Vec<SchedulerDispatchRecord>,
+    serial_blocker_tokens: Vec<(PartitionEventId, SchedulerEventToken)>,
     parallel_worker_limit: usize,
     parallel_batches: Vec<ParallelEpochPlannedBatch>,
     remote_delivery_windows: Vec<ParallelRemoteDeliveryWindow>,
+}
+
+impl PartialEq for ParallelEpochPlan {
+    fn eq(&self, other: &Self) -> bool {
+        self.horizon == other.horizon
+            && self.ready_partitions == other.ready_partitions
+            && self.frontiers == other.frontiers
+            && self.serial_blockers == other.serial_blockers
+            && self.parallel_worker_limit == other.parallel_worker_limit
+            && self.parallel_batches == other.parallel_batches
+            && self.remote_delivery_windows == other.remote_delivery_windows
+    }
 }
 
 impl ParallelEpochPlan {
@@ -68,6 +86,28 @@ impl ParallelEpochPlan {
         ready_partitions: Vec<ReadyPartition>,
         frontiers: Vec<PartitionFrontier>,
         serial_blockers: Vec<SchedulerDispatchRecord>,
+        parallel_worker_limit: usize,
+    ) -> Self {
+        Self::with_runtime_provenance(
+            None,
+            horizon,
+            ready_partitions,
+            Vec::new(),
+            frontiers,
+            serial_blockers,
+            Vec::new(),
+            parallel_worker_limit,
+        )
+    }
+
+    pub(in crate::scheduler) fn with_runtime_provenance(
+        scheduler_instance: Option<SchedulerInstanceId>,
+        horizon: Tick,
+        ready_partitions: Vec<ReadyPartition>,
+        ready_event_tokens: Vec<(PartitionId, SchedulerEventToken)>,
+        frontiers: Vec<PartitionFrontier>,
+        serial_blockers: Vec<SchedulerDispatchRecord>,
+        serial_blocker_tokens: Vec<(PartitionEventId, SchedulerEventToken)>,
         parallel_worker_limit: usize,
     ) -> Self {
         let parallel_worker_limit = parallel_worker_limit.max(1);
@@ -79,14 +119,24 @@ impl ParallelEpochPlan {
         let remote_delivery_windows =
             collect_parallel_remote_delivery_windows(horizon, &ready_partitions, &frontiers);
         Self {
+            scheduler_instance,
             horizon,
             ready_partitions,
+            ready_event_tokens,
             frontiers,
             serial_blockers,
+            serial_blocker_tokens,
             parallel_worker_limit,
             parallel_batches,
             remote_delivery_windows,
         }
+    }
+
+    pub(in crate::scheduler) fn matches_runtime_plan(&self, other: &Self) -> bool {
+        self == other
+            && self.scheduler_instance == other.scheduler_instance
+            && self.ready_event_tokens == other.ready_event_tokens
+            && self.serial_blocker_tokens == other.serial_blocker_tokens
     }
 
     pub fn horizon(&self) -> Tick {

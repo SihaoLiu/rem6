@@ -1,6 +1,8 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::RiscvClusterTurn;
-use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
+use rem6_kernel::{
+    MixedEventRun, ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph,
+};
 use rem6_system::{
     RiscvSystemParallelBatchScope, RiscvSystemParallelBatchWorkerLaneRecord,
     RiscvSystemParallelWorkerLaneRecord, RiscvSystemRun, RiscvSystemRunStopReason,
@@ -78,6 +80,25 @@ fn cpu_scheduler_turn_with_remote_wakeup(
     }
     let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
     let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    RiscvClusterTurn::parallel_scheduler(plan, recorded)
+}
+
+fn cpu_serial_blocked_mixed_turn() -> RiscvClusterTurn {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, |_| {})
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(1), 0, |_| {})
+        .unwrap();
+    scheduler
+        .schedule_at(PartitionId::new(2), 0, |_| {})
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let MixedEventRun::Parallel { plan, recorded } = scheduler.run_next_mixed_event(plan).unwrap()
+    else {
+        panic!("earliest mixed event should be parallel");
+    };
     RiscvClusterTurn::parallel_scheduler(plan, recorded)
 }
 
@@ -294,6 +315,24 @@ fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
         run.full_system_parallel_scheduler_batch_partition_set_summaries(),
         vec![(vec![cpu0, cpu1], 1), (vec![cpu2, memory], 1)],
     );
+}
+
+#[test]
+fn system_run_excludes_serial_blocked_mixed_epochs_from_planned_capacity() {
+    let run = RiscvSystemRun::new(
+        vec![cpu_serial_blocked_mixed_turn()],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 0 },
+    );
+
+    assert_eq!(run.parallel_scheduler_epochs().len(), 1);
+    assert!(!run.parallel_scheduler_epochs()[0].is_parallel_safe());
+    assert_eq!(run.parallel_scheduler_batch_timeline().len(), 1);
+    assert!(run.parallel_scheduler_planned_batch_timeline().is_empty());
+    assert!(run
+        .parallel_scheduler_planned_batch_worker_lanes()
+        .is_empty());
+    assert_eq!(run.parallel_scheduler_planned_batch_worker_ticks(), 0);
 }
 
 #[test]

@@ -649,6 +649,7 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u32(payload, partition.index());
             write_u64(payload, *tick);
         }
+        SchedulerError::StaleParallelEpochPlan => write_u64(payload, 21),
         SchedulerError::EpochHorizonOverflow {
             partition,
             now,
@@ -771,6 +772,7 @@ fn decode_scheduler_error(
             partition: PartitionId::new(cursor.read_u32("scheduler serial partition")?),
             tick: cursor.read_u64("scheduler serial tick")?,
         }),
+        21 => Ok(SchedulerError::StaleParallelEpochPlan),
         8 => Ok(SchedulerError::SnapshotContainsPendingEvents {
             pending_events: cursor.read_count("scheduler snapshot pending events")?,
         }),
@@ -914,5 +916,38 @@ impl<'a> PayloadCursor<'a> {
             component: self.component.clone(),
             reason,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_parallel_epoch_plan_scheduler_error_round_trips() {
+        let component = CheckpointComponentId::new("timer0").unwrap();
+        let mut payload = Vec::new();
+        encode_scheduler_error(&mut payload, &SchedulerError::StaleParallelEpochPlan);
+        assert_eq!(payload, 21_u64.to_le_bytes());
+        let mut cursor = PayloadCursor::new(component, &payload);
+
+        assert_eq!(
+            decode_scheduler_error(&mut cursor).unwrap(),
+            SchedulerError::StaleParallelEpochPlan
+        );
+        cursor.finish().unwrap();
+    }
+
+    #[test]
+    fn legacy_snapshot_pending_scheduler_error_decodes_tag_8() {
+        let component = CheckpointComponentId::new("timer0").unwrap();
+        let payload = [8_u64.to_le_bytes(), 3_u64.to_le_bytes()].concat();
+        let mut cursor = PayloadCursor::new(component, &payload);
+
+        assert_eq!(
+            decode_scheduler_error(&mut cursor).unwrap(),
+            SchedulerError::SnapshotContainsPendingEvents { pending_events: 3 }
+        );
+        cursor.finish().unwrap();
     }
 }

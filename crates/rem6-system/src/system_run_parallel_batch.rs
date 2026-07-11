@@ -106,7 +106,7 @@ impl RiscvSystemRun {
         &self,
     ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
         let mut timeline = self
-            .parallel_scheduler_epochs()
+            .parallel_safe_scheduler_epochs()
             .into_iter()
             .flat_map(|epoch| epoch.plan().parallel_batches())
             .map(|batch| {
@@ -183,7 +183,7 @@ impl RiscvSystemRun {
         &self,
     ) -> Vec<(usize, Tick)> {
         collect_worker_count_tick_summaries_from_summaries(
-            self.parallel_scheduler_epochs()
+            self.parallel_safe_scheduler_epochs()
                 .into_iter()
                 .flat_map(|epoch| epoch.plan().parallel_batch_worker_count_tick_summaries()),
         )
@@ -215,7 +215,7 @@ impl RiscvSystemRun {
         &self,
         worker_count: usize,
     ) -> Tick {
-        self.parallel_scheduler_epochs()
+        self.parallel_safe_scheduler_epochs()
             .into_iter()
             .map(|epoch| {
                 epoch
@@ -251,7 +251,7 @@ impl RiscvSystemRun {
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        self.parallel_scheduler_epochs()
+        self.parallel_safe_scheduler_epochs()
             .into_iter()
             .map(|epoch| {
                 epoch
@@ -284,7 +284,7 @@ impl RiscvSystemRun {
     }
 
     pub fn parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
-        self.parallel_scheduler_epochs()
+        self.parallel_safe_scheduler_epochs()
             .into_iter()
             .map(|epoch| epoch.plan().parallel_batch_worker_ticks())
             .fold(0, Tick::saturating_add)
@@ -306,7 +306,7 @@ impl RiscvSystemRun {
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        self.parallel_scheduler_epochs()
+        self.parallel_safe_scheduler_epochs()
             .into_iter()
             .map(|epoch| {
                 epoch
@@ -339,7 +339,7 @@ impl RiscvSystemRun {
     }
 
     pub fn parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
-        self.parallel_scheduler_epochs()
+        self.parallel_safe_scheduler_epochs()
             .into_iter()
             .map(|epoch| epoch.plan().parallel_batch_worker_capacity_ticks())
             .fold(0, Tick::saturating_add)

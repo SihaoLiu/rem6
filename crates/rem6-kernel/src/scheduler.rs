@@ -3,16 +3,21 @@ use std::collections::BinaryHeap;
 use std::fmt;
 use std::mem;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::thread;
 
 use crate::{LivelockTransitionKind, Tick, WaitForNode};
 
+mod checkpoint;
 mod error;
+mod mixed_event;
 mod parallel_epoch;
 mod remote_boundary;
 mod state;
 
+pub use checkpoint::SchedulerCheckpointAccess;
 pub use error::SchedulerError;
+pub use mixed_event::MixedEventRun;
 use remote_boundary::{remote_delivery_before_lookahead_error, remote_event_delivery_key_values};
 pub use state::{
     EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord, ParallelEpochPlan,
@@ -56,6 +61,28 @@ impl PartitionEventId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SchedulerInstanceId(u64);
+
+static NEXT_SCHEDULER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_scheduler_instance_id() -> SchedulerInstanceId {
+    SchedulerInstanceId(NEXT_SCHEDULER_INSTANCE_ID.fetch_add(1, AtomicOrdering::Relaxed))
+}
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SchedulerStorageId(usize);
+
+impl SchedulerStorageId {
+    fn for_scheduler(scheduler: &PartitionedScheduler) -> Self {
+        Self(std::ptr::from_ref(scheduler).addr())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct SchedulerEventToken(u64);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunSummary {
     executed_events: usize,
@@ -98,6 +125,8 @@ type ParallelSchedulerCallback =
     Box<dyn FnOnce(&mut ParallelSchedulerContext<'_>) + Send + 'static>;
 
 pub struct PartitionedScheduler {
+    instance_id: SchedulerInstanceId,
+    timeline_revision: u64,
     now: Tick,
     min_remote_delay: Tick,
     max_parallel_workers: usize,
@@ -132,6 +161,8 @@ impl PartitionedScheduler {
         }
 
         Ok(Self {
+            instance_id: next_scheduler_instance_id(),
+            timeline_revision: 0,
             now: 0,
             min_remote_delay,
             max_parallel_workers,
@@ -141,6 +172,10 @@ impl PartitionedScheduler {
 
     pub fn now(&self) -> Tick {
         self.now
+    }
+
+    pub fn instance_id(&self) -> SchedulerInstanceId {
+        self.instance_id
     }
 
     pub fn partition_count(&self) -> u32 {
@@ -178,6 +213,14 @@ impl PartitionedScheduler {
                 partition,
                 partitions: self.partition_count(),
             })
+    }
+
+    pub fn pending_event_snapshot(&self, id: PartitionEventId) -> Option<PendingEventSnapshot> {
+        self.partition(id.partition())?
+            .pending
+            .iter()
+            .find(|event| event.id == id)
+            .map(PartitionEvent::snapshot)
     }
 
     pub fn schedule_at<F>(
@@ -301,6 +344,7 @@ impl PartitionedScheduler {
         for (queue, partition) in self.partitions.iter_mut().zip(&snapshot.partitions) {
             queue.restore_quiescent(partition);
         }
+        self.timeline_revision = self.timeline_revision.wrapping_add(1);
 
         Ok(())
     }
@@ -320,6 +364,20 @@ impl PartitionedScheduler {
         if current_pending != 0 {
             return Err(SchedulerError::RestoreWouldDiscardPendingEvents {
                 pending_events: current_pending,
+            });
+        }
+
+        self.validate_quiescent_snapshot_compatibility(snapshot)
+    }
+
+    pub fn validate_quiescent_snapshot_compatibility(
+        &self,
+        snapshot: &SchedulerSnapshot,
+    ) -> Result<(), SchedulerError> {
+        let snapshot_pending = snapshot.total_pending_events();
+        if snapshot_pending != 0 {
+            return Err(SchedulerError::SnapshotContainsPendingEvents {
+                pending_events: snapshot_pending,
             });
         }
 
@@ -369,7 +427,6 @@ impl PartitionedScheduler {
 
         Ok(())
     }
-
     pub fn run_until_idle(&mut self) -> RunSummary {
         let mut executed_events = 0;
 
@@ -392,12 +449,30 @@ impl PartitionedScheduler {
                 final_tick: self.now,
             };
         };
-        let horizon = plan.horizon;
+        self.run_serial_epoch_to(plan.horizon)
+    }
 
+    pub fn run_next_epoch_until(&mut self, tick_limit: Tick) -> Option<RunSummary> {
+        if self.is_idle() || self.now >= tick_limit {
+            return None;
+        }
+        let plan = self.plan_next_epoch()?;
+        Some(self.run_serial_epoch_to(plan.horizon.min(tick_limit)))
+    }
+
+    fn run_serial_epoch_to(&mut self, horizon: Tick) -> RunSummary {
         let mut executed_events = 0;
         while let Some(partition) = self.next_partition_with_event_at_or_before(horizon) {
+            let timeline_revision = self.timeline_revision;
             self.dispatch_next_in_partition(partition);
             executed_events += 1;
+            if self.timeline_revision != timeline_revision {
+                self.advance_partitions_to(self.now);
+                return RunSummary {
+                    executed_events,
+                    final_tick: self.now,
+                };
+            }
         }
 
         for queue in &mut self.partitions {
@@ -544,16 +619,23 @@ impl PartitionedScheduler {
             .min_by_key(|(partition, tick)| (*tick, *partition))
     }
 
-    fn serial_blockers_at_or_before(&self, horizon: Tick) -> Vec<SchedulerDispatchRecord> {
+    fn serial_blockers_with_tokens_at_or_before(
+        &self,
+        horizon: Tick,
+    ) -> Vec<(SchedulerDispatchRecord, SchedulerEventToken)> {
         let mut blockers = self
             .partitions
             .iter()
             .enumerate()
             .flat_map(|(index, queue)| {
-                queue.serial_blockers_at_or_before(PartitionId::new(index as u32), horizon)
+                queue.serial_blockers_with_tokens_at_or_before(
+                    PartitionId::new(index as u32),
+                    horizon,
+                )
             })
             .collect::<Vec<_>>();
-        blockers.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
+        blockers
+            .sort_by_key(|(record, _)| (record.tick(), record.partition(), record.id().local()));
         blockers
     }
 
@@ -1124,6 +1206,7 @@ struct PartitionQueue {
     now: Tick,
     next_id: u64,
     next_order: u64,
+    next_runtime_token: u64,
     next_remote_order: u64,
     next_progress_order: u64,
     pending: BinaryHeap<PartitionEvent>,
@@ -1135,6 +1218,7 @@ impl PartitionQueue {
             now: 0,
             next_id: 0,
             next_order: 0,
+            next_runtime_token: 0,
             next_remote_order: 0,
             next_progress_order: 0,
             pending: BinaryHeap::new(),
@@ -1151,6 +1235,14 @@ impl PartitionQueue {
 
     fn peek_tick(&self) -> Option<Tick> {
         self.pending.peek().map(|event| event.tick)
+    }
+
+    fn peek_kind(&self) -> Option<ScheduledEventKind> {
+        self.pending
+            .peek()?
+            .callback
+            .as_ref()
+            .map(PartitionEventCallback::kind)
     }
 
     fn pop_next(&mut self) -> Option<PartitionEvent> {
@@ -1215,18 +1307,18 @@ impl PartitionQueue {
             .min()
     }
 
-    fn serial_blockers_at_or_before(
+    fn serial_blockers_with_tokens_at_or_before(
         &self,
         partition: PartitionId,
         horizon: Tick,
-    ) -> Vec<SchedulerDispatchRecord> {
+    ) -> Vec<(SchedulerDispatchRecord, SchedulerEventToken)> {
         let mut blockers = self
             .pending
             .iter()
             .filter(|event| event.tick <= horizon && event.is_serial())
-            .map(|event| event.dispatch_record(partition))
+            .map(|event| (event.dispatch_record(partition), event.token))
             .collect::<Vec<_>>();
-        blockers.sort_by_key(|record| (record.tick(), record.id().local()));
+        blockers.sort_by_key(|(record, _)| (record.tick(), record.id().local()));
         blockers
     }
 
@@ -1271,10 +1363,14 @@ impl PartitionQueue {
         let order = self.next_order;
         self.next_order += 1;
 
+        let token = SchedulerEventToken(self.next_runtime_token);
+        self.next_runtime_token += 1;
+
         self.pending.push(PartitionEvent {
             tick,
             order,
             id,
+            token,
             callback: Some(callback),
         });
 
@@ -1328,6 +1424,7 @@ struct PartitionEvent {
     tick: Tick,
     order: u64,
     id: PartitionEventId,
+    token: SchedulerEventToken,
     callback: Option<PartitionEventCallback>,
 }
 
@@ -1352,6 +1449,7 @@ impl PartitionEvent {
             id: self.id,
             tick: self.tick,
             order: self.order,
+            token: self.token,
             kind: self
                 .callback
                 .as_ref()
