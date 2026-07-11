@@ -115,13 +115,13 @@ pub(super) fn additional_fetch_candidate(
     else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let scalar_load_window =
+    let scalar_memory_window =
         matches!(
             current.decoded().instruction(),
-            RiscvInstruction::Load { .. }
+            RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
         ) && allows_scalar_memory_fetch_ahead(state, current.decoded().instruction());
-    if scalar_load_window {
-        return scalar_load_window_candidate(state, fetch_events, &current);
+    if scalar_memory_window {
+        return scalar_memory_window_candidate(state, fetch_events, &current);
     }
     let fu_window = matches!(
         o3_fu_latency_class(current.decoded().instruction()),
@@ -184,22 +184,28 @@ pub(super) fn additional_fetch_candidate(
     DetailedFetchAheadCandidate::Ready(third_pc)
 }
 
-fn scalar_load_window_candidate(
+fn scalar_memory_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     current: &RiscvCompletedFetchInstruction,
 ) -> DetailedFetchAheadCandidate {
     let limit = state.o3_runtime.scalar_memory_window_limit();
-    let Some(mut destinations) = state.o3_runtime.scalar_load_window_destinations() else {
+    let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let Some(current_destination) = independent_scalar_load_destination(
-        current.decoded().instruction(),
-        destinations.iter().copied(),
-    ) else {
-        return DetailedFetchAheadCandidate::Blocked;
-    };
-    destinations.push(current_destination);
+    let mut destinations = window.load_destinations().to_vec();
+    match current.decoded().instruction() {
+        instruction @ RiscvInstruction::Load { .. } => {
+            let Some(current_destination) =
+                independent_scalar_load_destination(instruction, destinations.iter().copied())
+            else {
+                return DetailedFetchAheadCandidate::Blocked;
+            };
+            destinations.push(current_destination);
+        }
+        RiscvInstruction::Store { .. } if window.rows() == 0 => {}
+        _ => return DetailedFetchAheadCandidate::Blocked,
+    }
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = Address::new(
         current
@@ -207,7 +213,7 @@ fn scalar_load_window_candidate(
             .get()
             .wrapping_add(u64::from(current.decoded().bytes())),
     );
-    let mut window_rows = destinations.len();
+    let mut window_rows = window.rows().saturating_add(1);
 
     loop {
         if window_rows >= limit {

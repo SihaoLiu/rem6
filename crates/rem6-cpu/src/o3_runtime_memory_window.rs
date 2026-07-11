@@ -14,6 +14,23 @@ enum O3ScalarMemoryWindowAdmission {
     Overlay(O3StoreLoadForwardingPlan),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct O3ScalarMemoryWindowState {
+    rows: usize,
+    leading_store: Option<MemoryAccessKind>,
+    load_destinations: Vec<Register>,
+}
+
+impl O3ScalarMemoryWindowState {
+    pub(crate) const fn rows(&self) -> usize {
+        self.rows
+    }
+
+    pub(crate) fn load_destinations(&self) -> &[Register] {
+        &self.load_destinations
+    }
+}
+
 impl O3RuntimeState {
     pub(crate) fn set_scalar_memory_window_limit(&mut self, limit: usize) {
         self.scalar_memory_window_limit = limit.clamp(1, MAX_O3_SCALAR_MEMORY_DEPTH);
@@ -30,9 +47,8 @@ impl O3RuntimeState {
         self.scalar_memory_window_limit
     }
 
-    pub(crate) fn scalar_load_window_destinations(&self) -> Option<Vec<Register>> {
-        if self.deferred_scalar_memory_execution.is_some()
-            || !self.live_scalar_memory_younger_sequences.is_empty()
+    pub(crate) fn scalar_memory_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
+        if !self.live_scalar_memory_younger_sequences.is_empty()
             || self
                 .live_scalar_memories
                 .iter()
@@ -40,15 +56,38 @@ impl O3RuntimeState {
         {
             return None;
         }
-        self.live_scalar_memories
-            .iter()
-            .map(|live| {
-                independent_scalar_load_destination(
-                    live.execution.instruction(),
-                    std::iter::empty(),
-                )
-            })
-            .collect()
+
+        let mut leading_store = None;
+        let mut load_destinations = Vec::new();
+        for (index, live) in self.live_scalar_memories.iter().enumerate() {
+            let access = live.execution.execution().memory_access()?;
+            match access {
+                MemoryAccessKind::Store { .. } if index == 0 => {
+                    leading_store = Some(access.clone());
+                }
+                MemoryAccessKind::Load { .. } => {
+                    let destination = independent_scalar_load_destination(
+                        live.execution.instruction(),
+                        load_destinations.iter().copied(),
+                    )?;
+                    load_destinations.push(destination);
+                }
+                _ => return None,
+            }
+        }
+
+        Some(O3ScalarMemoryWindowState {
+            rows: self.live_scalar_memories.len(),
+            leading_store,
+            load_destinations,
+        })
+    }
+
+    pub(crate) fn scalar_memory_fetch_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
+        if self.deferred_scalar_memory_execution.is_some() {
+            return None;
+        }
+        self.scalar_memory_window_state()
     }
 
     pub(super) fn has_scalar_memory_window_capacity(&self) -> bool {
@@ -58,25 +97,7 @@ impl O3RuntimeState {
     pub(crate) fn can_consider_scalar_memory_younger(&self) -> bool {
         !self.live_scalar_memories.is_empty()
             && self.has_scalar_memory_window_capacity()
-            && self.live_scalar_memory_younger_sequences.is_empty()
-            && self
-                .live_scalar_memories
-                .iter()
-                .all(|live| live.outcome == O3LiveScalarMemoryOutcome::Resident)
-            && (self.live_scalar_memories.iter().all(|live| {
-                independent_scalar_load_destination(
-                    live.execution.instruction(),
-                    std::iter::empty(),
-                )
-                .is_some()
-            }) || (self.live_scalar_memories.len() == 1
-                && matches!(
-                    self.live_scalar_memories[0]
-                        .execution
-                        .execution()
-                        .memory_access(),
-                    Some(MemoryAccessKind::Store { .. })
-                )))
+            && self.scalar_memory_window_state().is_some()
     }
 
     pub(crate) fn can_defer_scalar_memory_instruction(
@@ -96,30 +117,10 @@ impl O3RuntimeState {
         if !self.can_consider_scalar_memory_younger() {
             return None;
         }
-        let older_load_destinations = self
-            .live_scalar_memories
-            .iter()
-            .map(|live| {
-                independent_scalar_load_destination(
-                    live.execution.instruction(),
-                    std::iter::empty(),
-                )
-            })
-            .collect::<Option<Vec<_>>>();
-        if let Some(older_load_destinations) = older_load_destinations {
-            return independent_scalar_load_destination(instruction, older_load_destinations)
-                .map(|_| O3ScalarMemoryWindowAdmission::Independent);
-        }
-        if self.live_scalar_memories.len() != 1 {
-            return None;
-        }
-        independent_scalar_load_destination(instruction, std::iter::empty())?;
-        let older = self.live_scalar_memories[0]
-            .execution
-            .execution()
-            .memory_access()?;
-        match older {
-            MemoryAccessKind::Store { .. } => match o3_store_load_relation(older, younger_range)? {
+        let window = self.scalar_memory_window_state()?;
+        independent_scalar_load_destination(instruction, window.load_destinations.iter().copied())?;
+        match window.leading_store.as_ref() {
+            Some(older) => match o3_store_load_relation(older, younger_range)? {
                 O3StoreLoadRelation::Forwarded(plan) => {
                     Some(O3ScalarMemoryWindowAdmission::Forwarded(plan))
                 }
@@ -130,7 +131,7 @@ impl O3RuntimeState {
                     Some(O3ScalarMemoryWindowAdmission::Independent)
                 }
             },
-            _ => None,
+            None => Some(O3ScalarMemoryWindowAdmission::Independent),
         }
     }
 
@@ -218,6 +219,18 @@ mod tests {
             runtime.snapshot().load_store_queue()[1].kind(),
             O3LoadStoreQueueKind::Load
         );
+    }
+
+    #[test]
+    fn deferred_younger_load_can_claim_the_resident_store_window() {
+        let mut runtime = O3RuntimeState::default();
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.defer_scalar_memory_execution(&load));
+        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert_eq!(runtime.live_scalar_memories.len(), 2);
     }
 
     #[test]
@@ -550,17 +563,174 @@ mod tests {
     }
 
     #[test]
-    fn store_load_pair_does_not_expand_to_a_third_memory_row() {
+    fn store_led_window_stages_two_younger_independent_loads() {
         let mut runtime = O3RuntimeState::default();
-        runtime.set_scalar_memory_window_limit(4);
+        runtime.set_scalar_memory_window_limit(3);
         let store = scalar_store_event(0x8000, 10, 0x9000);
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let third = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
 
         assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
         assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(runtime.can_consider_scalar_memory_younger());
+        assert!(runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
+
+        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 3);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .load_store_queue()
+                .iter()
+                .map(|entry| entry.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                O3LoadStoreQueueKind::Store,
+                O3LoadStoreQueueKind::Load,
+                O3LoadStoreQueueKind::Load,
+            ]
+        );
+    }
+
+    #[test]
+    fn store_led_window_fills_the_configured_depth_four_limit() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let events = [
+            scalar_store_event(0x8000, 10, 0x9000),
+            scalar_load_event(0x8004, 11, 13, 10, 0x9040),
+            scalar_load_event(0x8008, 12, 14, 10, 0x9080),
+            scalar_load_event(0x800c, 13, 15, 10, 0x90c0),
+        ];
+
+        for (index, event) in events.iter().enumerate() {
+            assert!(runtime.stage_live_scalar_memory_issue(
+                event,
+                memory_request(20 + u64::try_from(index).unwrap()),
+                31 + u64::try_from(index).unwrap(),
+            ));
+        }
+
+        assert_eq!(runtime.live_scalar_memories.len(), 4);
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 4);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 4);
         assert!(!runtime.can_consider_scalar_memory_younger());
-        assert!(!runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
+    }
+
+    #[test]
+    fn fourth_store_led_load_keeps_leading_store_forwarding_and_overlay() {
+        for (younger_address, forwarded_bytes, fully_forwarded) in
+            [(0x9000, 4, true), (0x9002, 2, false)]
+        {
+            let mut runtime = O3RuntimeState::default();
+            runtime.set_scalar_memory_window_limit(4);
+            let store = scalar_store_event(0x8000, 10, 0x9000);
+            let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+            let third = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
+            let younger = scalar_load_event(0x800c, 13, 15, 10, younger_address);
+
+            assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+            assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
+            assert!(runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
+            let access = younger.execution().memory_access().unwrap();
+            assert_eq!(
+                runtime
+                    .scalar_load_forwarding_plan(younger.instruction(), access)
+                    .map(O3StoreLoadForwardingPlan::forwarded_bytes),
+                Some(forwarded_bytes)
+            );
+            assert_eq!(
+                runtime
+                    .forwarded_scalar_load_data(younger.instruction(), access)
+                    .is_some(),
+                fully_forwarded
+            );
+            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(23), 34));
+            assert_eq!(runtime.live_scalar_memories.len(), 4);
+        }
+    }
+
+    #[test]
+    fn later_store_led_load_still_forwards_from_the_leading_store() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+        let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9000);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
+        assert_eq!(
+            runtime.forwarded_scalar_load_data(
+                younger.instruction(),
+                younger.execution().memory_access().unwrap(),
+            ),
+            Some(vec![0x2a, 0, 0, 0])
+        );
+        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+    }
+
+    #[test]
+    fn failed_middle_load_discards_only_the_store_led_younger_suffix() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+        let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+        let mut failed = middle.clone();
+        failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
+
+        assert!(runtime.complete_live_scalar_memory_response(
+            &failed,
+            memory_request(21),
+            40,
+            8,
+            None,
+        ));
+
+        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(
+            runtime
+                .live_scalar_memories
+                .iter()
+                .map(|live| live.fetch_request)
+                .collect::<Vec<_>>(),
+            vec![store.fetch().request_id(), middle.fetch().request_id()]
+        );
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
+    }
+
+    #[test]
+    fn store_led_window_rejects_a_younger_store() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+        let younger_store = scalar_store_event(0x8008, 12, 0x9080);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(!runtime.stage_live_scalar_memory_issue(&younger_store, memory_request(22), 33,));
+        assert_eq!(runtime.live_scalar_memories.len(), 2);
+    }
+
+    #[test]
+    fn store_led_window_rejects_a_load_with_an_older_load_address_dependency() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(3);
+        let store = scalar_store_event(0x8000, 10, 0x9000);
+        let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
+        let dependent = scalar_load_event(0x8008, 12, 14, 13, 0x9080);
+
+        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(!runtime.stage_live_scalar_memory_issue(&dependent, memory_request(22), 33,));
         assert_eq!(runtime.live_scalar_memories.len(), 2);
     }
 

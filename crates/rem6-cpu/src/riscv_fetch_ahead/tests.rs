@@ -192,6 +192,42 @@ fn scalar_load_execution_event(
     )
 }
 
+fn scalar_store_execution_event(
+    pc: u64,
+    sequence: u64,
+    rs1: u8,
+    rs2: u8,
+    address: u64,
+) -> RiscvCpuExecutionEvent {
+    let instruction = RiscvInstruction::Store {
+        rs1: Register::new(rs1).unwrap(),
+        rs2: Register::new(rs2).unwrap(),
+        offset: Immediate::new(0),
+        width: MemoryWidth::Word,
+    };
+    let access = MemoryAccessKind::Store {
+        address,
+        width: MemoryWidth::Word,
+        value: 0x2a,
+    };
+    RiscvCpuExecutionEvent::new(
+        crate::CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                4,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                request(sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            vec![0; 4],
+        ),
+        instruction,
+        RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), Some(access)),
+    )
+}
+
 #[test]
 fn detailed_o3_gate_fetches_third_row_after_independent_scalar_younger() {
     let div = r_type(1, 1, 2, 0x4, 3, 0x33);
@@ -232,6 +268,50 @@ fn detailed_scalar_store_fetches_one_sequential_younger_before_data_issue() {
     let decision = core.next_fetch_ahead_before_retire().unwrap();
 
     assert_eq!(decision.pc(), Address::new(0x8004));
+}
+
+#[test]
+fn detailed_store_led_window_prefetches_a_second_younger_load() {
+    let store = s_type(0, 11, 10, 0x2);
+    let first_load = i_type(64, 10, 0x2, 13, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, store.to_le_bytes().to_vec()),
+        (1, 0x8004, first_load.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(3);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(10).unwrap(), 0x9000);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_store_led_window_prefetches_a_third_younger_load_at_depth_four() {
+    let store = s_type(0, 11, 10, 0x2);
+    let first_load = i_type(64, 10, 0x2, 13, 0x03);
+    let second_load = i_type(128, 10, 0x2, 14, 0x03);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, store.to_le_bytes().to_vec()),
+        (1, 0x8004, first_load.to_le_bytes().to_vec()),
+        (2, 0x8008, second_load.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(10).unwrap(), 0x9000);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
 }
 
 #[test]
@@ -444,6 +524,28 @@ fn detailed_scalar_load_window_depth_two_counts_live_older_row() {
     }
 
     assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_store_led_window_fetches_a_second_younger_load() {
+    let current = i_type(64, 10, 0x2, 13, 0x03);
+    let core = core_with_completed_fetches([(1, 0x8004, current.to_le_bytes().to_vec())]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(3);
+    let store = scalar_store_execution_event(0x8000, 0, 10, 11, 0x9000);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.set_pc(0x8004);
+        state.hart.write(Register::new(10).unwrap(), 0x9000);
+        assert!(state
+            .o3_runtime
+            .stage_live_scalar_memory_issue(&store, request(20), 31));
+    }
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
 }
 
 #[test]

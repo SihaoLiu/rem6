@@ -21,6 +21,8 @@ use crate::{
 mod forwarding;
 #[path = "riscv_data_issue_tests/multi_load.rs"]
 mod multi_load;
+#[path = "riscv_data_issue_tests/store_led.rs"]
+mod store_led;
 
 #[test]
 fn retry_response_discards_pending_o3_trace_data_access_outcome() {
@@ -1235,14 +1237,38 @@ fn issue_data_without_response(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) {
-    core.issue_next_data_access(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        |_delivery, _context| TargetOutcome::NoResponse,
-    )
-    .unwrap()
-    .unwrap();
+    issue_data_accesses_without_response(core, scheduler, transport, 1);
+}
+
+fn issue_data_accesses_without_response(
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    count: usize,
+) {
+    for _ in 0..count {
+        core.issue_next_data_access(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("scalar memory row should issue");
+    }
+}
+
+fn outstanding_data_requests_in_fetch_order(
+    core: &RiscvCore,
+) -> Vec<(MemoryRequestId, MemoryRequestId)> {
+    let state = core.state.lock().expect("riscv core lock");
+    let mut requests = state
+        .outstanding_data
+        .values()
+        .map(|access| (access.fetch_request, access.request))
+        .collect::<Vec<_>>();
+    requests.sort_unstable_by_key(|(fetch, _)| fetch.sequence());
+    requests
 }
 
 fn memory_routes() -> (

@@ -5,7 +5,7 @@ fn three_independent_detailed_scalar_loads_issue_before_first_response() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080]);
 
-    issue_without_response(&core, &mut scheduler, &transport, 3);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 3);
 
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 3);
@@ -18,7 +18,7 @@ fn four_independent_detailed_scalar_loads_issue_before_first_response() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080, 0x90c0]);
 
-    issue_without_response(&core, &mut scheduler, &transport, 4);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
 
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 4);
@@ -68,8 +68,8 @@ fn three_load_responses_write_back_in_program_order() {
 fn oldest_load_failure_cancels_two_younger_requests() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080]);
-    issue_without_response(&core, &mut scheduler, &transport, 3);
-    let requests = outstanding_requests_in_fetch_order(&core);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 3);
+    let requests = outstanding_data_requests_in_fetch_order(&core);
 
     core.record_data_failure(requests[0].1, scheduler.now());
 
@@ -86,8 +86,8 @@ fn oldest_load_failure_cancels_two_younger_requests() {
 fn oldest_of_four_loads_failure_cancels_three_younger_requests() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080, 0x90c0]);
-    issue_without_response(&core, &mut scheduler, &transport, 4);
-    let requests = outstanding_requests_in_fetch_order(&core);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
+    let requests = outstanding_data_requests_in_fetch_order(&core);
 
     core.record_data_failure(requests[0].1, scheduler.now());
 
@@ -105,8 +105,8 @@ fn oldest_of_four_loads_failure_cancels_three_younger_requests() {
 fn middle_load_failure_preserves_older_request_and_cancels_only_third() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080]);
-    issue_without_response(&core, &mut scheduler, &transport, 3);
-    let requests = outstanding_requests_in_fetch_order(&core);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 3);
+    let requests = outstanding_data_requests_in_fetch_order(&core);
 
     core.record_data_failure(requests[1].1, scheduler.now());
 
@@ -124,8 +124,8 @@ fn middle_load_failure_preserves_older_request_and_cancels_only_third() {
 fn third_of_four_loads_failure_preserves_two_older_requests_and_cancels_fourth() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080, 0x90c0]);
-    issue_without_response(&core, &mut scheduler, &transport, 4);
-    let requests = outstanding_requests_in_fetch_order(&core);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
+    let requests = outstanding_data_requests_in_fetch_order(&core);
 
     core.record_data_failure(requests[2].1, scheduler.now());
 
@@ -145,7 +145,7 @@ fn htm_abort_cancels_three_outstanding_scalar_loads() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080]);
     let begin = core.begin_htm_transaction().unwrap();
-    issue_without_response(&core, &mut scheduler, &transport, 3);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 3);
 
     core.abort_htm_transaction(begin.uid(), crate::HtmFailureCause::Explicit)
         .unwrap();
@@ -163,7 +163,7 @@ fn htm_abort_cancels_four_outstanding_scalar_loads() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_load_core(fetch_route, data_route, &[0x9000, 0x9040, 0x9080, 0x90c0]);
     let begin = core.begin_htm_transaction().unwrap();
-    issue_without_response(&core, &mut scheduler, &transport, 4);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
 
     core.abort_htm_transaction(begin.uid(), crate::HtmFailureCause::Explicit)
         .unwrap();
@@ -216,7 +216,7 @@ fn uncacheable_fourth_load_stays_serialized_behind_three_resident_loads() {
     core.add_pma_uncacheable_range(RiscvPmaRange::new(0x90c0, 0x90c4).unwrap())
         .unwrap();
 
-    issue_without_response(&core, &mut scheduler, &transport, 3);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 3);
     assert!(core
         .issue_next_data_access(
             &mut scheduler,
@@ -231,37 +231,6 @@ fn uncacheable_fourth_load_stays_serialized_behind_three_resident_loads() {
     assert_eq!(state.outstanding_data.len(), 3);
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 3);
-}
-
-fn issue_without_response(
-    core: &RiscvCore,
-    scheduler: &mut PartitionedScheduler,
-    transport: &MemoryTransport,
-    count: usize,
-) {
-    for _ in 0..count {
-        core.issue_next_data_access(
-            scheduler,
-            transport,
-            MemoryTrace::new(),
-            |_delivery, _context| TargetOutcome::NoResponse,
-        )
-        .unwrap()
-        .expect("independent scalar load should issue");
-    }
-}
-
-fn outstanding_requests_in_fetch_order(
-    core: &RiscvCore,
-) -> Vec<(MemoryRequestId, MemoryRequestId)> {
-    let state = core.state.lock().expect("riscv core lock");
-    let mut requests = state
-        .outstanding_data
-        .values()
-        .map(|access| (access.fetch_request, access.request))
-        .collect::<Vec<_>>();
-    requests.sort_unstable_by_key(|(fetch, _)| fetch.sequence());
-    requests
 }
 
 fn detailed_load_core(
