@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    branch::Rem6BranchTraceRecord, pipeline::Rem6PipelineTraceRecord, Rem6DataTraceRecord,
-    Rem6ExecTraceRecord, Rem6FetchTraceRecord,
+    branch::Rem6BranchTraceRecord,
+    pipeline::{PipelineStallBacklogFlushSummary, Rem6PipelineTraceRecord},
+    Rem6DataTraceRecord, Rem6ExecTraceRecord, Rem6FetchTraceRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1050,6 +1051,13 @@ pub(super) fn pipeline_trace_stats(
                 stat_path_segment(cause)
             ),
         );
+    }
+    for metric in PipelineStallBacklogFlushSummary::from_records(records).metrics() {
+        stats.push(Rem6PipelineTraceStat {
+            path: metric.path,
+            unit: metric.unit,
+            value: metric.value,
+        });
     }
     stats
 }

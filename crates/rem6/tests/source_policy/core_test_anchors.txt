@@ -233,6 +233,10 @@ sim.debug.pipeline_trace.stall_cause.fetch_wait.records
 sim.debug.pipeline_trace.stall_cause.data_wait.stall_cycles
 sim.debug.pipeline_trace.stall_cause.execute_wait.records
 sim.debug.pipeline_trace.stall_cause.execute_wait.stage.decode.ordering_blocked_cycles
+sim.debug.pipeline_trace.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction.sequences
+sim.debug.pipeline_trace.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction.block_kind.ordering_blocked.blocked_stage.fetch1.flushed_stage.fetch1.stall_cycles
+sim.debug.pipeline_trace.cpu.cpu0.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction.stall_cycles
+sim.debug.pipeline_trace.cpu.cpu0.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction.block_kind.ordering_blocked.blocked_stage.fetch1.flushed_stage.fetch1.stall_cycles
 sim.debug.pipeline_trace.stage.commit.advanced
 sim.debug.pipeline_trace.stage.commit.retired
 sim.debug.pipeline_trace.stage.decode.ordering_blocked_cycles
@@ -252,6 +256,11 @@ sim.debug.pipeline_trace.stage.commit.resource_blocked
 /debug/pipeline_summary/flush_cause/trap_redirect/stage/commit/records
 /debug/pipeline_summary/redirect_cause/trap_redirect/stage/commit/records
 /debug/pipeline_summary/redirect_cause/trap_redirect/stage/commit/flushed_cycles
+/debug/pipeline_summary/stall_backlog_flush/stall_cause/fetch_wait/flush_cause/branch_prediction/sequences
+/debug/pipeline_summary/stall_backlog_flush/stall_cause/fetch_wait/flush_cause/branch_prediction/block_kind/ordering_blocked/blocked_stage/fetch1/flushed_stage/fetch1/stall_cycles
+/debug/pipeline_summary/stall_backlog_flush/cpu/cpu0/stall_cause/fetch_wait/flush_cause/branch_prediction/stall_cycles
+/debug/pipeline_summary/stall_backlog_flush/cpu/cpu0/stall_cause/fetch_wait/flush_cause/branch_prediction/block_kind/ordering_blocked/blocked_stage/fetch1/flushed_stage/fetch1/stall_cycles
+rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_branch_flush
 sim.cpu0.pipeline.in_order.execute_wait_cycles
 sim.cpu0.pipeline.in_order.stage.fetch1.advanced_cycles
 sim.cpu0.pipeline.in_order.stage.commit.retired_cycles

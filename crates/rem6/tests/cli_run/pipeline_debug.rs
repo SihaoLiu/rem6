@@ -7,6 +7,9 @@ use serde_json::Value;
 
 use crate::support::*;
 
+#[path = "pipeline_debug/stall_backlog_flush.rs"]
+mod stall_backlog_flush;
+
 #[test]
 fn rem6_run_stats_emit_in_order_stall_cause_stage_matrix_without_debug_flag() {
     let mut program = riscv64_program(&[

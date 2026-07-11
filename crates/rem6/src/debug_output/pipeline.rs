@@ -5,6 +5,10 @@ use rem6_cpu::{
     InOrderPipelineStage, RiscvCluster,
 };
 
+mod correlation;
+
+pub(super) use correlation::PipelineStallBacklogFlushSummary;
+
 const PIPELINE_STAGE_NAMES: [&str; 5] = ["fetch1", "fetch2", "decode", "execute", "commit"];
 const PIPELINE_STALL_CAUSES: [&str; 3] = ["fetch_wait", "data_wait", "execute_wait"];
 const PIPELINE_REDIRECT_CAUSES: [&str; 3] =
@@ -242,7 +246,8 @@ pub(super) fn pipeline_trace_summary_to_json(records: &[Rem6PipelineTraceRecord]
     for record in records {
         summary.add_record(record);
     }
-    summary.to_json()
+    let stall_backlog_flush = PipelineStallBacklogFlushSummary::from_records(records);
+    summary.to_json(&stall_backlog_flush.to_json())
 }
 
 impl Rem6PipelineTraceSummary {
@@ -369,14 +374,15 @@ impl Rem6PipelineTraceSummary {
         }
     }
 
-    fn to_json(self) -> String {
+    fn to_json(self, stall_backlog_flush: &str) -> String {
         format!(
-            "{{{},\"stage\":{},\"stall_cause\":{},\"flush_cause\":{},\"redirect_cause\":{}}}",
+            "{{{},\"stage\":{},\"stall_cause\":{},\"flush_cause\":{},\"redirect_cause\":{},\"stall_backlog_flush\":{}}}",
             self.totals.json_fields(),
             pipeline_stage_totals_json(&self.stages),
             pipeline_stall_cause_totals_json(&self.stall_causes),
             pipeline_flush_cause_totals_json(&self.flush_causes),
             pipeline_flush_cause_totals_json(&self.redirect_causes),
+            stall_backlog_flush,
         )
     }
 }
@@ -586,6 +592,10 @@ const fn pipeline_redirect_cause(
 }
 
 impl Rem6PipelineTraceInstruction {
+    pub(super) const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
     pub(super) const fn stage(self) -> &'static str {
         self.stage
     }
