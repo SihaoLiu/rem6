@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
+const MAX_HOST_ACTIONS_ROOT_LINES: usize = 1200;
+const MAX_HOST_ACTIONS_O3_STATS_DUMP_ALIASES_LINES: usize = 800;
 const MAX_M5_HOST_ACTIONS_ROOT_LINES: usize = 5000;
 const MAX_M5_HOST_ACTIONS_O3_ROOT_LINES: usize = 4500;
 const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
@@ -275,6 +277,51 @@ fn cli_runtime_inputs_live_in_focused_modules() {
         !lib_rs.contains("fn build_cli_memory_store("),
         "src/lib.rs should delegate guest memory store construction to guest memory code"
     );
+}
+
+#[test]
+fn cli_host_action_o3_stats_dump_aliases_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/host_actions.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let module_path = crate_dir.join("src/host_actions/o3_stats_dump_aliases.rs");
+
+    assert!(
+        root.contains("mod o3_stats_dump_aliases;"),
+        "src/host_actions.rs must declare the focused O3 stats-dump alias module"
+    );
+    assert!(
+        module_path.exists(),
+        "O3 stats-dump alias translation belongs in src/host_actions/o3_stats_dump_aliases.rs"
+    );
+    let module = fs::read_to_string(&module_path).unwrap();
+
+    let root_lines = line_count(&root_path);
+    assert!(
+        root_lines <= MAX_HOST_ACTIONS_ROOT_LINES,
+        "src/host_actions.rs should delegate O3 stats-dump alias translation, but it has {root_lines} lines"
+    );
+    let module_lines = line_count(&module_path);
+    assert!(
+        module_lines <= MAX_HOST_ACTIONS_O3_STATS_DUMP_ALIASES_LINES,
+        "src/host_actions/o3_stats_dump_aliases.rs exceeds {MAX_HOST_ACTIONS_O3_STATS_DUMP_ALIASES_LINES} lines: {module_lines}"
+    );
+
+    for anchor in [
+        "fn append_o3_stats_dump_rate_alias_samples",
+        "fn append_o3_stats_dump_branch_mismatch_alias_samples",
+        "fn append_o3_stats_dump_lsq_data_response_alias_samples",
+        "fn stats_dump_sample_is_active",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/host_actions/o3_stats_dump_aliases.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "src/host_actions.rs still owns `{anchor}`"
+        );
+    }
 }
 
 #[test]
