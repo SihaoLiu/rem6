@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_kernel::{
     LivelockTransitionKind, PartitionEventId, PartitionId, PartitionedScheduler,
     ScheduledEventKind, SchedulerError, WaitForNode,
@@ -578,6 +578,25 @@ fn host_checkpoint_bank_reports_quiescence_by_component() {
     assert_eq!(reports[1].pending_event_count(), 1);
     assert_eq!(reports[1].first_pending_tick(), Some(11));
     assert_eq!(reports[1].last_pending_tick(), Some(11));
+}
+
+#[test]
+fn scheduler_checkpoint_bank_rejects_rebound_shared_mutex_aliases() {
+    let component0 = CheckpointComponentId::new("scheduler0").unwrap();
+    let component1 = CheckpointComponentId::new("scheduler1").unwrap();
+    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+    let port0 = SchedulerCheckpointPort::new(component0, Arc::clone(&scheduler));
+    *scheduler.lock().unwrap() = PartitionedScheduler::new(1).unwrap();
+    let port1 = SchedulerCheckpointPort::new(component1.clone(), Arc::clone(&scheduler));
+
+    let error = SchedulerCheckpointBank::new([port0, port1]).unwrap_err();
+
+    assert_eq!(
+        error,
+        CheckpointError::DuplicateComponent {
+            component: component1,
+        }
+    );
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::{
     o3_fu_latency::o3_fu_latency_class,
     o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
-    riscv_live_retire_gate::RiscvLiveRetireGateDecision,
+    riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
     CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
 };
 
@@ -109,7 +109,7 @@ impl RiscvCore {
                 ready_tick,
                 created_wait_ticks,
             } => {
-                match *kind {
+                let event_id = match *kind {
                     RiscvLiveRetireGateWakeKind::Serial => scheduler
                         .schedule_at(self.partition(), ready_tick, |_| {})
                         .map_err(RiscvCpuError::Scheduler)?,
@@ -117,7 +117,13 @@ impl RiscvCore {
                         .schedule_parallel_at(self.partition(), ready_tick, |_| {})
                         .map_err(RiscvCpuError::Scheduler)?,
                 };
-                state.live_retire_gate.mark_scheduled(window.request);
+                let event = scheduler
+                    .pending_event_snapshot(event_id)
+                    .expect("newly scheduled live-retire-gate wake is pending");
+                state.live_retire_gate.mark_scheduled(
+                    window.request,
+                    RiscvLiveRetireGateWake::new(scheduler.instance_id(), event),
+                );
                 if let Some(wait_ticks) = created_wait_ticks {
                     state.o3_runtime.record_live_retire_gate_wait(wait_ticks);
                 }

@@ -293,6 +293,26 @@ impl CheckpointRegistry {
         self.components.get(component)?.get(name).map(Vec::as_slice)
     }
 
+    pub fn remove_chunk(&mut self, component: &CheckpointComponentId, name: &str) -> bool {
+        self.components
+            .get_mut(component)
+            .and_then(|chunks| chunks.remove(name))
+            .is_some()
+    }
+
+    pub fn remove_component_if_empty(&mut self, component: &CheckpointComponentId) -> bool {
+        if self
+            .components
+            .get(component)
+            .is_some_and(BTreeMap::is_empty)
+        {
+            self.components.remove(component);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn contains_component(&self, component: &CheckpointComponentId) -> bool {
         self.components.contains_key(component)
     }

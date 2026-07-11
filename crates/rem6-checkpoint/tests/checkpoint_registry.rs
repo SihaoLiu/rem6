@@ -42,6 +42,24 @@ fn checkpoint_registry_captures_components_in_deterministic_order() {
 }
 
 #[test]
+fn checkpoint_registry_removes_only_empty_components() {
+    let scheduler = CheckpointComponentId::new("scheduler0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    registry.register(scheduler.clone()).unwrap();
+    registry
+        .write_chunk(&scheduler, "scheduler", vec![1])
+        .unwrap();
+    registry.write_chunk(&scheduler, "other", vec![2]).unwrap();
+
+    assert!(registry.remove_chunk(&scheduler, "scheduler"));
+    assert!(!registry.remove_component_if_empty(&scheduler));
+    assert!(registry.contains_component(&scheduler));
+    assert!(registry.remove_chunk(&scheduler, "other"));
+    assert!(registry.remove_component_if_empty(&scheduler));
+    assert!(!registry.contains_component(&scheduler));
+}
+
+#[test]
 fn checkpoint_manifest_reports_component_chunk_and_payload_totals() {
     let cpu = CheckpointComponentId::new("cpu0").unwrap();
     let memory = CheckpointComponentId::new("memory0").unwrap();

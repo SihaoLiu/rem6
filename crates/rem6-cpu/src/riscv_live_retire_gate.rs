@@ -1,5 +1,5 @@
 use rem6_isa_riscv::RiscvInstruction;
-use rem6_kernel::{SchedulerError, Tick};
+use rem6_kernel::{PendingEventSnapshot, SchedulerError, SchedulerInstanceId, Tick};
 use rem6_memory::MemoryRequestId;
 
 use crate::o3_runtime::{
@@ -26,11 +26,35 @@ impl RiscvLiveRetireGatePolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RiscvLiveRetireGateWake {
+    scheduler: SchedulerInstanceId,
+    event: PendingEventSnapshot,
+}
+
+impl RiscvLiveRetireGateWake {
+    pub(crate) const fn new(scheduler: SchedulerInstanceId, event: PendingEventSnapshot) -> Self {
+        Self { scheduler, event }
+    }
+
+    pub const fn scheduler(self) -> SchedulerInstanceId {
+        self.scheduler
+    }
+
+    pub const fn event(self) -> PendingEventSnapshot {
+        self.event
+    }
+
+    pub fn tick(self) -> Tick {
+        self.event.tick()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvLiveRetireGatePending {
     request: MemoryRequestId,
     ready_tick: Tick,
-    scheduled: bool,
+    scheduler_wake: Option<RiscvLiveRetireGateWake>,
     rebind_on_next_request: bool,
 }
 
@@ -39,7 +63,7 @@ impl RiscvLiveRetireGatePending {
         Self {
             request,
             ready_tick,
-            scheduled: false,
+            scheduler_wake: None,
             rebind_on_next_request: false,
         }
     }
@@ -48,7 +72,7 @@ impl RiscvLiveRetireGatePending {
         Self {
             request,
             ready_tick,
-            scheduled: false,
+            scheduler_wake: None,
             rebind_on_next_request: true,
         }
     }
@@ -62,7 +86,11 @@ impl RiscvLiveRetireGatePending {
     }
 
     const fn is_scheduled(self) -> bool {
-        self.scheduled
+        self.scheduler_wake.is_some()
+    }
+
+    const fn scheduler_wake(self) -> Option<RiscvLiveRetireGateWake> {
+        self.scheduler_wake
     }
 
     const fn blocks_new_work(self) -> bool {
@@ -78,8 +106,8 @@ impl RiscvLiveRetireGatePending {
         self.rebind_on_next_request = true;
     }
 
-    fn mark_scheduled(&mut self) {
-        self.scheduled = true;
+    fn mark_scheduled(&mut self, wake: RiscvLiveRetireGateWake) {
+        self.scheduler_wake = Some(wake);
     }
 }
 
@@ -97,6 +125,7 @@ pub(crate) enum RiscvLiveRetireGateDecision {
 pub(crate) struct RiscvLiveRetireGateState {
     policy: RiscvLiveRetireGatePolicy,
     pending: Option<RiscvLiveRetireGatePending>,
+    detached_scheduler_wakes: Vec<RiscvLiveRetireGateWake>,
 }
 
 impl RiscvLiveRetireGateState {
@@ -114,6 +143,7 @@ impl RiscvLiveRetireGateState {
         &mut self,
         payload: Option<O3LiveRetireGateCheckpointPayload>,
     ) {
+        self.detached_scheduler_wakes.clear();
         self.pending = payload.map(|payload| {
             RiscvLiveRetireGatePending::restored(payload.request(), payload.ready_tick())
         });
@@ -128,6 +158,17 @@ impl RiscvLiveRetireGateState {
         self.pending.map(RiscvLiveRetireGatePending::ready_tick)
     }
 
+    pub(crate) fn owned_scheduler_wakes(&self) -> Vec<RiscvLiveRetireGateWake> {
+        self.detached_scheduler_wakes
+            .iter()
+            .copied()
+            .chain(
+                self.pending
+                    .and_then(RiscvLiveRetireGatePending::scheduler_wake),
+            )
+            .collect()
+    }
+
     pub(crate) const fn detailed_policy_enabled(&self) -> bool {
         self.policy.creates_gates()
     }
@@ -139,6 +180,7 @@ impl RiscvLiveRetireGateState {
     }
 
     pub(crate) fn clear_pending_for_pc_redirect(&mut self) {
+        self.detach_pending_scheduler_wake();
         self.pending = None;
     }
 
@@ -149,6 +191,7 @@ impl RiscvLiveRetireGateState {
         now: Tick,
         ready_base_tick: Tick,
     ) -> Result<RiscvLiveRetireGateDecision, RiscvCpuError> {
+        self.prune_detached_scheduler_wakes(now);
         if let Some(mut pending) = self.pending {
             if pending.request() != request {
                 if !pending.rebind_on_next_request {
@@ -159,6 +202,7 @@ impl RiscvLiveRetireGateState {
                 pending.rebind(request);
             }
             if now >= pending.ready_tick() {
+                self.remember_detached_scheduler_wake(pending.scheduler_wake());
                 self.pending = None;
                 return Ok(RiscvLiveRetireGateDecision::Ready);
             }
@@ -199,12 +243,36 @@ impl RiscvLiveRetireGateState {
         self.pending.is_some()
     }
 
-    pub(crate) fn mark_scheduled(&mut self, request: MemoryRequestId) {
+    pub(crate) fn mark_scheduled(
+        &mut self,
+        request: MemoryRequestId,
+        wake: RiscvLiveRetireGateWake,
+    ) {
         if let Some(pending) = &mut self.pending {
             if pending.request() == request {
-                pending.mark_scheduled();
+                pending.mark_scheduled(wake);
             }
         }
+    }
+
+    fn detach_pending_scheduler_wake(&mut self) {
+        self.remember_detached_scheduler_wake(
+            self.pending
+                .and_then(RiscvLiveRetireGatePending::scheduler_wake),
+        );
+    }
+
+    fn remember_detached_scheduler_wake(&mut self, wake: Option<RiscvLiveRetireGateWake>) {
+        if let Some(wake) = wake {
+            if !self.detached_scheduler_wakes.contains(&wake) {
+                self.detached_scheduler_wakes.push(wake);
+            }
+        }
+    }
+
+    fn prune_detached_scheduler_wakes(&mut self, now: Tick) {
+        self.detached_scheduler_wakes
+            .retain(|wake| wake.tick() >= now);
     }
 }
 
@@ -244,6 +312,20 @@ impl RiscvCore {
             .with_live_retire_gate(state.live_retire_gate.checkpoint())
     }
 
+    #[doc(hidden)]
+    pub fn checkpoint_owned_live_retire_gate_wakes(
+        &self,
+    ) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .live_retire_gate
+            .owned_scheduler_wakes()
+            .into_iter()
+            .map(|wake| (wake.scheduler(), wake.event()))
+            .collect()
+    }
+
     pub fn restore_o3_runtime_checkpoint_payload(
         &self,
         payload: O3RuntimeCheckpointPayload,
@@ -258,12 +340,24 @@ impl RiscvCore {
 
 #[cfg(test)]
 mod tests {
+    use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{AgentId, MemoryRequestId};
 
     use super::*;
 
     fn div_raw() -> u32 {
         (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33
+    }
+
+    fn wake(tick: Tick) -> RiscvLiveRetireGateWake {
+        let mut scheduler = PartitionedScheduler::new(1).unwrap();
+        let event_id = scheduler
+            .schedule_at(PartitionId::new(0), tick, |_| {})
+            .unwrap();
+        RiscvLiveRetireGateWake::new(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event_id).unwrap(),
+        )
     }
 
     #[test]
@@ -292,7 +386,7 @@ mod tests {
                 created_wait_ticks: None,
             })
         );
-        gate.mark_scheduled(refetched_request);
+        gate.mark_scheduled(refetched_request, wake(99));
         assert_eq!(
             gate.before_retire(refetched_request, div_raw(), 10, 10),
             Ok(RiscvLiveRetireGateDecision::Blocked)
@@ -301,6 +395,50 @@ mod tests {
             gate.before_retire(refetched_request, div_raw(), 99, 99),
             Ok(RiscvLiveRetireGateDecision::Ready)
         );
+    }
+
+    #[test]
+    fn scheduled_gate_exposes_exact_owned_scheduler_wake_until_ready() {
+        let request = MemoryRequestId::new(AgentId::new(1), 42);
+        let mut scheduler = PartitionedScheduler::new(4).unwrap();
+        let event_id = scheduler
+            .schedule_parallel_at(PartitionId::new(3), 29, |_| {})
+            .unwrap();
+        let wake = RiscvLiveRetireGateWake::new(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event_id).unwrap(),
+        );
+        let mut gate = RiscvLiveRetireGateState::default();
+        gate.set_policy(RiscvLiveRetireGatePolicy::detailed());
+        assert!(matches!(
+            gate.before_retire(request, div_raw(), 10, 10),
+            Ok(RiscvLiveRetireGateDecision::Schedule { ready_tick: 29, .. })
+        ));
+
+        gate.mark_scheduled(request, wake);
+
+        assert_eq!(gate.owned_scheduler_wakes(), vec![wake]);
+        assert_eq!(
+            gate.before_retire(request, div_raw(), 28, 28),
+            Ok(RiscvLiveRetireGateDecision::Blocked)
+        );
+        assert_eq!(gate.owned_scheduler_wakes(), vec![wake]);
+        assert_eq!(
+            gate.before_retire(request, div_raw(), 29, 29),
+            Ok(RiscvLiveRetireGateDecision::Ready)
+        );
+        assert_eq!(gate.owned_scheduler_wakes(), vec![wake]);
+        gate.prune_detached_scheduler_wakes(30);
+        assert!(gate.owned_scheduler_wakes().is_empty());
+    }
+
+    #[test]
+    fn restored_gate_has_no_owned_scheduler_wake_before_rearming() {
+        let request = MemoryRequestId::new(AgentId::new(1), 42);
+        let mut gate = RiscvLiveRetireGateState::default();
+        gate.restore_checkpoint(Some(O3LiveRetireGateCheckpointPayload::new(request, 99)));
+
+        assert!(gate.owned_scheduler_wakes().is_empty());
     }
 
     #[test]
@@ -329,7 +467,7 @@ mod tests {
                 created_wait_ticks: Some(19),
             })
         );
-        gate.mark_scheduled(original);
+        gate.mark_scheduled(original, wake(29));
 
         gate.rebind_pending_to_next_request();
 
@@ -353,11 +491,14 @@ mod tests {
             gate.before_retire(request, div_raw(), 10, 10),
             Ok(RiscvLiveRetireGateDecision::Schedule { .. })
         ));
+        let wake = wake(29);
+        gate.mark_scheduled(request, wake);
 
         gate.clear_pending_for_pc_redirect();
 
         assert!(!gate.blocks_new_work());
         assert_eq!(gate.checkpoint(), None);
+        assert_eq!(gate.owned_scheduler_wakes(), vec![wake]);
     }
 
     #[test]

@@ -18,6 +18,7 @@ use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
     RiscvPmpSnapshotEntry, RiscvPmpTable,
 };
+use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId};
 use rem6_memory::Address;
 
 use crate::ExecutionModeTarget;
@@ -753,6 +754,15 @@ impl RiscvCoreCheckpointBank {
                     core.in_order_pipeline_snapshot().cycle(),
                 )
             })
+            .collect()
+    }
+
+    pub(crate) fn pending_live_retire_gate_wakes(
+        &self,
+    ) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
+        self.ports
+            .values()
+            .flat_map(|port| port.core().checkpoint_owned_live_retire_gate_wakes())
             .collect()
     }
 
