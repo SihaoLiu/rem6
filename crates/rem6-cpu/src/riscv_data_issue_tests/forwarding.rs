@@ -60,6 +60,119 @@ fn detailed_store_then_aliasing_load_completes_without_transport() {
 }
 
 #[test]
+fn detailed_word_store_forwards_contained_signed_and_unsigned_loads() {
+    for (load_address, load_width, load_signed, expected) in [
+        (0x9001, MemoryWidth::Byte, true, 0xffff_ffff_ffff_ff80),
+        (0x9001, MemoryWidth::Byte, false, 0x80),
+        (0x9000, MemoryWidth::Halfword, true, 0xffff_ffff_ffff_80ff),
+        (0x9002, MemoryWidth::Halfword, false, 0x7f),
+    ] {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = detailed_store_load_core_with_accesses(
+            fetch_route,
+            data_route,
+            0x9000,
+            MemoryWidth::Word,
+            0x007f_80ff,
+            load_address,
+            load_width,
+            load_signed,
+        );
+
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |delivery, _context| TargetOutcome::RespondAfter {
+                delay: 20,
+                response: MemoryResponse::completed(delivery.request(), None).unwrap(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| panic!("contained forwarded load must not reach transport"),
+        )
+        .unwrap()
+        .expect("contained forwarded load should schedule a local completion");
+
+        scheduler.run_next_epoch();
+        {
+            let state = core.state.lock().expect("riscv core lock");
+            assert_eq!(state.outstanding_data.len(), 1);
+            let snapshot = state.o3_runtime.snapshot();
+            let lsq = snapshot.load_store_queue();
+            assert_eq!(lsq.len(), 2);
+            assert!(!lsq[0].is_completed());
+            assert!(lsq[1].is_completed());
+        }
+        assert_eq!(core.read_register(reg(6)), 0);
+        assert!(core
+            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .is_none());
+
+        scheduler.run_until_idle_conservative();
+        let store = core
+            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .expect("older store should retire first");
+        assert_eq!(store.fetch_pc(), Address::new(0x8000));
+        assert_eq!(core.read_register(reg(6)), 0);
+        let load = core
+            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .expect("contained forwarded load should retire second");
+        assert_eq!(load.fetch_pc(), Address::new(0x8004));
+        assert_eq!(
+            core.read_register(reg(6)),
+            expected,
+            "architectural writeback for {load_width:?} at {load_address:#x}"
+        );
+    }
+}
+
+#[test]
+fn uncacheable_contained_store_load_pair_remains_serialized() {
+    for (uncacheable_start, uncacheable_end) in [(0x9000, 0x9004), (0x9001, 0x9002)] {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = detailed_store_load_core_with_accesses(
+            fetch_route,
+            data_route,
+            0x9000,
+            MemoryWidth::Word,
+            0x007f_80ff,
+            0x9001,
+            MemoryWidth::Byte,
+            true,
+        );
+        core.add_pma_uncacheable_range(
+            RiscvPmaRange::new(uncacheable_start, uncacheable_end).unwrap(),
+        )
+        .unwrap();
+
+        issue_data_without_response(&core, &mut scheduler, &transport);
+        assert!(core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |_delivery, _context| panic!("uncacheable pair must remain serialized"),
+            )
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .outstanding_data
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
 fn htm_abort_cancels_forwarded_load_before_or_after_local_completion() {
     for complete_locally in [false, true] {
         let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
@@ -150,9 +263,18 @@ fn younger_disjoint_load_writeback_waits_for_older_store_retirement() {
 }
 
 #[test]
-fn older_detailed_scalar_store_failure_replays_younger_cancelled_load() {
+fn older_detailed_scalar_store_failure_replays_younger_cancelled_contained_load() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = detailed_store_load_core(fetch_route, data_route, 0x9000, 0x9000);
+    let core = detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        0x9000,
+        MemoryWidth::Word,
+        0x007f_80ff,
+        0x9001,
+        MemoryWidth::Byte,
+        true,
+    );
 
     issue_data_without_response(&core, &mut scheduler, &transport);
     core.issue_next_data_access(
@@ -208,7 +330,7 @@ fn older_detailed_scalar_store_failure_replays_younger_cancelled_load() {
         MemoryTrace::new(),
         |delivery, _context| {
             TargetOutcome::Respond(
-                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63])).unwrap(),
             )
         },
     )
@@ -258,9 +380,18 @@ fn older_store_failure_cancels_issued_disjoint_younger_request() {
 }
 
 #[test]
-fn older_detailed_scalar_store_retry_replays_younger_cancelled_load() {
+fn older_detailed_scalar_store_retry_replays_younger_cancelled_contained_load() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = detailed_store_load_core(fetch_route, data_route, 0x9000, 0x9000);
+    let core = detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        0x9000,
+        MemoryWidth::Word,
+        0x007f_80ff,
+        0x9001,
+        MemoryWidth::Byte,
+        true,
+    );
 
     core.issue_next_data_access(
         &mut scheduler,
@@ -317,7 +448,7 @@ fn older_detailed_scalar_store_retry_replays_younger_cancelled_load() {
         MemoryTrace::new(),
         |delivery, _context| {
             TargetOutcome::Respond(
-                MemoryResponse::completed(delivery.request(), Some(vec![0x63, 0, 0, 0])).unwrap(),
+                MemoryResponse::completed(delivery.request(), Some(vec![0x63])).unwrap(),
             )
         },
     )

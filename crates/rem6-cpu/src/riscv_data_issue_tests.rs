@@ -1307,6 +1307,28 @@ fn detailed_store_load_core(
     store_address: u64,
     load_address: u64,
 ) -> RiscvCore {
+    detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        store_address,
+        MemoryWidth::Word,
+        0x2a,
+        load_address,
+        MemoryWidth::Word,
+        false,
+    )
+}
+
+fn detailed_store_load_core_with_accesses(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+    store_address: u64,
+    store_width: MemoryWidth,
+    store_value: u64,
+    load_address: u64,
+    load_width: MemoryWidth,
+    load_signed: bool,
+) -> RiscvCore {
     let core = RiscvCore::with_data(
         cpu_core(fetch_route, 0x8000),
         CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
@@ -1316,8 +1338,8 @@ fn detailed_store_load_core(
     state.hart.write(reg(2), store_address);
     state.hart.write(reg(4), load_address);
     state.events.extend([
-        scalar_store_event(0x8000, 1, store_address),
-        scalar_load_event_with_base(0x8004, 2, 6, 4, load_address),
+        scalar_store_event_with_width_and_value(0x8000, 1, store_address, store_width, store_value),
+        scalar_load_event_with_base_width(0x8004, 2, 6, 4, load_address, load_width, load_signed),
     ]);
     drop(state);
     core
@@ -1363,18 +1385,30 @@ fn scalar_load_event_with_base(
     rs1: u8,
     address: u64,
 ) -> RiscvCpuExecutionEvent {
+    scalar_load_event_with_base_width(pc, sequence, rd, rs1, address, MemoryWidth::Word, false)
+}
+
+fn scalar_load_event_with_base_width(
+    pc: u64,
+    sequence: u64,
+    rd: u8,
+    rs1: u8,
+    address: u64,
+    width: MemoryWidth,
+    signed: bool,
+) -> RiscvCpuExecutionEvent {
     let instruction = rem6_isa_riscv::RiscvInstruction::Load {
         rd: reg(rd),
         rs1: reg(rs1),
         offset: Immediate::new(0),
-        width: MemoryWidth::Word,
-        signed: false,
+        width,
+        signed,
     };
     let access = MemoryAccessKind::Load {
         rd: reg(rd),
         address,
-        width: MemoryWidth::Word,
-        signed: false,
+        width,
+        signed,
     };
     RiscvCpuExecutionEvent::new(
         fetch_event(pc, sequence),
@@ -1383,17 +1417,23 @@ fn scalar_load_event_with_base(
     )
 }
 
-fn scalar_store_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {
+fn scalar_store_event_with_width_and_value(
+    pc: u64,
+    sequence: u64,
+    address: u64,
+    width: MemoryWidth,
+    value: u64,
+) -> RiscvCpuExecutionEvent {
     let instruction = rem6_isa_riscv::RiscvInstruction::Store {
         rs1: reg(2),
         rs2: reg(3),
         offset: Immediate::new(0),
-        width: MemoryWidth::Word,
+        width,
     };
     let access = MemoryAccessKind::Store {
         address,
-        width: MemoryWidth::Word,
-        value: 0x2a,
+        width,
+        value,
     };
     RiscvCpuExecutionEvent::new(
         fetch_event(pc, sequence),

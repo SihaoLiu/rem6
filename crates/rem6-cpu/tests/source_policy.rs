@@ -177,6 +177,54 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
     }
 }
 
+#[test]
+fn o3_store_forwarding_policy_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
+    let memory_window =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_memory_window.rs")).unwrap();
+    let stats = fs::read_to_string(crate_dir.join("src/o3_runtime_stats.rs")).unwrap();
+    let module_path = crate_dir.join("src/o3_store_forwarding.rs");
+
+    assert!(
+        root.contains("mod o3_store_forwarding;"),
+        "src/o3_runtime.rs must delegate store-forwarding classification"
+    );
+    assert!(
+        module_path.exists(),
+        "O3 store-forwarding policy belongs in src/o3_store_forwarding.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    for anchor in [
+        "struct O3StoreForwardingEntry",
+        "struct O3StoreLoadForwardingPlan",
+        "enum O3StoreLoadRelation",
+        "enum O3StoreLoadSuppressionReason",
+        "fn o3_store_load_relation",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_store_forwarding.rs is missing policy owner `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "src/o3_runtime.rs still owns store-forwarding policy `{anchor}`"
+        );
+    }
+    assert!(
+        memory_window.contains("o3_load_forwarding_access"),
+        "the live memory window must use the shared scalar-load range conversion"
+    );
+    assert!(
+        !memory_window.contains("fn scalar_memory_range"),
+        "the live memory window must not duplicate scalar range construction"
+    );
+    assert!(
+        stats.contains("O3StoreLoadSuppressionReason"),
+        "forwarding stats must consume the classifier-owned suppression reason"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

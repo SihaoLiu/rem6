@@ -2834,8 +2834,8 @@ fn detailed_o3_lsq_forwarding_dump_reset_stats_binary(name: &str) -> std::path::
         i_type(8, 5, 0b010, 14, 0x03),  // lw x14, 8(x5)
         b_type(28, 0, 14, 0x1),         // bne x14, x0, fail
         i_type(0x44, 0, 0x0, 15, 0x13), // addi x15, x0, 0x44
-        s_type(12, 15, 5, 0b010),       // sw x15, 12(x5)
-        i_type(12, 5, 0b100, 16, 0x03), // lbu x16, 12(x5)
+        s_type(12, 15, 5, 0b000),       // sb x15, 12(x5)
+        i_type(12, 5, 0b010, 16, 0x03), // lw x16, 12(x5)
         b_type(12, 15, 16, 0x1),        // bne x16, x15, fail
         m5op(M5_DUMP_STATS),
         m5op(M5_EXIT),
@@ -2874,8 +2874,8 @@ fn multicore_hart1_detailed_o3_lsq_forwarding_dump_reset_stats_binary(
         i_type(8, 5, 0b010, 14, 0x03),  // lw x14, 8(x5)
         b_type(28, 0, 14, 0x1),         // bne x14, x0, fail
         i_type(0x44, 0, 0x0, 15, 0x13), // addi x15, x0, 0x44
-        s_type(12, 15, 5, 0b010),       // sw x15, 12(x5)
-        i_type(12, 5, 0b100, 16, 0x03), // lbu x16, 12(x5)
+        s_type(12, 15, 5, 0b000),       // sb x15, 12(x5)
+        i_type(12, 5, 0b010, 16, 0x03), // lw x16, 12(x5)
         b_type(12, 15, 16, 0x1),        // bne x16, x15, fail
         m5op(M5_DUMP_STATS),
     ]);
@@ -3019,8 +3019,8 @@ fn detailed_o3_lsq_store_load_byte_mismatch_binary(name: &str) -> std::path::Pat
         u_type(0, 5, 0x17),             // auipc x5, 0
         i_type(60, 5, 0x0, 5, 0x13),    // addi x5, x5, data
         i_type(0x5a, 0, 0x0, 11, 0x13), // addi x11, x0, 0x5a
-        s_type(0, 11, 5, 0b010),        // sw x11, 0(x5)
-        i_type(0, 5, 0b100, 12, 0x03),  // lbu x12, 0(x5)
+        s_type(0, 11, 5, 0b000),        // sb x11, 0(x5)
+        i_type(0, 5, 0b010, 12, 0x03),  // lw x12, 0(x5)
         b_type(8, 11, 12, 0x1),         // bne x12, x11, fail
         m5op(M5_EXIT),
         m5op(M5_FAIL),

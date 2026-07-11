@@ -3404,6 +3404,7 @@ fn detailed_o3_store_forwarding_debug_binary(name: &str) -> std::path::PathBuf {
 
 fn detailed_o3_store_forwarding_suppression_debug_binary(
     name: &str,
+    store_funct3: u32,
     load_offset: i32,
     load_funct3: u32,
     expected_register: u8,
@@ -3413,7 +3414,7 @@ fn detailed_o3_store_forwarding_suppression_debug_binary(
         u_type(0, 5, 0x17),
         i_type(60, 5, 0x0, 5, 0x13),
         i_type(0x5a, 0, 0x0, 11, 0x13),
-        s_type(0, 11, 5, 0b010),
+        s_type(0, 11, 5, store_funct3),
         i_type(load_offset, 5, load_funct3, 12, 0x03),
         b_type(8, expected_register, 12, 0x1),
         m5op(M5_EXIT),
@@ -3429,17 +3430,17 @@ fn detailed_o3_store_forwarding_suppression_debug_binary(
 }
 
 fn detailed_o3_store_forwarding_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
-    detailed_o3_store_forwarding_suppression_debug_binary(name, 4, 0b010, 0)
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 0b010, 4, 0b010, 0)
 }
 
 fn detailed_o3_store_forwarding_byte_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
-    detailed_o3_store_forwarding_suppression_debug_binary(name, 0, 0b100, 11)
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 0b000, 0, 0b010, 11)
 }
 
 fn detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
     name: &str,
 ) -> std::path::PathBuf {
-    detailed_o3_store_forwarding_suppression_debug_binary(name, 4, 0b100, 0)
+    detailed_o3_store_forwarding_suppression_debug_binary(name, 0b010, 4, 0b100, 0)
 }
 
 fn hart1_detailed_o3_debug_binary(name: &str) -> std::path::PathBuf {
@@ -14251,11 +14252,12 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
 
 #[test]
 fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
-    for (path, load_address, load_bytes, address_mismatches, byte_mismatches) in [
+    for (path, store_bytes, load_address, load_bytes, address_mismatches, byte_mismatches) in [
         (
             detailed_o3_store_forwarding_mismatch_debug_binary(
                 "debug-flags-o3-store-forwarding-address-mismatch",
             ),
+            4,
             "0x80000044",
             4,
             1,
@@ -14265,8 +14267,9 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             detailed_o3_store_forwarding_byte_mismatch_debug_binary(
                 "debug-flags-o3-store-forwarding-byte-mismatch",
             ),
-            "0x80000040",
             1,
+            "0x80000040",
+            4,
             0,
             1,
         ),
@@ -14274,6 +14277,7 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
                 "debug-flags-o3-store-forwarding-address-byte-mismatch",
             ),
+            4,
             "0x80000044",
             1,
             1,
@@ -14412,7 +14416,7 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             json_record_str(&events[3], "lsq_store_address"),
             "0x80000040"
         );
-        assert_eq!(json_record_u64(&events[3], "lsq_store_bytes"), 4);
+        assert_eq!(json_record_u64(&events[3], "lsq_store_bytes"), store_bytes);
         assert_eq!(
             json_record_str(&events[4], "lsq_load_address"),
             load_address

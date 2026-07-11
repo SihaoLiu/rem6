@@ -1,5 +1,9 @@
-use rem6_memory::{AccessSize, AddressRange};
+use rem6_memory::AddressRange;
 
+use super::o3_store_forwarding::{
+    o3_load_forwarding_access, o3_store_load_relation, O3StoreLoadForwardingPlan,
+    O3StoreLoadRelation,
+};
 use super::*;
 
 const MAX_LIVE_SCALAR_MEMORIES: usize = 3;
@@ -7,7 +11,7 @@ const MAX_LIVE_SCALAR_MEMORIES: usize = 3;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3ScalarMemoryWindowAdmission {
     Independent,
-    Forwarded { value: u64, bytes: usize },
+    Forwarded(O3StoreLoadForwardingPlan),
 }
 
 impl O3RuntimeState {
@@ -74,19 +78,15 @@ impl O3RuntimeState {
             MemoryAccessKind::Load { rd: older_rd, .. } if rd != *older_rd && rs1 != *older_rd => {
                 Some(O3ScalarMemoryWindowAdmission::Independent)
             }
-            MemoryAccessKind::Store { value, width, .. } => {
-                let older_range = scalar_memory_range(older)?;
-                if older_range == younger_range {
-                    Some(O3ScalarMemoryWindowAdmission::Forwarded {
-                        value: *value,
-                        bytes: width.bytes(),
-                    })
-                } else if !older_range.overlaps(younger_range) {
-                    Some(O3ScalarMemoryWindowAdmission::Independent)
-                } else {
-                    None
+            MemoryAccessKind::Store { .. } => match o3_store_load_relation(older, younger_range)? {
+                O3StoreLoadRelation::Forwarded(plan) => {
+                    Some(O3ScalarMemoryWindowAdmission::Forwarded(plan))
                 }
-            }
+                O3StoreLoadRelation::Independent(_) => {
+                    Some(O3ScalarMemoryWindowAdmission::Independent)
+                }
+                O3StoreLoadRelation::Blocked(_) => None,
+            },
             _ => None,
         }
     }
@@ -99,13 +99,13 @@ impl O3RuntimeState {
         if !matches!(access, MemoryAccessKind::Load { .. }) {
             return None;
         }
-        let range = scalar_memory_range(access)?;
-        let O3ScalarMemoryWindowAdmission::Forwarded { value, bytes } =
+        let range = o3_load_forwarding_access(access)?.range();
+        let O3ScalarMemoryWindowAdmission::Forwarded(plan) =
             self.scalar_memory_window_admission(instruction, range)?
         else {
             return None;
         };
-        Some(value.to_le_bytes()[..bytes].to_vec())
+        Some(plan.data())
     }
 
     pub(crate) fn can_stage_scalar_memory(&self, execution: &RiscvCpuExecutionEvent) -> bool {
@@ -113,20 +113,10 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        scalar_memory_range(access).is_some_and(|younger_range| {
-            self.can_defer_scalar_memory_instruction(execution.instruction(), younger_range)
+        o3_load_forwarding_access(access).is_some_and(|load| {
+            self.can_defer_scalar_memory_instruction(execution.instruction(), load.range())
         })
     }
-}
-
-fn scalar_memory_range(access: &MemoryAccessKind) -> Option<AddressRange> {
-    let (address, width) = match access {
-        MemoryAccessKind::Load { address, width, .. }
-        | MemoryAccessKind::Store { address, width, .. } => (*address, *width),
-        _ => return None,
-    };
-    let size = AccessSize::new(width.bytes() as u64).ok()?;
-    AddressRange::new(Address::new(address), size).ok()
 }
 
 #[cfg(test)]
@@ -337,6 +327,37 @@ mod tests {
     }
 
     #[test]
+    fn word_store_forwards_fully_contained_byte_and_half_loads() {
+        for (address, width, expected) in [
+            (0x9001, MemoryWidth::Byte, vec![0x80]),
+            (0x9000, MemoryWidth::Halfword, vec![0xff, 0x80]),
+            (0x9002, MemoryWidth::Halfword, vec![0x7f, 0x00]),
+        ] {
+            let mut runtime = O3RuntimeState::default();
+            let older = scalar_store_event_with_width_and_value(
+                0x8000,
+                10,
+                0x9000,
+                MemoryWidth::Word,
+                0x007f_80ff,
+            );
+            let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, address, width);
+
+            assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+            assert_eq!(
+                runtime.forwarded_scalar_load_data(
+                    younger.instruction(),
+                    younger.execution().memory_access().unwrap(),
+                ),
+                Some(expected),
+                "contained load at {address:#x} with {width:?} should receive selected store bytes"
+            );
+            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+            assert_eq!(runtime.live_scalar_memories.len(), 2);
+        }
+    }
+
+    #[test]
     fn store_then_partially_overlapping_load_does_not_stage_second_live_row() {
         for younger_address in [0x8fff, 0x9002, 0x9003] {
             let mut runtime = O3RuntimeState::default();
@@ -355,8 +376,9 @@ mod tests {
     #[test]
     fn store_then_same_address_width_mismatch_does_not_stage_second_live_row() {
         let mut runtime = O3RuntimeState::default();
-        let older = scalar_store_event(0x8000, 10, 0x9000);
-        let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, 0x9000, MemoryWidth::Byte);
+        let older =
+            scalar_store_event_with_width_and_value(0x8000, 10, 0x9000, MemoryWidth::Byte, 0x2a);
+        let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, 0x9000, MemoryWidth::Word);
 
         assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
         assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
@@ -409,16 +431,26 @@ mod tests {
     }
 
     fn scalar_store_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {
+        scalar_store_event_with_width_and_value(pc, sequence, address, MemoryWidth::Word, 0x2a)
+    }
+
+    fn scalar_store_event_with_width_and_value(
+        pc: u64,
+        sequence: u64,
+        address: u64,
+        width: MemoryWidth,
+        value: u64,
+    ) -> RiscvCpuExecutionEvent {
         let instruction = RiscvInstruction::Store {
             rs1: reg(10),
             rs2: reg(11),
             offset: Immediate::new(0),
-            width: MemoryWidth::Word,
+            width,
         };
         let access = MemoryAccessKind::Store {
             address,
-            width: MemoryWidth::Word,
-            value: 0x2a,
+            width,
+            value,
         };
         execution_event(pc, sequence, instruction, access)
     }

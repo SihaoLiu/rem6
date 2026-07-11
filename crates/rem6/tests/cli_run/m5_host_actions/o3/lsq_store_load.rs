@@ -444,7 +444,7 @@ fn store_load_json(
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
-fn data_memory_request_count(json: &Value) -> usize {
+pub(super) fn data_memory_request_count(json: &Value) -> usize {
     json.pointer("/debug/memory_trace")
         .and_then(Value::as_array)
         .expect("run JSON Memory trace")
@@ -466,7 +466,7 @@ fn data_memory_request_count(json: &Value) -> usize {
         .len()
 }
 
-fn event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
+pub(super) fn event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
     json.pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
         .and_then(|events| {
@@ -477,7 +477,7 @@ fn event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("O3 trace should include event at {pc}: {json}"))
 }
 
-fn event_u64(event: &Value, field: &str) -> u64 {
+pub(super) fn event_u64(event: &Value, field: &str) -> u64 {
     event
         .get(field)
         .and_then(Value::as_u64)
@@ -517,8 +517,8 @@ fn store_load_width_mismatch_binary(name: &str) -> std::path::PathBuf {
         u_type(0, 10, 0x17),
         i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
         i_type(0x2a, 0, 0x0, 11, 0x13),
-        s_type(0, 11, 10, 0b010),
-        i_type(0, 10, 0b100, 12, 0x03),
+        s_type(0, 11, 10, 0b000),
+        i_type(0, 10, 0b010, 12, 0x03),
         i_type(1, 12, 0x0, 13, 0x13),
         s_type(4, 12, 10, 0b010),
         s_type(8, 13, 10, 0b010),

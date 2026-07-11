@@ -34,6 +34,8 @@ mod o3_runtime_snapshot_entries;
 mod o3_runtime_stats;
 #[path = "o3_source_operands.rs"]
 mod o3_source_operands;
+#[path = "o3_store_forwarding.rs"]
+mod o3_store_forwarding;
 
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
@@ -57,8 +59,11 @@ pub(crate) use o3_source_operands::{
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };
+use o3_store_forwarding::{
+    o3_load_forwarding_access, o3_store_forwarding_entry, O3StoreForwardingEntry,
+    O3StoreLoadForwardingPlan,
+};
 
-const U64_BYTES: usize = 8;
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -434,13 +439,11 @@ impl O3RuntimeState {
         let Some(load) = o3_load_forwarding_access(access) else {
             return;
         };
-        if load.address != pending.address || load.bytes != pending.bytes {
+        if load.range() != pending.plan.load_range() {
             return;
         }
 
-        if o3_load_data_value(data, pending.bytes)
-            .is_some_and(|value| o3_low_bytes_equal(value, pending.value, pending.bytes))
-        {
+        if pending.plan.matches_data(data) {
             self.stats
                 .record_store_to_load_forwarding_match(pending.operation);
             self.mark_trace_store_forwarding_match(pending.trace_sequence);
@@ -547,18 +550,9 @@ struct O3StoreForwardingObservation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct O3StoreForwardingEntry {
-    address: Address,
-    bytes: u32,
-    value: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct O3PendingLoadForwardingMatch {
     fetch_request: MemoryRequestId,
-    address: Address,
-    bytes: u32,
-    value: u64,
+    plan: O3StoreLoadForwardingPlan,
     operation: O3RuntimeLsqOperation,
     trace_sequence: Option<u64>,
 }
@@ -593,13 +587,6 @@ fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
         .filter(|physical| *physical != u32::MAX)
         .max()
         .map_or(1, |physical| physical.saturating_add(1))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct O3LoadForwardingAccess {
-    register: Register,
-    address: Address,
-    bytes: u32,
 }
 
 fn o3_branch_link_register_write(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {
@@ -637,66 +624,6 @@ fn o3_branch_squashed_target(
     } else {
         Some(fallthrough_target)
     }
-}
-
-fn o3_store_forwarding_entry(access: &MemoryAccessKind) -> Option<O3StoreForwardingEntry> {
-    match access {
-        MemoryAccessKind::Store {
-            address,
-            width,
-            value,
-        } => Some(O3StoreForwardingEntry {
-            address: Address::new(*address),
-            bytes: o3_lsq_bytes(width.bytes()),
-            value: *value,
-        }),
-        _ => None,
-    }
-}
-
-fn o3_load_forwarding_access(access: &MemoryAccessKind) -> Option<O3LoadForwardingAccess> {
-    match access {
-        MemoryAccessKind::Load {
-            rd, address, width, ..
-        } => Some(O3LoadForwardingAccess {
-            register: *rd,
-            address: Address::new(*address),
-            bytes: o3_lsq_bytes(width.bytes()),
-        }),
-        _ => None,
-    }
-}
-
-fn o3_load_register_value(
-    register_writes: &[rem6_isa_riscv::RegisterWrite],
-    register: Register,
-) -> Option<u64> {
-    register_writes
-        .iter()
-        .find(|write| write.register() == register)
-        .map(rem6_isa_riscv::RegisterWrite::value)
-}
-
-fn o3_load_data_value(data: &[u8], bytes: u32) -> Option<u64> {
-    let width = usize::try_from(bytes).ok()?;
-    if data.len() < width || width > U64_BYTES {
-        return None;
-    }
-    let mut value = 0_u64;
-    for (index, byte) in data.iter().take(width).copied().enumerate() {
-        value |= u64::from(byte) << (index * 8);
-    }
-    Some(value)
-}
-
-fn o3_low_bytes_equal(lhs: u64, rhs: u64, bytes: u32) -> bool {
-    let bits = bytes.saturating_mul(8);
-    let mask = if bits >= u64::BITS {
-        u64::MAX
-    } else {
-        (1_u64 << bits) - 1
-    };
-    (lhs & mask) == (rhs & mask)
 }
 
 fn o3_rename_write_count(record: &rem6_isa_riscv::RiscvExecutionRecord) -> u64 {
