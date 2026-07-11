@@ -1,8 +1,6 @@
 use rem6_isa_riscv::{MemoryAccessKind, Register, RegisterWrite};
 use rem6_memory::{AccessSize, Address, AddressRange};
 
-const U64_BYTES: usize = 8;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct O3StoreForwardingEntry {
     range: AddressRange,
@@ -11,38 +9,18 @@ pub(super) struct O3StoreForwardingEntry {
 
 impl O3StoreForwardingEntry {
     pub(super) fn relation(self, load_range: AddressRange) -> O3StoreLoadRelation {
+        let plan = O3StoreLoadForwardingPlan {
+            load_range,
+            store_range: self.range,
+            store_value: self.value,
+        };
         if self.range.contains_range(load_range) {
-            let byte_offset = usize::try_from(
-                load_range
-                    .start()
-                    .get()
-                    .checked_sub(self.range.start().get())
-                    .expect("contained load starts within store range"),
-            )
-            .expect("scalar store byte offset fits usize");
-            let shift = u32::try_from(
-                byte_offset
-                    .checked_mul(8)
-                    .expect("scalar store byte shift fits usize"),
-            )
-            .expect("scalar store byte shift fits u32");
-            return O3StoreLoadRelation::Forwarded(O3StoreLoadForwardingPlan {
-                load_range,
-                value: self.value.checked_shr(shift).unwrap_or(0),
-            });
+            return O3StoreLoadRelation::Forwarded(plan);
         }
         if self.range.overlaps(load_range) {
-            O3StoreLoadRelation::Blocked(self.suppression_reason(load_range))
+            O3StoreLoadRelation::Overlay(plan)
         } else {
             O3StoreLoadRelation::Independent(O3StoreLoadSuppressionReason::AddressMismatch)
-        }
-    }
-
-    fn suppression_reason(self, load_range: AddressRange) -> O3StoreLoadSuppressionReason {
-        if self.range.start() == load_range.start() {
-            O3StoreLoadSuppressionReason::ByteMismatch
-        } else {
-            O3StoreLoadSuppressionReason::AddressMismatch
         }
     }
 }
@@ -64,22 +42,22 @@ impl O3LoadForwardingAccess {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct O3StoreLoadForwardingPlan {
+pub(crate) struct O3StoreLoadForwardingPlan {
     load_range: AddressRange,
-    value: u64,
+    store_range: AddressRange,
+    store_value: u64,
 }
 
 impl O3StoreLoadForwardingPlan {
-    pub(super) fn data(self) -> Vec<u8> {
-        self.value.to_le_bytes()[..self.bytes_usize()].to_vec()
+    pub(crate) fn data(self) -> Vec<u8> {
+        assert_eq!(self.forwarded_bytes(), self.bytes());
+        let mut data = vec![0; self.bytes_usize()];
+        assert!(self.overlay_response_data(&mut data));
+        data
     }
 
     pub(super) const fn load_range(self) -> AddressRange {
         self.load_range
-    }
-
-    pub(super) fn value(self) -> u64 {
-        low_bytes(self.value, self.bytes())
     }
 
     pub(super) fn bytes(self) -> u32 {
@@ -87,23 +65,73 @@ impl O3StoreLoadForwardingPlan {
     }
 
     pub(super) fn matches_value(self, value: u64) -> bool {
-        low_bytes(value, self.bytes()) == self.value()
+        self.matches_data(&value.to_le_bytes())
     }
 
     pub(super) fn matches_data(self, data: &[u8]) -> bool {
-        o3_load_data_value(data, self.bytes()).is_some_and(|value| self.matches_value(value))
+        if data.len() < self.bytes_usize() {
+            return false;
+        }
+        let store_bytes = self.store_value.to_le_bytes();
+        self.overlap_addresses().all(|address| {
+            let load_index = self.load_byte_index(address);
+            let store_index = self.store_byte_index(address);
+            data[load_index] == store_bytes[store_index]
+        })
+    }
+
+    pub(crate) fn forwarded_bytes(self) -> u32 {
+        u32::try_from(self.overlap_addresses().count())
+            .expect("scalar forwarding byte count fits u32")
+    }
+
+    pub(crate) fn is_partial(self) -> bool {
+        self.forwarded_bytes() < self.bytes()
+    }
+
+    pub(crate) fn overlay_response_data(self, data: &mut [u8]) -> bool {
+        if data.len() < self.bytes_usize() {
+            return false;
+        }
+        let store_bytes = self.store_value.to_le_bytes();
+        for address in self.overlap_addresses() {
+            data[self.load_byte_index(address)] = store_bytes[self.store_byte_index(address)];
+        }
+        true
     }
 
     fn bytes_usize(self) -> usize {
         usize::try_from(self.load_range.size().bytes()).expect("scalar load width fits usize")
+    }
+
+    fn overlap_addresses(self) -> std::ops::Range<u64> {
+        self.load_range
+            .start()
+            .get()
+            .max(self.store_range.start().get())
+            ..self
+                .load_range
+                .end()
+                .get()
+                .min(self.store_range.end().get())
+    }
+
+    fn load_byte_index(self, address: u64) -> usize {
+        usize::try_from(address - self.load_range.start().get())
+            .expect("scalar load byte index fits usize")
+    }
+
+    fn store_byte_index(self, address: u64) -> usize {
+        usize::try_from(address - self.store_range.start().get())
+            .expect("scalar store byte index fits usize")
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum O3StoreLoadRelation {
     Forwarded(O3StoreLoadForwardingPlan),
+    Overlay(O3StoreLoadForwardingPlan),
     Independent(O3StoreLoadSuppressionReason),
-    Blocked(O3StoreLoadSuppressionReason),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,28 +195,6 @@ fn scalar_range(address: u64, bytes: usize) -> Option<AddressRange> {
     .ok()
 }
 
-fn o3_load_data_value(data: &[u8], bytes: u32) -> Option<u64> {
-    let width = usize::try_from(bytes).ok()?;
-    if data.len() < width || width > U64_BYTES {
-        return None;
-    }
-    let mut value = 0_u64;
-    for (index, byte) in data.iter().take(width).copied().enumerate() {
-        value |= u64::from(byte) << (index * 8);
-    }
-    Some(value)
-}
-
-fn low_bytes(value: u64, bytes: u32) -> u64 {
-    let bits = bytes.saturating_mul(8);
-    let mask = if bits >= u64::BITS {
-        u64::MAX
-    } else {
-        (1_u64 << bits) - 1
-    };
-    value & mask
-}
-
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::MemoryWidth;
@@ -196,7 +202,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn word_store_classifies_contained_independent_and_partial_load_ranges() {
+    fn word_store_classifies_contained_and_independent_load_ranges() {
         let store = o3_store_forwarding_entry(&MemoryAccessKind::Store {
             address: 0x9000,
             width: MemoryWidth::Word,
@@ -221,15 +227,81 @@ mod tests {
             store.relation(scalar_range(0x9004, 4).unwrap()),
             O3StoreLoadRelation::Independent(O3StoreLoadSuppressionReason::AddressMismatch)
         );
-        for (address, bytes, reason) in [
-            (0x8fff, 2, O3StoreLoadSuppressionReason::AddressMismatch),
-            (0x9000, 8, O3StoreLoadSuppressionReason::ByteMismatch),
-            (0x9003, 2, O3StoreLoadSuppressionReason::AddressMismatch),
+    }
+
+    #[test]
+    fn partial_store_overlap_plans_merge_only_store_owned_bytes() {
+        for (store, load_range, response, expected, forwarded_bytes) in [
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9001, 1).unwrap(),
+                    value: 0x5a,
+                },
+                scalar_range(0x9000, 4).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x80],
+                vec![0x11, 0x5a, 0x33, 0x80],
+                1,
+            ),
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9002, 2).unwrap(),
+                    value: 0x065a,
+                },
+                scalar_range(0x9000, 4).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x80],
+                vec![0x11, 0x22, 0x5a, 0x06],
+                2,
+            ),
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9000, 4).unwrap(),
+                    value: 0x0000_065a,
+                },
+                scalar_range(0x9000, 8).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x80, 0x55, 0x66, 0x77, 0x00],
+                vec![0x5a, 0x06, 0x00, 0x00, 0x55, 0x66, 0x77, 0x00],
+                4,
+            ),
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9004, 4).unwrap(),
+                    value: 0x0000_065a,
+                },
+                scalar_range(0x9000, 8).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x80, 0x55, 0x66, 0x77, 0x00],
+                vec![0x11, 0x22, 0x33, 0x80, 0x5a, 0x06, 0x00, 0x00],
+                4,
+            ),
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9000, 4).unwrap(),
+                    value: 0xddcc_bbaa,
+                },
+                scalar_range(0x9002, 4).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x44],
+                vec![0xcc, 0xdd, 0x33, 0x44],
+                2,
+            ),
+            (
+                O3StoreForwardingEntry {
+                    range: scalar_range(0x9000, 4).unwrap(),
+                    value: 0xddcc_bbaa,
+                },
+                scalar_range(0x8fff, 4).unwrap(),
+                vec![0x11, 0x22, 0x33, 0x44],
+                vec![0x11, 0xaa, 0xbb, 0xcc],
+                3,
+            ),
         ] {
-            assert_eq!(
-                store.relation(scalar_range(address, bytes).unwrap()),
-                O3StoreLoadRelation::Blocked(reason)
-            );
+            let O3StoreLoadRelation::Overlay(plan) = store.relation(load_range) else {
+                panic!("partial overlap should produce a response overlay");
+            };
+            assert_eq!(plan.forwarded_bytes(), forwarded_bytes);
+            let mut actual = response.clone();
+            assert!(plan.overlay_response_data(&mut actual));
+            assert_eq!(actual, expected);
+            assert!(plan.matches_data(&actual));
+            assert!(!plan.matches_data(&response));
         }
     }
 }

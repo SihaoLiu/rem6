@@ -194,7 +194,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
         "system.cpu.lsq0.operation.load.storeLoadForwardingCandidates",
         "system.cpu.lsq0.operation.load.storeLoadForwardingMatches",
     ] {
-        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 1, "resettable");
     }
     for path in [
         "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
@@ -202,19 +202,23 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_forwarding_snapshot() {
         "system.cpu.lsq0.storeLoadForwardingSuppressed",
         "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
     ] {
-        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 2, "resettable");
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 1, "resettable");
     }
     for path in [
         "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_address_mismatches",
-        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
         "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_address_mismatches",
-        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
         "system.cpu.lsq0.storeLoadForwardingAddressMismatches",
-        "system.cpu.lsq0.storeLoadForwardingByteMismatches",
         "system.cpu.lsq0.operation.load.storeLoadForwardingAddressMismatches",
-        "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
     ] {
         assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 1, "resettable");
+    }
+    for path in [
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
+        "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_forwarding_byte_mismatches",
+        "system.cpu.lsq0.storeLoadForwardingByteMismatches",
+        "system.cpu.lsq0.operation.load.storeLoadForwardingByteMismatches",
+    ] {
+        assert_stats_dump_sample(post_reset_dump, path, "counter", "Count", 0, "resettable");
     }
     for path in [
         "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_forwarding_suppressed",
@@ -348,11 +352,11 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
         Some(1)
     );
     for (suffix, value) in [
-        ("candidates", 0),
-        ("matches", 0),
-        ("suppressed", 2),
+        ("candidates", 1),
+        ("matches", 1),
+        ("suppressed", 1),
         ("address_mismatches", 1),
-        ("byte_mismatches", 1),
+        ("byte_mismatches", 0),
     ] {
         assert_stats_dump_sample(
             post_reset_dump,
@@ -380,11 +384,11 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
         );
     }
     for (suffix, value) in [
-        ("Candidates", 0),
-        ("Matches", 0),
-        ("Suppressed", 2),
+        ("Candidates", 1),
+        ("Matches", 1),
+        ("Suppressed", 1),
         ("AddressMismatches", 1),
-        ("ByteMismatches", 1),
+        ("ByteMismatches", 0),
     ] {
         assert_stats_dump_sample(
             post_reset_dump,
@@ -431,11 +435,11 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
         }
     }
     for (suffix, value) in [
-        ("candidates", 0),
-        ("matches", 0),
-        ("suppressed", 2),
+        ("candidates", 1),
+        ("matches", 1),
+        ("suppressed", 1),
         ("address_mismatches", 1),
-        ("byte_mismatches", 1),
+        ("byte_mismatches", 0),
     ] {
         assert_json_stat(
             &json,
@@ -446,11 +450,11 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
         );
     }
     for (suffix, value) in [
-        ("Candidates", 0),
-        ("Matches", 0),
-        ("Suppressed", 2),
+        ("Candidates", 1),
+        ("Matches", 1),
+        ("Suppressed", 1),
         ("AddressMismatches", 1),
-        ("ByteMismatches", 1),
+        ("ByteMismatches", 0),
     ] {
         assert_json_stat(
             &json,
@@ -492,26 +496,35 @@ fn rem6_run_m5_dump_reset_stats_scopes_multicore_o3_lsq_forwarding_by_active_har
 }
 
 #[test]
-fn rem6_run_o3_runtime_json_exposes_store_load_forwarding_suppression() {
-    for (path, address_mismatches, byte_mismatches) in [
+fn rem6_run_o3_runtime_json_classifies_store_load_forwarding_relations() {
+    for (path, candidates, matches, suppressed, address_mismatches, byte_mismatches) in [
         (
             detailed_o3_lsq_store_load_mismatch_binary(
                 "m5-switch-cpu-detailed-o3-lsq-store-load-address-suppression-json",
             ),
+            0,
+            0,
+            1,
             1,
             0,
         ),
         (
-            detailed_o3_lsq_store_load_byte_mismatch_binary(
-                "m5-switch-cpu-detailed-o3-lsq-store-load-byte-suppression-json",
+            detailed_o3_lsq_store_load_partial_overlap_binary(
+                "m5-switch-cpu-detailed-o3-lsq-store-load-partial-overlap-json",
             ),
-            0,
             1,
+            1,
+            0,
+            0,
+            0,
         ),
         (
-            detailed_o3_lsq_store_load_address_and_byte_mismatch_binary(
-                "m5-switch-cpu-detailed-o3-lsq-store-load-address-byte-suppression-json",
+            detailed_o3_lsq_store_load_address_mismatch_byte_load_binary(
+                "m5-switch-cpu-detailed-o3-lsq-store-load-address-byte-load-suppression-json",
             ),
+            0,
+            0,
+            1,
             1,
             0,
         ),
@@ -553,17 +566,17 @@ fn rem6_run_o3_runtime_json_exposes_store_load_forwarding_suppression() {
             (
                 "/store_load_forwarding_candidates",
                 "sim.cpu0.o3.lsq_store_to_load_forwarding_candidates",
-                0,
+                candidates,
             ),
             (
                 "/store_load_forwarding_matches",
                 "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
-                0,
+                matches,
             ),
             (
                 "/store_load_forwarding_suppressed",
                 "sim.cpu0.o3.lsq_store_to_load_forwarding_suppressed",
-                1,
+                suppressed,
             ),
             (
                 "/store_load_forwarding_address_mismatches",
@@ -578,7 +591,7 @@ fn rem6_run_o3_runtime_json_exposes_store_load_forwarding_suppression() {
             (
                 "/lsq/store_load_forwarding_suppressed",
                 "system.cpu.lsq0.storeLoadForwardingSuppressed",
-                1,
+                suppressed,
             ),
             (
                 "/lsq/store_load_forwarding_address_mismatches",
@@ -593,7 +606,7 @@ fn rem6_run_o3_runtime_json_exposes_store_load_forwarding_suppression() {
             (
                 "/lsq/operation/load/forwarding_suppressed",
                 "system.cpu.lsq0.operation.load.storeLoadForwardingSuppressed",
-                1,
+                suppressed,
             ),
             (
                 "/lsq/operation/load/forwarding_address_mismatches",

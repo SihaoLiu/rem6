@@ -133,6 +133,218 @@ fn detailed_word_store_forwards_contained_signed_and_unsigned_loads() {
 }
 
 #[test]
+fn detailed_partial_store_load_merges_transport_response_before_retirement() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        0x9001,
+        MemoryWidth::Byte,
+        0x5a,
+        0x9000,
+        MemoryWidth::Word,
+        true,
+    );
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::completed(delivery.request(), None).unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x11, 0x22, 0x33, 0x80]))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("partial forwarding should issue a transport request");
+
+    while core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .len()
+        == 2
+    {
+        scheduler.run_next_epoch();
+    }
+    let completed = core
+        .data_access_events()
+        .into_iter()
+        .find(|event| {
+            event.fetch_request_id().sequence() == 2
+                && event.kind() == RiscvDataAccessEventKind::Completed
+        })
+        .expect("younger partial load should complete before the older store");
+    assert_eq!(completed.data(), Some([0x11, 0x5a, 0x33, 0x80].as_slice()));
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert!(core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .is_none());
+
+    scheduler.run_until_idle_conservative();
+    let store = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older store should retire first");
+    assert_eq!(store.fetch_pc(), Address::new(0x8000));
+    assert_eq!(core.read_register(reg(6)), 0);
+    let load = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("partially forwarded load should retire second");
+    assert_eq!(load.fetch_pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(reg(6)), 0xffff_ffff_8033_5a11);
+}
+
+#[test]
+fn older_store_retry_cancels_issued_partial_overlay_request() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        0x9001,
+        MemoryWidth::Byte,
+        0x5a,
+        0x9000,
+        MemoryWidth::Word,
+        false,
+    );
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 10,
+            response: MemoryResponse::retry(delivery.request()),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::completed(
+                delivery.request(),
+                Some(vec![0x11, 0x22, 0x33, 0x80]),
+            )
+            .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    scheduler.run_until_idle_conservative();
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .is_empty());
+    assert!(!core.data_access_events().iter().any(|event| {
+        event.fetch_request_id().sequence() == 2
+            && event.kind() == RiscvDataAccessEventKind::Completed
+    }));
+    let retry = core
+        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("older store retry should drain before replay");
+    assert_eq!(
+        retry.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Retry)
+    );
+    assert!(core.has_unissued_data_access());
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(vec![0x11, 0x22, 0x33, 0x80]))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("cancelled partial load should replay through transport");
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(6)), 0);
+    core.record_ready_o3_scalar_memory_event_with_trace(true)
+        .expect("replayed younger load should retire");
+    assert_eq!(core.read_register(reg(6)), 0x8033_2211);
+}
+
+#[test]
+fn older_store_failure_cancels_partial_overlay_and_stale_response_is_ignored() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_store_load_core_with_accesses(
+        fetch_route,
+        data_route,
+        0x9001,
+        MemoryWidth::Byte,
+        0x5a,
+        0x9000,
+        MemoryWidth::Word,
+        false,
+    );
+
+    issue_data_without_response(&core, &mut scheduler, &transport);
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::RespondAfter {
+            delay: 20,
+            response: MemoryResponse::completed(
+                delivery.request(),
+                Some(vec![0x11, 0x22, 0x33, 0x80]),
+            )
+            .unwrap(),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let older_request = {
+        let state = core.state.lock().expect("riscv core lock");
+        state
+            .outstanding_data
+            .values()
+            .find(|access| access.fetch_request.sequence() == 1)
+            .expect("older store request")
+            .request
+    };
+
+    core.record_data_failure(older_request, scheduler.now());
+    scheduler.run_until_idle_conservative();
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .is_empty());
+    assert!(!core.data_access_events().iter().any(|event| {
+        event.fetch_request_id().sequence() == 2
+            && event.kind() == RiscvDataAccessEventKind::Completed
+    }));
+    assert_eq!(core.read_register(reg(6)), 0);
+}
+
+#[test]
 fn uncacheable_contained_store_load_pair_remains_serialized() {
     for (uncacheable_start, uncacheable_end) in [(0x9000, 0x9004), (0x9001, 0x9002)] {
         let (mut scheduler, transport, fetch_route, data_route) = memory_routes();

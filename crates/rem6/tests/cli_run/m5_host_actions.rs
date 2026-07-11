@@ -3013,7 +3013,7 @@ fn detailed_o3_lsq_store_load_mismatch_binary(name: &str) -> std::path::PathBuf 
     temp_binary(name, &elf)
 }
 
-fn detailed_o3_lsq_store_load_byte_mismatch_binary(name: &str) -> std::path::PathBuf {
+fn detailed_o3_lsq_store_load_partial_overlap_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
         u_type(0, 5, 0x17),             // auipc x5, 0
@@ -3034,7 +3034,7 @@ fn detailed_o3_lsq_store_load_byte_mismatch_binary(name: &str) -> std::path::Pat
     temp_binary(name, &elf)
 }
 
-fn detailed_o3_lsq_store_load_address_and_byte_mismatch_binary(name: &str) -> std::path::PathBuf {
+fn detailed_o3_lsq_store_load_address_mismatch_byte_load_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![
         m5op(M5_SWITCH_CPU),            // switch cpu0 to detailed
         u_type(0, 5, 0x17),             // auipc x5, 0

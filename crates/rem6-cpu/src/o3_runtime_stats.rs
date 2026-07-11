@@ -811,6 +811,47 @@ mod tests {
         assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 0);
         assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 0);
     }
+
+    #[test]
+    fn partial_forwarded_load_is_a_match_not_a_suppressed_byte_mismatch() {
+        let store = o3_store_forwarding_entry(&MemoryAccessKind::Store {
+            address: 0x9001,
+            width: MemoryWidth::Byte,
+            value: 0x5a,
+        })
+        .unwrap();
+        let load_register = Register::new(12).unwrap();
+        let load = MemoryAccessKind::Load {
+            rd: load_register,
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            signed: true,
+        };
+        let mut stats = O3RuntimeStats::default();
+
+        let (observation, pending) = stats.record_store_to_load_forwarding(
+            &load,
+            MemoryRequestId::new(AgentId::new(7), 1),
+            &[RegisterWrite::new(load_register, 0xffff_ffff_8033_5a11)],
+            Some(store),
+            Some(3),
+            true,
+        );
+
+        assert!(observation.candidate);
+        assert!(observation.matched);
+        assert!(observation.partial);
+        assert_eq!(observation.forwarded_bytes, 1);
+        assert!(!observation.suppressed);
+        assert!(!observation.address_mismatch);
+        assert!(!observation.byte_mismatch);
+        assert!(pending.is_none());
+        assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 0);
+        assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 0);
+        assert_eq!(stats.lsq_store_to_load_forwarding_byte_mismatches(), 0);
+    }
 }
 
 impl O3RuntimeStats {
@@ -1151,9 +1192,10 @@ impl O3RuntimeStats {
         let Some(load) = o3_load_forwarding_access(access) else {
             return (O3StoreForwardingObservation::default(), None);
         };
-        let plan = match prior_store.relation(load.range()) {
-            O3StoreLoadRelation::Forwarded(plan) => plan,
-            O3StoreLoadRelation::Independent(reason) | O3StoreLoadRelation::Blocked(reason) => {
+        let (plan, partial) = match prior_store.relation(load.range()) {
+            O3StoreLoadRelation::Forwarded(plan) => (plan, false),
+            O3StoreLoadRelation::Overlay(plan) => (plan, true),
+            O3StoreLoadRelation::Independent(reason) => {
                 self.record_store_to_load_forwarding_suppressed(o3_lsq_operation(access), reason);
                 return (
                     O3StoreForwardingObservation {
@@ -1180,6 +1222,8 @@ impl O3RuntimeStats {
         let mut observation = O3StoreForwardingObservation {
             candidate: true,
             matched: false,
+            partial,
+            forwarded_bytes: u64::from(plan.forwarded_bytes()),
             ..O3StoreForwardingObservation::default()
         };
         match o3_load_register_value(register_writes, load.register()) {

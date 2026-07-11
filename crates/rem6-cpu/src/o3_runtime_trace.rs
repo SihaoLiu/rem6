@@ -29,6 +29,8 @@ pub struct O3RuntimeTraceRecord {
     rename_map_entries: u64,
     store_load_forwarding_candidate: bool,
     store_load_forwarding_match: bool,
+    store_load_forwarding_partial: bool,
+    store_load_forwarding_bytes: u64,
     store_load_forwarding_suppressed: bool,
     store_load_forwarding_address_mismatch: bool,
     store_load_forwarding_byte_mismatch: bool,
@@ -330,6 +332,8 @@ impl O3RuntimeTraceRecord {
             rename_map_entries: u64::try_from(rename_map_entries).unwrap_or(u64::MAX),
             store_load_forwarding_candidate: false,
             store_load_forwarding_match: false,
+            store_load_forwarding_partial: false,
+            store_load_forwarding_bytes: 0,
             store_load_forwarding_suppressed: false,
             store_load_forwarding_address_mismatch: false,
             store_load_forwarding_byte_mismatch: false,
@@ -510,6 +514,14 @@ impl O3RuntimeTraceRecord {
         self.store_load_forwarding_match
     }
 
+    pub const fn store_load_forwarding_partial(self) -> bool {
+        self.store_load_forwarding_partial
+    }
+
+    pub const fn store_load_forwarding_bytes(self) -> u64 {
+        self.store_load_forwarding_bytes
+    }
+
     pub const fn store_load_forwarding_suppressed(self) -> bool {
         self.store_load_forwarding_suppressed
     }
@@ -595,6 +607,15 @@ impl O3RuntimeTraceRecord {
         self.store_load_forwarding_suppressed = suppressed;
         self.store_load_forwarding_address_mismatch = address_mismatch;
         self.store_load_forwarding_byte_mismatch = byte_mismatch;
+    }
+
+    pub(crate) fn set_store_load_forwarding_contribution(
+        &mut self,
+        partial: bool,
+        forwarded_bytes: u64,
+    ) {
+        self.store_load_forwarding_partial = partial;
+        self.store_load_forwarding_bytes = forwarded_bytes;
     }
 
     pub(crate) fn mark_store_load_forwarding_match(&mut self) {

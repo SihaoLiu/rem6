@@ -59,9 +59,9 @@ pub(crate) use o3_source_operands::{
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };
+pub(crate) use o3_store_forwarding::O3StoreLoadForwardingPlan;
 use o3_store_forwarding::{
     o3_load_forwarding_access, o3_store_forwarding_entry, O3StoreForwardingEntry,
-    O3StoreLoadForwardingPlan,
 };
 
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
@@ -371,6 +371,10 @@ impl O3RuntimeState {
             observation.address_mismatch,
             observation.byte_mismatch,
         );
+        trace_record.set_store_load_forwarding_contribution(
+            observation.partial,
+            observation.forwarded_bytes,
+        );
         if completed_live_scalar_memory.is_none() {
             self.record_data_access_sequence(execution, trace_record.sequence());
         }
@@ -544,6 +548,8 @@ struct O3StoreForwardingWindow {
 struct O3StoreForwardingObservation {
     candidate: bool,
     matched: bool,
+    partial: bool,
+    forwarded_bytes: u64,
     suppressed: bool,
     address_mismatch: bool,
     byte_mismatch: bool,

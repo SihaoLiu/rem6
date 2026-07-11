@@ -192,7 +192,7 @@ fn rem6_run_o3_detailed_aliasing_store_load_forwards_without_second_memory_reque
 }
 
 #[test]
-fn rem6_run_o3_detailed_store_load_width_mismatch_remains_serialized() {
+fn rem6_run_o3_detailed_store_load_width_mismatch_merges_store_byte() {
     let path = store_load_width_mismatch_binary("o3-store-load-width-mismatch");
     let json = store_load_json(&path, "direct", 900, None);
 
@@ -200,40 +200,47 @@ fn rem6_run_o3_detailed_store_load_width_mismatch_remains_serialized() {
     let older = event_at_pc(&json, OLDER_STORE_PC);
     let younger = event_at_pc(&json, YOUNGER_LOAD_PC);
     assert!(
-        event_u64(younger, "issue_tick") >= event_u64(older, "lsq_data_response_tick"),
-        "width-mismatched load must wait for the store response: older={older}, younger={younger}"
+        event_u64(younger, "issue_tick") < event_u64(older, "lsq_data_response_tick"),
+        "partially covered load should issue before the store response: older={older}, younger={younger}"
     );
-    assert_eq!(
-        younger
-            .pointer("/store_load_forwarding_suppressed")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        younger
-            .pointer("/store_load_forwarding_byte_mismatch")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
+    for field in [
+        "store_load_forwarding_candidate",
+        "store_load_forwarding_match",
+        "store_load_forwarding_partial",
+    ] {
+        assert_eq!(
+            younger.get(field).and_then(Value::as_bool),
+            Some(true),
+            "partial forwarding field {field}: {younger}"
+        );
+    }
+    assert_eq!(event_u64(younger, "store_load_forwarding_bytes"), 1);
+    for field in [
+        "store_load_forwarding_suppressed",
+        "store_load_forwarding_address_mismatch",
+        "store_load_forwarding_byte_mismatch",
+    ] {
+        assert_eq!(younger.get(field).and_then(Value::as_bool), Some(false));
+    }
     assert_json_stat(
         &json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        2,
         "monotonic",
     );
     assert_json_stat(
         &json,
         "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
         "Count",
-        0,
+        1,
         "monotonic",
     );
     assert_json_stat(
         &json,
         "sim.cpu0.o3.lsq_store_to_load_forwarding_byte_mismatches",
         "Count",
-        1,
+        0,
         "monotonic",
     );
     assert_eq!(data_memory_request_count(&json), 4);

@@ -16,8 +16,9 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_checker, riscv_cross_line::supports_cross_line_data_access, riscv_data_access,
-    riscv_execute, riscv_live_retire_window::stage_o3_scalar_memory_younger_window, CpuId,
+    o3_runtime::O3StoreLoadForwardingPlan, riscv_checker,
+    riscv_cross_line::supports_cross_line_data_access, riscv_data_access, riscv_execute,
+    riscv_live_retire_window::stage_o3_scalar_memory_younger_window, CpuId,
     InOrderPipelineCycleRecord, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
     RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessEvent,
     RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
@@ -332,7 +333,12 @@ impl RiscvCore {
             self.check_pmp_data_access(fetch_request, &access, size, address)?;
             self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
         }
-        let forwarded_load_data = self.forwarded_scalar_load_data(fetch_request, &access);
+        let (forwarded_load_data, store_load_overlay) =
+            match self.scalar_load_forwarding_plan(fetch_request, &access) {
+                Some(plan) if plan.is_partial() => (None, Some(plan)),
+                Some(plan) => (Some(plan.data()), None),
+                None => (None, None),
+            };
 
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
 
@@ -351,6 +357,7 @@ impl RiscvCore {
             request_byte_offset,
             line_layout: Some(line_layout),
             forwarded_load_data,
+            store_load_overlay,
         }))
     }
 
@@ -403,6 +410,7 @@ impl RiscvCore {
             request_byte_offset: 0,
             line_layout: None,
             forwarded_load_data: None,
+            store_load_overlay: None,
         }))
     }
 
@@ -652,7 +660,11 @@ impl RiscvCore {
 
         match delivery.response().status() {
             ResponseStatus::Completed => {
-                let data = delivery.response().data().map(ToOwned::to_owned);
+                let mut data = delivery.response().data().map(ToOwned::to_owned);
+                let forwarded = access.store_load_overlay.is_some_and(|plan| {
+                    data.as_mut()
+                        .is_some_and(|data| plan.overlay_response_data(data))
+                });
                 let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
                     record_load_completion(
@@ -684,7 +696,7 @@ impl RiscvCore {
                     completed_event,
                     delivery.tick(),
                     data.as_deref(),
-                    false,
+                    forwarded,
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
@@ -1071,6 +1083,7 @@ pub(crate) struct OutstandingDataAccess {
     pub(crate) request_byte_offset: usize,
     pub(crate) line_layout: Option<CacheLineLayout>,
     pub(crate) forwarded_load_data: Option<Vec<u8>>,
+    pub(crate) store_load_overlay: Option<O3StoreLoadForwardingPlan>,
 }
 
 impl OutstandingDataAccess {
@@ -1244,6 +1257,7 @@ impl OutstandingDataAccess {
             size: self.size,
             physical_address: self.physical_address,
             request_byte_offset: self.request_byte_offset,
+            store_load_overlay: self.store_load_overlay,
         }
     }
 
@@ -1263,6 +1277,7 @@ pub(crate) struct IssuedDataAccess {
     size: AccessSize,
     physical_address: Address,
     request_byte_offset: usize,
+    store_load_overlay: Option<O3StoreLoadForwardingPlan>,
 }
 
 impl IssuedDataAccess {

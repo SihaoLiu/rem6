@@ -6,14 +6,17 @@ use super::{
     deferred_o3_scalar_load_writeback, mark_data_access_event_kind, record_o3_data_access_outcome,
     OutstandingDataAccess,
 };
-use crate::{RiscvCore, RiscvCpuError, RiscvDataAccessEvent, RiscvDataAccessEventKind};
+use crate::{
+    o3_runtime::O3StoreLoadForwardingPlan, RiscvCore, RiscvCpuError, RiscvDataAccessEvent,
+    RiscvDataAccessEventKind,
+};
 
 impl RiscvCore {
-    pub(super) fn forwarded_scalar_load_data(
+    pub(super) fn scalar_load_forwarding_plan(
         &self,
         fetch_request: MemoryRequestId,
         access: &MemoryAccessKind,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<O3StoreLoadForwardingPlan> {
         let state = self.state.lock().expect("riscv core lock");
         if state.data_translation.is_some() {
             return None;
@@ -24,7 +27,7 @@ impl RiscvCore {
             .find(|event| event.fetch().request_id() == fetch_request)?;
         state
             .o3_runtime
-            .forwarded_scalar_load_data(execution.instruction(), access)
+            .scalar_load_forwarding_plan(execution.instruction(), access)
     }
 
     pub(crate) fn schedule_forwarded_load_completion(

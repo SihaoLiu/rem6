@@ -12,6 +12,7 @@ const MAX_LIVE_SCALAR_MEMORIES: usize = 3;
 enum O3ScalarMemoryWindowAdmission {
     Independent,
     Forwarded(O3StoreLoadForwardingPlan),
+    Overlay(O3StoreLoadForwardingPlan),
 }
 
 impl O3RuntimeState {
@@ -82,15 +83,18 @@ impl O3RuntimeState {
                 O3StoreLoadRelation::Forwarded(plan) => {
                     Some(O3ScalarMemoryWindowAdmission::Forwarded(plan))
                 }
+                O3StoreLoadRelation::Overlay(plan) => {
+                    Some(O3ScalarMemoryWindowAdmission::Overlay(plan))
+                }
                 O3StoreLoadRelation::Independent(_) => {
                     Some(O3ScalarMemoryWindowAdmission::Independent)
                 }
-                O3StoreLoadRelation::Blocked(_) => None,
             },
             _ => None,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn forwarded_scalar_load_data(
         &self,
         instruction: RiscvInstruction,
@@ -106,6 +110,22 @@ impl O3RuntimeState {
             return None;
         };
         Some(plan.data())
+    }
+
+    pub(crate) fn scalar_load_forwarding_plan(
+        &self,
+        instruction: RiscvInstruction,
+        access: &MemoryAccessKind,
+    ) -> Option<O3StoreLoadForwardingPlan> {
+        if !matches!(access, MemoryAccessKind::Load { .. }) {
+            return None;
+        }
+        let range = o3_load_forwarding_access(access)?.range();
+        match self.scalar_memory_window_admission(instruction, range)? {
+            O3ScalarMemoryWindowAdmission::Forwarded(plan)
+            | O3ScalarMemoryWindowAdmission::Overlay(plan) => Some(plan),
+            O3ScalarMemoryWindowAdmission::Independent => None,
+        }
     }
 
     pub(crate) fn can_stage_scalar_memory(&self, execution: &RiscvCpuExecutionEvent) -> bool {
@@ -358,31 +378,52 @@ mod tests {
     }
 
     #[test]
-    fn store_then_partially_overlapping_load_does_not_stage_second_live_row() {
-        for younger_address in [0x8fff, 0x9002, 0x9003] {
+    fn store_then_partially_overlapping_load_stages_transport_backed_second_row() {
+        for (younger_address, forwarded_bytes) in [(0x8fff, 3), (0x9002, 2), (0x9003, 1)] {
             let mut runtime = O3RuntimeState::default();
             let older = scalar_store_event(0x8000, 10, 0x9000);
             let younger = scalar_load_event(0x8004, 11, 13, 10, younger_address);
 
             assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-            assert!(
-                !runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32),
-                "younger load at {younger_address:#x} overlaps the older word store"
+            let access = younger.execution().memory_access().unwrap();
+            assert_eq!(
+                runtime
+                    .scalar_load_forwarding_plan(younger.instruction(), access)
+                    .map(O3StoreLoadForwardingPlan::forwarded_bytes),
+                Some(forwarded_bytes),
+                "younger load at {younger_address:#x} should retain the overlapping store bytes"
             );
-            assert_eq!(runtime.live_scalar_memories.len(), 1);
+            assert_eq!(
+                runtime.forwarded_scalar_load_data(younger.instruction(), access),
+                None,
+                "partial forwarding still requires a transport response"
+            );
+            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+            assert_eq!(runtime.live_scalar_memories.len(), 2);
         }
     }
 
     #[test]
-    fn store_then_same_address_width_mismatch_does_not_stage_second_live_row() {
+    fn byte_store_then_same_address_word_load_stages_partial_forwarding_pair() {
         let mut runtime = O3RuntimeState::default();
         let older =
             scalar_store_event_with_width_and_value(0x8000, 10, 0x9000, MemoryWidth::Byte, 0x2a);
         let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, 0x9000, MemoryWidth::Word);
 
         assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 1);
+        let access = younger.execution().memory_access().unwrap();
+        assert_eq!(
+            runtime
+                .scalar_load_forwarding_plan(younger.instruction(), access)
+                .map(O3StoreLoadForwardingPlan::forwarded_bytes),
+            Some(1)
+        );
+        assert_eq!(
+            runtime.forwarded_scalar_load_data(younger.instruction(), access),
+            None
+        );
+        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+        assert_eq!(runtime.live_scalar_memories.len(), 2);
     }
 
     #[test]

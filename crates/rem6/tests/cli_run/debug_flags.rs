@@ -3433,11 +3433,11 @@ fn detailed_o3_store_forwarding_mismatch_debug_binary(name: &str) -> std::path::
     detailed_o3_store_forwarding_suppression_debug_binary(name, 0b010, 4, 0b010, 0)
 }
 
-fn detailed_o3_store_forwarding_byte_mismatch_debug_binary(name: &str) -> std::path::PathBuf {
+fn detailed_o3_store_forwarding_partial_overlap_debug_binary(name: &str) -> std::path::PathBuf {
     detailed_o3_store_forwarding_suppression_debug_binary(name, 0b000, 0, 0b010, 11)
 }
 
-fn detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
+fn detailed_o3_store_forwarding_address_mismatch_byte_load_debug_binary(
     name: &str,
 ) -> std::path::PathBuf {
     detailed_o3_store_forwarding_suppression_debug_binary(name, 0b010, 4, 0b100, 0)
@@ -14251,8 +14251,20 @@ fn rem6_run_o3_debug_flag_emits_store_forwarding_events() {
 }
 
 #[test]
-fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
-    for (path, store_bytes, load_address, load_bytes, address_mismatches, byte_mismatches) in [
+fn rem6_run_o3_debug_flag_classifies_store_forwarding_relations() {
+    for (
+        path,
+        store_bytes,
+        load_address,
+        load_bytes,
+        candidates,
+        matches,
+        suppressed,
+        address_mismatches,
+        byte_mismatches,
+        partial,
+        forwarded_bytes,
+    ) in [
         (
             detailed_o3_store_forwarding_mismatch_debug_binary(
                 "debug-flags-o3-store-forwarding-address-mismatch",
@@ -14260,27 +14272,42 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             4,
             "0x80000044",
             4,
+            0,
+            0,
             1,
+            1,
+            0,
+            false,
             0,
         ),
         (
-            detailed_o3_store_forwarding_byte_mismatch_debug_binary(
-                "debug-flags-o3-store-forwarding-byte-mismatch",
+            detailed_o3_store_forwarding_partial_overlap_debug_binary(
+                "debug-flags-o3-store-forwarding-partial-overlap",
             ),
             1,
             "0x80000040",
             4,
+            1,
+            1,
             0,
+            0,
+            0,
+            true,
             1,
         ),
         (
-            detailed_o3_store_forwarding_address_and_byte_mismatch_debug_binary(
-                "debug-flags-o3-store-forwarding-address-byte-mismatch",
+            detailed_o3_store_forwarding_address_mismatch_byte_load_debug_binary(
+                "debug-flags-o3-store-forwarding-address-mismatch-byte-load",
             ),
             4,
             "0x80000044",
             1,
+            0,
+            0,
             1,
+            1,
+            0,
+            false,
             0,
         ),
     ] {
@@ -14318,9 +14345,9 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
         assert_eq!(trace.len(), 1);
         let record = &trace[0];
         for (field, value) in [
-            ("store_load_forwarding_candidates", 0),
-            ("store_load_forwarding_matches", 0),
-            ("store_load_forwarding_suppressed", 1),
+            ("store_load_forwarding_candidates", candidates),
+            ("store_load_forwarding_matches", matches),
+            ("store_load_forwarding_suppressed", suppressed),
             (
                 "store_load_forwarding_address_mismatches",
                 address_mismatches,
@@ -14337,9 +14364,9 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             .pointer("/event_summary")
             .expect("O3 trace event summary should be embedded with the trace record");
         for (field, value) in [
-            ("store_load_forwarding_candidates", 0),
-            ("store_load_forwarding_matches", 0),
-            ("store_load_forwarding_suppressed", 1),
+            ("store_load_forwarding_candidates", candidates),
+            ("store_load_forwarding_matches", matches),
+            ("store_load_forwarding_suppressed", suppressed),
             (
                 "store_load_forwarding_address_mismatches",
                 address_mismatches,
@@ -14356,9 +14383,9 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             .pointer("/lsq_operation/load")
             .expect("event summary LSQ load lane");
         for (field, value) in [
-            ("forwarding_candidates", 0),
-            ("forwarding_matches", 0),
-            ("forwarding_suppressed", 1),
+            ("forwarding_candidates", candidates),
+            ("forwarding_matches", matches),
+            ("forwarding_suppressed", suppressed),
             ("forwarding_address_mismatches", address_mismatches),
             ("forwarding_byte_mismatches", byte_mismatches),
         ] {
@@ -14408,8 +14435,8 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             1,
             1,
             0,
-            false,
-            false,
+            candidates == 1,
+            matches == 1,
             false,
         );
         assert_eq!(
@@ -14430,8 +14457,16 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             assert_eq!(json_record_bool(&events[3], field), false);
         }
         assert_eq!(
+            json_record_bool(&events[3], "store_load_forwarding_partial"),
+            false
+        );
+        assert_eq!(
+            json_record_u64(&events[3], "store_load_forwarding_bytes"),
+            0
+        );
+        assert_eq!(
             json_record_bool(&events[4], "store_load_forwarding_suppressed"),
-            true
+            suppressed == 1
         );
         assert_eq!(
             json_record_bool(&events[4], "store_load_forwarding_address_mismatch"),
@@ -14440,6 +14475,14 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
         assert_eq!(
             json_record_bool(&events[4], "store_load_forwarding_byte_mismatch"),
             byte_mismatches == 1
+        );
+        assert_eq!(
+            json_record_bool(&events[4], "store_load_forwarding_partial"),
+            partial
+        );
+        assert_eq!(
+            json_record_u64(&events[4], "store_load_forwarding_bytes"),
+            forwarded_bytes
         );
 
         for (path, unit, value) in [
@@ -14450,17 +14493,17 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             (
                 "sim.debug.o3_trace.store_load_forwarding_candidates",
                 "Count",
-                0,
+                candidates,
             ),
             (
                 "sim.debug.o3_trace.store_load_forwarding_matches",
                 "Count",
-                0,
+                matches,
             ),
             (
                 "sim.debug.o3_trace.store_load_forwarding_suppressed",
                 "Count",
-                1,
+                suppressed,
             ),
             (
                 "sim.debug.o3_trace.store_load_forwarding_address_mismatches",
@@ -14478,17 +14521,17 @@ fn rem6_run_o3_debug_flag_marks_store_forwarding_suppression_reasons() {
             (
                 "sim.debug.o3_trace.event.store_load_forwarding_candidates",
                 "Count",
-                0,
+                candidates,
             ),
             (
                 "sim.debug.o3_trace.event.store_load_forwarding_matches",
                 "Count",
-                0,
+                matches,
             ),
             (
                 "sim.debug.o3_trace.event.store_load_forwarding_suppressed",
                 "Count",
-                1,
+                suppressed,
             ),
             (
                 "sim.debug.o3_trace.event.store_load_forwarding_address_mismatches",

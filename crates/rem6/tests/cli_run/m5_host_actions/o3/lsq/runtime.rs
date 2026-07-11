@@ -1008,55 +1008,83 @@ fn rem6_run_o3_runtime_json_exposes_event_summary_lsq_matrix_stats() {
     }
 
     for (
-        suppressed_path,
+        classified_path,
+        candidates,
+        matches,
+        suppressed,
         mismatch_pointer,
         mismatch_stat_path,
         operation_mismatch_pointer,
         operation_mismatch_stat_path,
+        mismatches,
     ) in [
         (
             detailed_o3_lsq_store_load_mismatch_binary(
                 "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-address-stats",
             ),
+            0,
+            0,
+            1,
             "/store_load_forwarding_address_mismatches",
             "sim.cpu0.o3.event_summary.store_load_forwarding_address_mismatches",
             "/lsq_operation/load/forwarding_address_mismatches",
             "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_address_mismatches",
+            1,
         ),
         (
-            detailed_o3_lsq_store_load_byte_mismatch_binary(
-                "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-byte-stats",
+            detailed_o3_lsq_store_load_partial_overlap_binary(
+                "m5-switch-cpu-detailed-o3-event-summary-lsq-forwarding-partial-stats",
             ),
+            1,
+            1,
+            0,
             "/store_load_forwarding_byte_mismatches",
             "sim.cpu0.o3.event_summary.store_load_forwarding_byte_mismatches",
             "/lsq_operation/load/forwarding_byte_mismatches",
             "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_byte_mismatches",
+            0,
         ),
     ] {
-        let suppressed_json = o3_lsq_debug_runtime_json(&suppressed_path, "140");
-        let suppressed_summary = suppressed_json
+        let classified_json = o3_lsq_debug_runtime_json(&classified_path, "140");
+        let classified_summary = classified_json
             .pointer("/cores/0/o3_runtime/event_summary")
             .unwrap_or_else(|| {
-                panic!("O3 runtime JSON should expose suppressed event summary: {suppressed_json}")
+                panic!("O3 runtime JSON should expose classified event summary: {classified_json}")
             });
-        for (pointer, stat_path) in [
+        for (pointer, stat_path, value) in [
+            (
+                "/store_load_forwarding_candidates",
+                "sim.cpu0.o3.event_summary.store_load_forwarding_candidates",
+                candidates,
+            ),
+            (
+                "/store_load_forwarding_matches",
+                "sim.cpu0.o3.event_summary.store_load_forwarding_matches",
+                matches,
+            ),
             (
                 "/store_load_forwarding_suppressed",
                 "sim.cpu0.o3.event_summary.store_load_forwarding_suppressed",
+                suppressed,
             ),
             (
                 "/lsq_operation/load/forwarding_suppressed",
                 "sim.cpu0.o3.event_summary.lsq_operation.load.forwarding_suppressed",
+                suppressed,
             ),
-            (mismatch_pointer, mismatch_stat_path),
-            (operation_mismatch_pointer, operation_mismatch_stat_path),
+            (mismatch_pointer, mismatch_stat_path, mismatches),
+            (
+                operation_mismatch_pointer,
+                operation_mismatch_stat_path,
+                mismatches,
+            ),
         ] {
             assert_eq!(
-                suppressed_summary.pointer(pointer).and_then(Value::as_u64),
-                Some(1),
-                "runtime event-summary forwarding-suppression lane {pointer} should be positive: {suppressed_summary}"
+                classified_summary.pointer(pointer).and_then(Value::as_u64),
+                Some(value),
+                "runtime event-summary forwarding classification lane {pointer}: {classified_summary}"
             );
-            assert_json_stat(&suppressed_json, stat_path, "Count", 1, "monotonic");
+            assert_json_stat(&classified_json, stat_path, "Count", value, "monotonic");
         }
     }
 }
