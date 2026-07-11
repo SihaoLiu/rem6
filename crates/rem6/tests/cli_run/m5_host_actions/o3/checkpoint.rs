@@ -1,6 +1,149 @@
 use super::*;
 
 #[test]
+fn rem6_run_checkpoints_and_restores_live_retire_gate_with_attached_scheduler() {
+    let path = live_retire_gate_div_witness_binary(
+        "m5-switch-cpu-o3-live-retire-gate-scheduler-checkpoint",
+    );
+    let timing_output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        timing_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&timing_output.stderr)
+    );
+    let timing: Value = serde_json::from_slice(&timing_output.stdout)
+        .unwrap_or_else(|error| panic!("invalid timing stdout JSON: {error}"));
+    let checkpoint_tick = timing
+        .pointer("/simulation/final_tick")
+        .and_then(Value::as_u64)
+        .expect("timing run final tick");
+    let restore_tick = checkpoint_tick.saturating_add(1);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--m5-switch-cpu-mode",
+            "detailed",
+            "--host-checkpoint",
+            &format!("{checkpoint_tick}:live-div-gate"),
+            "--host-restore-checkpoint",
+            &format!("{restore_tick}:live-div-gate"),
+            "--debug-flags",
+            "O3,HostAction",
+            "--dump-memory",
+            "0x80000060:4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("01000000")
+    );
+    assert_eq!(
+        json.pointer("/host_actions/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let restore = json
+        .pointer("/host_actions/checkpoint_restores/0")
+        .unwrap_or_else(|| panic!("missing live-gate restore metadata: {json}"));
+    assert_eq!(
+        restore.pointer("/label").and_then(Value::as_str),
+        Some("live-div-gate")
+    );
+    let scheduler_chunk = restore_component_chunk(restore, "scheduler0", "scheduler");
+    assert_eq!(
+        scheduler_chunk.pointer("/name").and_then(Value::as_str),
+        Some("scheduler")
+    );
+    assert!(
+        scheduler_chunk
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "scheduler checkpoint chunk should carry payload bytes: {scheduler_chunk}"
+    );
+    assert!(
+        scheduler_chunk
+            .pointer("/payload_checksum")
+            .and_then(Value::as_str)
+            .is_some_and(|checksum| !checksum.is_empty()),
+        "scheduler checkpoint chunk should carry a checksum: {scheduler_chunk}"
+    );
+    let chunk = restore_component_chunk(restore, "cpu0", "o3-runtime-state");
+    let runtime = chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("missing decoded live-gate O3 payload: {chunk}"));
+    assert!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value >= 1),
+        "checkpoint should capture a live ROB row: {runtime}"
+    );
+    assert!(
+        runtime
+            .pointer("/snapshot_rename_map_entries")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value >= 1),
+        "checkpoint should capture the live rename owner: {runtime}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.live_retire_gate.scheduled_waits",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_checkpoints_o3_runtime_state_after_detailed_execution() {
     let path = detailed_o3_checkpoint_state_binary("m5-switch-cpu-detailed-o3-checkpoint-state");
 
