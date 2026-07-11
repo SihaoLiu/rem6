@@ -35,9 +35,11 @@ use crate::{
     VirtioSplitQueueCheckpointPort,
 };
 
-pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
+pub use execution_mode_checkpoint::{
+    decode_execution_mode_authority_from_manifest, ExecutionModeCheckpointError,
+};
 use execution_mode_checkpoint::{
-    decode_execution_modes, encode_execution_modes, execution_mode_checkpoint_component,
+    encode_execution_modes, execution_mode_checkpoint_component,
     manifest_has_execution_mode_checkpoint, EXECUTION_MODE_CHECKPOINT_CHUNK,
 };
 use stats_sync::StatsSyncHook;
@@ -620,7 +622,9 @@ impl SystemActionExecutor {
         manifest: &CheckpointManifest,
     ) -> Result<(BTreeMap<ExecutionModeTarget, ExecutionMode>, bool), SystemError> {
         let component = execution_mode_checkpoint_component();
-        if !manifest_has_execution_mode_checkpoint(manifest) {
+        let modes = decode_execution_mode_authority_from_manifest(manifest)
+            .map_err(SystemError::ExecutionModeCheckpoint)?;
+        let Some(modes) = modes else {
             let modes = BTreeMap::new();
             if self.execution_mode_checkpoint_registered {
                 checkpoints
@@ -632,23 +636,13 @@ impl SystemActionExecutor {
                     .map_err(SystemError::Checkpoint)?;
             }
             return Ok((modes, self.execution_mode_checkpoint_registered));
-        }
+        };
 
         match checkpoints.register(component.clone()) {
             Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
             Err(error) => return Err(SystemError::Checkpoint(error)),
         }
-
-        let payload = checkpoints
-            .chunk(&component, EXECUTION_MODE_CHECKPOINT_CHUNK)
-            .ok_or_else(|| ExecutionModeCheckpointError::MissingChunk {
-                component: component.clone(),
-                name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
-            })
-            .map_err(SystemError::ExecutionModeCheckpoint)?;
-        decode_execution_modes(&component, payload)
-            .map(|modes| (modes, true))
-            .map_err(SystemError::ExecutionModeCheckpoint)
+        Ok((modes, true))
     }
 
     pub fn attach_memory_checkpoint_bank(

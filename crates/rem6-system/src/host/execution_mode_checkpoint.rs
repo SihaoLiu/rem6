@@ -77,6 +77,29 @@ pub(super) fn manifest_has_execution_mode_checkpoint(manifest: &CheckpointManife
         .any(|state| state.component().as_str() == EXECUTION_MODE_CHECKPOINT_COMPONENT)
 }
 
+pub fn decode_execution_mode_authority_from_manifest(
+    manifest: &CheckpointManifest,
+) -> Result<Option<BTreeMap<ExecutionModeTarget, ExecutionMode>>, ExecutionModeCheckpointError> {
+    let component = execution_mode_checkpoint_component();
+    let Some(state) = manifest
+        .states()
+        .iter()
+        .find(|state| state.component() == &component)
+    else {
+        return Ok(None);
+    };
+    let payload = state
+        .chunks()
+        .iter()
+        .find(|chunk| chunk.name() == EXECUTION_MODE_CHECKPOINT_CHUNK)
+        .map(|chunk| chunk.payload())
+        .ok_or_else(|| ExecutionModeCheckpointError::MissingChunk {
+            component: component.clone(),
+            name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
+        })?;
+    decode_execution_modes(&component, payload).map(Some)
+}
+
 pub(super) fn encode_execution_modes(
     modes: &BTreeMap<ExecutionModeTarget, ExecutionMode>,
 ) -> Vec<u8> {
@@ -193,5 +216,53 @@ fn execution_mode_from_code(
             name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
             code,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_checkpoint::{CheckpointChunk, CheckpointState};
+
+    use super::*;
+
+    #[test]
+    fn manifest_decoder_returns_none_without_execution_mode_authority() {
+        let manifest = CheckpointManifest::new("without-authority", 17, Vec::new());
+
+        assert_eq!(
+            decode_execution_mode_authority_from_manifest(&manifest),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn manifest_decoder_rejects_duplicate_execution_mode_targets() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&2_u64.to_le_bytes());
+        for mode in [2_u8, 1_u8] {
+            payload.extend_from_slice(&4_u64.to_le_bytes());
+            payload.extend_from_slice(b"cpu0");
+            payload.push(mode);
+        }
+        let component = execution_mode_checkpoint_component();
+        let manifest = CheckpointManifest::new(
+            "duplicate-authority",
+            17,
+            vec![CheckpointState::new(
+                component.clone(),
+                vec![CheckpointChunk::new(
+                    EXECUTION_MODE_CHECKPOINT_CHUNK,
+                    payload,
+                )],
+            )],
+        );
+
+        assert_eq!(
+            decode_execution_mode_authority_from_manifest(&manifest),
+            Err(ExecutionModeCheckpointError::DuplicateTarget {
+                component,
+                target: ExecutionModeTarget::new("cpu0"),
+            })
+        );
     }
 }

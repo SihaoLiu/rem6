@@ -197,7 +197,7 @@ impl Rem6O3TraceRecord {
             o3_trace_execution_mode_authority_to_json(&self.target, self.execution_mode);
         let checkpoint_restore_label = self.checkpoint_restore.as_ref().map_or_else(
             || "null".to_string(),
-            |restore| format!("\"{}\"", json_escape(&restore.label)),
+            |restore| format!("\"{}\"", json_escape(&restore.latest_label)),
         );
         let checkpoint_restore_labels = self.checkpoint_restore.as_ref().map_or_else(
             || "[]".to_string(),
@@ -224,9 +224,9 @@ impl Rem6O3TraceRecord {
             .map_or((0, 0, 0, 0), |restore| {
                 (
                     restore.count,
-                    restore.tick,
-                    restore.manifest_tick,
-                    restore.payload_bytes,
+                    restore.latest_tick,
+                    restore.latest_manifest_tick,
+                    restore.latest_payload_bytes,
                 )
             });
         format!(

@@ -4981,20 +4981,15 @@ fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
         .unwrap_or_else(|| panic!("missing JSON array field {field}: {record:?}"))
 }
 
-fn assert_o3_restore_scope_components_match_latest(restore_scope: &Value, latest_restore: &Value) {
-    assert_eq!(
-        restore_scope.pointer("/components"),
-        latest_restore.pointer("/components"),
-        "O3 restore scope should expose the latest restored component payload metadata: scope {restore_scope}; latest {latest_restore}"
-    );
-    let components = restore_scope
+fn o3_runtime_restore_component_and_chunk(restore: &Value) -> (&Value, &Value) {
+    let components = restore
         .pointer("/components")
         .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing O3 restore components: {restore_scope}"));
+        .unwrap_or_else(|| panic!("missing O3 restore components: {restore}"));
     let cpu0 = components
         .iter()
         .find(|component| component.pointer("/component").and_then(Value::as_str) == Some("cpu0"))
-        .unwrap_or_else(|| panic!("missing CPU0 restore component: {restore_scope}"));
+        .unwrap_or_else(|| panic!("missing CPU0 restore component: {restore}"));
     let o3_runtime = cpu0
         .pointer("/chunks")
         .and_then(Value::as_array)
@@ -5004,20 +4999,112 @@ fn assert_o3_restore_scope_components_match_latest(restore_scope: &Value, latest
             })
         })
         .unwrap_or_else(|| panic!("missing CPU0 O3 runtime restore chunk: {cpu0}"));
-    assert!(
-        o3_runtime
-            .pointer("/payload_bytes")
-            .and_then(Value::as_u64)
-            .is_some_and(|bytes| bytes > 0),
-        "O3 runtime restore chunk should expose payload bytes: {o3_runtime}"
+    (cpu0, o3_runtime)
+}
+
+fn assert_o3_restore_scope_stats_match_latest(
+    stdout: &str,
+    restore_scope: &Value,
+    latest_restore: &Value,
+) {
+    assert_eq!(
+        restore_scope.pointer("/components"),
+        latest_restore.pointer("/components"),
+        "O3 restore scope should expose the latest restored component payload metadata: scope {restore_scope}; latest {latest_restore}"
     );
+    let (cpu0, o3_runtime) = o3_runtime_restore_component_and_chunk(restore_scope);
+    let component_chunks = json_record_u64(cpu0, "chunk_count");
+    let component_payload_bytes = json_record_u64(cpu0, "payload_bytes");
+    let chunk_payload_bytes = json_record_u64(o3_runtime, "payload_bytes");
+    let chunk_payload_checksum = o3_runtime
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .and_then(|checksum| u64::from_str_radix(checksum.strip_prefix("0x")?, 16).ok())
+        .unwrap_or_else(|| panic!("missing O3 runtime payload checksum: {o3_runtime}"));
     assert!(
-        o3_runtime
-            .pointer("/payload_checksum")
-            .and_then(Value::as_str)
-            .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
-        "O3 runtime restore chunk should expose payload checksum: {o3_runtime}"
+        component_chunks > 0 && component_payload_bytes > 0 && chunk_payload_bytes > 0,
+        "latest CPU0 restore metadata should contain non-empty chunks: {cpu0}"
     );
+
+    for (path, unit, value) in [
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.chunks",
+            "Count",
+            component_chunks,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.payload_bytes",
+            "Byte",
+            component_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.chunks",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.payload_bytes",
+            "Byte",
+            chunk_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
+            "Unspecified",
+            chunk_payload_checksum,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.components",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.chunks",
+            "Count",
+            component_chunks,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.payload_bytes",
+            "Byte",
+            component_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.components",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.chunks",
+            "Count",
+            component_chunks,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.payload_bytes",
+            "Byte",
+            component_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.chunk.o3_runtime_state.chunks",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.chunk.o3_runtime_state.payload_bytes",
+            "Byte",
+            chunk_payload_bytes,
+        ),
+        (
+            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.component.cpu0.chunk.o3_runtime_state.payload_checksum_accumulator",
+            "Unspecified",
+            chunk_payload_checksum,
+        ),
+    ] {
+        assert_stat(stdout, path, unit, value, "monotonic");
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -7515,7 +7602,7 @@ fn rem6_run_o3_debug_flag_counts_multiple_checkpoint_restore_scopes() {
     let restore_scope = record
         .pointer("/checkpoint_restore")
         .unwrap_or_else(|| panic!("O3 restore scope should be structured: {record}"));
-    assert_o3_restore_scope_components_match_latest(restore_scope, latest_restore);
+    assert_o3_restore_scope_stats_match_latest(&stdout, restore_scope, latest_restore);
 
     let events = record
         .pointer("/events")
@@ -7558,16 +7645,6 @@ fn rem6_run_o3_debug_flag_counts_multiple_checkpoint_restore_scopes() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             latest_payload_bytes,
-        ),
-        (
-            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
-            "Count",
-            2,
-        ),
-        (
-            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.components",
-            "Count",
-            2,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");
@@ -7647,6 +7724,20 @@ fn rem6_run_o3_debug_flag_tracks_distinct_checkpoint_restore_labels() {
         .collect::<Vec<_>>();
     assert_eq!(restore_labels, ["debug-baseline", "debug-replayed"]);
     let latest_restore = &restores[1];
+    let first_restore_checksum = o3_runtime_restore_component_and_chunk(&restores[0])
+        .1
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .expect("first O3 runtime restore checksum");
+    let latest_restore_checksum = o3_runtime_restore_component_and_chunk(latest_restore)
+        .1
+        .pointer("/payload_checksum")
+        .and_then(Value::as_str)
+        .expect("latest O3 runtime restore checksum");
+    assert_ne!(
+        first_restore_checksum, latest_restore_checksum,
+        "distinct checkpoints should expose distinct O3 runtime payloads"
+    );
     let latest_restore_tick = json_record_u64(latest_restore, "tick");
     let latest_manifest_tick = json_record_u64(latest_restore, "manifest_tick");
     let latest_payload_bytes = json_record_u64(latest_restore, "payload_bytes");
@@ -7691,7 +7782,7 @@ fn rem6_run_o3_debug_flag_tracks_distinct_checkpoint_restore_labels() {
     let restore_scope = record
         .pointer("/checkpoint_restore")
         .unwrap_or_else(|| panic!("O3 restore scope should be structured: {record}"));
-    assert_o3_restore_scope_components_match_latest(restore_scope, latest_restore);
+    assert_o3_restore_scope_stats_match_latest(&stdout, restore_scope, latest_restore);
 
     let events = record
         .pointer("/events")
@@ -7734,16 +7825,6 @@ fn rem6_run_o3_debug_flag_tracks_distinct_checkpoint_restore_labels() {
             "sim.debug.o3_trace.checkpoint_restore_payload_bytes",
             "Byte",
             latest_payload_bytes,
-        ),
-        (
-            "sim.debug.o3_trace.checkpoint_restore.component.cpu0.components",
-            "Count",
-            2,
-        ),
-        (
-            "sim.debug.o3_trace.checkpoint_restore.target.cpu0.components",
-            "Count",
-            2,
         ),
     ] {
         assert_stat(&stdout, path, unit, value, "monotonic");

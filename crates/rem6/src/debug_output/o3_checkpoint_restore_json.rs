@@ -26,16 +26,16 @@ const O3_CHECKPOINT_RESTORE_AUTHORITY_STAT_LANES: [(&str, usize); 3] = [
 pub(super) struct Rem6O3CheckpointRestoreScope {
     pub(super) count: u64,
     pub(super) labels: Vec<String>,
-    pub(super) label: String,
-    pub(super) tick: u64,
-    pub(super) manifest_tick: u64,
-    pub(super) payload_bytes: u64,
+    pub(super) latest_label: String,
+    pub(super) latest_tick: u64,
+    pub(super) latest_manifest_tick: u64,
+    pub(super) latest_payload_bytes: u64,
     pub(super) execution_mode_authority_present_manifests: u64,
     pub(super) execution_mode_authority_cleared_manifests: u64,
     pub(super) execution_mode_authority_decode_errors: u64,
-    pub(super) execution_modes: Vec<Rem6HostExecutionModeSummary>,
-    pub(super) components: Vec<Rem6HostCheckpointComponentSummary>,
-    component_stat_components: Vec<Rem6HostCheckpointComponentSummary>,
+    aggregate_execution_modes: Vec<Rem6HostExecutionModeSummary>,
+    latest_execution_mode_targets: BTreeSet<String>,
+    pub(super) latest_components: Vec<Rem6HostCheckpointComponentSummary>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -74,7 +74,7 @@ struct Rem6O3CheckpointRestoreComponentStatTotals {
 impl Rem6O3CheckpointRestoreScope {
     pub(super) fn from_summaries(summaries: &[Rem6HostCheckpointSummary]) -> Option<Self> {
         let summary = summaries.last()?;
-        let execution_modes = summaries
+        let aggregate_execution_modes = summaries
             .iter()
             .flat_map(|summary| summary.execution_modes.iter().cloned())
             .collect::<Vec<_>>();
@@ -84,10 +84,10 @@ impl Rem6O3CheckpointRestoreScope {
                 .iter()
                 .map(|summary| summary.label.clone())
                 .collect(),
-            label: summary.label.clone(),
-            tick: summary.tick,
-            manifest_tick: summary.manifest_tick,
-            payload_bytes: summary.payload_bytes,
+            latest_label: summary.label.clone(),
+            latest_tick: summary.tick,
+            latest_manifest_tick: summary.manifest_tick,
+            latest_payload_bytes: summary.payload_bytes,
             execution_mode_authority_present_manifests: summaries
                 .iter()
                 .filter(|summary| summary.execution_mode_authority_present)
@@ -100,22 +100,23 @@ impl Rem6O3CheckpointRestoreScope {
                 .iter()
                 .filter(|summary| summary.execution_mode_authority_decode_error)
                 .count() as u64,
-            execution_modes,
-            components: summary.components.clone(),
-            component_stat_components: summaries
+            aggregate_execution_modes,
+            latest_execution_mode_targets: summary
+                .execution_modes
                 .iter()
-                .flat_map(|summary| summary.components.iter().cloned())
+                .map(|authority| authority.target.clone())
                 .collect(),
+            latest_components: summary.components.clone(),
         })
     }
 
     pub(super) fn execution_mode_authority_targets(&self) -> u64 {
-        self.execution_modes.len() as u64
+        self.aggregate_execution_modes.len() as u64
     }
 
     pub(super) fn execution_mode_authority_mode_counts(&self) -> [u64; 3] {
         let mut counts = [0_u64; 3];
-        for execution_mode in &self.execution_modes {
+        for execution_mode in &self.aggregate_execution_modes {
             let Some(index) = execution_mode_authority_lane_index(execution_mode.mode) else {
                 continue;
             };
@@ -178,12 +179,12 @@ impl Rem6O3CheckpointRestoreComponentStatTotals {
         stat_path_segment: &impl Fn(&str) -> String,
     ) -> Self {
         let restore_targets = restore
-            .execution_modes
+            .latest_execution_mode_targets
             .iter()
-            .map(|authority| stat_path_segment(&authority.target))
+            .map(|target| stat_path_segment(target))
             .collect::<BTreeSet<_>>();
         let mut totals = Self::default();
-        for component in &restore.component_stat_components {
+        for component in &restore.latest_components {
             let component_path = stat_path_segment(&component.component);
             totals
                 .components
@@ -353,17 +354,17 @@ pub(super) fn o3_checkpoint_restore_to_json(
         restore.execution_mode_authority_present_manifests,
         restore.execution_mode_authority_cleared_manifests,
         restore.execution_mode_authority_decode_errors,
-        &restore.execution_modes,
+        &restore.aggregate_execution_modes,
     );
     format!(
         "{{\"count\":{},\"labels\":[{}],\"latest_label\":\"{}\",\"latest_tick\":{},\"latest_manifest_tick\":{},\"latest_payload_bytes\":{},\"components\":{},\"execution_mode_authority\":{}}}",
         restore.count,
         labels,
-        json_escape(&restore.label),
-        restore.tick,
-        restore.manifest_tick,
-        restore.payload_bytes,
-        checkpoint_components_to_json(&restore.components),
+        json_escape(&restore.latest_label),
+        restore.latest_tick,
+        restore.latest_manifest_tick,
+        restore.latest_payload_bytes,
+        checkpoint_components_to_json(&restore.latest_components),
         authority
     )
 }
@@ -379,7 +380,7 @@ pub(super) fn o3_trace_checkpoint_restore_authority_stats(
             continue;
         };
         for (target, counts) in
-            execution_mode_target_counts(&restore.execution_modes, &stat_path_segment)
+            execution_mode_target_counts(&restore.aggregate_execution_modes, &stat_path_segment)
         {
             let totals = target_modes.entry(target).or_default();
             for (index, count) in counts.into_iter().enumerate() {
@@ -432,7 +433,7 @@ pub(in crate::debug_output) fn o3_trace_cpu_checkpoint_restore_authority_stats(
             continue;
         };
         for (target, counts) in
-            execution_mode_target_counts(&restore.execution_modes, &stat_path_segment)
+            execution_mode_target_counts(&restore.aggregate_execution_modes, &stat_path_segment)
         {
             let target_modes = cpu_target_modes.entry(record.cpu()).or_default();
             let totals = target_modes.entry(target).or_default();
@@ -616,4 +617,67 @@ fn execution_mode_authority_lane_index(mode: &str) -> Option<usize> {
     EXECUTION_MODE_AUTHORITY_JSON_LANES
         .iter()
         .position(|lane| *lane == mode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_component_target_stats_ignore_historical_execution_mode_authority() {
+        let older = restore_summary(
+            "older",
+            true,
+            false,
+            vec![Rem6HostExecutionModeSummary {
+                target: "cpu0".to_string(),
+                mode: "detailed",
+            }],
+        );
+        let latest = restore_summary("latest", false, true, Vec::new());
+        let restore = Rem6O3CheckpointRestoreScope::from_summaries(&[older, latest]).unwrap();
+
+        assert_eq!(restore.execution_mode_authority_targets(), 1);
+        let stats =
+            Rem6O3CheckpointRestoreComponentStatTotals::from_restore(&restore, &|segment| {
+                segment.replace('-', "_")
+            });
+        assert!(stats.components.contains_key("cpu0"));
+        assert!(stats.targets.is_empty());
+        assert!(stats.target_components.is_empty());
+        assert!(stats.target_chunks.is_empty());
+    }
+
+    fn restore_summary(
+        label: &str,
+        execution_mode_authority_present: bool,
+        execution_mode_authority_cleared: bool,
+        execution_modes: Vec<Rem6HostExecutionModeSummary>,
+    ) -> Rem6HostCheckpointSummary {
+        Rem6HostCheckpointSummary {
+            tick: 17,
+            event: 19,
+            source: 0,
+            label: label.to_string(),
+            manifest_tick: 13,
+            component_count: 1,
+            chunk_count: 1,
+            payload_bytes: 8,
+            execution_mode_authority_present,
+            execution_mode_authority_cleared,
+            execution_mode_authority_decode_error: false,
+            execution_modes,
+            components: vec![Rem6HostCheckpointComponentSummary {
+                component: "cpu0".to_string(),
+                chunk_count: 1,
+                payload_bytes: 8,
+                chunks: vec![Rem6HostCheckpointChunkSummary {
+                    name: "o3-runtime-state".to_string(),
+                    payload_bytes: 8,
+                    payload_checksum: 11,
+                    o3_runtime: None,
+                }],
+            }],
+        }
+    }
 }

@@ -4,9 +4,9 @@ pub(crate) mod transfer_stats;
 use rem6_cpu::{O3RuntimeCheckpointPayload, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation};
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
-    ExecutionMode, ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
-    ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
-    SystemActionOutcome, SystemHostController,
+    decode_execution_mode_authority_from_manifest, ExecutionMode, ExecutionModeSwitchCheckerGate,
+    ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
+    ExecutionModeSwitchStateTransferComponent, SystemActionOutcome, SystemHostController,
 };
 
 use self::o3_stats_dump_aliases::samples_with_gem5_aliases;
@@ -237,45 +237,21 @@ fn checkpoint_summary_from_manifest(
 fn execution_mode_authority_from_manifest(
     manifest: &rem6_checkpoint::CheckpointManifest,
 ) -> (bool, bool, Vec<Rem6HostExecutionModeSummary>) {
-    let Some(state) = manifest
-        .states()
-        .iter()
-        .find(|state| state.component().as_str() == "host.execution_modes")
-    else {
-        return (false, false, Vec::new());
-    };
-    let Some(chunk) = state.chunks().iter().find(|chunk| chunk.name() == "modes") else {
-        return (false, true, Vec::new());
-    };
-    match decode_execution_mode_authority(chunk.payload()) {
-        Some(modes) => (true, false, modes),
-        None => (false, true, Vec::new()),
+    match decode_execution_mode_authority_from_manifest(manifest) {
+        Ok(Some(modes)) => (
+            true,
+            false,
+            modes
+                .into_iter()
+                .map(|(target, mode)| Rem6HostExecutionModeSummary {
+                    target: target.as_str().to_string(),
+                    mode: execution_mode_name(mode),
+                })
+                .collect(),
+        ),
+        Ok(None) => (false, false, Vec::new()),
+        Err(_) => (false, true, Vec::new()),
     }
-}
-
-fn decode_execution_mode_authority(payload: &[u8]) -> Option<Vec<Rem6HostExecutionModeSummary>> {
-    let mut cursor = 0;
-    let count = read_checkpoint_u64(payload, &mut cursor)? as usize;
-    let mut modes = Vec::new();
-    for _ in 0..count {
-        let target_len = read_checkpoint_u64(payload, &mut cursor)? as usize;
-        let target_end = cursor.checked_add(target_len)?;
-        let target = std::str::from_utf8(payload.get(cursor..target_end)?)
-            .ok()?
-            .to_string();
-        cursor = target_end;
-        let mode = execution_mode_name_from_code(*payload.get(cursor)?)?;
-        cursor += 1;
-        modes.push(Rem6HostExecutionModeSummary { target, mode });
-    }
-    (cursor == payload.len()).then_some(modes)
-}
-
-fn read_checkpoint_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
-    let end = cursor.checked_add(8)?;
-    let bytes = payload.get(*cursor..end)?.try_into().ok()?;
-    *cursor = end;
-    Some(u64::from_le_bytes(bytes))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -377,15 +353,6 @@ const fn execution_mode_name(mode: ExecutionMode) -> &'static str {
     }
 }
 
-const fn execution_mode_name_from_code(code: u8) -> Option<&'static str> {
-    match code {
-        0 => Some("functional"),
-        1 => Some("timing"),
-        2 => Some("detailed"),
-        _ => None,
-    }
-}
-
 pub(crate) fn host_action_summary(
     controller: &SystemHostController,
 ) -> Result<Rem6HostActionSummary, String> {
@@ -480,6 +447,31 @@ impl Rem6HostStatsDumpSummary {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn duplicate_execution_mode_targets_are_not_published() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&2_u64.to_le_bytes());
+        for mode in [2_u8, 1_u8] {
+            payload.extend_from_slice(&4_u64.to_le_bytes());
+            payload.extend_from_slice(b"cpu0");
+            payload.push(mode);
+        }
+        let manifest = rem6_checkpoint::CheckpointManifest::new(
+            "duplicate-execution-mode-authority",
+            17,
+            vec![rem6_checkpoint::CheckpointState::new(
+                rem6_checkpoint::CheckpointComponentId::new("host.execution_modes").unwrap(),
+                vec![rem6_checkpoint::CheckpointChunk::new("modes", payload)],
+            )],
+        );
+
+        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, true);
+
+        assert!(!summary.execution_mode_authority_present);
+        assert!(summary.execution_mode_authority_decode_error);
+        assert!(summary.execution_modes.is_empty());
+    }
 
     #[test]
     fn malformed_o3_runtime_checkpoint_chunks_report_decode_error() {

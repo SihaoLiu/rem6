@@ -199,13 +199,13 @@ impl Rem6O3TraceTotals {
         if let Some(restore) = record.checkpoint_restore() {
             self.checkpoint_restores = self.checkpoint_restores.max(restore.count);
             self.checkpoint_restore_records = self.checkpoint_restore_records.saturating_add(1);
-            self.checkpoint_restore_tick = self.checkpoint_restore_tick.max(restore.tick);
+            self.checkpoint_restore_tick = self.checkpoint_restore_tick.max(restore.latest_tick);
             self.checkpoint_restore_manifest_tick = self
                 .checkpoint_restore_manifest_tick
-                .max(restore.manifest_tick);
+                .max(restore.latest_manifest_tick);
             self.checkpoint_restore_payload_bytes = self
                 .checkpoint_restore_payload_bytes
-                .max(restore.payload_bytes);
+                .max(restore.latest_payload_bytes);
             self.checkpoint_restore_authority.add(restore);
         }
         add_counter(&mut self.instructions, stats.instructions());

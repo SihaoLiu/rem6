@@ -422,6 +422,83 @@ fn pipeline_outputs_consume_typed_redirect_flush_authority() {
 }
 
 #[test]
+fn checkpoint_restore_outputs_share_system_and_latest_authority() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let host_actions = fs::read_to_string(crate_dir.join("src/host_actions.rs")).unwrap();
+    let o3_restore =
+        fs::read_to_string(crate_dir.join("src/debug_output/o3_checkpoint_restore_json.rs"))
+            .unwrap();
+    let system_host = fs::read_to_string(crate_dir.join("../rem6-system/src/host.rs")).unwrap();
+    let system_decoder =
+        fs::read_to_string(crate_dir.join("../rem6-system/src/host/execution_mode_checkpoint.rs"))
+            .unwrap();
+
+    assert!(
+        host_actions.contains("decode_execution_mode_authority_from_manifest(manifest)"),
+        "CLI checkpoint summaries must consume the rem6-system execution-mode decoder"
+    );
+    for legacy_decoder in [
+        "fn decode_execution_mode_authority(",
+        "fn read_checkpoint_u64(",
+        "fn execution_mode_name_from_code(",
+    ] {
+        assert!(
+            !host_actions.contains(legacy_decoder),
+            "src/host_actions.rs must not regain local checkpoint decoder `{legacy_decoder}`"
+        );
+    }
+
+    let manifest_decoder = source_section(
+        &system_decoder,
+        "pub fn decode_execution_mode_authority_from_manifest(",
+        "pub(super) fn encode_execution_modes(",
+    );
+    assert!(
+        manifest_decoder.contains("decode_execution_modes(&component, payload).map(Some)"),
+        "the public manifest decoder must delegate payload validation to the system decoder"
+    );
+    let restore_stage = source_section(
+        &system_host,
+        "fn stage_execution_mode_checkpoint_restore(",
+        "pub fn attach_memory_checkpoint_bank(",
+    );
+    assert!(
+        restore_stage.contains("decode_execution_mode_authority_from_manifest(manifest)"),
+        "system restore staging must consume the same manifest decoder as CLI summaries"
+    );
+
+    assert!(
+        o3_restore.contains("latest_components"),
+        "O3 restore output must name its component projection as latest"
+    );
+    assert!(
+        o3_restore.contains("latest_execution_mode_targets"),
+        "O3 target-qualified component stats must classify against latest authority"
+    );
+    assert!(
+        o3_restore.contains("aggregate_execution_modes"),
+        "O3 aggregate execution-mode authority must be named separately from latest targets"
+    );
+    assert!(
+        !o3_restore.contains("component_stat_components"),
+        "O3 restore output must not retain a hidden all-restore component projection"
+    );
+    let component_stats = source_section(
+        &o3_restore,
+        "impl Rem6O3CheckpointRestoreComponentStatTotals {",
+        "impl Rem6O3CheckpointRestoreAuthorityTotals {",
+    );
+    assert!(
+        component_stats.contains("for component in &restore.latest_components"),
+        "O3 component stats must consume the same latest components emitted in structured JSON"
+    );
+    assert!(
+        component_stats.contains(".latest_execution_mode_targets"),
+        "O3 target-qualified component stats must not classify against aggregate authority rows"
+    );
+}
+
+#[test]
 fn stats_compat_root_keeps_current_ratchet() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/stats_compat.rs");
     let lines = line_count(&path);
