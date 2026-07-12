@@ -371,8 +371,173 @@ impl PipelineCorrelationTotals {
 mod tests {
     use serde_json::Value;
 
-    use super::super::{Rem6PipelineTraceInstruction, Rem6PipelineTraceRecord};
+    use super::super::{
+        Rem6PipelineTraceInstruction, Rem6PipelineTraceRecord, PIPELINE_REDIRECT_CAUSES,
+        PIPELINE_STALL_CAUSES,
+    };
     use super::PipelineStallBacklogFlushSummary;
+
+    #[test]
+    fn all_stall_causes_correlate_with_all_flush_causes() {
+        let mut records = Vec::new();
+        let mut cycle = 1;
+        let mut sequence = 1;
+        for (stall_index, stall_cause) in PIPELINE_STALL_CAUSES.iter().enumerate() {
+            for (flush_index, flush_cause) in PIPELINE_REDIRECT_CAUSES.iter().enumerate() {
+                let stall_cycles = u64::try_from((stall_index + 1) * 10 + flush_index + 1).unwrap();
+                records.push(trace_record(
+                    0,
+                    cycle,
+                    Some(stall_cause),
+                    stall_cycles,
+                    vec![instruction(sequence, "execute")],
+                    Vec::new(),
+                    Vec::new(),
+                    vec![instruction(sequence, "execute")],
+                ));
+                records.push(
+                    trace_record(
+                        0,
+                        cycle + 1,
+                        None,
+                        0,
+                        Vec::new(),
+                        Vec::new(),
+                        vec![instruction(sequence, "decode")],
+                        Vec::new(),
+                    )
+                    .with_flush_cause(flush_cause),
+                );
+                cycle += 2;
+                sequence += 1;
+            }
+        }
+
+        let summary = PipelineStallBacklogFlushSummary::from_records(&records);
+        let json: Value = serde_json::from_str(&summary.to_json()).unwrap();
+        let metrics = summary.metrics();
+        for (stall_index, stall_cause) in PIPELINE_STALL_CAUSES.iter().enumerate() {
+            for (flush_index, flush_cause) in PIPELINE_REDIRECT_CAUSES.iter().enumerate() {
+                let expected_cycles =
+                    u64::try_from((stall_index + 1) * 10 + flush_index + 1).unwrap();
+                let pair = format!("/stall_cause/{stall_cause}/flush_cause/{flush_cause}");
+                let stage = format!(
+                    "{pair}/block_kind/resource_blocked/blocked_stage/execute/flushed_stage/decode"
+                );
+                let metric_pair = format!(
+                    "stall_backlog_flush.stall_cause.{stall_cause}.flush_cause.{flush_cause}"
+                );
+                let cpu_metric_pair = format!("cpu.cpu0.{metric_pair}");
+                let metric_stage = format!(
+                    "{metric_pair}.block_kind.resource_blocked.blocked_stage.execute.flushed_stage.decode"
+                );
+                let cpu_metric_stage = format!("cpu.cpu0.{metric_stage}");
+                for (metric, expected) in [
+                    ("sequences", 1),
+                    ("stall_records", 1),
+                    ("stall_cycles", expected_cycles),
+                ] {
+                    assert_eq!(
+                        json.pointer(&format!("{pair}/{metric}"))
+                            .and_then(Value::as_u64),
+                        Some(expected)
+                    );
+                    assert_eq!(
+                        json.pointer(&format!("/cpu/cpu0{pair}/{metric}"))
+                            .and_then(Value::as_u64),
+                        Some(expected)
+                    );
+                    assert_eq!(
+                        json.pointer(&format!("{stage}/{metric}"))
+                            .and_then(Value::as_u64),
+                        Some(expected)
+                    );
+                    assert_eq!(
+                        json.pointer(&format!("/cpu/cpu0{stage}/{metric}"))
+                            .and_then(Value::as_u64),
+                        Some(expected)
+                    );
+                    for prefix in [
+                        &metric_pair,
+                        &cpu_metric_pair,
+                        &metric_stage,
+                        &cpu_metric_stage,
+                    ] {
+                        assert_eq!(
+                            metric_value(&metrics, &format!("{prefix}.{metric}")),
+                            Some(expected)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn redirect_and_flushed_rows_without_flush_cause_do_not_count_backlog() {
+        let mut redirect = trace_record(
+            0,
+            2,
+            None,
+            0,
+            Vec::new(),
+            Vec::new(),
+            vec![instruction(7, "decode")],
+            Vec::new(),
+        );
+        redirect.redirect_cause = Some("trap_redirect");
+        let records = [
+            trace_record(
+                0,
+                1,
+                Some("execute_wait"),
+                4,
+                vec![instruction(7, "execute")],
+                Vec::new(),
+                Vec::new(),
+                vec![instruction(7, "execute")],
+            ),
+            redirect,
+        ];
+
+        let summary = PipelineStallBacklogFlushSummary::from_records(&records);
+        let json: Value = serde_json::from_str(&summary.to_json()).unwrap();
+        let metrics = summary.metrics();
+        let pair = "/stall_cause/execute_wait/flush_cause/trap_redirect";
+        let metric_pair = "stall_backlog_flush.stall_cause.execute_wait.flush_cause.trap_redirect";
+        for metric in ["sequences", "stall_records", "stall_cycles"] {
+            assert_eq!(
+                json.pointer(&format!("{pair}/{metric}"))
+                    .and_then(Value::as_u64),
+                Some(0)
+            );
+            assert_eq!(
+                json.pointer(&format!("/cpu/cpu0{pair}/{metric}"))
+                    .and_then(Value::as_u64),
+                Some(0)
+            );
+            assert_eq!(
+                metric_value(&metrics, &format!("{metric_pair}.{metric}")),
+                Some(0)
+            );
+            assert_eq!(
+                metric_value(&metrics, &format!("cpu.cpu0.{metric_pair}.{metric}")),
+                Some(0)
+            );
+        }
+        for pair in [pair.to_owned(), format!("/cpu/cpu0{pair}")] {
+            assert!(json
+                .pointer(&format!("{pair}/block_kind"))
+                .and_then(Value::as_object)
+                .is_some_and(serde_json::Map::is_empty));
+        }
+        assert!(metrics.iter().all(|metric| !metric
+            .path
+            .starts_with(&format!("{metric_pair}.block_kind."))));
+        assert!(metrics.iter().all(|metric| !metric
+            .path
+            .starts_with(&format!("cpu.cpu0.{metric_pair}.block_kind."))));
+    }
 
     #[test]
     fn matching_prior_backlog_preserves_exact_cause_and_stage_totals() {
@@ -595,6 +760,13 @@ mod tests {
 
     fn instruction(sequence: u64, stage: &'static str) -> Rem6PipelineTraceInstruction {
         Rem6PipelineTraceInstruction { sequence, stage }
+    }
+
+    fn metric_value(metrics: &[super::PipelineStallBacklogFlushMetric], path: &str) -> Option<u64> {
+        metrics
+            .iter()
+            .find(|candidate| candidate.path == path)
+            .map(|candidate| candidate.value)
     }
 
     #[allow(clippy::too_many_arguments)]
