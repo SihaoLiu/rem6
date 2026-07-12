@@ -7,6 +7,9 @@ use crate::support::{
     riscv64_program, temp_binary, u_type,
 };
 
+#[path = "pipeline_interrupt/stall_backlog_flush.rs"]
+mod stall_backlog_flush;
+
 const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
 const SBI_TIME_SET_TIMER: i32 = 0;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
@@ -586,6 +589,15 @@ fn run_interrupt_timer_program(
     stats_format: &str,
     debug_flag: Option<&str>,
 ) -> String {
+    run_interrupt_timer_program_with_lookahead(path, stats_format, debug_flag, "2")
+}
+
+fn run_interrupt_timer_program_with_lookahead(
+    path: &Path,
+    stats_format: &str,
+    debug_flag: Option<&str>,
+    branch_lookahead: &str,
+) -> String {
     let mut args = vec![
         "run",
         "--isa",
@@ -602,7 +614,7 @@ fn run_interrupt_timer_program(
         "--memory-route-delay",
         "3",
         "--riscv-branch-lookahead",
-        "2",
+        branch_lookahead,
         "--riscv-sbi",
         "--riscv-in-order-width",
         "4",
