@@ -29,10 +29,13 @@ use crate::{
     RiscvLoadReservation,
 };
 
+mod buffered_store;
 mod forwarding;
 mod prepared;
 mod request_helpers;
 
+pub(crate) use buffered_store::BufferedO3Store;
+use buffered_store::PreparedDataAccess;
 pub(crate) use prepared::{PreparedDataIssueCleanup, PreparedDataParallelAccess};
 pub(crate) use request_helpers::{
     access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
@@ -57,8 +60,16 @@ impl RiscvCore {
             + 'static,
     {
         self.data_issue_attempt(|| {
-            let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
+            let Some(prepared) = self.prepare_data_access(scheduler.now(), transport)? else {
                 return Ok(None);
+            };
+            let issue = match prepared {
+                PreparedDataAccess::BufferedStore(buffered) => {
+                    return self
+                        .submit_buffered_o3_store(scheduler, transport, trace, buffered, responder)
+                        .map(Some);
+                }
+                PreparedDataAccess::New(issue) => issue,
             };
             if issue.has_forwarded_load_data() {
                 return self
@@ -76,6 +87,11 @@ impl RiscvCore {
                 issue.size,
                 issue.memory_request()?,
             )?;
+            if let Some(predecessor) = self.o3_store_predecessor(&issue) {
+                return self
+                    .schedule_buffered_o3_store(scheduler, issue, request, predecessor)
+                    .map(Some);
+            }
 
             let core = self.clone();
             let event = transport
@@ -112,34 +128,8 @@ impl RiscvCore {
             return Ok(None);
         };
 
-        match prepared {
-            PreparedDataParallelAccess::Transaction {
-                issue,
-                transaction,
-                cleanup,
-            } => {
-                let event = transport
-                    .submit_parallel_batch(scheduler, [transaction])
-                    .map_err(RiscvCpuError::Transport)?
-                    .into_iter()
-                    .next()
-                    .expect("single data transaction returns one event");
-
-                self.record_data_issue(issue);
-                cleanup.disarm();
-                Ok(Some(event))
-            }
-            PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
-                let event = self.schedule_store_conditional_failure_parallel(scheduler, issue)?;
-                cleanup.disarm();
-                Ok(Some(event))
-            }
-            PreparedDataParallelAccess::Forwarded { issue, cleanup } => {
-                let event = self.schedule_forwarded_load_completion_parallel(scheduler, issue)?;
-                cleanup.disarm();
-                Ok(Some(event))
-            }
-        }
+        self.submit_prepared_data_parallel_access(scheduler, transport, prepared)
+            .map(Some)
     }
 
     pub(crate) fn prepare_data_parallel_access<F>(
@@ -155,8 +145,16 @@ impl RiscvCore {
             + 'static,
     {
         self.data_issue_attempt(|| {
-            let Some(issue) = self.prepare_data_access(tick, transport)? else {
+            let Some(prepared) = self.prepare_data_access(tick, transport)? else {
                 return Ok(None);
+            };
+            let issue = match prepared {
+                PreparedDataAccess::BufferedStore(buffered) => {
+                    return Ok(Some(
+                        self.prepare_buffered_o3_store_parallel(buffered, trace, responder),
+                    ));
+                }
+                PreparedDataAccess::New(issue) => issue,
             };
             if issue.has_forwarded_load_data() {
                 return Ok(Some(PreparedDataParallelAccess::forwarded(self, issue)));
@@ -172,6 +170,14 @@ impl RiscvCore {
                 issue.size,
                 issue.memory_request()?,
             )?;
+            if let Some(predecessor) = self.o3_store_predecessor(&issue) {
+                return Ok(Some(PreparedDataParallelAccess::buffered_store(
+                    self,
+                    issue,
+                    request,
+                    predecessor,
+                )));
+            }
             let core = self.clone();
             let transaction = ParallelMemoryTransaction::new(
                 issue.memory_route(),
@@ -247,7 +253,10 @@ impl RiscvCore {
         &self,
         tick: Tick,
         transport: &MemoryTransport,
-    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+    ) -> Result<Option<PreparedDataAccess>, RiscvCpuError> {
+        if let Some(buffered) = self.ready_buffered_o3_store() {
+            return Ok(Some(PreparedDataAccess::BufferedStore(buffered)));
+        }
         if let Some(fetch) = self.data_translation_page_map_required_fetch() {
             return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
         }
@@ -347,7 +356,7 @@ impl RiscvCore {
 
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
 
-        Ok(Some(OutstandingDataAccess {
+        Ok(Some(PreparedDataAccess::New(OutstandingDataAccess {
             tick,
             partition: self.core.partition(),
             target: RiscvDataAccessTarget::Memory {
@@ -363,7 +372,7 @@ impl RiscvCore {
             line_layout: Some(line_layout),
             forwarded_load_data,
             store_load_overlay,
-        }))
+        })))
     }
 
     fn prepare_mmio_data_access(
@@ -542,9 +551,11 @@ impl RiscvCore {
                 detailed && untranslated && matches!(issue.access, MemoryAccessKind::Load { .. }),
             )
         };
-        let fetch_events = detailed_scalar_load
-            .then(|| self.core.fetch_events())
-            .unwrap_or_default();
+        let fetch_events = if detailed_scalar_load {
+            self.core.fetch_events()
+        } else {
+            Vec::new()
+        };
         let mut state = self.state.lock().expect("riscv core lock");
         let execution = state
             .events
@@ -670,9 +681,11 @@ impl RiscvCore {
                     .live_scalar_memory_younger_wakeup_seed()
                     .is_some()
         };
-        should_snapshot
-            .then(|| self.core.fetch_events())
-            .unwrap_or_default()
+        if should_snapshot {
+            self.core.fetch_events()
+        } else {
+            Vec::new()
+        }
     }
 
     pub(crate) fn record_data_response(&self, delivery: ResponseDelivery) {
@@ -999,11 +1012,13 @@ fn record_o3_data_access_outcome(
     forwarded: bool,
 ) {
     let Some(execution) = execution else {
+        state.buffered_o3_stores.remove(&access.request);
         state
             .o3_runtime
             .discard_data_access_outcome(access.fetch_request);
         return;
     };
+    state.buffered_o3_stores.remove(&access.request);
     let latency_ticks = response_tick.saturating_sub(access.tick);
     let squash_younger_requests = matches!(
         execution.data_access_event_kind(),
@@ -1037,6 +1052,7 @@ fn record_o3_data_access_outcome(
     if completed_live_scalar_memory {
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);
+            state.buffered_o3_stores.remove(&request);
             state.issued_data_for_fetches.remove(&fetch_request);
             if let Some(event) = state
                 .events

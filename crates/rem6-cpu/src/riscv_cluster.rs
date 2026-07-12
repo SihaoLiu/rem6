@@ -1014,6 +1014,44 @@ impl RiscvCluster {
                         first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
                     }
                 },
+                PreparedParallelAction::LocalBufferedStore {
+                    cpu,
+                    core,
+                    issue,
+                    request,
+                    predecessor,
+                    cleanup,
+                } => match core.schedule_prepared_buffered_o3_store_parallel(
+                    scheduler,
+                    issue,
+                    request,
+                    predecessor,
+                ) {
+                    Ok(event) => {
+                        cleanup.disarm();
+                        actions.push(RiscvClusterDriveEvent::new(
+                            cpu,
+                            RiscvCoreDriveAction::DataAccessIssued { event },
+                        ));
+                    }
+                    Err(error) => {
+                        first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
+                    }
+                },
+                PreparedParallelAction::BufferedStoreData {
+                    cpu,
+                    core,
+                    request_id,
+                    transaction_index,
+                } => {
+                    core.record_buffered_o3_store_submission(request_id);
+                    actions.push(RiscvClusterDriveEvent::new(
+                        cpu,
+                        RiscvCoreDriveAction::DataAccessIssued {
+                            event: events[transaction_index],
+                        },
+                    ));
+                }
             }
         }
 

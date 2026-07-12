@@ -1184,8 +1184,10 @@ impl RiscvCore {
                 cleanup.disarm();
                 Ok(Some(event))
             }
-            PreparedDataParallelAccess::Forwarded { .. } => {
-                unreachable!("translated data access cannot use untranslated store forwarding")
+            PreparedDataParallelAccess::Forwarded { .. }
+            | PreparedDataParallelAccess::BufferedStore { .. }
+            | PreparedDataParallelAccess::BufferedTransaction { .. } => {
+                unreachable!("translated data access cannot use untranslated O3 memory shortcuts")
             }
         }
     }

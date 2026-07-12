@@ -1,5 +1,5 @@
-use rem6_isa_riscv::RiscvInstruction;
-use rem6_memory::Address;
+use rem6_isa_riscv::{Register, RiscvInstruction};
+use rem6_memory::{Address, AddressRange};
 
 use crate::{
     riscv_execute::oldest_completed_fetch_at,
@@ -190,18 +190,15 @@ fn scalar_memory_window_candidate(
     let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
+    let mut store_range = window.store_range();
     let mut destinations = window.load_destinations().to_vec();
-    match current.decoded().instruction() {
-        instruction @ RiscvInstruction::Load { .. } => {
-            let Some(current_destination) =
-                independent_scalar_load_destination(instruction, destinations.iter().copied())
-            else {
-                return DetailedFetchAheadCandidate::Blocked;
-            };
-            destinations.push(current_destination);
-        }
-        RiscvInstruction::Store { .. } if window.rows() == 0 => {}
-        _ => return DetailedFetchAheadCandidate::Blocked,
+    if !admit_scalar_memory_prefix_instruction(
+        state,
+        current.decoded().instruction(),
+        &mut store_range,
+        &mut destinations,
+    ) {
+        return DetailedFetchAheadCandidate::Blocked;
     }
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = Address::new(
@@ -225,18 +222,19 @@ fn scalar_memory_window_candidate(
             Ok(next) => next,
             Err(candidate) => return candidate,
         };
-        let destination = independent_scalar_load_destination(
-            next.decoded().instruction(),
-            destinations.iter().copied(),
-        );
-        if let Some(destination) = destination {
-            if state
-                .cacheable_scalar_memory_instruction_range(next.decoded().instruction())
-                .is_none()
-            {
+        let instruction = next.decoded().instruction();
+        if matches!(
+            instruction,
+            RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
+        ) {
+            if !admit_scalar_memory_prefix_instruction(
+                state,
+                instruction,
+                &mut store_range,
+                &mut destinations,
+            ) {
                 return DetailedFetchAheadCandidate::Blocked;
             }
-            destinations.push(destination);
             window_rows += 1;
             previous_request = next.last_consumed_request();
             next_pc = Address::new(
@@ -275,6 +273,36 @@ fn scalar_memory_window_candidate(
                 return DetailedFetchAheadCandidate::Blocked;
             }
         }
+    }
+}
+
+fn admit_scalar_memory_prefix_instruction(
+    state: &RiscvCoreState,
+    instruction: RiscvInstruction,
+    store_range: &mut Option<AddressRange>,
+    destinations: &mut Vec<Register>,
+) -> bool {
+    let Some(range) = state.cacheable_scalar_memory_instruction_range(instruction) else {
+        return false;
+    };
+    match instruction {
+        instruction @ RiscvInstruction::Load { .. } => {
+            let Some(destination) =
+                independent_scalar_load_destination(instruction, destinations.iter().copied())
+            else {
+                return false;
+            };
+            destinations.push(destination);
+            true
+        }
+        RiscvInstruction::Store { .. } if destinations.is_empty() => match store_range {
+            Some(older) => *older == range,
+            None => {
+                *store_range = Some(range);
+                true
+            }
+        },
+        _ => false,
     }
 }
 

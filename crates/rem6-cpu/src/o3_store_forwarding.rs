@@ -8,6 +8,10 @@ pub(super) struct O3StoreForwardingEntry {
 }
 
 impl O3StoreForwardingEntry {
+    pub(super) const fn range(self) -> AddressRange {
+        self.range
+    }
+
     pub(super) fn relation(self, load_range: AddressRange) -> O3StoreLoadRelation {
         let plan = O3StoreLoadForwardingPlan {
             load_range,

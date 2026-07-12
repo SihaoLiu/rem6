@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvPmaRange};
 use rem6_kernel::PartitionedScheduler;
@@ -23,6 +26,8 @@ mod forwarding;
 mod multi_load;
 #[path = "riscv_data_issue_tests/store_led.rs"]
 mod store_led;
+#[path = "riscv_data_issue_tests/store_store_load.rs"]
+mod store_store_load;
 
 #[test]
 fn retry_response_discards_pending_o3_trace_data_access_outcome() {

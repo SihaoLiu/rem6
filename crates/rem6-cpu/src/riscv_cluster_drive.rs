@@ -1,4 +1,5 @@
 use rem6_kernel::{ParallelSchedulerContext, PartitionedScheduler, Tick};
+use rem6_memory::{MemoryRequest, MemoryRequestId};
 use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
 };
@@ -11,6 +12,7 @@ use crate::riscv_data_issue::{
 use crate::riscv_fetch_ahead::PreparedRiscvFetchAheadSpeculation;
 use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction};
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum PreparedParallelAction {
     Ready(RiscvClusterDriveEvent),
     Fetch {
@@ -38,6 +40,20 @@ pub(crate) enum PreparedParallelAction {
         core: RiscvCore,
         issue: OutstandingDataAccess,
         cleanup: PreparedDataIssueCleanup,
+    },
+    LocalBufferedStore {
+        cpu: CpuId,
+        core: RiscvCore,
+        issue: OutstandingDataAccess,
+        request: MemoryRequest,
+        predecessor: MemoryRequestId,
+        cleanup: PreparedDataIssueCleanup,
+    },
+    BufferedStoreData {
+        cpu: CpuId,
+        core: RiscvCore,
+        request_id: MemoryRequestId,
+        transaction_index: usize,
     },
 }
 
@@ -107,6 +123,35 @@ pub(crate) fn push_prepared_data_action(
                 core: core.clone(),
                 issue,
                 cleanup,
+            });
+        }
+        PreparedDataParallelAccess::BufferedStore {
+            issue,
+            request,
+            predecessor,
+            cleanup,
+        } => {
+            prepared_actions.push(PreparedParallelAction::LocalBufferedStore {
+                cpu,
+                core: core.clone(),
+                issue,
+                request,
+                predecessor,
+                cleanup,
+            });
+        }
+        PreparedDataParallelAccess::BufferedTransaction {
+            request_id,
+            transaction,
+        } => {
+            let transaction_index = transactions.len();
+            transaction_cpus.push(cpu);
+            transactions.push(transaction);
+            prepared_actions.push(PreparedParallelAction::BufferedStoreData {
+                cpu,
+                core: core.clone(),
+                request_id,
+                transaction_index,
             });
         }
     }

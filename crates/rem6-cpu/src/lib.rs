@@ -388,6 +388,7 @@ impl RiscvCore {
     pub fn has_pending_data_access(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         !state.outstanding_data.is_empty()
+            || !state.buffered_o3_stores.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty()
     }
@@ -395,15 +396,19 @@ impl RiscvCore {
     pub(crate) fn pending_data_access_blocks_new_work(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         let has_pending = !state.outstanding_data.is_empty()
+            || !state.buffered_o3_stores.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty();
-        has_pending && !state.can_extend_detailed_scalar_memory_window()
+        has_pending
+            && !state.has_ready_buffered_o3_store()
+            && !state.can_extend_detailed_scalar_memory_window()
     }
 
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
             && state.outstanding_data.is_empty()
+            && state.buffered_o3_stores.is_empty()
             && state.pending_data_translations.is_empty()
             && state.ready_translated_data.is_empty()
             && state
@@ -428,7 +433,8 @@ impl RiscvCore {
     }
 
     pub fn has_unissued_data_access(&self) -> bool {
-        self.next_unissued_data_access().is_some()
+        let state = self.state.lock().expect("riscv core lock");
+        state.has_ready_buffered_o3_store() || state.next_unissued_data_access().is_some()
     }
 
     pub fn write_register(&self, register: Register, value: u64) {
@@ -797,6 +803,7 @@ struct RiscvCoreState {
         BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
     outstanding_data: BTreeMap<MemoryRequestId, riscv_data_issue::IssuedDataAccess>,
+    buffered_o3_stores: BTreeMap<MemoryRequestId, riscv_data_issue::BufferedO3Store>,
     pending_trap: Option<RiscvTrap>,
     pending_trap_event: Option<RiscvCpuExecutionEvent>,
     reservation: Option<RiscvLoadReservation>,
@@ -846,6 +853,7 @@ impl RiscvCoreState {
             pending_data_translations: BTreeMap::new(),
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
+            buffered_o3_stores: BTreeMap::new(),
             pending_trap: None,
             pending_trap_event: None,
             reservation: None,
@@ -945,6 +953,7 @@ impl RiscvCoreState {
         self.pending_data_translations.clear();
         self.ready_translated_data.clear();
         self.outstanding_data.clear();
+        self.buffered_o3_stores.clear();
     }
 
     fn discard_return_address_stack_speculations(&mut self) {
