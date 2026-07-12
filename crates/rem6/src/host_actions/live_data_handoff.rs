@@ -1,12 +1,11 @@
-use rem6_cpu::RiscvO3LiveDataHandoff;
+use rem6_cpu::{RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffTarget};
 
 use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) decode_error: bool,
-    pub(crate) outstanding_requests: Option<u64>,
-    pub(crate) resident_rows: Option<u64>,
+    pub(crate) row_count: Option<u64>,
     pub(crate) younger_rows: Option<u64>,
     pub(crate) first_fetch_request_agent: Option<u64>,
     pub(crate) first_fetch_request_sequence: Option<u64>,
@@ -14,12 +13,25 @@ pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) first_data_request_sequence: Option<u64>,
     pub(crate) first_issue_tick: Option<u64>,
     pub(crate) last_issue_tick: Option<u64>,
-    pub(crate) first_partition: Option<u64>,
-    pub(crate) first_route: Option<u64>,
+    pub(crate) first_target: Option<Rem6HostO3LiveDataHandoffTargetSummary>,
     pub(crate) first_address: Option<u64>,
     pub(crate) first_bytes: Option<u64>,
     pub(crate) first_o3_sequence: Option<u64>,
     pub(crate) first_trace_sequence: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Rem6HostO3LiveDataHandoffTargetSummary {
+    Memory {
+        source_partition: u64,
+        route: u64,
+    },
+    Mmio {
+        source_partition: u64,
+        target_partition: u64,
+        request_latency: u64,
+        response_latency: u64,
+    },
 }
 
 pub(super) fn decode_o3_live_data_handoff_chunk(
@@ -35,8 +47,7 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
     let first = handoff.entries().first().copied();
     Some(Rem6HostO3LiveDataHandoffChunkSummary {
         decode_error: false,
-        outstanding_requests: Some(handoff.entries().len() as u64),
-        resident_rows: Some(handoff.entries().len() as u64),
+        row_count: Some(handoff.entries().len() as u64),
         younger_rows: Some(u64::from(handoff.younger_rows())),
         first_fetch_request_agent: first
             .map(|entry| u64::from(entry.fetch_request().agent().get())),
@@ -49,8 +60,22 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
             .iter()
             .map(|entry| entry.issue_tick())
             .max(),
-        first_partition: first.map(|entry| u64::from(entry.partition().index())),
-        first_route: first.map(|entry| entry.route().get()),
+        first_target: first.map(|entry| match entry.target() {
+            RiscvO3LiveDataHandoffTarget::Memory { route } => {
+                Rem6HostO3LiveDataHandoffTargetSummary::Memory {
+                    source_partition: u64::from(entry.partition().index()),
+                    route: route.get(),
+                }
+            }
+            RiscvO3LiveDataHandoffTarget::Mmio { route } => {
+                Rem6HostO3LiveDataHandoffTargetSummary::Mmio {
+                    source_partition: u64::from(route.source_partition().index()),
+                    target_partition: u64::from(route.target_partition().index()),
+                    request_latency: route.request_latency(),
+                    response_latency: route.response_latency(),
+                }
+            }
+        }),
         first_address: first.map(|entry| entry.address().get()),
         first_bytes: first.map(|entry| u64::from(entry.bytes())),
         first_o3_sequence: first.map(|entry| entry.o3_sequence()),
@@ -62,8 +87,7 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
     fn decode_error() -> Self {
         Self {
             decode_error: true,
-            outstanding_requests: None,
-            resident_rows: None,
+            row_count: None,
             younger_rows: None,
             first_fetch_request_agent: None,
             first_fetch_request_sequence: None,
@@ -71,12 +95,93 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             first_data_request_sequence: None,
             first_issue_tick: None,
             last_issue_tick: None,
-            first_partition: None,
-            first_route: None,
+            first_target: None,
             first_address: None,
             first_bytes: None,
             first_o3_sequence: None,
             first_trace_sequence: None,
         }
     }
+
+    pub(crate) fn to_json(&self) -> String {
+        let first_address = self
+            .first_address
+            .map(|address| format!("\"0x{address:x}\""))
+            .unwrap_or_else(|| "null".to_string());
+        let first_target = self
+            .first_target
+            .map(Rem6HostO3LiveDataHandoffTargetSummary::to_json)
+            .unwrap_or_else(|| "null".to_string());
+        let first_partition = self
+            .first_target
+            .map(Rem6HostO3LiveDataHandoffTargetSummary::source_partition);
+        let first_route = self
+            .first_target
+            .and_then(Rem6HostO3LiveDataHandoffTargetSummary::memory_route);
+        format!(
+            "{{\"decode_error\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{}}}",
+            self.decode_error,
+            optional_u64_json(self.row_count),
+            optional_u64_json(self.row_count),
+            optional_u64_json(self.younger_rows),
+            optional_u64_json(self.first_fetch_request_agent),
+            optional_u64_json(self.first_fetch_request_sequence),
+            optional_u64_json(self.first_data_request_agent),
+            optional_u64_json(self.first_data_request_sequence),
+            optional_u64_json(self.first_issue_tick),
+            optional_u64_json(self.last_issue_tick),
+            optional_u64_json(first_partition),
+            optional_u64_json(first_route),
+            first_target,
+            first_address,
+            optional_u64_json(self.first_bytes),
+            optional_u64_json(self.first_o3_sequence),
+            optional_u64_json(self.first_trace_sequence),
+        )
+    }
+}
+
+impl Rem6HostO3LiveDataHandoffTargetSummary {
+    const fn source_partition(self) -> u64 {
+        match self {
+            Self::Memory {
+                source_partition, ..
+            }
+            | Self::Mmio {
+                source_partition, ..
+            } => source_partition,
+        }
+    }
+
+    const fn memory_route(self) -> Option<u64> {
+        match self {
+            Self::Memory { route, .. } => Some(route),
+            Self::Mmio { .. } => None,
+        }
+    }
+
+    fn to_json(self) -> String {
+        match self {
+            Self::Memory {
+                source_partition,
+                route,
+            } => format!(
+                "{{\"kind\":\"memory\",\"source_partition\":{source_partition},\"route\":{route}}}"
+            ),
+            Self::Mmio {
+                source_partition,
+                target_partition,
+                request_latency,
+                response_latency,
+            } => format!(
+                "{{\"kind\":\"mmio\",\"source_partition\":{source_partition},\"target_partition\":{target_partition},\"request_latency\":{request_latency},\"response_latency\":{response_latency}}}"
+            ),
+        }
+    }
+}
+
+fn optional_u64_json(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }

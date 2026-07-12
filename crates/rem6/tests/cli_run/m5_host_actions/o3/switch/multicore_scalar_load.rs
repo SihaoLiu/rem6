@@ -177,6 +177,21 @@ fn assert_multicore_cpu1_scalar_load_handoff(memory_system: &str) {
         handoff.pointer("/first_route").and_then(Value::as_u64),
         Some(cpu1_window.route)
     );
+    let target = handoff
+        .pointer("/first_target")
+        .unwrap_or_else(|| panic!("missing typed CPU1 memory target: {handoff}"));
+    assert_eq!(
+        target.pointer("/kind").and_then(Value::as_str),
+        Some("memory")
+    );
+    assert_eq!(
+        target.pointer("/source_partition").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        target.pointer("/route").and_then(Value::as_u64),
+        Some(cpu1_window.route)
+    );
     assert_eq!(
         handoff.pointer("/first_address").and_then(Value::as_str),
         Some("0x80000200")

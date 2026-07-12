@@ -323,6 +323,21 @@ fn assert_data_and_memory_trace(
         handoff.pointer("/first_route").and_then(Value::as_u64),
         Some(request_route)
     );
+    let target = handoff
+        .pointer("/first_target")
+        .unwrap_or_else(|| panic!("missing typed memory target: {handoff}"));
+    assert_eq!(
+        target.pointer("/kind").and_then(Value::as_str),
+        Some("memory")
+    );
+    assert_eq!(
+        target.pointer("/source_partition").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        target.pointer("/route").and_then(Value::as_u64),
+        Some(request_route)
+    );
     assert_eq!(
         handoff.pointer("/first_partition").and_then(Value::as_u64),
         Some(0)

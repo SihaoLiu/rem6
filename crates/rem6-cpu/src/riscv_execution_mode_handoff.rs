@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{Address, AgentId, MemoryRequestId};
+use rem6_mmio::MmioRoute;
 use rem6_transport::MemoryRouteId;
 
 use crate::RiscvCore;
@@ -11,14 +12,30 @@ use crate::RiscvCore;
 pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 
 const MAGIC: [u8; 4] = *b"O3DH";
-const VERSION: u8 = 1;
+const VERSION_MEMORY_ROUTE: u8 = 1;
+const VERSION_TYPED_TARGET: u8 = 2;
 const HEADER_BYTES: usize = MAGIC.len() + 1 + 4 + 4;
-const ENTRY_BYTES: usize = 73;
+const V1_ENTRY_BYTES: usize = 73;
 const MAX_ROWS: usize = 4;
 #[cfg(test)]
-const O3_SEQUENCE_OFFSET: usize = 56;
+const V1_O3_SEQUENCE_OFFSET: usize = 56;
 #[cfg(test)]
-const TRACE_SEQUENCE_OFFSET: usize = 65;
+const V1_TRACE_SEQUENCE_OFFSET: usize = 65;
+#[cfg(test)]
+const ISSUE_TICK_OFFSET: usize = 24;
+#[cfg(test)]
+const V2_TARGET_KIND_OFFSET: usize = 36;
+#[cfg(test)]
+const V2_MMIO_REQUEST_LATENCY_OFFSET: usize = 41;
+
+const TARGET_MEMORY: u8 = 0;
+const TARGET_MMIO: u8 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvO3LiveDataHandoffTarget {
+    Memory { route: MemoryRouteId },
+    Mmio { route: MmioRoute },
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvO3LiveDataHandoffEntry {
@@ -26,7 +43,7 @@ pub struct RiscvO3LiveDataHandoffEntry {
     data_request: MemoryRequestId,
     issue_tick: Tick,
     partition: PartitionId,
-    route: MemoryRouteId,
+    target: RiscvO3LiveDataHandoffTarget,
     address: Address,
     bytes: u32,
     o3_sequence: u64,
@@ -50,8 +67,37 @@ impl RiscvO3LiveDataHandoffEntry {
         self.partition
     }
 
+    pub const fn target(self) -> RiscvO3LiveDataHandoffTarget {
+        self.target
+    }
+
+    /// Returns the legacy memory-transport route.
+    ///
+    /// # Panics
+    ///
+    /// Panics for MMIO targets. Use [`Self::target`] or [`Self::mmio_route`]
+    /// when consuming typed-target payloads.
     pub const fn route(self) -> MemoryRouteId {
-        self.route
+        match self.target {
+            RiscvO3LiveDataHandoffTarget::Memory { route } => route,
+            RiscvO3LiveDataHandoffTarget::Mmio { .. } => {
+                panic!("MMIO live-data handoff targets have no memory route ID")
+            }
+        }
+    }
+
+    pub const fn memory_route(self) -> Option<MemoryRouteId> {
+        match self.target {
+            RiscvO3LiveDataHandoffTarget::Memory { route } => Some(route),
+            RiscvO3LiveDataHandoffTarget::Mmio { .. } => None,
+        }
+    }
+
+    pub const fn mmio_route(self) -> Option<MmioRoute> {
+        match self.target {
+            RiscvO3LiveDataHandoffTarget::Memory { .. } => None,
+            RiscvO3LiveDataHandoffTarget::Mmio { route } => Some(route),
+        }
     }
 
     pub const fn address(self) -> Address {
@@ -96,9 +142,18 @@ impl RiscvO3LiveDataHandoff {
 
     pub fn encode(&self) -> Vec<u8> {
         let entry_count = u32::try_from(self.entries.len()).expect("handoff entry count fits u32");
-        let mut payload = Vec::with_capacity(HEADER_BYTES + self.entries.len() * ENTRY_BYTES);
+        let version = if self
+            .entries
+            .iter()
+            .all(|entry| matches!(entry.target, RiscvO3LiveDataHandoffTarget::Memory { .. }))
+        {
+            VERSION_MEMORY_ROUTE
+        } else {
+            VERSION_TYPED_TARGET
+        };
+        let mut payload = Vec::with_capacity(HEADER_BYTES + self.entries.len() * V1_ENTRY_BYTES);
         payload.extend_from_slice(&MAGIC);
-        payload.push(VERSION);
+        payload.push(version);
         payload.extend_from_slice(&entry_count.to_le_bytes());
         payload.extend_from_slice(&self.younger_rows.to_le_bytes());
         for entry in &self.entries {
@@ -106,7 +161,16 @@ impl RiscvO3LiveDataHandoff {
             write_request(&mut payload, entry.data_request);
             payload.extend_from_slice(&entry.issue_tick.to_le_bytes());
             payload.extend_from_slice(&entry.partition.index().to_le_bytes());
-            payload.extend_from_slice(&entry.route.get().to_le_bytes());
+            match (version, entry.target) {
+                (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Memory { route }) => {
+                    payload.extend_from_slice(&route.get().to_le_bytes())
+                }
+                (VERSION_TYPED_TARGET, target) => write_target(&mut payload, target),
+                (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Mmio { .. }) => {
+                    unreachable!("MMIO handoffs require typed-target encoding")
+                }
+                _ => unreachable!("selected a supported live-data handoff version"),
+            }
             payload.extend_from_slice(&entry.address.get().to_le_bytes());
             payload.extend_from_slice(&entry.bytes.to_le_bytes());
             payload.extend_from_slice(&entry.o3_sequence.to_le_bytes());
@@ -126,10 +190,9 @@ impl RiscvO3LiveDataHandoff {
         if payload[..MAGIC.len()] != MAGIC {
             return Err(RiscvO3LiveDataHandoffError::InvalidMagic);
         }
-        if payload[MAGIC.len()] != VERSION {
-            return Err(RiscvO3LiveDataHandoffError::UnsupportedVersion {
-                version: payload[MAGIC.len()],
-            });
+        let version = payload[MAGIC.len()];
+        if !matches!(version, VERSION_MEMORY_ROUTE | VERSION_TYPED_TARGET) {
+            return Err(RiscvO3LiveDataHandoffError::UnsupportedVersion { version });
         }
         let mut offset = MAGIC.len() + 1;
         let entry_count = read_u32(payload, &mut offset)? as usize;
@@ -151,12 +214,14 @@ impl RiscvO3LiveDataHandoff {
                 maximum: MAX_ROWS,
             });
         }
-        let expected = HEADER_BYTES + entry_count * ENTRY_BYTES;
-        if payload.len() != expected {
-            return Err(RiscvO3LiveDataHandoffError::InvalidPayloadSize {
-                expected,
-                actual: payload.len(),
-            });
+        if version == VERSION_MEMORY_ROUTE {
+            let expected = HEADER_BYTES + entry_count * V1_ENTRY_BYTES;
+            if payload.len() != expected {
+                return Err(RiscvO3LiveDataHandoffError::InvalidPayloadSize {
+                    expected,
+                    actual: payload.len(),
+                });
+            }
         }
 
         let mut entries = Vec::with_capacity(entry_count);
@@ -180,7 +245,7 @@ impl RiscvO3LiveDataHandoff {
             }
             let issue_tick = read_u64(payload, &mut offset)?;
             let partition = PartitionId::new(read_u32(payload, &mut offset)?);
-            let route = MemoryRouteId::new(read_u64(payload, &mut offset)?);
+            let target = read_target(payload, &mut offset, version, issue_tick, partition)?;
             let address = Address::new(read_u64(payload, &mut offset)?);
             let bytes = read_u32(payload, &mut offset)?;
             if !matches!(bytes, 1 | 2 | 4 | 8) {
@@ -225,11 +290,17 @@ impl RiscvO3LiveDataHandoff {
                 data_request,
                 issue_tick,
                 partition,
-                route,
+                target,
                 address,
                 bytes,
                 o3_sequence,
                 trace_sequence: (trace_present == 1).then_some(trace_sequence),
+            });
+        }
+        if offset != payload.len() {
+            return Err(RiscvO3LiveDataHandoffError::InvalidPayloadSize {
+                expected: offset,
+                actual: payload.len(),
             });
         }
         Ok(Self {
@@ -248,6 +319,18 @@ pub enum RiscvO3LiveDataHandoffError {
     InvalidMagic,
     UnsupportedVersion {
         version: u8,
+    },
+    InvalidTargetKind {
+        value: u8,
+    },
+    InvalidMmioRoute {
+        request_latency: Tick,
+        response_latency: Tick,
+    },
+    MmioRouteTickOverflow {
+        issue_tick: Tick,
+        request_latency: Tick,
+        response_latency: Tick,
     },
     EmptyEntries,
     TooManyRows {
@@ -300,6 +383,24 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
                     "live-data handoff version {version} is unsupported"
                 )
             }
+            Self::InvalidTargetKind { value } => {
+                write!(formatter, "live-data handoff target kind {value} is invalid")
+            }
+            Self::InvalidMmioRoute {
+                request_latency,
+                response_latency,
+            } => write!(
+                formatter,
+                "live-data handoff MMIO route has request latency {request_latency} and response latency {response_latency}"
+            ),
+            Self::MmioRouteTickOverflow {
+                issue_tick,
+                request_latency,
+                response_latency,
+            } => write!(
+                formatter,
+                "live-data handoff MMIO route at tick {issue_tick} with request latency {request_latency} and response latency {response_latency} overflows the tick range"
+            ),
             Self::EmptyEntries => write!(formatter, "live-data handoff has no entries"),
             Self::TooManyRows {
                 entries,
@@ -361,7 +462,7 @@ pub(crate) struct RiscvIssuedScalarLoadHandoff {
     pub(crate) data_request: MemoryRequestId,
     pub(crate) issue_tick: Tick,
     pub(crate) partition: PartitionId,
-    pub(crate) route: MemoryRouteId,
+    pub(crate) target: RiscvO3LiveDataHandoffTarget,
     pub(crate) address: Address,
     pub(crate) bytes: u32,
 }
@@ -407,19 +508,31 @@ impl RiscvCore {
             let resident = rows.remove(&issued.data_request)?;
             if resident.fetch_request != issued.fetch_request
                 || resident.issue_tick != issued.issue_tick
-                || state
-                    .pma
-                    .is_uncacheable(issued.address.get(), u64::from(issued.bytes))
-                    .ok()?
             {
                 return None;
+            }
+            match issued.target {
+                RiscvO3LiveDataHandoffTarget::Memory { .. }
+                    if state
+                        .pma
+                        .is_uncacheable(issued.address.get(), u64::from(issued.bytes))
+                        .ok()? =>
+                {
+                    return None;
+                }
+                RiscvO3LiveDataHandoffTarget::Mmio { route }
+                    if route.source_partition() != issued.partition =>
+                {
+                    return None;
+                }
+                _ => {}
             }
             entries.push(RiscvO3LiveDataHandoffEntry {
                 fetch_request: issued.fetch_request,
                 data_request: issued.data_request,
                 issue_tick: issued.issue_tick,
                 partition: issued.partition,
-                route: issued.route,
+                target: issued.target,
                 address: issued.address,
                 bytes: issued.bytes,
                 o3_sequence: resident.o3_sequence,
@@ -431,6 +544,66 @@ impl RiscvCore {
         }
         entries.sort_by_key(|entry| entry.o3_sequence);
         RiscvO3LiveDataHandoff::new(entries, younger_rows)
+    }
+}
+
+fn write_target(payload: &mut Vec<u8>, target: RiscvO3LiveDataHandoffTarget) {
+    match target {
+        RiscvO3LiveDataHandoffTarget::Memory { route } => {
+            payload.push(TARGET_MEMORY);
+            payload.extend_from_slice(&route.get().to_le_bytes());
+        }
+        RiscvO3LiveDataHandoffTarget::Mmio { route } => {
+            payload.push(TARGET_MMIO);
+            payload.extend_from_slice(&route.target_partition().index().to_le_bytes());
+            payload.extend_from_slice(&route.request_latency().to_le_bytes());
+            payload.extend_from_slice(&route.response_latency().to_le_bytes());
+        }
+    }
+}
+
+fn read_target(
+    payload: &[u8],
+    offset: &mut usize,
+    version: u8,
+    issue_tick: Tick,
+    partition: PartitionId,
+) -> Result<RiscvO3LiveDataHandoffTarget, RiscvO3LiveDataHandoffError> {
+    if version == VERSION_MEMORY_ROUTE {
+        return Ok(RiscvO3LiveDataHandoffTarget::Memory {
+            route: MemoryRouteId::new(read_u64(payload, offset)?),
+        });
+    }
+
+    match read_u8(payload, offset)? {
+        TARGET_MEMORY => Ok(RiscvO3LiveDataHandoffTarget::Memory {
+            route: MemoryRouteId::new(read_u64(payload, offset)?),
+        }),
+        TARGET_MMIO => {
+            let target_partition = PartitionId::new(read_u32(payload, offset)?);
+            let request_latency = read_u64(payload, offset)?;
+            let response_latency = read_u64(payload, offset)?;
+            let route = MmioRoute::new(
+                partition,
+                target_partition,
+                request_latency,
+                response_latency,
+            )
+            .map_err(|_| RiscvO3LiveDataHandoffError::InvalidMmioRoute {
+                request_latency,
+                response_latency,
+            })?;
+            issue_tick
+                .checked_add(request_latency)
+                .and_then(|tick| tick.checked_add(response_latency))
+                .ok_or(RiscvO3LiveDataHandoffError::MmioRouteTickOverflow {
+                    issue_tick,
+                    request_latency,
+                    response_latency,
+                })?;
+            Ok(RiscvO3LiveDataHandoffTarget::Mmio { route })
+        }
+        value => Err(RiscvO3LiveDataHandoffError::InvalidTargetKind { value }),
     }
 }
 
@@ -492,13 +665,24 @@ fn read_array<const N: usize>(
 mod tests {
     use super::*;
 
+    const LEGACY_V1_SINGLE_ENTRY_PAYLOAD: [u8; HEADER_BYTES + V1_ENTRY_BYTES] = [
+        0x4f, 0x33, 0x44, 0x48, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0b,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x80, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
     fn entry(sequence: u64) -> RiscvO3LiveDataHandoffEntry {
         RiscvO3LiveDataHandoffEntry {
             fetch_request: MemoryRequestId::new(AgentId::new(3), sequence),
             data_request: MemoryRequestId::new(AgentId::new(4), sequence + 10),
             issue_tick: 29 + sequence,
             partition: PartitionId::new(2),
-            route: MemoryRouteId::new(7),
+            target: RiscvO3LiveDataHandoffTarget::Memory {
+                route: MemoryRouteId::new(7),
+            },
             address: Address::new(0x8000 + sequence * 4),
             bytes: 4,
             o3_sequence: sequence,
@@ -506,13 +690,111 @@ mod tests {
         }
     }
 
+    fn mmio_entry(sequence: u64) -> RiscvO3LiveDataHandoffEntry {
+        RiscvO3LiveDataHandoffEntry {
+            target: RiscvO3LiveDataHandoffTarget::Mmio {
+                route: rem6_mmio::MmioRoute::new(PartitionId::new(2), PartitionId::new(5), 7, 11)
+                    .unwrap(),
+            },
+            ..entry(sequence)
+        }
+    }
+
     #[test]
     fn live_data_handoff_round_trips_entries() {
         let handoff = RiscvO3LiveDataHandoff::new(vec![entry(1), entry(2)], 2).unwrap();
+        let payload = handoff.encode();
+
+        assert_eq!(payload[MAGIC.len()], VERSION_MEMORY_ROUTE);
+        assert_eq!(payload.len(), HEADER_BYTES + 2 * V1_ENTRY_BYTES);
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&payload),
+            Ok(handoff.clone())
+        );
+        assert_eq!(
+            handoff.entries()[0].memory_route(),
+            Some(MemoryRouteId::new(7))
+        );
+        assert_eq!(handoff.entries()[0].mmio_route(), None);
+    }
+
+    #[test]
+    fn live_data_handoff_decodes_and_reencodes_legacy_v1_bytes() {
+        let decoded = RiscvO3LiveDataHandoff::decode(&LEGACY_V1_SINGLE_ENTRY_PAYLOAD).unwrap();
 
         assert_eq!(
-            RiscvO3LiveDataHandoff::decode(&handoff.encode()),
-            Ok(handoff)
+            decoded,
+            RiscvO3LiveDataHandoff::new(vec![entry(1)], 0).unwrap()
+        );
+        assert_eq!(decoded.entries()[0].route(), MemoryRouteId::new(7));
+        assert_eq!(decoded.encode(), LEGACY_V1_SINGLE_ENTRY_PAYLOAD);
+    }
+
+    #[test]
+    fn live_data_handoff_round_trips_typed_memory_and_mmio_targets() {
+        let memory = entry(1);
+        let mmio = mmio_entry(2);
+        let handoff = RiscvO3LiveDataHandoff::new(vec![memory, mmio], 1).unwrap();
+        let payload = handoff.encode();
+
+        assert_eq!(payload[MAGIC.len()], VERSION_TYPED_TARGET);
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&payload),
+            Ok(handoff.clone())
+        );
+        assert_eq!(
+            handoff.entries()[0].target(),
+            RiscvO3LiveDataHandoffTarget::Memory {
+                route: MemoryRouteId::new(7),
+            }
+        );
+        assert_eq!(
+            handoff.entries()[1].mmio_route(),
+            Some(
+                rem6_mmio::MmioRoute::new(PartitionId::new(2), PartitionId::new(5), 7, 11,)
+                    .unwrap()
+            )
+        );
+        assert_eq!(handoff.entries()[1].memory_route(), None);
+    }
+
+    #[test]
+    fn live_data_handoff_rejects_unknown_or_invalid_typed_targets() {
+        let payload = RiscvO3LiveDataHandoff::new(vec![mmio_entry(1)], 0)
+            .unwrap()
+            .encode();
+        let mut unknown_kind = payload.clone();
+        unknown_kind[HEADER_BYTES + V2_TARGET_KIND_OFFSET] = 7;
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&unknown_kind),
+            Err(RiscvO3LiveDataHandoffError::InvalidTargetKind { value: 7 })
+        );
+
+        let mut zero_request_latency = payload;
+        let request_latency = HEADER_BYTES + V2_MMIO_REQUEST_LATENCY_OFFSET;
+        zero_request_latency[request_latency..request_latency + 8]
+            .copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&zero_request_latency),
+            Err(RiscvO3LiveDataHandoffError::InvalidMmioRoute {
+                request_latency: 0,
+                response_latency: 11,
+            })
+        );
+
+        let mut overflowing_tick = RiscvO3LiveDataHandoff::new(vec![mmio_entry(1)], 0)
+            .unwrap()
+            .encode();
+        let issue_tick = u64::MAX - 5;
+        let issue_offset = HEADER_BYTES + ISSUE_TICK_OFFSET;
+        overflowing_tick[issue_offset..issue_offset + 8].copy_from_slice(&issue_tick.to_le_bytes());
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&overflowing_tick),
+            Err(RiscvO3LiveDataHandoffError::MmioRouteTickOverflow {
+                issue_tick,
+                request_latency: 7,
+                response_latency: 11,
+            })
         );
     }
 
@@ -528,11 +810,11 @@ mod tests {
             Err(RiscvO3LiveDataHandoffError::InvalidMagic)
         );
         let mut bad_version = payload.clone();
-        bad_version[MAGIC.len()] = VERSION + 1;
+        bad_version[MAGIC.len()] = VERSION_TYPED_TARGET + 1;
         assert_eq!(
             RiscvO3LiveDataHandoff::decode(&bad_version),
             Err(RiscvO3LiveDataHandoffError::UnsupportedVersion {
-                version: VERSION + 1,
+                version: VERSION_TYPED_TARGET + 1,
             })
         );
         assert!(matches!(
@@ -596,7 +878,7 @@ mod tests {
         };
         let payload = handoff.encode();
         let mut duplicate_o3 = payload.clone();
-        let second_o3 = HEADER_BYTES + ENTRY_BYTES + O3_SEQUENCE_OFFSET;
+        let second_o3 = HEADER_BYTES + V1_ENTRY_BYTES + V1_O3_SEQUENCE_OFFSET;
         duplicate_o3[second_o3..second_o3 + 8].copy_from_slice(&1_u64.to_le_bytes());
         assert_eq!(
             RiscvO3LiveDataHandoff::decode(&duplicate_o3),
@@ -604,7 +886,7 @@ mod tests {
         );
 
         let mut duplicate_trace = payload;
-        let second_trace = HEADER_BYTES + ENTRY_BYTES + TRACE_SEQUENCE_OFFSET;
+        let second_trace = HEADER_BYTES + V1_ENTRY_BYTES + V1_TRACE_SEQUENCE_OFFSET;
         duplicate_trace[second_trace..second_trace + 8].copy_from_slice(&21_u64.to_le_bytes());
         assert_eq!(
             RiscvO3LiveDataHandoff::decode(&duplicate_trace),

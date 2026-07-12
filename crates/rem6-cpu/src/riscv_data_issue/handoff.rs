@@ -1,7 +1,9 @@
 use rem6_isa_riscv::MemoryAccessKind;
 
 use super::IssuedDataAccess;
-use crate::riscv_execution_mode_handoff::RiscvIssuedScalarLoadHandoff;
+use crate::riscv_execution_mode_handoff::{
+    RiscvIssuedScalarLoadHandoff, RiscvO3LiveDataHandoffTarget,
+};
 use crate::RiscvDataAccessTarget;
 
 impl IssuedDataAccess {
@@ -9,15 +11,20 @@ impl IssuedDataAccess {
         if !matches!(self.access, MemoryAccessKind::Load { .. }) {
             return None;
         }
-        let RiscvDataAccessTarget::Memory { route, .. } = self.target else {
-            return None;
+        let target = match &self.target {
+            RiscvDataAccessTarget::Memory { route, .. } => {
+                RiscvO3LiveDataHandoffTarget::Memory { route: *route }
+            }
+            RiscvDataAccessTarget::Mmio { route } => {
+                RiscvO3LiveDataHandoffTarget::Mmio { route: *route }
+            }
         };
         Some(RiscvIssuedScalarLoadHandoff {
             fetch_request: self.fetch_request,
             data_request: self.request,
             issue_tick: self.tick,
             partition: self.partition,
-            route,
+            target,
             address: self.physical_address,
             bytes: u32::try_from(self.size.bytes()).ok()?,
         })

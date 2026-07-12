@@ -1,8 +1,7 @@
 use crate::formatting::json_escape;
 use crate::{
     Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
-    Rem6HostExecutionModeSummary, Rem6HostO3LiveDataHandoffChunkSummary,
-    Rem6HostO3RuntimeCheckpointChunkSummary,
+    Rem6HostExecutionModeSummary, Rem6HostO3RuntimeCheckpointChunkSummary,
 };
 
 impl Rem6HostCheckpointSummary {
@@ -75,34 +74,6 @@ impl Rem6HostCheckpointChunkSummary {
             self.payload_checksum,
             o3_runtime,
             o3_live_data_handoff,
-        )
-    }
-}
-
-impl Rem6HostO3LiveDataHandoffChunkSummary {
-    fn to_json(&self) -> String {
-        let first_address = self
-            .first_address
-            .map(|address| format!("\"0x{address:x}\""))
-            .unwrap_or_else(|| "null".to_string());
-        format!(
-            "{{\"decode_error\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_partition\":{},\"first_route\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{}}}",
-            self.decode_error,
-            optional_u64_json(self.outstanding_requests),
-            optional_u64_json(self.resident_rows),
-            optional_u64_json(self.younger_rows),
-            optional_u64_json(self.first_fetch_request_agent),
-            optional_u64_json(self.first_fetch_request_sequence),
-            optional_u64_json(self.first_data_request_agent),
-            optional_u64_json(self.first_data_request_sequence),
-            optional_u64_json(self.first_issue_tick),
-            optional_u64_json(self.last_issue_tick),
-            optional_u64_json(self.first_partition),
-            optional_u64_json(self.first_route),
-            first_address,
-            optional_u64_json(self.first_bytes),
-            optional_u64_json(self.first_o3_sequence),
-            optional_u64_json(self.first_trace_sequence),
         )
     }
 }

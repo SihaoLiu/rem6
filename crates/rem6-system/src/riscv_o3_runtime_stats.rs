@@ -334,21 +334,27 @@ impl Default for RiscvO3RuntimeStats {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
     use rem6_cpu::{
         CpuCore, CpuDataConfig, CpuFetchConfig, CpuResetState, RiscvCluster,
         RiscvClusterDriveEvent, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
-        RiscvCpuExecutionEvent,
+        RiscvCpuExecutionEvent, RiscvO3LiveDataHandoffTarget,
     };
     use rem6_isa_riscv::{Immediate, Register, RiscvExecutionRecord, RiscvInstruction};
-    use rem6_kernel::{PartitionId, PartitionedScheduler};
+    use rem6_kernel::{
+        ParallelSchedulerContext, PartitionId, PartitionedScheduler, SchedulerContext,
+    };
     use rem6_memory::{
         AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId,
         MemoryResponse,
     };
-    use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
+    use rem6_mmio::{
+        MmioAccess, MmioBus, MmioDevice, MmioError, MmioRegisterBank, MmioRequest, MmioResponse,
+        MmioRoute,
+    };
     use rem6_stats::{StatResetPolicy, StatsRegistry};
     use rem6_transport::{
         MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome,
@@ -359,9 +365,41 @@ mod tests {
     use super::*;
     use crate::{
         riscv_execution_mode_target_for_cpu, ExecutionMode, GuestSourceId, HostEventPolicy,
-        RiscvCoreCheckpointPort, RiscvInstructionStats, RiscvSystemRunDriver, RiscvTrapEventPort,
-        SystemHostController, SystemHostEventPort,
+        RiscvCoreCheckpointError, RiscvCoreCheckpointPort, RiscvInstructionStats,
+        RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
+        RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
     };
+
+    struct CountingMmioDevice {
+        responses: Arc<AtomicUsize>,
+        bank: Mutex<MmioRegisterBank>,
+    }
+
+    impl MmioDevice for CountingMmioDevice {
+        fn respond(
+            &self,
+            _context: &mut SchedulerContext<'_>,
+            request: &MmioRequest,
+        ) -> Result<MmioResponse, MmioError> {
+            self.responses.fetch_add(1, Ordering::SeqCst);
+            self.bank
+                .lock()
+                .expect("counted MMIO register bank lock")
+                .respond(request)
+        }
+
+        fn respond_parallel(
+            &self,
+            _context: &mut ParallelSchedulerContext<'_>,
+            request: &MmioRequest,
+        ) -> Result<MmioResponse, MmioError> {
+            self.responses.fetch_add(1, Ordering::SeqCst);
+            self.bank
+                .lock()
+                .expect("counted MMIO register bank lock")
+                .respond(request)
+        }
+    }
 
     #[test]
     fn scalar_memory_execution_turn_defers_o3_retirement() {
@@ -809,10 +847,14 @@ mod tests {
         )
         .unwrap();
         let mut bus = MmioBus::new();
+        let device_responses = Arc::new(AtomicUsize::new(0));
         bus.insert_device(
             AddressRange::new(Address::new(0), AccessSize::new(0x100).unwrap()).unwrap(),
             MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
-            Mutex::new(bank),
+            CountingMmioDevice {
+                responses: Arc::clone(&device_responses),
+                bank: Mutex::new(bank),
+            },
         )
         .unwrap();
         let response_event = core
@@ -838,8 +880,49 @@ mod tests {
         assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 1);
         assert_eq!(core.o3_runtime_snapshot().load_store_queue().len(), 1);
         assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+        let handoff = core
+            .capture_o3_live_data_handoff()
+            .expect("resident MMIO load should have typed live handoff authority");
+        assert_eq!(handoff.entries().len(), 1);
+        assert_eq!(handoff.younger_rows(), 0);
+        assert_eq!(
+            handoff.entries()[0].target(),
+            RiscvO3LiveDataHandoffTarget::Mmio {
+                route: MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+            }
+        );
+        let component = CheckpointComponentId::new("cpu0").unwrap();
+        let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+        let mut registry = CheckpointRegistry::new();
+        port.register(&mut registry).unwrap();
+        registry
+            .write_chunk(
+                &component,
+                RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+                handoff.encode(),
+            )
+            .unwrap();
+        assert_eq!(
+            port.restore_from(&registry),
+            Err(RiscvCoreCheckpointError::LiveDataHandoffNotRestorable { component })
+        );
+        assert_eq!(device_responses.load(Ordering::SeqCst), 0);
+
+        {
+            let controller = driver.trap_port().controller();
+            controller
+                .lock()
+                .expect("system host controller lock")
+                .executor_mut()
+                .set_execution_mode(
+                    riscv_execution_mode_target_for_cpu(cpu),
+                    ExecutionMode::Timing,
+                );
+        }
+        core.set_detailed_live_retire_gate_enabled(false);
 
         scheduler.run_until_idle_parallel().unwrap();
+        assert_eq!(device_responses.load(Ordering::SeqCst), 1);
         driver
             .record_o3_runtime_stats(&cluster, &RiscvClusterTurn::idle(scheduler.now()))
             .unwrap();
