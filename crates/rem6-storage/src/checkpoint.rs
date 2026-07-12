@@ -215,6 +215,10 @@ impl StorageImageCheckpointPort {
         &self.component
     }
 
+    fn aliases_target(&self, other: &Self) -> bool {
+        self.target.aliases(&other.target)
+    }
+
     pub fn register(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         registry.register(self.component.clone())
     }
@@ -302,6 +306,15 @@ enum StorageImageCheckpointTarget {
 }
 
 impl StorageImageCheckpointTarget {
+    fn aliases(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Raw(left), Self::Raw(right)) => Arc::ptr_eq(&left.state, &right.state),
+            (Self::Cow(left), Self::Cow(right)) => Arc::ptr_eq(&left.state, &right.state),
+            (Self::File(left), Self::File(right)) => left.shares_backing_with(right),
+            _ => false,
+        }
+    }
+
     fn snapshot(&self) -> Result<StorageImageCheckpointSnapshot, StorageError> {
         match self {
             Self::Raw(image) => Ok(StorageImageCheckpointSnapshot::Raw(image.snapshot())),
@@ -452,7 +465,11 @@ impl StorageImageCheckpointBank {
         let mut by_component = BTreeMap::new();
         for port in ports {
             let component = port.component().clone();
-            if by_component.contains_key(&component) {
+            if by_component.contains_key(&component)
+                || by_component
+                    .values()
+                    .any(|existing: &StorageImageCheckpointPort| existing.aliases_target(&port))
+            {
                 return Err(CheckpointError::DuplicateComponent { component });
             }
             by_component.insert(component, port);
@@ -472,7 +489,12 @@ impl StorageImageCheckpointBank {
 
     pub fn insert_port(&mut self, port: StorageImageCheckpointPort) -> Result<(), CheckpointError> {
         let component = port.component().clone();
-        if self.ports.contains_key(&component) {
+        if self.ports.contains_key(&component)
+            || self
+                .ports
+                .values()
+                .any(|existing| existing.aliases_target(&port))
+        {
             return Err(CheckpointError::DuplicateComponent { component });
         }
         self.ports.insert(component, port);
@@ -480,8 +502,18 @@ impl StorageImageCheckpointBank {
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        let mut registered = Vec::new();
         for port in self.ports.values() {
-            port.register(registry)?;
+            match port.register(registry) {
+                Ok(()) => registered.push(port.component().clone()),
+                Err(error) => {
+                    for component in registered {
+                        let removed = registry.remove_component(&component);
+                        debug_assert!(removed);
+                    }
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -1009,6 +1041,7 @@ fn validate_file_storage_snapshot(
     image: &FileStorageImage,
     snapshot: &FileStorageSnapshot,
 ) -> Result<(), StorageError> {
+    validate_storage_bytes(snapshot.capacity_sectors(), snapshot.bytes().len() as u64)?;
     let image_sectors = image.capacity_sectors();
     if snapshot.capacity_sectors() != image_sectors {
         return Err(StorageError::SnapshotCapacityMismatch {
@@ -1016,7 +1049,10 @@ fn validate_file_storage_snapshot(
             image_sectors,
         });
     }
-    validate_storage_bytes(snapshot.capacity_sectors(), snapshot.bytes().len() as u64)
+    if !image.can_restore_snapshot() {
+        return Err(StorageError::ReadOnly);
+    }
+    Ok(())
 }
 
 fn encode_channel_id(channel: IdeChannelId) -> u8 {

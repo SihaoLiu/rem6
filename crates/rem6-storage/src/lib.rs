@@ -7,6 +7,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use same_file::Handle as SameFileHandle;
+
 mod checkpoint;
 mod ide;
 mod ide_disk;
@@ -313,6 +315,7 @@ impl StorageImageLayer for RawStorageImage {
 #[derive(Debug)]
 pub struct FileStorageImage {
     path: PathBuf,
+    backing_identity: Arc<SameFileHandle>,
     state: Arc<Mutex<FileStorageImageState>>,
 }
 
@@ -320,6 +323,7 @@ impl Clone for FileStorageImage {
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
+            backing_identity: Arc::clone(&self.backing_identity),
             state: Arc::clone(&self.state),
         }
     }
@@ -341,6 +345,17 @@ impl FileStorageImage {
     pub fn capacity_sectors(&self) -> u64 {
         let state = self.state.lock().expect("file storage image lock");
         state.capacity_sectors
+    }
+
+    pub(crate) fn can_restore_snapshot(&self) -> bool {
+        self.state
+            .lock()
+            .expect("file storage image lock")
+            .backing_writable
+    }
+
+    pub(crate) fn shares_backing_with(&self, other: &Self) -> bool {
+        self.backing_identity == other.backing_identity
     }
 
     pub fn flush_count(&self) -> u64 {
@@ -423,7 +438,7 @@ impl FileStorageImage {
                 image_sectors: state.capacity_sectors,
             });
         }
-        if state.read_only {
+        if !state.backing_writable {
             return Err(StorageError::ReadOnly);
         }
         state
@@ -445,16 +460,23 @@ impl FileStorageImage {
             .write(!read_only)
             .open(&path)
             .map_err(|error| file_operation_error(&path, StorageFileOperation::Open, error))?;
-        let bytes = file
+        let metadata = file
             .metadata()
-            .map_err(|error| file_operation_error(&path, StorageFileOperation::Metadata, error))?
-            .len();
+            .map_err(|error| file_operation_error(&path, StorageFileOperation::Metadata, error))?;
+        let bytes = metadata.len();
         validate_image_bytes(bytes)?;
+        let identity_file = file
+            .try_clone()
+            .map_err(|error| file_operation_error(&path, StorageFileOperation::Open, error))?;
+        let backing_identity = SameFileHandle::from_file(identity_file)
+            .map_err(|error| file_operation_error(&path, StorageFileOperation::Metadata, error))?;
         Ok(Self {
+            backing_identity: Arc::new(backing_identity),
             path,
             state: Arc::new(Mutex::new(FileStorageImageState {
                 file,
                 capacity_sectors: bytes / STORAGE_SECTOR_BYTES,
+                backing_writable: !read_only,
                 read_only,
                 flush_count: 0,
             })),
@@ -484,6 +506,7 @@ impl StorageImageLayer for FileStorageImage {
 struct FileStorageImageState {
     file: File,
     capacity_sectors: u64,
+    backing_writable: bool,
     read_only: bool,
     flush_count: u64,
 }

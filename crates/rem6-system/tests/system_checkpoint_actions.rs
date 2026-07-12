@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{
@@ -9,14 +12,16 @@ use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
-use rem6_storage::{CowStorageImage, RawStorageImage, StorageSectorId};
+use rem6_storage::{
+    CowStorageImage, FileStorageImage, RawStorageImage, StorageError, StorageSectorId,
+};
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, IdeControllerCheckpointBank,
-    IdeControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
-    MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
-    StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
-    SystemActionExecutor, SystemActionOutcome, SystemError,
+    ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId, HostAction, HostActionRecord,
+    IdeControllerCheckpointBank, IdeControllerCheckpointPort, MemoryStoreCheckpointBank,
+    MemoryStoreCheckpointError, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointError,
+    SchedulerCheckpointPort, StorageCheckpointError, StorageImageCheckpointBank,
+    StorageImageCheckpointPort, SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -79,6 +84,32 @@ fn image_bytes(bytes: &[u8]) -> Vec<u8> {
         .iter()
         .flat_map(|byte| sector(*byte))
         .collect::<Vec<_>>()
+}
+
+#[derive(Debug)]
+struct TempImageFile(PathBuf);
+
+impl TempImageFile {
+    fn create(name: &str, bytes: &[u8]) -> Self {
+        static NEXT_TEMP_IMAGE: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_TEMP_IMAGE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "rem6-system-{name}-{}-{sequence}.img",
+            std::process::id()
+        ));
+        fs::write(&path, bytes).unwrap();
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempImageFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 fn ide_disk(byte: u8, device: rem6_storage::IdeDeviceId) -> rem6_storage::IdeDisk {
@@ -186,6 +217,145 @@ fn system_action_executor_checkpoints_and_restores_storage_images() {
     );
     assert_eq!(raw.snapshot(), expected_raw);
     assert_eq!(cow.snapshot(), expected_cow);
+}
+
+#[test]
+fn read_only_storage_restore_fails_before_host_checkpoint_metadata_commit() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(29);
+    let component = CheckpointComponentId::new("storage.file0").unwrap();
+    let target = ExecutionModeTarget::new("cpu0");
+    let captured = image_bytes(&[0x41, 0x42]);
+    let image = TempImageFile::create("read-only-restore", &captured);
+
+    let writable = FileStorageImage::open(image.path()).unwrap();
+    let source_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        writable,
+    )])
+    .unwrap();
+    let mut source_executor = SystemActionExecutor::new(StatsRegistry::new());
+    source_executor
+        .attach_storage_image_checkpoint_bank(source_bank)
+        .unwrap();
+    source_executor.set_execution_mode(target.clone(), ExecutionMode::Functional);
+    let manifest = match source_executor
+        .apply(&HostActionRecord::new(
+            1,
+            host,
+            host,
+            GuestEventId::new(29),
+            source,
+            HostAction::Checkpoint {
+                label: "read-only-storage-source".to_string(),
+            },
+        ))
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected checkpoint outcome: {other:?}"),
+    };
+
+    let live = image_bytes(&[0xa1, 0xa2]);
+    fs::write(image.path(), &live).unwrap();
+    let read_only = FileStorageImage::open_read_only(image.path()).unwrap();
+    let target_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        read_only,
+    )])
+    .unwrap();
+    let mut target_executor = SystemActionExecutor::new(StatsRegistry::new());
+    target_executor
+        .attach_storage_image_checkpoint_bank(target_bank)
+        .unwrap();
+    target_executor.set_execution_mode(target.clone(), ExecutionMode::Detailed);
+    assert!(target_executor
+        .checkpoints()
+        .chunk(&component, "storage-image")
+        .is_none());
+
+    let error = target_executor
+        .apply(&HostActionRecord::new(
+            2,
+            host,
+            host,
+            GuestEventId::new(30),
+            source,
+            HostAction::RestoreCheckpoint { manifest },
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SystemError::StorageCheckpoint(StorageCheckpointError::Storage {
+            component: component.clone(),
+            error: StorageError::ReadOnly,
+        })
+    );
+    assert_eq!(
+        target_executor.execution_mode(&target),
+        Some(ExecutionMode::Detailed)
+    );
+    assert!(target_executor
+        .checkpoints()
+        .chunk(&component, "storage-image")
+        .is_none());
+    assert_eq!(fs::read(image.path()).unwrap(), live);
+}
+
+#[test]
+fn storage_checkpoint_alias_attach_leaves_no_orphan_component() {
+    let first_component = CheckpointComponentId::new("storage.first").unwrap();
+    let second_component = CheckpointComponentId::new("storage.second").unwrap();
+    let image = RawStorageImage::from_bytes(image_bytes(&[0x51])).unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor
+        .attach_storage_image_checkpoint_port(StorageImageCheckpointPort::raw(
+            first_component.clone(),
+            image.clone(),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        executor.attach_storage_image_checkpoint_port(StorageImageCheckpointPort::raw(
+            second_component.clone(),
+            image,
+        )),
+        Err(CheckpointError::DuplicateComponent {
+            component: second_component.clone(),
+        })
+    );
+    assert!(executor.checkpoints().contains_component(&first_component));
+    assert!(!executor.checkpoints().contains_component(&second_component));
+}
+
+#[test]
+fn storage_checkpoint_bank_attach_rolls_back_partial_registration() {
+    let first_component = CheckpointComponentId::new("storage.first").unwrap();
+    let conflict_component = CheckpointComponentId::new("storage.second").unwrap();
+    let first = RawStorageImage::from_bytes(image_bytes(&[0x61])).unwrap();
+    let second = RawStorageImage::from_bytes(image_bytes(&[0x71])).unwrap();
+    let bank = StorageImageCheckpointBank::new([
+        StorageImageCheckpointPort::raw(first_component.clone(), first),
+        StorageImageCheckpointPort::raw(conflict_component.clone(), second),
+    ])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor
+        .checkpoints_mut()
+        .register(conflict_component.clone())
+        .unwrap();
+
+    assert_eq!(
+        executor.attach_storage_image_checkpoint_bank(bank),
+        Err(CheckpointError::DuplicateComponent {
+            component: conflict_component.clone(),
+        })
+    );
+    assert!(!executor.checkpoints().contains_component(&first_component));
+    assert!(executor
+        .checkpoints()
+        .contains_component(&conflict_component));
 }
 
 #[test]

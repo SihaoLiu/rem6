@@ -735,13 +735,20 @@ impl SystemActionExecutor {
         &mut self,
         port: StorageImageCheckpointPort,
     ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
         port.register(&mut self.checkpoints)?;
-        if let Some(storage_image_checkpoints) = &mut self.storage_image_checkpoints {
+        let result = if let Some(storage_image_checkpoints) = &mut self.storage_image_checkpoints {
             storage_image_checkpoints.insert_port(port)
         } else {
-            self.storage_image_checkpoints = Some(StorageImageCheckpointBank::new([port])?);
-            Ok(())
+            StorageImageCheckpointBank::new([port]).map(|bank| {
+                self.storage_image_checkpoints = Some(bank);
+            })
+        };
+        if result.is_err() {
+            let removed = self.checkpoints.remove_component(&component);
+            debug_assert!(removed);
         }
+        result
     }
 
     pub fn attach_ide_controller_checkpoint_port(

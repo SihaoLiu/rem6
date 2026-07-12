@@ -746,7 +746,7 @@ O3 engine ownership, cache/DRAM runtime state, and calibrated power paths.
   stats dump/reset and checkpoint tick repeats, and
   `m5_switch_cpu` as top-level execution-mode metadata plus continued execution,
   checkpoint-backed transfer counts, and run-level `sim.host_actions.*` stats including SE ROI/stat hooks.
-- [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
+- [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners, with file-image restore capability preflight rejecting read-only backing targets before host checkpoint metadata or execution-mode authority commits.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] GDB RV64D floating-point, including XML-aligned `fflags`/`frm`/`fcsr` and placeholder numbering, advertised RV64 CSR target descriptions including supervisor `sscratch`, supervisor environment `senvcfg`, machine environment `menvcfg`, translation `satp`, interrupt aliases `sie`/`sip`, machine identity `mhartid`/`mvendorid`/`marchid`/`mimpid`/`mconfigptr`, machine ISA `misa`, counter inhibit `mcountinhibit`, counter `cycle`/`time`/`instret`, machine-counter aliases `mcycle`/`minstret`, packed PMP config `pmpcfg0`/`pmpcfg2`, and PMP address registers `pmpaddr0` through `pmpaddr15`, and RV64 machine status, interrupt, trap, identity, ISA, environment-config, counter-inhibit, counter, and PMP CSR register-cache paths exist, with `cycle`/`mcycle`, `time`, and `instret`/`minstret` remaining GDB-visible across real GDB single-step execution and PMP0 through PMP15 writes updating the same `RiscvCore` PMP state consumed by CPU access checks.
 - [x] GDB RV64 vector fixed-point and vector-configuration CSR target descriptions and register-cache read/write paths exist for `vxsat`, `vxrm`, `vcsr`, `vl`, `vtype`, and `vlenb`.
@@ -785,7 +785,7 @@ O3 engine ownership, cache/DRAM runtime state, and calibrated power paths.
 - [ ] Power and thermal models are calibrated against real component activity.
 - [x] O3 pending-state checkpoints exist.
 
-**Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
+**Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks including read-only backing file-image restore preflight before host checkpoint metadata commit,
 m5ops, host actions, run-level `sim.host_actions.*` stats, GDB packet/session parsing, RISC-V integer/PC register
 paths, RV64D floating-point target descriptions including XML-aligned
 `fflags`/`frm`/`fcsr` and placeholder numbering,
@@ -854,7 +854,7 @@ broader runtime-calibrated power/thermal, and broad running O3 execution beyond 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 `cli_run::pc_count_probes::rem6_run_emits_riscv_pc_count_probe_stats`,
-checkpoint tests including RISC-V hart run-state, in-order pipeline restore,
+checkpoint tests including `storage_image_checkpoint_bank_rejects_read_only_file_target_during_validation`, `file_storage_checkpoint_replays_read_only_snapshot_on_writable_target`, `storage_image_checkpoint_bank_rejects_target_aliases`, `storage_checkpoint_alias_attach_leaves_no_orphan_component`, `storage_checkpoint_bank_attach_rolls_back_partial_registration`, `read_only_storage_restore_fails_before_host_checkpoint_metadata_commit`, RISC-V hart run-state, in-order pipeline restore,
 fetch-steering branch predictor restore with live fetch-ahead pending
 speculation, and GShare, BiMode, Tournament, and multiperspective perceptron predictor checkpoint restore,
 RISC-V core O3 runtime checkpoint restore tests plus O3 pending/writeback payload tests, GDB byte-stream,

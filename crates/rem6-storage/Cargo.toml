@@ -11,6 +11,7 @@ rem6-interrupt = { path = "../rem6-interrupt" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
 rem6-pci = { path = "../rem6-pci" }
+same-file = "1.0.6"
 
 [lints]
 workspace = true

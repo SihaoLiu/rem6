@@ -1,9 +1,9 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_storage::{
     CowStorageImage, FileStorageImage, RawStorageImage, StorageCheckpointError, StorageError,
     StorageFileOperation, StorageImageCheckpointBank, StorageImageCheckpointPort,
@@ -28,6 +28,27 @@ fn temp_image_path(name: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("rem6-storage-{name}-{unique}.img"))
+}
+
+#[derive(Debug)]
+struct TempImageFile(PathBuf);
+
+impl TempImageFile {
+    fn create(name: &str, bytes: &[u8]) -> Self {
+        let path = temp_image_path(name);
+        fs::write(&path, bytes).unwrap();
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempImageFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 #[derive(Debug)]
@@ -434,6 +455,181 @@ fn storage_image_checkpoint_bank_captures_and_restores_file_images() {
     );
 
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn storage_image_checkpoint_bank_rejects_read_only_file_target_during_validation() {
+    let component = CheckpointComponentId::new("storage.file0").unwrap();
+    let captured = image_bytes(&[0x31, 0x32]);
+    let image = TempImageFile::create("checkpoint-read-only-validation", &captured);
+    let writable = FileStorageImage::open(image.path()).unwrap();
+    let source_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        writable,
+    )])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    source_bank.register_all(&mut registry).unwrap();
+    source_bank.capture_all_into(&mut registry).unwrap();
+
+    let live = image_bytes(&[0x91, 0x92]);
+    fs::write(image.path(), &live).unwrap();
+    let read_only = FileStorageImage::open_read_only(image.path()).unwrap();
+    let target_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        read_only,
+    )])
+    .unwrap();
+
+    assert_eq!(
+        target_bank.validate_restore_from(&registry),
+        Err(StorageCheckpointError::Storage {
+            component: component.clone(),
+            error: StorageError::ReadOnly,
+        })
+    );
+    assert_eq!(
+        target_bank.restore_all_from(&registry),
+        Err(StorageCheckpointError::Storage {
+            component,
+            error: StorageError::ReadOnly,
+        })
+    );
+    assert_eq!(fs::read(image.path()).unwrap(), live);
+}
+
+#[test]
+fn file_storage_checkpoint_replays_read_only_snapshot_on_writable_target() {
+    let component = CheckpointComponentId::new("storage.file0").unwrap();
+    let source_image = TempImageFile::create(
+        "checkpoint-read-only-replay-source",
+        &image_bytes(&[0x51, 0x52]),
+    );
+    let source = FileStorageImage::open_read_only(source_image.path()).unwrap();
+    let source_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        source,
+    )])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    source_bank.register_all(&mut registry).unwrap();
+    source_bank.capture_all_into(&mut registry).unwrap();
+
+    let target_image = TempImageFile::create(
+        "checkpoint-read-only-replay-target",
+        &image_bytes(&[0x91, 0x92]),
+    );
+    let target = FileStorageImage::open(target_image.path()).unwrap();
+    let target_bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component,
+        target.clone(),
+    )])
+    .unwrap();
+
+    target_bank.restore_all_from(&registry).unwrap();
+    assert!(matches!(
+        target.write_sector(StorageSectorId::new(0), sector(0xff)),
+        Err(StorageError::ReadOnly)
+    ));
+
+    target_bank.restore_all_from(&registry).unwrap();
+
+    assert_eq!(
+        fs::read(target_image.path()).unwrap(),
+        image_bytes(&[0x51, 0x52])
+    );
+    assert!(matches!(
+        target.write_sector(StorageSectorId::new(0), sector(0xff)),
+        Err(StorageError::ReadOnly)
+    ));
+}
+
+#[test]
+fn storage_image_checkpoint_bank_rejects_target_aliases() {
+    let first_component = CheckpointComponentId::new("storage.first").unwrap();
+    let second_component = CheckpointComponentId::new("storage.second").unwrap();
+
+    let raw = RawStorageImage::from_bytes(image_bytes(&[0x61])).unwrap();
+    assert_eq!(
+        StorageImageCheckpointBank::new([
+            StorageImageCheckpointPort::raw(first_component.clone(), raw.clone()),
+            StorageImageCheckpointPort::raw(second_component.clone(), raw),
+        ])
+        .unwrap_err(),
+        CheckpointError::DuplicateComponent {
+            component: second_component.clone(),
+        }
+    );
+
+    let child = RawStorageImage::from_bytes(image_bytes(&[0x71])).unwrap();
+    let cow = CowStorageImage::new(Arc::new(child));
+    assert_eq!(
+        StorageImageCheckpointBank::new([
+            StorageImageCheckpointPort::cow(first_component.clone(), cow.clone()),
+            StorageImageCheckpointPort::cow(second_component.clone(), cow),
+        ])
+        .unwrap_err(),
+        CheckpointError::DuplicateComponent {
+            component: second_component.clone(),
+        }
+    );
+
+    let file = TempImageFile::create("checkpoint-aliased-target", &image_bytes(&[0x81]));
+    let image = FileStorageImage::open(file.path()).unwrap();
+    assert_eq!(
+        StorageImageCheckpointBank::new([
+            StorageImageCheckpointPort::file(first_component.clone(), image.clone()),
+            StorageImageCheckpointPort::file(second_component.clone(), image.clone()),
+        ])
+        .unwrap_err(),
+        CheckpointError::DuplicateComponent {
+            component: second_component.clone(),
+        }
+    );
+
+    let independently_opened = FileStorageImage::open(file.path()).unwrap();
+    assert_eq!(
+        StorageImageCheckpointBank::new([
+            StorageImageCheckpointPort::file(first_component.clone(), image.clone()),
+            StorageImageCheckpointPort::file(second_component.clone(), independently_opened,),
+        ])
+        .unwrap_err(),
+        CheckpointError::DuplicateComponent {
+            component: second_component.clone(),
+        }
+    );
+
+    #[cfg(unix)]
+    {
+        let hard_link = TempImageFile(temp_image_path("checkpoint-aliased-hard-link"));
+        fs::hard_link(file.path(), hard_link.path()).unwrap();
+        let hard_link_image = FileStorageImage::open(hard_link.path()).unwrap();
+        assert_eq!(
+            StorageImageCheckpointBank::new([
+                StorageImageCheckpointPort::file(first_component.clone(), image.clone()),
+                StorageImageCheckpointPort::file(second_component.clone(), hard_link_image),
+            ])
+            .unwrap_err(),
+            CheckpointError::DuplicateComponent {
+                component: second_component.clone(),
+            }
+        );
+    }
+
+    let mut bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        first_component,
+        image.clone(),
+    )])
+    .unwrap();
+    assert_eq!(
+        bank.insert_port(StorageImageCheckpointPort::file(
+            second_component.clone(),
+            image,
+        )),
+        Err(CheckpointError::DuplicateComponent {
+            component: second_component,
+        })
+    );
 }
 
 #[test]
