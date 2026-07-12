@@ -555,6 +555,7 @@ mod tests {
             .as_ref()
             .expect("handoff chunk should expose a decode summary");
         assert!(handoff.decode_error);
+        assert_eq!(handoff.schema_version, None);
         assert_eq!(handoff.row_count, None);
         assert_eq!(handoff.first_data_request_sequence, None);
 
@@ -566,6 +567,10 @@ mod tests {
         );
         assert_eq!(
             json.pointer("/components/0/chunks/0/o3_live_data_handoff/outstanding_requests"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_live_data_handoff/schema_version"),
             Some(&Value::Null)
         );
         assert_eq!(

@@ -296,6 +296,38 @@ fn o3_store_forwarding_policy_lives_in_focused_module() {
     );
 }
 
+#[test]
+fn riscv_live_data_handoff_codec_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/riscv_execution_mode_handoff.rs")).unwrap();
+    let codec_path = crate_dir.join("src/riscv_execution_mode_handoff/codec.rs");
+
+    assert!(
+        root.contains("mod codec;"),
+        "the RISC-V live-data handoff root must delegate binary encoding"
+    );
+    assert!(
+        codec_path.exists(),
+        "live-data handoff encoding belongs in src/riscv_execution_mode_handoff/codec.rs"
+    );
+    let codec = fs::read_to_string(codec_path).unwrap();
+    for anchor in [
+        "const MAGIC:",
+        "pub fn encode(&self)",
+        "pub fn decode(payload:",
+        "fn read_target(",
+    ] {
+        assert!(
+            codec.contains(anchor),
+            "live-data handoff codec is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "the semantic handoff root still owns codec detail `{anchor}`"
+        );
+    }
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

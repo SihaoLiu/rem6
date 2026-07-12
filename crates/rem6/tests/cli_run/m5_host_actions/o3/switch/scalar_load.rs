@@ -137,6 +137,10 @@ fn assert_live_scalar_load_handoff(memory_system: &str) {
         Some(false)
     );
     assert_eq!(
+        handoff.pointer("/schema_version").and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
         handoff
             .pointer("/outstanding_requests")
             .and_then(Value::as_u64),

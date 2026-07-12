@@ -7,6 +7,7 @@ use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) decode_error: bool,
+    pub(crate) schema_version: Option<u64>,
     pub(crate) row_count: Option<u64>,
     pub(crate) resident_rows: Option<u64>,
     pub(crate) forwarded_rows: Option<u64>,
@@ -73,7 +74,7 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
     if name != RISCV_O3_LIVE_DATA_HANDOFF_CHUNK {
         return None;
     }
-    let Ok(handoff) = RiscvO3LiveDataHandoff::decode(payload) else {
+    let Ok((handoff, schema_version)) = RiscvO3LiveDataHandoff::decode_with_version(payload) else {
         return Some(Rem6HostO3LiveDataHandoffChunkSummary::decode_error());
     };
     let first = handoff.entries().first().copied();
@@ -81,6 +82,7 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
     let first_partial_overlay = handoff.partial_overlays().first().copied();
     Some(Rem6HostO3LiveDataHandoffChunkSummary {
         decode_error: false,
+        schema_version: Some(u64::from(schema_version)),
         row_count: Some(handoff.entries().len() as u64),
         resident_rows: Some(handoff.resident_rows() as u64),
         forwarded_rows: Some(handoff.forwarded_rows().len() as u64),
@@ -169,6 +171,7 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
     fn decode_error() -> Self {
         Self {
             decode_error: true,
+            schema_version: None,
             row_count: None,
             resident_rows: None,
             forwarded_rows: None,
@@ -294,8 +297,9 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             .first_target
             .and_then(Rem6HostO3LiveDataHandoffTargetSummary::memory_route);
         format!(
-            "{{\"decode_error\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{}}}",
+            "{{\"decode_error\":{},\"schema_version\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{}}}",
             self.decode_error,
+            optional_u64_json(self.schema_version),
             optional_u64_json(self.row_count),
             optional_u64_json(self.resident_rows),
             optional_u64_json(self.row_count),

@@ -103,6 +103,10 @@ fn rem6_run_host_switch_transfers_outstanding_o3_scalar_load_mmio() {
         handoff.pointer("/decode_error").and_then(Value::as_bool),
         Some(false)
     );
+    assert_eq!(
+        handoff.pointer("/schema_version").and_then(Value::as_u64),
+        Some(5)
+    );
     assert_eq!(handoff.pointer("/first_route"), Some(&Value::Null));
     assert_eq!(
         handoff.pointer("/first_address").and_then(Value::as_str),
