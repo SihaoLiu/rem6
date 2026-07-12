@@ -185,6 +185,57 @@ fn translation_tlb_caches_page_entries_uses_lru_and_restores_snapshot() {
 }
 
 #[test]
+fn translation_tlb_cached_peek_preserves_lru_and_stats() {
+    let map = mapped_page_map();
+    let code_base = Address::new(0xffff_0000_8000_0000);
+    let mut tlb = TranslationTlb::new(TranslationTlbConfig::new(2).unwrap());
+    tlb.translate(
+        &request(
+            1,
+            code_base.get() + 0x40,
+            4,
+            TranslationAccessKind::InstructionFetch,
+        ),
+        &map,
+    )
+    .unwrap();
+    let before = tlb.snapshot();
+
+    let hit = tlb
+        .peek_cached_in_address_space(
+            TranslationAddressSpaceId::global(),
+            &request(
+                2,
+                code_base.get() + 0x80,
+                4,
+                TranslationAccessKind::InstructionFetch,
+            ),
+        )
+        .unwrap()
+        .expect("cached page should be visible without observation");
+    assert_eq!(hit.kind(), TranslationTlbLookupKind::Hit);
+    assert_eq!(
+        hit.physical_address(),
+        Some(Address::new(0x0000_0000_8000_0080))
+    );
+    assert_eq!(tlb.snapshot(), before);
+
+    assert!(tlb
+        .peek_cached_in_address_space(
+            TranslationAddressSpaceId::global(),
+            &request(
+                3,
+                0xffff_0000_b000_0040,
+                4,
+                TranslationAccessKind::InstructionFetch,
+            ),
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(tlb.snapshot(), before);
+}
+
+#[test]
 fn translation_tlb_restore_rejects_non_monotonic_next_lru() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let entry = TranslationTlbEntrySnapshot::new(

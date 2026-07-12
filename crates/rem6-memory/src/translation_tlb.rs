@@ -864,6 +864,24 @@ impl TranslationTlb {
         )))
     }
 
+    pub fn peek_cached_in_address_space(
+        &self,
+        address_space: TranslationAddressSpaceId,
+        request: &TranslationRequest,
+    ) -> Result<Option<TranslationTlbLookup>, TranslationError> {
+        let Some(key) = self.lookup_key(address_space, request.range())? else {
+            return Ok(None);
+        };
+        let entry = self
+            .entries
+            .get(&key)
+            .expect("TLB peek returned a missing entry");
+        Ok(Some(TranslationTlbLookup::new(
+            TranslationTlbLookupKind::Hit,
+            entry.resolve(request),
+        )))
+    }
+
     pub fn translate_in_address_space(
         &mut self,
         address_space: TranslationAddressSpaceId,

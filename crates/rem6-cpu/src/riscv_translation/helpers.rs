@@ -287,6 +287,9 @@ pub(super) fn record_data_translation_fault_state(
     state.pending_trap = event.execution().trap().copied();
     state.pending_trap_event = Some(event.clone());
     state.issued_data_for_fetches.insert(fetch_request);
+    state
+        .cached_translated_scalar_load_window_fetches
+        .remove(&fetch_request);
     state.ready_translated_data.remove(&fetch_request);
     state.events[original_index] = event;
     riscv_checker::sync_checker_hart(state);

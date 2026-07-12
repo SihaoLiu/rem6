@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
-use rem6_memory::Address;
+use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
     riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind},
@@ -9,152 +9,18 @@ use crate::{
     BranchTargetPrediction, BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
     GShareBranchPredictor, InOrderPipelineStage, MultiperspectivePerceptron,
     MultiperspectivePerceptronThreadSnapshot, ReturnAddressStackOperationId,
-    ReturnAddressStackOperationKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind,
-    TageScLBranchPredictor, TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD,
-    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
-    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    ReturnAddressStackOperationKind, RiscvBranchPredictorKind, RiscvCoreState, RiscvCpuError,
+    RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind, TageScLBranchPredictor,
+    TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod detailed_o3;
+mod driver;
 mod speculation;
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
-
-impl RiscvCore {
-    pub(crate) fn next_fetch_ahead_before_retire(&self) -> Option<RiscvFetchAheadDecision> {
-        let fetch_events = self.core.fetch_events();
-        let mut state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some() || state.pending_fetch_prefix.is_some() {
-            return None;
-        }
-        if state.o3_runtime.has_ready_live_scalar_memory_event() {
-            return None;
-        }
-        if hart_has_enabled_pending_interrupt(&state.hart) {
-            return None;
-        }
-
-        let mut completed = fetch_events
-            .iter()
-            .filter(|event| {
-                event.kind() == CpuFetchEventKind::Completed
-                    && !state.executed_fetches.contains(&event.request_id())
-            })
-            .collect::<Vec<_>>();
-        if completed.is_empty() {
-            return None;
-        }
-        completed.sort_by_key(|event| event.request_id().sequence());
-
-        let fetch = match detailed_o3::additional_fetch_candidate(&state, &fetch_events, &completed)
-        {
-            detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
-                return Some(RiscvFetchAheadDecision::straight_line(pc));
-            }
-            detailed_o3::DetailedFetchAheadCandidate::Blocked => return None,
-            detailed_o3::DetailedFetchAheadCandidate::NotApplicable => {
-                if completed.len() >= completed_fetch_window(&state) {
-                    return None;
-                }
-                next_fetch_ahead_candidate(&state, &completed)?
-            }
-        };
-        let data = fetch.data()?;
-        let raw = match data {
-            [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
-            _ => return None,
-        };
-        let Ok(decoded) = RiscvInstruction::decode_with_length(raw) else {
-            return None;
-        };
-        let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
-        if detailed_o3::scalar_memory_has_younger_fetch(
-            &state,
-            &fetch_events,
-            fetch.request_id(),
-            sequential_pc,
-            decoded.instruction(),
-        ) {
-            return None;
-        }
-
-        fetch_ahead_decision(
-            &mut state,
-            &completed,
-            fetch.request_id().sequence(),
-            fetch.pc(),
-            sequential_pc,
-            decoded.instruction(),
-        )
-    }
-
-    pub(crate) fn set_fetch_ahead_pc(&self, pc: Address) {
-        self.core.set_pc(pc);
-    }
-
-    pub(crate) fn prepare_fetch_ahead_speculation(
-        &self,
-        decision: &RiscvFetchAheadDecision,
-    ) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvCpuError> {
-        let Some(speculation) = decision.branch_speculation() else {
-            return Ok(None);
-        };
-        let fetch_events = self.core.fetch_events();
-        let state = self.state.lock().expect("riscv core lock");
-        if state
-            .branch_speculations
-            .contains_key(&speculation.sequence)
-        {
-            return Ok(None);
-        }
-        let selected = speculation
-            .selected_speculation
-            .as_ref()
-            .map(|selected| {
-                preview_selected_branch_speculation(
-                    &state,
-                    &fetch_events,
-                    speculation.sequence,
-                    selected,
-                )
-            })
-            .transpose()?;
-        Ok(Some(PreparedRiscvFetchAheadSpeculation {
-            speculation: speculation.clone(),
-            selected,
-        }))
-    }
-
-    pub(crate) fn record_prepared_fetch_ahead_speculation(
-        &self,
-        prepared: Option<PreparedRiscvFetchAheadSpeculation>,
-    ) {
-        let Some(prepared) = prepared else {
-            return;
-        };
-        let mut state = self.state.lock().expect("riscv core lock");
-        prepared.apply(&mut state);
-    }
-
-    pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
-        &self,
-    ) -> Result<bool, RiscvCpuError> {
-        let fetch_events = self.core.fetch_events();
-        let mut state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some()
-            || state.pending_fetch_prefix.is_some()
-            || hart_has_enabled_pending_interrupt(&state.hart)
-        {
-            return Ok(false);
-        }
-        if detailed_o3::scalar_memory_waits_for_younger_fetch(&state, &fetch_events) {
-            return Ok(false);
-        }
-
-        can_retire_completed_fetch_with_branch_speculations(&mut state, &fetch_events)
-    }
-}
 
 pub(crate) struct PreparedRiscvFetchAheadSpeculation {
     speculation: RiscvFetchAheadSpeculation,
@@ -936,15 +802,26 @@ fn next_completed_fetch_sequence_for_architectural_pc(
 fn fetch_ahead_decision(
     state: &mut RiscvCoreState,
     completed_fetches: &[&CpuFetchEvent],
-    sequence: u64,
+    request: MemoryRequestId,
     fetch_pc: Address,
     sequential_pc: Address,
     instruction: RiscvInstruction,
+    translated: detailed_o3::TranslatedMemoryFetchAhead,
 ) -> Option<RiscvFetchAheadDecision> {
+    let scalar_memory_head =
+        detailed_o3::scalar_memory_fetch_ahead_head(state, request, instruction, translated);
     if instruction_allows_straight_line_fetch_ahead(instruction)
-        || detailed_o3::allows_scalar_memory_fetch_ahead(state, instruction)
+        || scalar_memory_head.is_some()
         || instruction_allows_trap_fallthrough_fetch_ahead(state, instruction)
     {
+        if matches!(
+            scalar_memory_head,
+            Some(detailed_o3::ScalarMemoryFetchAheadHead::CachedTranslatedLoad { .. })
+        ) {
+            state
+                .cached_translated_scalar_load_window_fetches
+                .insert(request);
+        }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
@@ -959,7 +836,7 @@ fn fetch_ahead_decision(
         )?;
         return Some(RiscvFetchAheadDecision::branch(
             target,
-            sequence,
+            request.sequence(),
             fetch_pc,
             branch_kind,
             true,
@@ -983,7 +860,7 @@ fn fetch_ahead_decision(
     };
     Some(RiscvFetchAheadDecision::branch(
         pc,
-        sequence,
+        request.sequence(),
         fetch_pc,
         BranchTargetKind::DirectConditional,
         prediction.predicted_taken,

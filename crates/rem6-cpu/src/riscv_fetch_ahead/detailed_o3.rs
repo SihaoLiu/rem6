@@ -1,5 +1,5 @@
 use rem6_isa_riscv::{Register, RiscvInstruction};
-use rem6_memory::{Address, AddressRange};
+use rem6_memory::{Address, AddressRange, MemoryRequestId};
 
 use crate::{
     riscv_execute::oldest_completed_fetch_at,
@@ -16,17 +16,54 @@ pub(super) enum DetailedFetchAheadCandidate {
     NotApplicable,
     Blocked,
     Ready(Address),
+    ReadyCachedTranslatedLoad {
+        pc: Address,
+        fetch_request: MemoryRequestId,
+    },
 }
 
-pub(super) fn allows_scalar_memory_fetch_ahead(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TranslatedMemoryFetchAhead {
+    Disabled,
+    CachedMemory,
+}
+
+pub(super) enum ScalarMemoryFetchAheadHead {
+    Untranslated,
+    CachedTranslatedLoad { destination: Register },
+}
+
+pub(super) fn allows_detailed_memory_head_fetch_ahead(
     state: &RiscvCoreState,
+    fetch_request: rem6_memory::MemoryRequestId,
     instruction: RiscvInstruction,
+    translated: TranslatedMemoryFetchAhead,
 ) -> bool {
-    state.live_retire_gate.detailed_policy_enabled()
-        && state.data_translation.is_none()
-        && state
+    scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
+}
+
+pub(super) fn scalar_memory_fetch_ahead_head(
+    state: &RiscvCoreState,
+    fetch_request: rem6_memory::MemoryRequestId,
+    instruction: RiscvInstruction,
+    translated: TranslatedMemoryFetchAhead,
+) -> Option<ScalarMemoryFetchAheadHead> {
+    if !state.live_retire_gate.detailed_policy_enabled() {
+        return None;
+    }
+    if state.data_translation.is_none() {
+        return state
             .cacheable_scalar_memory_instruction_range(instruction)
             .is_some()
+            .then_some(ScalarMemoryFetchAheadHead::Untranslated);
+    }
+    if translated == TranslatedMemoryFetchAhead::Disabled {
+        return None;
+    }
+    let destination = independent_scalar_load_destination(instruction, [])?;
+    state
+        .cacheable_cached_translated_scalar_load(instruction, fetch_request)
+        .then_some(ScalarMemoryFetchAheadHead::CachedTranslatedLoad { destination })
 }
 
 pub(super) fn scalar_memory_has_younger_fetch(
@@ -35,8 +72,9 @@ pub(super) fn scalar_memory_has_younger_fetch(
     memory_request: rem6_memory::MemoryRequestId,
     younger_pc: Address,
     instruction: RiscvInstruction,
+    translated: TranslatedMemoryFetchAhead,
 ) -> bool {
-    allows_scalar_memory_fetch_ahead(state, instruction)
+    allows_detailed_memory_head_fetch_ahead(state, memory_request, instruction, translated)
         && has_live_younger_fetch_at(state, fetch_events, memory_request, younger_pc)
 }
 
@@ -64,6 +102,7 @@ fn has_live_younger_fetch_at(
 pub(super) fn scalar_memory_waits_for_younger_fetch(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
+    translated: TranslatedMemoryFetchAhead,
 ) -> bool {
     let architectural = Address::new(state.hart.pc());
     let Some(memory) = fetch_events
@@ -88,14 +127,19 @@ pub(super) fn scalar_memory_waits_for_younger_fetch(
         return false;
     }
 
-    allows_scalar_memory_fetch_ahead(state, decoded.instruction())
-        && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
+    allows_detailed_memory_head_fetch_ahead(
+        state,
+        memory.request_id(),
+        decoded.instruction(),
+        translated,
+    ) && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
 }
 
 pub(super) fn additional_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     completed: &[&CpuFetchEvent],
+    translated: TranslatedMemoryFetchAhead,
 ) -> DetailedFetchAheadCandidate {
     if !state.live_retire_gate.detailed_policy_enabled() {
         return DetailedFetchAheadCandidate::NotApplicable;
@@ -113,19 +157,52 @@ pub(super) fn additional_fetch_candidate(
     else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let scalar_memory_window =
-        matches!(
-            current.decoded().instruction(),
-            RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
-        ) && allows_scalar_memory_fetch_ahead(state, current.decoded().instruction());
-    if scalar_memory_window {
-        return scalar_memory_window_candidate(state, fetch_events, &current);
+    let scalar_memory_head = scalar_memory_fetch_ahead_head(
+        state,
+        current.last_consumed_request(),
+        current.decoded().instruction(),
+        translated,
+    );
+    match scalar_memory_head {
+        Some(ScalarMemoryFetchAheadHead::Untranslated) => {
+            return scalar_memory_window_candidate(state, fetch_events, &current);
+        }
+        Some(ScalarMemoryFetchAheadHead::CachedTranslatedLoad { destination }) => {
+            let candidate =
+                translated_scalar_load_window_candidate(state, fetch_events, &current, destination);
+            return match candidate {
+                DetailedFetchAheadCandidate::Ready(pc) => {
+                    DetailedFetchAheadCandidate::ReadyCachedTranslatedLoad {
+                        pc,
+                        fetch_request: current.last_consumed_request(),
+                    }
+                }
+                candidate => candidate,
+            };
+        }
+        None => {}
     }
     let Some(window) = RiscvScalarIntegerLiveWindow::from_fu_head(current.decoded().instruction())
     else {
         return DetailedFetchAheadCandidate::NotApplicable;
     };
     scalar_integer_fu_window_candidate(state, fetch_events, &current, window)
+}
+
+fn translated_scalar_load_window_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    current: &RiscvCompletedFetchInstruction,
+    destination: Register,
+) -> DetailedFetchAheadCandidate {
+    let Some(window) = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+        [destination],
+        1,
+        state.o3_runtime.scalar_memory_window_limit(),
+    ) else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    scalar_integer_fu_window_candidate(state, fetch_events, current, window)
 }
 
 fn scalar_integer_fu_window_candidate(

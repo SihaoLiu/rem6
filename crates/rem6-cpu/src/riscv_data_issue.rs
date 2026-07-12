@@ -535,10 +535,9 @@ impl RiscvCore {
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
-        let (o3_scalar_memory, o3_scalar_load) = {
+        let (o3_scalar_memory, o3_scalar_load_younger_window) = {
             let state = self.state.lock().expect("riscv core lock");
             let detailed = state.live_retire_gate.detailed_policy_enabled();
-            let untranslated = state.data_translation.is_none();
             let scalar_memory = matches!(
                 issue.access,
                 MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
@@ -548,17 +547,30 @@ impl RiscvCore {
                     || state
                         .o3_runtime
                         .owns_pending_scalar_memory_retirement(issue.fetch_request));
-            let o3_scalar_load = o3_scalar_memory
-                && untranslated
-                && matches!(issue.access, MemoryAccessKind::Load { .. });
-            (o3_scalar_memory, o3_scalar_load)
+            let o3_scalar_load_younger_window = o3_scalar_memory
+                && matches!(issue.access, MemoryAccessKind::Load { .. })
+                && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
+                && (state.data_translation.is_none()
+                    || state
+                        .cached_translated_scalar_load_window_fetches
+                        .contains(&issue.fetch_request))
+                && matches!(
+                    state
+                        .pma
+                        .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
+                    Ok(false)
+                );
+            (o3_scalar_memory, o3_scalar_load_younger_window)
         };
-        let fetch_events = if o3_scalar_load {
+        let fetch_events = if o3_scalar_load_younger_window {
             self.core.fetch_events()
         } else {
             Vec::new()
         };
         let mut state = self.state.lock().expect("riscv core lock");
+        state
+            .cached_translated_scalar_load_window_fetches
+            .remove(&issue.fetch_request);
         let execution = state
             .events
             .iter()
@@ -581,7 +593,7 @@ impl RiscvCore {
                 staged,
                 "O3-owned scalar data issue must own an available memory slot"
             );
-            if o3_scalar_load && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. }) {
+            if o3_scalar_load_younger_window {
                 stage_o3_scalar_memory_younger_window(
                     &mut state,
                     execution,

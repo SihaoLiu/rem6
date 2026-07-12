@@ -1059,7 +1059,7 @@ impl RiscvCore {
             if self.has_pending_data_access() {
                 return Ok(None);
             }
-            if !self.can_retire_completed_fetch_while_fetch_pending()? {
+            if !self.can_retire_completed_fetch_while_cached_translated_memory_fetch_pending()? {
                 self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
@@ -1075,7 +1075,7 @@ impl RiscvCore {
             return Ok(None);
         }
 
-        if let Some(decision) = self.next_fetch_ahead_before_retire() {
+        if let Some(decision) = self.next_cached_translated_memory_fetch_ahead_before_retire() {
             let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
             self.set_fetch_ahead_pc(decision.pc());
             let event = self.issue_next_fetch_with_prepared_fetch_ahead(
@@ -1383,6 +1383,9 @@ impl RiscvCore {
                 }
             },
             None => {
+                state
+                    .cached_translated_scalar_load_window_fetches
+                    .remove(&fetch_request);
                 state
                     .pending_data_translations
                     .insert(translation_id, pending);

@@ -5,7 +5,7 @@ use crate::{
     CpuResetState, CpuTranslationFrontend, InOrderPipelineError, InOrderPipelineInstruction,
     InOrderPipelineSnapshot, InOrderPipelineStage, MultiperspectivePerceptron,
     MultiperspectivePerceptronConfig, MultiperspectivePerceptronFeature, OutstandingFetch,
-    RiscvBranchPredictorKind, RiscvCpuExecutionEvent, TournamentBranchPredictor,
+    RiscvBranchPredictorKind, RiscvCore, RiscvCpuExecutionEvent, TournamentBranchPredictor,
     TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
     RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
@@ -15,8 +15,9 @@ use rem6_isa_riscv::{
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{
-    AccessSize, AgentId, CacheLineLayout, MemoryRequestId, TranslationQueueConfig,
-    TranslationTlbConfig,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, TranslationAccessKind,
+    TranslationAddressSpaceId, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
+    TranslationQueueConfig, TranslationRequest, TranslationRequestId, TranslationTlbConfig,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -35,6 +36,41 @@ fn layout() -> CacheLineLayout {
 
 fn request(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(7), sequence)
+}
+
+fn install_cached_data_translation(
+    core: &RiscvCore,
+    virtual_base: u64,
+    physical_base: u64,
+    permissions: TranslationPagePermissions,
+    fill_access: TranslationAccessKind,
+) {
+    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    page_map
+        .map(
+            Address::new(virtual_base),
+            Address::new(physical_base),
+            1,
+            permissions,
+        )
+        .unwrap();
+    let request = TranslationRequest::new(
+        TranslationRequestId::new(AgentId::new(7), 99),
+        Address::new(virtual_base),
+        AccessSize::new(4).unwrap(),
+        fill_access,
+    )
+    .unwrap();
+    let mut state = core.state.lock().expect("riscv core lock");
+    let address_space = TranslationAddressSpaceId::new(state.hart.translation_address_space());
+    state
+        .data_translation
+        .as_mut()
+        .expect("test core has data translation")
+        .tlb_mut()
+        .expect("test translation frontend has a TLB")
+        .translate_in_address_space(address_space, &request, &page_map)
+        .unwrap();
 }
 
 fn b_type(offset: i32, rs1: u8, rs2: u8, funct3: u32) -> u32 {
@@ -925,7 +961,157 @@ fn detailed_resident_store_accepts_a_same_range_store_and_fetches_the_load() {
 }
 
 #[test]
-fn translated_scalar_load_window_does_not_fetch_fourth() {
+fn translated_cached_memory_driver_fetches_third_younger_alu() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let first = i_type(7, 0, 0x0, 6, 0x13);
+    let second = i_type(11, 6, 0x0, 7, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.write(Register::new(2).unwrap(), 0x4000);
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+
+    let decision = core
+        .next_cached_translated_memory_fetch_ahead_before_retire()
+        .unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn translated_cached_scalar_load_window_stops_at_configured_depth() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let first = i_type(7, 0, 0x0, 6, 0x13);
+    let second = i_type(11, 6, 0x0, 7, 0x13);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, first.to_le_bytes().to_vec()),
+        (2, 0x8008, second.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(3);
+    core.write_register(Register::new(2).unwrap(), 0x4000);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+}
+
+#[test]
+fn translated_uncached_scalar_load_does_not_fetch_younger_alu() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.write(Register::new(2).unwrap(), 0x4000);
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+}
+
+#[test]
+fn translated_cached_permission_fault_does_not_fetch_younger_alu() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.write(Register::new(2).unwrap(), 0x4000);
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::new(false, true, false),
+        TranslationAccessKind::Store,
+    );
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+}
+
+#[test]
+fn translated_cached_uncacheable_load_does_not_fetch_younger_alu() {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.write(Register::new(2).unwrap(), 0x4000);
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
+    core.add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9004).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+}
+
+#[test]
+fn translated_cached_scalar_load_window_rejects_younger_memory_prefix() {
     let older = i_type(0, 2, 0x2, 5, 0x03);
     let middle = i_type(64, 2, 0x2, 6, 0x03);
     let third = i_type(128, 2, 0x2, 7, 0x03);
@@ -936,13 +1122,26 @@ fn translated_scalar_load_window_does_not_fetch_fourth() {
     ]);
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(4);
-    core.state.lock().expect("riscv core lock").data_translation =
-        Some(CpuTranslationFrontend::with_tlb(
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.write(Register::new(2).unwrap(), 0x4000);
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
             TranslationQueueConfig::new(4, 0).unwrap(),
             TranslationTlbConfig::new(4).unwrap(),
         ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
 
-    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
 }
 
 #[test]

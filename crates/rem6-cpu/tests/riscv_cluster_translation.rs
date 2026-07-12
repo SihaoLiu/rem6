@@ -12,6 +12,7 @@ use rem6_memory::{
     PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
     TranslationQueueConfig, TranslationTlbConfig,
 };
+use rem6_mmio::MmioBus;
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
     TransportEndpointId,
@@ -327,6 +328,142 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
                 Address::new(0x9018),
             ),
         ]
+    );
+}
+
+#[test]
+fn riscv_cluster_mmio_translation_driver_suppresses_cached_memory_fetch_ahead() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = translated_riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    });
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0x4000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(0, 2, 0x2, 5, 0x03)),
+            (0x8004, i_type(0, 2, 0x2, 6, 0x03)),
+            (0x8008, i_type(1, 0, 0x0, 7, 0x13)),
+        ],
+        &[(0x9000, vec![0x2a, 0, 0, 0])],
+    );
+    let bus = MmioBus::new();
+
+    let mut saw_cached_load_execute = false;
+    let mut enabled_detailed_after_warmup = false;
+    let mut observed_actions = Vec::new();
+    for _ in 0..20 {
+        if !enabled_detailed_after_warmup
+            && cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)) == 42
+        {
+            cluster
+                .core(CpuId::new(0))
+                .unwrap()
+                .set_detailed_live_retire_gate_enabled(true);
+            enabled_detailed_after_warmup = true;
+        }
+        let events = cluster
+            .drive_ready_cores_parallel_with_mmio_and_data_translation(
+                &mut scheduler,
+                &transport,
+                &bus,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                &page_map,
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        observed_actions.push(
+            events
+                .iter()
+                .map(|event| format!("{:?}", event.action()))
+                .collect::<Vec<_>>(),
+        );
+        if events.iter().any(|event| {
+            matches!(
+                event.action(),
+                RiscvCoreDriveAction::InstructionExecuted(execution)
+                    if execution.fetch_pc() == Address::new(0x8004)
+            )
+        }) {
+            assert!(cluster
+                .core(CpuId::new(0))
+                .unwrap()
+                .inner()
+                .fetch_events()
+                .iter()
+                .all(|event| event.pc() != Address::new(0x8008)));
+            saw_cached_load_execute = true;
+            break;
+        }
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+
+    assert!(
+        saw_cached_load_execute,
+        "detailed={enabled_detailed_after_warmup} actions={observed_actions:?} now={} idle={} pc={:?} fetches={:?} data={:?}",
+        scheduler.now(),
+        scheduler.is_idle(),
+        cluster.core(CpuId::new(0)).unwrap().pc(),
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .inner()
+            .fetch_events(),
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .data_access_events()
+    );
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .data_translation_tlb_entry_count(),
+        Some(1)
     );
 }
 

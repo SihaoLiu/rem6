@@ -1,5 +1,8 @@
 use rem6_isa_riscv::{Register, RiscvInstruction};
-use rem6_memory::{AccessSize, Address, AddressRange};
+use rem6_memory::{
+    AccessSize, Address, AddressRange, MemoryRequestId, TranslationAccessKind,
+    TranslationAddressSpaceId, TranslationRequest, TranslationRequestId,
+};
 
 use crate::RiscvCoreState;
 
@@ -47,6 +50,48 @@ impl RiscvCoreState {
             Ok(false) => Some(range),
             Ok(true) | Err(_) => None,
         }
+    }
+
+    pub(super) fn cacheable_cached_translated_scalar_load(
+        &self,
+        instruction: RiscvInstruction,
+        fetch_request: MemoryRequestId,
+    ) -> bool {
+        if !matches!(instruction, RiscvInstruction::Load { .. }) {
+            return false;
+        }
+        let Some(virtual_range) = self.scalar_memory_instruction_range(instruction) else {
+            return false;
+        };
+        let Ok(request) = TranslationRequest::new(
+            TranslationRequestId::new(fetch_request.agent(), fetch_request.sequence()),
+            virtual_range.start(),
+            virtual_range.size(),
+            TranslationAccessKind::Load,
+        ) else {
+            return false;
+        };
+        let address_space = TranslationAddressSpaceId::new(self.hart.translation_address_space());
+        let Some(tlb) = self
+            .data_translation
+            .as_ref()
+            .and_then(|frontend| frontend.tlb())
+        else {
+            return false;
+        };
+        let Some(physical_address) = tlb
+            .peek_cached_in_address_space(address_space, &request)
+            .ok()
+            .flatten()
+            .and_then(|lookup| lookup.physical_address())
+        else {
+            return false;
+        };
+        matches!(
+            self.pma
+                .is_uncacheable(physical_address.get(), virtual_range.size().bytes()),
+            Ok(false)
+        )
     }
 
     fn scalar_memory_instruction_range(

@@ -6,8 +6,9 @@ use std::sync::{
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvPmaRange};
 use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{
-    Address, AddressRange, AgentId, MemoryRequestId, MemoryResponse, TranslationPageMap,
-    TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig,
+    AccessSize, Address, AddressRange, AgentId, MemoryRequestId, MemoryResponse,
+    TranslationPageMap, TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
+    TranslationTlbConfig,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
@@ -28,6 +29,8 @@ mod multi_load;
 mod store_led;
 #[path = "riscv_data_issue_tests/store_store_load.rs"]
 mod store_store_load;
+#[path = "riscv_data_issue_tests/translated.rs"]
+mod translated;
 
 #[test]
 fn retry_response_discards_pending_o3_trace_data_access_outcome() {
@@ -190,42 +193,7 @@ fn detailed_scalar_load_submission_stages_one_completed_younger_fetch() {
         CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
     );
     core.set_detailed_live_retire_gate_enabled(true);
-    core.write_register(reg(2), 0x9000);
-
-    let load = i_type(0, 2, 0b010, 5, 0x03);
-    core.issue_next_fetch(
-        &mut scheduler,
-        &transport,
-        MemoryTrace::new(),
-        move |delivery, _context| {
-            TargetOutcome::Respond(
-                MemoryResponse::completed(delivery.request(), Some(load.to_le_bytes().to_vec()))
-                    .unwrap(),
-            )
-        },
-    )
-    .unwrap();
-    scheduler.run_until_idle_conservative();
-    let executed = core.execute_next_completed_fetch().unwrap().unwrap();
-    assert_eq!(executed.fetch_pc(), Address::new(0x8000));
-
-    let independent = i_type(7, 0, 0b000, 6, 0x13);
-    core.issue_next_fetch(
-        &mut scheduler,
-        &transport,
-        MemoryTrace::new(),
-        move |delivery, _context| {
-            TargetOutcome::Respond(
-                MemoryResponse::completed(
-                    delivery.request(),
-                    Some(independent.to_le_bytes().to_vec()),
-                )
-                .unwrap(),
-            )
-        },
-    )
-    .unwrap();
-    scheduler.run_until_idle_conservative();
+    complete_scalar_load_and_younger_fetch(&core, &mut scheduler, &transport, 0x9000);
 
     issue_data_without_response(&core, &mut scheduler, &transport);
 
@@ -1393,6 +1361,49 @@ fn issue_data_without_response(
     transport: &MemoryTransport,
 ) {
     issue_data_accesses_without_response(core, scheduler, transport, 1);
+}
+
+fn complete_scalar_load_and_younger_fetch(
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    load_base: u64,
+) {
+    core.write_register(reg(2), load_base);
+    let load = i_type(0, 2, 0b010, 5, 0x03);
+    core.issue_next_fetch(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(load.to_le_bytes().to_vec()))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    let executed = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(executed.fetch_pc(), Address::new(0x8000));
+
+    let independent = i_type(7, 0, 0b000, 6, 0x13);
+    core.issue_next_fetch(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(
+                    delivery.request(),
+                    Some(independent.to_le_bytes().to_vec()),
+                )
+                .unwrap(),
+            )
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
 }
 
 fn issue_data_accesses_without_response(
