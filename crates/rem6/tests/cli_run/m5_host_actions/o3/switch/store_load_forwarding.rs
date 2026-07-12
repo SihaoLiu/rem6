@@ -7,6 +7,9 @@ use super::*;
 const OLDER_STORE_PC: &str = "0x80000010";
 const YOUNGER_LOAD_PC: &str = "0x80000014";
 const DEPENDENT_ALU_PC: &str = "0x80000018";
+const INDEPENDENT_YOUNGER_ALU_PC: &str = "0x80000018";
+const MULTI_SOURCE_OLDER_STORE_PC: &str = "0x80000018";
+const MULTI_SOURCE_YOUNGER_LOAD_PC: &str = "0x80000024";
 const DATA_ADDRESS: &str = "0x80000100";
 const RESULTS: &str = "2a0000002a0000002b000000";
 
@@ -21,18 +24,33 @@ fn rem6_run_host_switch_transfers_full_forwarded_store_load_cache_fabric_dram() 
 }
 
 #[test]
-fn rem6_run_host_switch_rejects_partial_forwarded_store_load_handoff() {
-    let path = partial_forwarded_store_load_binary("host-switch-partial-forwarded-store-load");
-    let baseline = run_full_forwarded_store_load_handoff(&path, "direct", None);
-    let store = event_at_pc(&baseline, OLDER_STORE_PC);
-    let load = event_at_pc(&baseline, YOUNGER_LOAD_PC);
+fn rem6_run_host_switch_transfers_partial_forwarded_store_load_direct() {
+    assert_partial_forwarded_store_load_handoff("direct");
+}
+
+#[test]
+fn rem6_run_host_switch_transfers_partial_forwarded_store_load_cache_fabric_dram() {
+    assert_partial_forwarded_store_load_handoff("cache-fabric-dram");
+}
+
+#[test]
+fn rem6_run_host_switch_rejects_multi_source_partial_forwarded_store_load_handoff() {
+    let path = multi_source_partial_forwarded_store_load_binary(
+        "host-switch-multi-source-partial-forwarded-store-load",
+    );
+    let baseline = run_store_load_handoff(&path, "direct", None, 4);
+    let store = event_at_pc(&baseline, MULTI_SOURCE_OLDER_STORE_PC);
+    let load = event_at_pc(&baseline, MULTI_SOURCE_YOUNGER_LOAD_PC);
     let load_issue = event_u64(load, "issue_tick");
     let first_response =
         event_u64(load, "lsq_data_response_tick").min(event_u64(store, "lsq_data_response_tick"));
     let switch_tick = load_issue.saturating_add(first_response.saturating_sub(load_issue) / 2);
-    assert!(load_issue < switch_tick && switch_tick < first_response);
+    assert!(
+        load_issue < switch_tick && switch_tick < first_response,
+        "multi-source window must precede the first response: load_issue={load_issue}, switch_tick={switch_tick}, first_response={first_response}"
+    );
 
-    let output = full_forwarded_store_load_command(&path, "direct", Some(switch_tick))
+    let output = store_load_handoff_command_with_delay(&path, "direct", Some(switch_tick), 4, 16)
         .output()
         .unwrap();
 
@@ -40,8 +58,260 @@ fn rem6_run_host_switch_rejects_partial_forwarded_store_load_handoff() {
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("checkpoint component is not quiescent: cpu0"),
-        "unexpected partial-forward handoff error: {}",
+        "unexpected multi-source partial-forward handoff error: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn rem6_run_host_switch_rejects_partial_forwarded_store_load_with_younger_row() {
+    const ROUTE_DELAY: u64 = 32;
+    let path = partial_forwarded_store_load_with_younger_binary(
+        "host-switch-partial-forwarded-store-load-younger-row",
+    );
+    let baseline = run_store_load_handoff_with_delay(&path, "direct", None, 3, ROUTE_DELAY);
+    let store = event_at_pc(&baseline, OLDER_STORE_PC);
+    let load = event_at_pc(&baseline, YOUNGER_LOAD_PC);
+    let younger = event_at_pc(&baseline, INDEPENDENT_YOUNGER_ALU_PC);
+    let load_issue = event_u64(load, "issue_tick");
+    let younger_issue = event_u64(younger, "issue_tick");
+    let first_response =
+        event_u64(load, "lsq_data_response_tick").min(event_u64(store, "lsq_data_response_tick"));
+    let switch_floor = load_issue.max(younger_issue);
+    let switch_tick = switch_floor.saturating_add(first_response.saturating_sub(switch_floor) / 2);
+    assert!(
+        switch_floor < switch_tick && switch_tick < first_response,
+        "younger-row window must follow issue and precede the first response: load_issue={load_issue}, younger_issue={younger_issue}, switch_tick={switch_tick}, first_response={first_response}"
+    );
+
+    let output =
+        store_load_handoff_command_with_delay(&path, "direct", Some(switch_tick), 3, ROUTE_DELAY)
+            .output()
+            .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("checkpoint component is not quiescent: cpu0"),
+        "unexpected partial-forward handoff with younger row error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_partial_forwarded_store_load_handoff(memory_system: &str) {
+    let path = partial_forwarded_store_load_binary(&format!(
+        "host-switch-partial-forwarded-store-load-{}",
+        memory_system.replace('-', "_")
+    ));
+    let baseline = run_store_load_handoff(&path, memory_system, None, 2);
+    let baseline_store = event_at_pc(&baseline, OLDER_STORE_PC);
+    let baseline_load = event_at_pc(&baseline, YOUNGER_LOAD_PC);
+    let load_issue = event_u64(baseline_load, "issue_tick");
+    let first_response = event_u64(baseline_load, "lsq_data_response_tick")
+        .min(event_u64(baseline_store, "lsq_data_response_tick"));
+    let switch_tick = load_issue.saturating_add(first_response.saturating_sub(load_issue) / 2);
+    assert!(load_issue < switch_tick && switch_tick < first_response);
+
+    let json = run_store_load_handoff(&path, memory_system, Some(switch_tick), 2);
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("115a3380115a3380125a3380")
+    );
+    for (register, value) in [("x12", "0xffffffff80335a11"), ("x13", "0xffffffff80335a12")] {
+        assert_eq!(
+            json.pointer(&format!("/cores/0/registers/{register}"))
+                .and_then(Value::as_str),
+            Some(value),
+            "partial-overlay handoff must preserve {register}: {json}"
+        );
+    }
+
+    let timing_switch = json
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .and_then(|switches| {
+            switches.iter().find(|switch| {
+                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing partial-overlay timing switch: {json}"));
+    let timing_action_tick = timing_switch
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .expect("partial-overlay switch action tick");
+    assert!(load_issue < timing_action_tick && timing_action_tick < first_response);
+
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing partial-overlay state transfer: {timing_switch}"));
+    assert_eq!(
+        transfer
+            .pointer("/live_data_handoff")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        transfer.pointer("/restorable").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        transfer
+            .pointer("/quiescence_gate/validated")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let runtime = latest_transfer_o3_runtime_chunk(transfer, "cpu0");
+    assert_eq!(
+        runtime.pointer("/decode_error").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let handoff = transfer_handoff_chunk(transfer, "cpu0");
+    for (field, expected) in [
+        ("outstanding_requests", 2),
+        ("resident_rows", 2),
+        ("transport_owned_rows", 2),
+        ("forwarded_rows", 0),
+        ("partial_overlay_rows", 1),
+        ("younger_rows", 0),
+        ("first_bytes", 1),
+        ("first_partial_overlay_bytes", 4),
+        ("first_partial_overlay_source_bytes", 1),
+        ("first_partial_overlay_forwarded_mask", 2),
+        ("first_partial_overlay_response_owned_mask", 13),
+        ("first_partial_overlay_forwarded_bytes", 1),
+    ] {
+        assert_eq!(
+            handoff
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(expected),
+            "partial-overlay handoff field {field}: {handoff}"
+        );
+    }
+    assert_eq!(
+        handoff.pointer("/first_operation").and_then(Value::as_str),
+        Some("store")
+    );
+    assert_eq!(
+        handoff.pointer("/first_address").and_then(Value::as_str),
+        Some("0x80000101")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_partial_overlay_operation")
+            .and_then(Value::as_str),
+        Some("load")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_partial_overlay_address")
+            .and_then(Value::as_str),
+        Some(DATA_ADDRESS)
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_partial_overlay_source_address")
+            .and_then(Value::as_str),
+        Some("0x80000101")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_partial_overlay_source_data_hex")
+            .and_then(Value::as_str),
+        Some("5a")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_partial_overlay_forwarded_data_hex")
+            .and_then(Value::as_str),
+        Some("005a0000")
+    );
+    assert_eq!(
+        handoff.pointer("/last_issue_tick").and_then(Value::as_u64),
+        Some(load_issue)
+    );
+    assert_eq!(
+        handoff.pointer("/first_partial_overlay_source_data_request_agent"),
+        handoff.pointer("/first_data_request_agent")
+    );
+    assert_eq!(
+        handoff.pointer("/first_partial_overlay_source_data_request_sequence"),
+        handoff.pointer("/first_data_request_sequence")
+    );
+    assert!(
+        handoff
+            .pointer("/first_partial_overlay_load_data_request_sequence")
+            .and_then(Value::as_u64)
+            .is_some_and(|sequence| {
+                handoff
+                    .pointer("/first_data_request_sequence")
+                    .and_then(Value::as_u64)
+                    != Some(sequence)
+            }),
+        "overlay load must retain its own transport request: {handoff}"
+    );
+
+    for pc in [OLDER_STORE_PC, YOUNGER_LOAD_PC] {
+        let baseline_event = event_at_pc(&baseline, pc);
+        let transferred = event_at_pc(&json, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(transferred, field),
+                event_u64(baseline_event, field),
+                "partial-overlay handoff must preserve {field} for {pc}: {transferred}"
+            );
+        }
+    }
+    assert!(event_at_pc_if_present(&json, DEPENDENT_ALU_PC).is_none());
+    assert_eq!(data_memory_request_count(&json), 4);
+    assert_memory_resources(&json, memory_system);
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.lsq_store_to_load_forwarding_matches",
+        "Count",
+        1,
+        "monotonic",
+    );
+
+    let trace_switch = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .and_then(|records| {
+            records.iter().find(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some("execution_mode_switch")
+                    && record.pointer("/tick").and_then(Value::as_u64) == Some(timing_action_tick)
+            })
+        })
+        .unwrap_or_else(|| panic!("missing HostAction partial-overlay trace: {json}"));
+    assert_eq!(
+        transfer_handoff_chunk(
+            trace_switch
+                .pointer("/state_transfer")
+                .expect("HostAction partial-overlay state transfer"),
+            "cpu0",
+        ),
+        handoff
     );
 }
 
@@ -329,9 +599,29 @@ fn run_full_forwarded_store_load_handoff(
     memory_system: &str,
     switch_tick: Option<u64>,
 ) -> Value {
-    let output = full_forwarded_store_load_command(path, memory_system, switch_tick)
-        .output()
-        .unwrap();
+    run_store_load_handoff(path, memory_system, switch_tick, 2)
+}
+
+fn run_store_load_handoff(
+    path: &Path,
+    memory_system: &str,
+    switch_tick: Option<u64>,
+    depth: usize,
+) -> Value {
+    run_store_load_handoff_with_delay(path, memory_system, switch_tick, depth, 16)
+}
+
+fn run_store_load_handoff_with_delay(
+    path: &Path,
+    memory_system: &str,
+    switch_tick: Option<u64>,
+    depth: usize,
+    route_delay: u64,
+) -> Value {
+    let output =
+        store_load_handoff_command_with_delay(path, memory_system, switch_tick, depth, route_delay)
+            .output()
+            .unwrap();
     assert!(
         output.status.success(),
         "{memory_system} switch {switch_tick:?}; stderr: {}",
@@ -341,10 +631,12 @@ fn run_full_forwarded_store_load_handoff(
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
-fn full_forwarded_store_load_command(
+fn store_load_handoff_command_with_delay(
     path: &Path,
     memory_system: &str,
     switch_tick: Option<u64>,
+    depth: usize,
+    route_delay: u64,
 ) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
@@ -361,11 +653,11 @@ fn full_forwarded_store_load_command(
         "--debug-flags",
         "O3,Data,Memory,HostAction",
         "--riscv-o3-scalar-memory-depth",
-        "2",
+        &depth.to_string(),
         "--memory-system",
         memory_system,
         "--memory-route-delay",
-        "16",
+        &route_delay.to_string(),
         "--m5-switch-cpu-mode",
         "detailed",
         "--dump-memory",
@@ -420,6 +712,56 @@ fn partial_forwarded_store_load_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.extend([0x8033_2211, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn partial_forwarded_store_load_with_younger_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 256_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0x5a, 0, 0x0, 11, 0x13),
+        s_type(1, 11, 10, 0b000),
+        i_type(0, 10, 0b010, 12, 0x03),
+        i_type(7, 0, 0x0, 14, 0x13),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x8033_2211, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn multi_source_partial_forwarded_store_load_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 256_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0xaa, 0, 0x0, 11, 0x13),
+        i_type(0x6bb, 0, 0x0, 12, 0x13),
+        i_type(0xdd, 0, 0x0, 13, 0x13),
+        s_type(0, 11, 10, 0b010),
+        s_type(2, 12, 10, 0b001),
+        s_type(2, 13, 10, 0b000),
+        i_type(0, 10, 0b011, 14, 0x03),
+        i_type(1, 14, 0x0, 15, 0x13),
+        s_type(8, 14, 10, 0b011),
+        s_type(16, 15, 10, 0b011),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x4433_2211, 0x8877_6655, 0, 0, 0, 0]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)

@@ -44,11 +44,11 @@ impl O3StoreLoadForwardingPlan {
         data
     }
 
-    pub(super) const fn load_range(self) -> AddressRange {
+    pub(crate) const fn load_range(self) -> AddressRange {
         self.load_range
     }
 
-    pub(super) fn bytes(self) -> u32 {
+    pub(crate) fn bytes(self) -> u32 {
         u32::try_from(self.load_range.size().bytes()).expect("scalar load width fits u32")
     }
 
@@ -66,6 +66,14 @@ impl O3StoreLoadForwardingPlan {
 
     pub(crate) fn forwarded_bytes(self) -> u32 {
         self.forwarded_mask.count_ones()
+    }
+
+    pub(crate) const fn forwarded_mask(self) -> u8 {
+        self.forwarded_mask
+    }
+
+    pub(crate) const fn forwarded_data(self) -> [u8; 8] {
+        self.data
     }
 
     pub(crate) fn is_partial(self) -> bool {

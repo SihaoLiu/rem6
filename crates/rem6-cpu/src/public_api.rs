@@ -117,7 +117,8 @@ pub use crate::riscv_execution_event::{
 pub use crate::riscv_execution_mode_handoff::{
     RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffEntry, RiscvO3LiveDataHandoffError,
     RiscvO3LiveDataHandoffForwardedRow, RiscvO3LiveDataHandoffOperation,
-    RiscvO3LiveDataHandoffTarget, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+    RiscvO3LiveDataHandoffPartialOverlay, RiscvO3LiveDataHandoffTarget,
+    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 pub use crate::riscv_hart_run_state::RiscvHartRunState;
 pub use crate::riscv_sc_progress::{

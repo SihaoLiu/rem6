@@ -9,12 +9,23 @@ use rem6_transport::MemoryRouteId;
 
 use crate::RiscvCore;
 
+#[path = "riscv_execution_mode_handoff/partial_overlay.rs"]
+mod partial_overlay;
+
+pub use partial_overlay::RiscvO3LiveDataHandoffPartialOverlay;
+pub(crate) use partial_overlay::RiscvPendingPartialScalarLoadHandoff;
+use partial_overlay::{
+    canonical_partial_overlay_source_data, partial_overlay_mask, partial_overlay_matches_source,
+    scalar_byte_mask, validate_partial_overlay_data,
+};
+
 pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 
 const MAGIC: [u8; 4] = *b"O3DH";
 const VERSION_MEMORY_ROUTE: u8 = 1;
 const VERSION_TYPED_TARGET: u8 = 2;
 const VERSION_FORWARDING: u8 = 3;
+const VERSION_PARTIAL_OVERLAY: u8 = 4;
 const HEADER_BYTES: usize = MAGIC.len() + 1 + 4 + 4;
 const V1_ENTRY_BYTES: usize = 73;
 const MAX_ROWS: usize = 4;
@@ -176,17 +187,24 @@ impl RiscvO3LiveDataHandoffForwardedRow {
 pub struct RiscvO3LiveDataHandoff {
     entries: Vec<RiscvO3LiveDataHandoffEntry>,
     forwarded_rows: Vec<RiscvO3LiveDataHandoffForwardedRow>,
+    partial_overlays: Vec<RiscvO3LiveDataHandoffPartialOverlay>,
     younger_rows: u32,
 }
 
 impl RiscvO3LiveDataHandoff {
     fn new(entries: Vec<RiscvO3LiveDataHandoffEntry>, younger_rows: usize) -> Option<Self> {
         let row_count = entries.len().checked_add(younger_rows)?;
-        (!entries.is_empty() && row_count <= MAX_ROWS).then_some(Self {
-            entries,
-            forwarded_rows: Vec::new(),
-            younger_rows: u32::try_from(younger_rows).ok()?,
-        })
+        (!entries.is_empty()
+            && entries
+                .iter()
+                .all(|entry| entry.operation == RiscvO3LiveDataHandoffOperation::Load)
+            && row_count <= MAX_ROWS)
+            .then_some(Self {
+                entries,
+                forwarded_rows: Vec::new(),
+                partial_overlays: Vec::new(),
+                younger_rows: u32::try_from(younger_rows).ok()?,
+            })
     }
 
     fn with_forwarded_rows(
@@ -204,7 +222,24 @@ impl RiscvO3LiveDataHandoff {
         (!entries.is_empty() && row_count <= MAX_ROWS).then_some(Self {
             entries,
             forwarded_rows,
+            partial_overlays: Vec::new(),
             younger_rows: u32::try_from(younger_rows).ok()?,
+        })
+    }
+
+    fn with_partial_overlay(
+        entries: Vec<RiscvO3LiveDataHandoffEntry>,
+        overlay: RiscvO3LiveDataHandoffPartialOverlay,
+        younger_rows: usize,
+    ) -> Option<Self> {
+        if entries.len() != 2 || younger_rows != 0 {
+            return None;
+        }
+        Some(Self {
+            entries,
+            forwarded_rows: Vec::new(),
+            partial_overlays: vec![overlay],
+            younger_rows: 0,
         })
     }
 
@@ -214,6 +249,10 @@ impl RiscvO3LiveDataHandoff {
 
     pub fn forwarded_rows(&self) -> &[RiscvO3LiveDataHandoffForwardedRow] {
         &self.forwarded_rows
+    }
+
+    pub fn partial_overlays(&self) -> &[RiscvO3LiveDataHandoffPartialOverlay] {
+        &self.partial_overlays
     }
 
     pub fn resident_rows(&self) -> usize {
@@ -228,12 +267,11 @@ impl RiscvO3LiveDataHandoff {
         let entry_count = u32::try_from(self.entries.len()).expect("handoff entry count fits u32");
         let forwarded_count =
             u32::try_from(self.forwarded_rows.len()).expect("handoff forwarded row count fits u32");
-        let version = if !self.forwarded_rows.is_empty()
-            || self
-                .entries
-                .iter()
-                .any(|entry| entry.operation != RiscvO3LiveDataHandoffOperation::Load)
-        {
+        let partial_overlay_count = u32::try_from(self.partial_overlays.len())
+            .expect("handoff partial-overlay count fits u32");
+        let version = if !self.partial_overlays.is_empty() {
+            VERSION_PARTIAL_OVERLAY
+        } else if !self.forwarded_rows.is_empty() {
             VERSION_FORWARDING
         } else if self
             .entries
@@ -251,13 +289,16 @@ impl RiscvO3LiveDataHandoff {
         payload.extend_from_slice(&self.younger_rows.to_le_bytes());
         if version == VERSION_FORWARDING {
             payload.extend_from_slice(&forwarded_count.to_le_bytes());
+        } else if version == VERSION_PARTIAL_OVERLAY {
+            payload.extend_from_slice(&forwarded_count.to_le_bytes());
+            payload.extend_from_slice(&partial_overlay_count.to_le_bytes());
         }
         for entry in &self.entries {
             write_request(&mut payload, entry.fetch_request);
             write_request(&mut payload, entry.data_request);
             payload.extend_from_slice(&entry.issue_tick.to_le_bytes());
             payload.extend_from_slice(&entry.partition.index().to_le_bytes());
-            if version == VERSION_FORWARDING {
+            if matches!(version, VERSION_FORWARDING | VERSION_PARTIAL_OVERLAY) {
                 payload.push(match entry.operation {
                     RiscvO3LiveDataHandoffOperation::Load => OPERATION_LOAD,
                     RiscvO3LiveDataHandoffOperation::Store => OPERATION_STORE,
@@ -267,7 +308,7 @@ impl RiscvO3LiveDataHandoff {
                 (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Memory { route }) => {
                     payload.extend_from_slice(&route.get().to_le_bytes())
                 }
-                (VERSION_TYPED_TARGET | VERSION_FORWARDING, target) => {
+                (VERSION_TYPED_TARGET | VERSION_FORWARDING | VERSION_PARTIAL_OVERLAY, target) => {
                     write_target(&mut payload, target)
                 }
                 (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Mmio { .. }) => {
@@ -294,6 +335,15 @@ impl RiscvO3LiveDataHandoff {
             payload.push(u8::from(row.trace_sequence.is_some()));
             payload.extend_from_slice(&row.trace_sequence.unwrap_or_default().to_le_bytes());
         }
+        for overlay in &self.partial_overlays {
+            write_request(&mut payload, overlay.load_data_request);
+            write_request(&mut payload, overlay.source_data_request);
+            payload.extend_from_slice(&overlay.address.get().to_le_bytes());
+            payload.extend_from_slice(&overlay.bytes.to_le_bytes());
+            payload.push(overlay.forwarded_mask);
+            payload.extend_from_slice(&overlay.data);
+            payload.extend_from_slice(&overlay.source_data);
+        }
         payload
     }
 
@@ -310,14 +360,22 @@ impl RiscvO3LiveDataHandoff {
         let version = payload[MAGIC.len()];
         if !matches!(
             version,
-            VERSION_MEMORY_ROUTE | VERSION_TYPED_TARGET | VERSION_FORWARDING
+            VERSION_MEMORY_ROUTE
+                | VERSION_TYPED_TARGET
+                | VERSION_FORWARDING
+                | VERSION_PARTIAL_OVERLAY
         ) {
             return Err(RiscvO3LiveDataHandoffError::UnsupportedVersion { version });
         }
         let mut offset = MAGIC.len() + 1;
         let entry_count = read_u32(payload, &mut offset)? as usize;
         let younger_rows = read_u32(payload, &mut offset)?;
-        let forwarded_count = if version == VERSION_FORWARDING {
+        let forwarded_count = if matches!(version, VERSION_FORWARDING | VERSION_PARTIAL_OVERLAY) {
+            read_u32(payload, &mut offset)? as usize
+        } else {
+            0
+        };
+        let partial_overlay_count = if version == VERSION_PARTIAL_OVERLAY {
             read_u32(payload, &mut offset)? as usize
         } else {
             0
@@ -331,6 +389,19 @@ impl RiscvO3LiveDataHandoff {
             return Err(RiscvO3LiveDataHandoffError::InvalidForwardingShape {
                 entries: entry_count,
                 forwarded_rows: forwarded_count,
+                younger_rows,
+            });
+        }
+        if version == VERSION_PARTIAL_OVERLAY
+            && (entry_count != 2
+                || forwarded_count != 0
+                || partial_overlay_count != 1
+                || younger_rows != 0)
+        {
+            return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayShape {
+                entries: entry_count,
+                forwarded_rows: forwarded_count,
+                partial_overlays: partial_overlay_count,
                 younger_rows,
             });
         }
@@ -386,7 +457,7 @@ impl RiscvO3LiveDataHandoff {
             }
             let issue_tick = read_u64(payload, &mut offset)?;
             let partition = PartitionId::new(read_u32(payload, &mut offset)?);
-            let operation = if version == VERSION_FORWARDING {
+            let operation = if matches!(version, VERSION_FORWARDING | VERSION_PARTIAL_OVERLAY) {
                 match read_u8(payload, &mut offset)? {
                     OPERATION_LOAD => RiscvO3LiveDataHandoffOperation::Load,
                     OPERATION_STORE => RiscvO3LiveDataHandoffOperation::Store,
@@ -556,6 +627,88 @@ impl RiscvO3LiveDataHandoff {
                 trace_sequence: (trace_present == 1).then_some(trace_sequence),
             });
         }
+        let mut partial_overlays = Vec::with_capacity(partial_overlay_count);
+        for _ in 0..partial_overlay_count {
+            let load_data_request = read_request(payload, &mut offset)?;
+            let source_data_request = read_request(payload, &mut offset)?;
+            let address = Address::new(read_u64(payload, &mut offset)?);
+            let bytes = read_u32(payload, &mut offset)?;
+            if !matches!(bytes, 1 | 2 | 4 | 8) {
+                return Err(RiscvO3LiveDataHandoffError::InvalidScalarBytes { bytes });
+            }
+            if address.get().checked_add(u64::from(bytes) - 1).is_none() {
+                return Err(RiscvO3LiveDataHandoffError::AddressRangeOverflow { address, bytes });
+            }
+            let forwarded_mask = read_u8(payload, &mut offset)?;
+            let width_mask = scalar_byte_mask(bytes);
+            if forwarded_mask == 0
+                || forwarded_mask == width_mask
+                || forwarded_mask & !width_mask != 0
+            {
+                return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayMask {
+                    mask: forwarded_mask,
+                    bytes,
+                });
+            }
+            let data = read_array::<8>(payload, &mut offset)?;
+            let source_data = read_array::<8>(payload, &mut offset)?;
+            let load = entries
+                .iter()
+                .find(|entry| entry.data_request == load_data_request);
+            if !load.is_some_and(|load| {
+                load.operation == RiscvO3LiveDataHandoffOperation::Load
+                    && matches!(load.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                    && load.address == address
+                    && load.bytes == bytes
+            }) {
+                return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayLoad {
+                    request: load_data_request,
+                });
+            }
+            let load = load.expect("validated partial-overlay load entry");
+            let source = entries
+                .iter()
+                .find(|entry| entry.data_request == source_data_request);
+            if !source.is_some_and(|source| {
+                source.operation == RiscvO3LiveDataHandoffOperation::Store
+                    && matches!(source.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                    && source.partition == load.partition
+                    && source.target == load.target
+                    && source.o3_sequence < load.o3_sequence
+            }) {
+                return Err(RiscvO3LiveDataHandoffError::InvalidForwardingSource {
+                    request: source_data_request,
+                });
+            }
+            let source = source.expect("validated partial-overlay source entry");
+            let expected_mask = partial_overlay_mask(source.address, source.bytes, address, bytes);
+            if forwarded_mask != expected_mask {
+                return Err(RiscvO3LiveDataHandoffError::PartialOverlayMaskMismatch {
+                    expected: expected_mask,
+                    actual: forwarded_mask,
+                });
+            }
+            validate_partial_overlay_data(
+                source.address,
+                source.bytes,
+                address,
+                bytes,
+                forwarded_mask,
+                &data,
+                &source_data,
+            )?;
+            partial_overlays.push(RiscvO3LiveDataHandoffPartialOverlay {
+                load_data_request,
+                source_data_request,
+                source_address: source.address,
+                source_bytes: source.bytes,
+                address,
+                bytes,
+                forwarded_mask,
+                data,
+                source_data,
+            });
+        }
         if offset != payload.len() {
             return Err(RiscvO3LiveDataHandoffError::InvalidPayloadSize {
                 expected: offset,
@@ -565,6 +718,7 @@ impl RiscvO3LiveDataHandoff {
         Ok(Self {
             entries,
             forwarded_rows,
+            partial_overlays,
             younger_rows,
         })
     }
@@ -590,6 +744,12 @@ pub enum RiscvO3LiveDataHandoffError {
     InvalidForwardingShape {
         entries: usize,
         forwarded_rows: usize,
+        younger_rows: u32,
+    },
+    InvalidPartialOverlayShape {
+        entries: usize,
+        forwarded_rows: usize,
+        partial_overlays: usize,
         younger_rows: u32,
     },
     InvalidMmioRoute {
@@ -641,6 +801,27 @@ pub enum RiscvO3LiveDataHandoffError {
     InvalidForwardingSource {
         request: MemoryRequestId,
     },
+    InvalidPartialOverlayLoad {
+        request: MemoryRequestId,
+    },
+    InvalidPartialOverlayMask {
+        mask: u8,
+        bytes: u32,
+    },
+    PartialOverlayMaskMismatch {
+        expected: u8,
+        actual: u8,
+    },
+    InvalidPartialOverlayData {
+        index: usize,
+    },
+    InvalidPartialOverlaySourceData {
+        index: usize,
+    },
+    NonZeroPartialOverlaySourceDataPadding {
+        index: usize,
+        value: u8,
+    },
     InvalidTracePresence {
         value: u8,
     },
@@ -679,6 +860,15 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
             } => write!(
                 formatter,
                 "live-data handoff forwarding shape has {entries} transport entries, {forwarded_rows} forwarded rows, and {younger_rows} younger rows"
+            ),
+            Self::InvalidPartialOverlayShape {
+                entries,
+                forwarded_rows,
+                partial_overlays,
+                younger_rows,
+            } => write!(
+                formatter,
+                "live-data handoff partial-overlay shape has {entries} transport entries, {forwarded_rows} forwarded rows, {partial_overlays} overlay rows, and {younger_rows} younger rows"
             ),
             Self::InvalidMmioRoute {
                 request_latency,
@@ -753,6 +943,32 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
                 request.agent().get(),
                 request.sequence()
             ),
+            Self::InvalidPartialOverlayLoad { request } => write!(
+                formatter,
+                "live-data handoff partial-overlay load {}:{} is invalid",
+                request.agent().get(),
+                request.sequence()
+            ),
+            Self::InvalidPartialOverlayMask { mask, bytes } => write!(
+                formatter,
+                "live-data handoff partial-overlay mask {mask:#04x} is invalid for {bytes} bytes"
+            ),
+            Self::PartialOverlayMaskMismatch { expected, actual } => write!(
+                formatter,
+                "live-data handoff partial-overlay mask {actual:#04x} does not match source overlap {expected:#04x}"
+            ),
+            Self::InvalidPartialOverlayData { index } => write!(
+                formatter,
+                "live-data handoff partial-overlay data byte {index} does not match its source ownership"
+            ),
+            Self::InvalidPartialOverlaySourceData { index } => write!(
+                formatter,
+                "live-data handoff partial-overlay source data byte {index} is not owned by the overlay"
+            ),
+            Self::NonZeroPartialOverlaySourceDataPadding { index, value } => write!(
+                formatter,
+                "live-data handoff partial-overlay source padding byte {index} has value {value}"
+            ),
             Self::InvalidTracePresence { value } => write!(
                 formatter,
                 "live-data handoff trace-presence value {value} is invalid"
@@ -778,6 +994,7 @@ pub(crate) struct RiscvIssuedScalarMemoryHandoff {
     pub(crate) address: Address,
     pub(crate) bytes: u32,
     pub(crate) store_data: Option<[u8; 8]>,
+    pub(crate) partial_overlay: Option<RiscvPendingPartialScalarLoadHandoff>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -878,6 +1095,70 @@ impl RiscvCore {
             return None;
         }
         entries.sort_by_key(|entry| entry.o3_sequence);
+        let partial_rows = issued_rows
+            .iter()
+            .filter_map(|issued| issued.partial_overlay.map(|overlay| (*issued, overlay)))
+            .collect::<Vec<_>>();
+        if !partial_rows.is_empty() {
+            if partial_rows.len() != 1
+                || !forwarded_rows.is_empty()
+                || entries.len() != 2
+                || younger_rows != 0
+            {
+                return None;
+            }
+            let (load, overlay) = partial_rows[0];
+            if load.operation != RiscvO3LiveDataHandoffOperation::Load
+                || !matches!(load.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                || load.address != overlay.address
+                || load.bytes != overlay.bytes
+            {
+                return None;
+            }
+            let load_entry = entries
+                .iter()
+                .find(|entry| entry.data_request == load.data_request)?;
+            let mut sources = issued_rows.iter().filter(|source| {
+                source.operation == RiscvO3LiveDataHandoffOperation::Store
+                    && source.partition == load.partition
+                    && matches!(source.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                    && source.target == load.target
+                    && source.partial_overlay.is_none()
+                    && partial_overlay_matches_source(**source, overlay)
+            });
+            let source = *sources.next()?;
+            if sources.next().is_some() {
+                return None;
+            }
+            let source_entry = entries
+                .iter()
+                .find(|entry| entry.data_request == source.data_request)?;
+            if source_entry.o3_sequence >= load_entry.o3_sequence {
+                return None;
+            }
+            let source_data = canonical_partial_overlay_source_data(
+                source.address,
+                overlay.address,
+                overlay.bytes,
+                overlay.forwarded_mask,
+                &overlay.data,
+            );
+            return RiscvO3LiveDataHandoff::with_partial_overlay(
+                entries,
+                RiscvO3LiveDataHandoffPartialOverlay {
+                    load_data_request: load.data_request,
+                    source_data_request: source.data_request,
+                    source_address: source.address,
+                    source_bytes: source.bytes,
+                    address: overlay.address,
+                    bytes: overlay.bytes,
+                    forwarded_mask: overlay.forwarded_mask,
+                    data: overlay.data,
+                    source_data,
+                },
+                younger_rows,
+            );
+        }
         if forwarded_rows.is_empty() {
             if entries
                 .iter()
@@ -1091,6 +1372,23 @@ mod tests {
         }
     }
 
+    fn partial_overlay(
+        load: RiscvO3LiveDataHandoffEntry,
+        source: MemoryRequestId,
+    ) -> RiscvO3LiveDataHandoffPartialOverlay {
+        RiscvO3LiveDataHandoffPartialOverlay {
+            load_data_request: load.data_request,
+            source_data_request: source,
+            source_address: Address::new(0x8001),
+            source_bytes: 1,
+            address: load.address,
+            bytes: load.bytes,
+            forwarded_mask: 0b0010,
+            data: [0, 0x5a, 0, 0, 0, 0, 0, 0],
+            source_data: [0x5a, 0, 0, 0, 0, 0, 0, 0],
+        }
+    }
+
     #[test]
     fn live_data_handoff_round_trips_entries() {
         let handoff = RiscvO3LiveDataHandoff::new(vec![entry(1), entry(2)], 2).unwrap();
@@ -1177,6 +1475,130 @@ mod tests {
     }
 
     #[test]
+    fn live_data_handoff_round_trips_pending_partial_overlay() {
+        let mut store = entry(1);
+        store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        store.address = Address::new(0x8001);
+        store.bytes = 1;
+        let mut load = entry(2);
+        load.address = Address::new(0x8000);
+        let overlay = partial_overlay(load, store.data_request);
+        let handoff =
+            RiscvO3LiveDataHandoff::with_partial_overlay(vec![store, load], overlay, 0).unwrap();
+        let payload = handoff.encode();
+
+        assert_eq!(payload[MAGIC.len()], VERSION_PARTIAL_OVERLAY);
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&payload),
+            Ok(handoff.clone())
+        );
+        assert_eq!(handoff.partial_overlays(), &[overlay]);
+        assert_eq!(handoff.resident_rows(), 2);
+        assert_eq!(overlay.forwarded_mask(), 0b0010);
+        assert_eq!(overlay.forwarded_bytes(), 1);
+        assert_eq!(overlay.data(), &[0, 0x5a, 0, 0]);
+        assert_eq!(overlay.source_address(), Address::new(0x8001));
+        assert_eq!(overlay.source_bytes(), 1);
+        assert_eq!(overlay.source_data(), &[0x5a]);
+    }
+
+    #[test]
+    fn live_data_handoff_rejects_invalid_partial_overlay_provenance() {
+        let mut store = entry(1);
+        store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        store.address = Address::new(0x8001);
+        store.bytes = 1;
+        let mut load = entry(2);
+        load.address = Address::new(0x8000);
+        let unknown = MemoryRequestId::new(AgentId::new(9), 99);
+        let invalid_source = RiscvO3LiveDataHandoff::with_partial_overlay(
+            vec![store, load],
+            partial_overlay(load, unknown),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&invalid_source.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidForwardingSource { request: unknown })
+        );
+
+        let mut full_mask = partial_overlay(load, store.data_request);
+        full_mask.forwarded_mask = 0b1111;
+        let invalid_mask =
+            RiscvO3LiveDataHandoff::with_partial_overlay(vec![store, load], full_mask, 0).unwrap();
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&invalid_mask.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayMask {
+                mask: 0b1111,
+                bytes: 4,
+            })
+        );
+
+        let valid = RiscvO3LiveDataHandoff::with_partial_overlay(
+            vec![store, load],
+            partial_overlay(load, store.data_request),
+            0,
+        )
+        .unwrap()
+        .encode();
+        let mut invalid_shape = valid.clone();
+        let partial_overlay_count_offset = HEADER_BYTES + 4;
+        invalid_shape[partial_overlay_count_offset..partial_overlay_count_offset + 4]
+            .copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&invalid_shape),
+            Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayShape {
+                entries: 2,
+                forwarded_rows: 0,
+                partial_overlays: 0,
+                younger_rows: 0,
+            })
+        );
+
+        let v4_header_bytes = HEADER_BYTES + 8;
+        let v4_memory_entry_bytes = V1_ENTRY_BYTES + 2;
+        let overlay_data_offset = v4_header_bytes + 2 * v4_memory_entry_bytes + 12 + 12 + 8 + 4 + 1;
+        let mut invalid_data = valid.clone();
+        invalid_data[overlay_data_offset] = 1;
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&invalid_data),
+            Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayData { index: 0 })
+        );
+
+        let mut mismatched_source_data = valid;
+        mismatched_source_data[overlay_data_offset + 8] = 0x6b;
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&mismatched_source_data),
+            Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayData { index: 1 })
+        );
+
+        let mut wider_store = entry(1);
+        wider_store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        wider_store.address = Address::new(0x8001);
+        wider_store.bytes = 4;
+        let forged_nonoverlap = RiscvO3LiveDataHandoff::with_partial_overlay(
+            vec![wider_store, load],
+            RiscvO3LiveDataHandoffPartialOverlay {
+                load_data_request: load.data_request,
+                source_data_request: wider_store.data_request,
+                source_address: wider_store.address,
+                source_bytes: wider_store.bytes,
+                address: load.address,
+                bytes: load.bytes,
+                forwarded_mask: 0b1110,
+                data: [0, 0x11, 0x22, 0x33, 0, 0, 0, 0],
+                source_data: [0x11, 0x22, 0x33, 0x44, 0, 0, 0, 0],
+            },
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&forged_nonoverlap.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlaySourceData { index: 3 })
+        );
+    }
+
+    #[test]
     fn live_data_handoff_rejects_unknown_or_invalid_typed_targets() {
         let payload = RiscvO3LiveDataHandoff::new(vec![mmio_entry(1)], 0)
             .unwrap()
@@ -1228,11 +1650,11 @@ mod tests {
             Err(RiscvO3LiveDataHandoffError::InvalidMagic)
         );
         let mut bad_version = payload.clone();
-        bad_version[MAGIC.len()] = VERSION_FORWARDING + 1;
+        bad_version[MAGIC.len()] = VERSION_PARTIAL_OVERLAY + 1;
         assert_eq!(
             RiscvO3LiveDataHandoff::decode(&bad_version),
             Err(RiscvO3LiveDataHandoffError::UnsupportedVersion {
-                version: VERSION_FORWARDING + 1,
+                version: VERSION_PARTIAL_OVERLAY + 1,
             })
         );
         assert!(matches!(
@@ -1270,14 +1692,16 @@ mod tests {
     fn live_data_handoff_rejects_store_only_v3_shape() {
         let mut store = entry(1);
         store.operation = RiscvO3LiveDataHandoffOperation::Store;
-        let handoff = RiscvO3LiveDataHandoff {
-            entries: vec![store],
-            forwarded_rows: Vec::new(),
-            younger_rows: 0,
-        };
+        store.address = Address::new(0x8004);
+        let forwarded = forwarded_row(2, store.data_request);
+        let mut payload =
+            RiscvO3LiveDataHandoff::with_forwarded_rows(vec![store], vec![forwarded], 0)
+                .unwrap()
+                .encode();
+        payload[HEADER_BYTES..HEADER_BYTES + 4].copy_from_slice(&0_u32.to_le_bytes());
 
         assert_eq!(
-            RiscvO3LiveDataHandoff::decode(&handoff.encode()),
+            RiscvO3LiveDataHandoff::decode(&payload),
             Err(RiscvO3LiveDataHandoffError::InvalidForwardingShape {
                 entries: 1,
                 forwarded_rows: 0,
@@ -1332,6 +1756,7 @@ mod tests {
         let handoff = RiscvO3LiveDataHandoff {
             entries: vec![entry(1), entry(2)],
             forwarded_rows: Vec::new(),
+            partial_overlays: Vec::new(),
             younger_rows: 0,
         };
         let payload = handoff.encode();
