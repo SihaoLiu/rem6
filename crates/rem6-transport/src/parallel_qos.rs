@@ -25,7 +25,7 @@ impl MemoryTransport {
         &self,
         transactions: &[PreparedParallelTransaction],
     ) -> bool {
-        self.qos_arbiter.is_some()
+        self.qos_state.is_some()
             && (transactions.len() > 1 || self.direct_target_batch_responder.is_some())
             && !transactions.is_empty()
             && transactions.iter().all(|transaction| {
@@ -78,7 +78,7 @@ impl MemoryTransport {
                         .into_iter()
                         .map(|(_, transaction)| transaction)
                         .collect(),
-                )?;
+                );
                 for index in indexes {
                     events[index] = Some(event);
                 }
@@ -92,7 +92,7 @@ impl MemoryTransport {
                     arrival_tick,
                     target_partition,
                     transaction,
-                )?;
+                );
                 events[index] = Some(event);
             }
         }
@@ -107,10 +107,10 @@ impl MemoryTransport {
         &self,
         group: Vec<(usize, PreparedParallelTransaction)>,
     ) -> Vec<(usize, PreparedParallelTransaction)> {
-        let Some(arbiter) = &self.qos_arbiter else {
+        let Some(qos_state) = &self.qos_state else {
             return group;
         };
-        let mut arbiter = arbiter.lock().expect("QoS arbiter lock");
+        let mut qos_state = qos_state.inner.lock().expect("QoS state lock");
         let mut pending = group;
         let mut ordered = Vec::with_capacity(pending.len());
 
@@ -132,7 +132,8 @@ impl MemoryTransport {
                     .expect("memory requests always have nonzero size")
                 })
                 .collect::<Vec<_>>();
-            let grant = arbiter
+            let grant = qos_state
+                .arbiter
                 .grant(&queue)
                 .expect("nonempty direct QoS queue must produce a grant");
             ordered.push(pending.remove(eligible_indexes[grant.queue_index()]));
@@ -148,7 +149,7 @@ impl MemoryTransport {
         arrival_tick: Tick,
         target_partition: PartitionId,
         transaction: PreparedParallelTransaction,
-    ) -> Result<PartitionEventId, TransportError> {
+    ) -> PartitionEventId {
         let PreparedParallelTransaction {
             route_id,
             route,
@@ -163,7 +164,8 @@ impl MemoryTransport {
         let request_id = request.id();
         let last_hop_index = route.hops().len() - 1;
         let fabric = self.fabric.clone();
-        record_direct_request_trace(&trace, start_tick, route_id, &route, request_id)?;
+        record_direct_request_trace(&trace, start_tick, route_id, &route, request_id)
+            .expect("validated direct route trace timing");
 
         scheduler
             .schedule_parallel_at(target_partition, arrival_tick, move |context| {
@@ -187,7 +189,7 @@ impl MemoryTransport {
                     response_sink,
                 );
             })
-            .map_err(TransportError::Scheduler)
+            .expect("validated direct target schedule")
     }
 
     fn schedule_or_append_direct_parallel_target_batch(
@@ -197,7 +199,7 @@ impl MemoryTransport {
         arrival_tick: Tick,
         target_partition: PartitionId,
         transactions: Vec<PreparedParallelTransaction>,
-    ) -> Result<PartitionEventId, TransportError> {
+    ) -> PartitionEventId {
         let key = (
             arrival_tick,
             target_partition,
@@ -215,7 +217,8 @@ impl MemoryTransport {
                 transaction.route_id,
                 &transaction.route,
                 transaction.request.id(),
-            )?;
+            )
+            .expect("validated direct batch trace timing");
         }
 
         if let Some(pending) = self
@@ -227,9 +230,9 @@ impl MemoryTransport {
         {
             let mut pending = pending.lock().expect("pending direct target batch lock");
             pending.transactions.extend(transactions);
-            return Ok(pending
+            return pending
                 .event
-                .expect("scheduled direct target batch has an event"));
+                .expect("scheduled direct target batch has an event");
         }
 
         let pending = std::sync::Arc::new(std::sync::Mutex::new(crate::PendingDirectTargetBatch {
@@ -264,7 +267,7 @@ impl MemoryTransport {
                     fabric,
                 );
             })
-            .map_err(TransportError::Scheduler)?;
+            .expect("validated direct batch target schedule");
         pending
             .lock()
             .expect("pending direct target batch lock")
@@ -273,7 +276,7 @@ impl MemoryTransport {
             .lock()
             .expect("direct target batch lock")
             .insert(key, pending);
-        Ok(event)
+        event
     }
 
     fn run_direct_parallel_target_batch(

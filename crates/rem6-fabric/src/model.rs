@@ -450,9 +450,52 @@ pub struct FabricModel {
     wait_log: Vec<FabricWaitRecord>,
 }
 
+pub struct FabricTransaction<'a> {
+    model: &'a mut FabricModel,
+}
+
+impl FabricTransaction<'_> {
+    pub fn transmit(
+        &mut self,
+        injection_tick: Tick,
+        packet: FabricPacket,
+        path: FabricPath,
+    ) -> Result<FabricTransfer, FabricError> {
+        self.model.transmit(injection_tick, packet, path)
+    }
+
+    pub fn transmit_batch<I>(
+        &mut self,
+        injection_tick: Tick,
+        requests: I,
+    ) -> Result<Vec<FabricTransfer>, FabricError>
+    where
+        I: IntoIterator<Item = (FabricPacket, FabricPath)>,
+    {
+        self.model.transmit_batch(injection_tick, requests)
+    }
+}
+
 impl FabricModel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn try_transaction<T, E, F>(&mut self, transaction: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut FabricTransaction<'_>) -> Result<T, E>,
+    {
+        let snapshot = self.snapshot();
+        let activity_len = self.activity_log.len();
+        let wait_len = self.wait_log.len();
+        let result = transaction(&mut FabricTransaction { model: self });
+        if result.is_err() {
+            self.restore_snapshot(snapshot)
+                .expect("a freshly captured fabric snapshot must restore");
+            self.activity_log.truncate(activity_len);
+            self.wait_log.truncate(wait_len);
+        }
+        result
     }
 
     pub fn transmit(

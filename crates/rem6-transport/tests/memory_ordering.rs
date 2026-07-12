@@ -10,8 +10,9 @@ use rem6_memory::{
     MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryTrace, MemoryTransport, ParallelMemoryTransaction,
-    TargetBatchOutcome, TargetOutcome, TransportEndpointId,
+    FabricQosGrantActivity, FabricQosSuppressionReason, MemoryRoute, MemoryRouteHop, MemoryTrace,
+    MemoryTransport, ParallelMemoryTransaction, TargetBatchOutcome, TargetOutcome,
+    TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -370,6 +371,72 @@ fn shared_fabric_qos_batch_preserves_same_agent_release_ordering() {
             .map(|(_, request)| *request)
             .collect::<Vec<_>>(),
         vec![prior.id(), release.id()]
+    );
+}
+
+#[test]
+fn shared_fabric_qos_activity_records_memory_order_suppression() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+    );
+    let route = fabric_ordering_route(&mut transport, "mesh_order_activity");
+    let prior = request(21, 0x2100);
+    let release = request(22, 0x2200).with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        None,
+    ));
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route,
+                    prior,
+                    trace.clone(),
+                    record_no_response(Arc::clone(&deliveries)),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(1)),
+                ParallelMemoryTransaction::new(
+                    route,
+                    release,
+                    trace,
+                    record_no_response(Arc::clone(&deliveries)),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(0)),
+            ],
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let activities = transport.fabric_qos_grant_activities();
+    assert_eq!(activities.len(), 2);
+    let first = &activities[0];
+    assert_eq!(first.candidates().len(), 1);
+    assert_eq!(first.candidates()[0].order(), 0);
+    assert_eq!(first.grant().order(), 0);
+    assert_eq!(first.suppressed().len(), 1);
+    assert_eq!(first.suppressed()[0].request().order(), 1);
+    assert_eq!(
+        first.suppressed()[0].reason(),
+        FabricQosSuppressionReason::MemoryOrder
+    );
+    let second = &activities[1];
+    assert_eq!(second.candidates().len(), 1);
+    assert_eq!(second.grant().order(), 1);
+    assert!(second.suppressed().is_empty());
+    assert_eq!(
+        activities
+            .iter()
+            .map(FabricQosGrantActivity::grant_index)
+            .collect::<Vec<_>>(),
+        [0, 1]
     );
 }
 

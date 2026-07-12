@@ -6,10 +6,11 @@ use rem6_boot::{
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
     BootElfSectionTypeRanges, BootElfSectionVersions, BootElfSymbolSummary,
 };
-use rem6_fabric::FabricHopActivity;
+use rem6_fabric::{FabricHopActivity, QosQueuePolicyKind, QosQueuedRequest, QosRequestorId};
 use rem6_kernel::WaitForEdgeKind;
 use rem6_memory::Address;
 use rem6_system::RiscvDataCacheProtocol;
+use rem6_transport::FabricQosSuppressionReason;
 
 use super::optional_count_json;
 use super::parallel::empty_parallel_json;
@@ -773,7 +774,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .map(|policy| format!("\"{}\"", policy.as_str()))
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"wait_for_edge_count\":{},\"wait_for_edge_kind_windows\":[{}],\"wait_for_blocked_node_windows\":[{}],\"wait_for_target_node_windows\":[{}],\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"qos_grant_activities\":[{}],\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"wait_for_edge_count\":{},\"wait_for_edge_kind_windows\":[{}],\"wait_for_blocked_node_windows\":[{}],\"wait_for_target_node_windows\":[{}],\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -781,6 +782,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         credit_depth,
         router_stage,
         qos_queue_policy,
+        run_fabric_qos_grant_activities_json(summary),
         summary.active_lanes(),
         summary.active_virtual_networks(),
         summary.router_activities().len(),
@@ -802,6 +804,88 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         run_fabric_hop_activities_json(summary),
         run_fabric_router_activities_json(summary),
     )
+}
+
+fn run_fabric_qos_grant_activities_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .qos_grant_activities()
+        .iter()
+        .map(|activity| {
+            let candidates = activity
+                .candidates()
+                .iter()
+                .enumerate()
+                .map(|(queue_index, request)| {
+                    run_fabric_qos_request_json(request, Some(queue_index))
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let suppressed = activity
+                .suppressed()
+                .iter()
+                .map(|suppressed| {
+                    format!(
+                        "{{\"request\":{},\"reason\":\"{}\"}}",
+                        run_fabric_qos_request_json(suppressed.request(), None),
+                        run_fabric_qos_suppression_reason_json(suppressed.reason()),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"tick\":{},\"batch\":{},\"grant_index\":{},\"policy\":\"{}\",\"candidates\":[{}],\"suppressed\":[{}],\"selected_queue_index\":{},\"grant\":{},\"lrg_requestors_before\":[{}],\"lrg_requestors_after\":[{}]}}",
+                activity.tick(),
+                activity.batch(),
+                activity.grant_index(),
+                run_fabric_qos_policy_json(activity.policy()),
+                candidates,
+                suppressed,
+                activity.selected_queue_index(),
+                run_fabric_qos_request_json(activity.grant(), None),
+                run_fabric_qos_requestors_json(activity.lrg_requestors_before()),
+                run_fabric_qos_requestors_json(activity.lrg_requestors_after()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_fabric_qos_request_json(request: &QosQueuedRequest, queue_index: Option<usize>) -> String {
+    let queue_index = queue_index
+        .map(|queue_index| format!("\"queue_index\":{queue_index},"))
+        .unwrap_or_default();
+    format!(
+        "{{{}\"packet\":{},\"request_id\":{},\"requestor\":{},\"priority\":{},\"bytes\":{},\"order\":{}}}",
+        queue_index,
+        request.request_id().get(),
+        request.request_id().get(),
+        request.requestor().get(),
+        request.priority().get(),
+        request.bytes(),
+        request.order(),
+    )
+}
+
+fn run_fabric_qos_requestors_json(requestors: &[QosRequestorId]) -> String {
+    requestors
+        .iter()
+        .map(|requestor| requestor.get().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_fabric_qos_policy_json(policy: QosQueuePolicyKind) -> &'static str {
+    match policy {
+        QosQueuePolicyKind::Fifo => "fifo",
+        QosQueuePolicyKind::Lifo => "lifo",
+        QosQueuePolicyKind::LeastRecentlyGranted => "least-recently-granted",
+    }
+}
+
+fn run_fabric_qos_suppression_reason_json(reason: FabricQosSuppressionReason) -> &'static str {
+    match reason {
+        FabricQosSuppressionReason::MemoryOrder => "memory_order",
+    }
 }
 
 fn run_fabric_link_activities_json(summary: &Rem6RunFabricSummary) -> String {

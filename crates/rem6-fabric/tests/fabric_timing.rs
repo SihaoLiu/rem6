@@ -1028,3 +1028,24 @@ fn fabric_rejects_invalid_packets_paths_and_batches() {
         })
     );
 }
+
+#[test]
+fn fabric_transaction_rolls_back_resource_and_activity_state() {
+    let mut fabric = FabricModel::new();
+    let good = path([FabricPathHop::new(link("mesh_transaction"), 2, 4).unwrap()]);
+    let bad = path([FabricPathHop::new(link("mesh_transaction"), u64::MAX, 4).unwrap()]);
+    let before = fabric.snapshot();
+
+    let error = fabric
+        .try_transaction(|fabric| -> Result<(), FabricError> {
+            fabric.transmit(0, packet(1, 8, 0), good)?;
+            fabric.transmit(0, packet(2, 8, 0), bad)?;
+            Ok(())
+        })
+        .unwrap_err();
+
+    assert_eq!(error, FabricError::TickOverflow);
+    assert_eq!(fabric.snapshot(), before);
+    assert!(fabric.hop_activities().is_empty());
+    assert_eq!(fabric.total_transfer_count(), 0);
+}

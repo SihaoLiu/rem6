@@ -9,7 +9,7 @@ mod types;
 pub use activity::{
     FabricActivityProfile, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
 };
-pub use model::FabricModel;
+pub use model::{FabricModel, FabricTransaction};
 pub use path::{
     FabricPath, FabricPathHop, FabricRouterStage, FabricSerialLinkRate, FabricSerialLinkTiming,
 };

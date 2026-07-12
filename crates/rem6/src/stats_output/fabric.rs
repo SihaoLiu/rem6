@@ -92,6 +92,7 @@ pub(super) fn emit_run_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.contended_lanes(),
     )?;
+    emit_fabric_qos_stats(stats, prefix, summary)?;
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
     emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
@@ -103,6 +104,61 @@ pub(super) fn emit_run_fabric_stats(
         summary.wait_for_edge_count(),
         summary.wait_for_edge_kind_windows(),
     )
+}
+
+fn emit_fabric_qos_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6RunFabricSummary,
+) -> Result<(), Rem6CliError> {
+    let prefix = format!("{prefix}.qos");
+    for (suffix, value) in [
+        ("grants", summary.qos_grant_activities().len() as u64),
+        ("candidates", summary.qos_candidate_count()),
+        ("suppressed", summary.qos_suppressed_count()),
+        ("batches", summary.qos_batch_count()),
+        ("max_candidates", summary.qos_max_candidate_count()),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{prefix}.{suffix}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+
+    let mut requestor_grants = BTreeMap::<u32, u64>::new();
+    let mut priority_grants = BTreeMap::<u8, u64>::new();
+    for activity in summary.qos_grant_activities() {
+        requestor_grants
+            .entry(activity.grant().requestor().get())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+        priority_grants
+            .entry(activity.grant().priority().get())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+    }
+    for (requestor, grants) in requestor_grants {
+        increment_stat(
+            stats,
+            &format!("{prefix}.requestor{requestor}.grants"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            grants,
+        )?;
+    }
+    for (priority, grants) in priority_grants {
+        increment_stat(
+            stats,
+            &format!("{prefix}.priority{priority}.grants"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            grants,
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn emit_fabric_virtual_network_stats<I>(

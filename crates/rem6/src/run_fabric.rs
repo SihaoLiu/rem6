@@ -7,7 +7,7 @@ use rem6_fabric::{
 };
 use rem6_kernel::{WaitForBlockedNodeWindow, WaitForEdgeKindWindow, WaitForTargetNodeWindow};
 use rem6_system::RiscvSystemRun;
-use rem6_transport::MemoryTransport;
+use rem6_transport::{FabricQosGrantActivity, MemoryTransport};
 
 use crate::{config::RunFabricRouterStageConfig, execute_error, Rem6CliError, RunFabricConfig};
 
@@ -27,6 +27,7 @@ pub(crate) struct Rem6RunFabricSummary {
     link_activities: Vec<FabricLinkActivity>,
     lane_activities: Vec<FabricLaneActivity>,
     hop_activities: Vec<FabricHopActivity>,
+    qos_grant_activities: Vec<FabricQosGrantActivity>,
     router_activities: Vec<Rem6RunFabricRouterActivity>,
     wait_for_edge_count: u64,
     wait_for_edge_kind_windows: Vec<WaitForEdgeKindWindow>,
@@ -73,6 +74,7 @@ impl Rem6RunFabricSummary {
 
         let lane_activities = transport.fabric_lane_activities().unwrap_or_default();
         let hop_activities = transport.fabric_hop_activities().unwrap_or_default();
+        let qos_grant_activities = transport.fabric_qos_grant_activities();
         let profile = FabricActivityProfile::from_lanes(lane_activities.iter());
         let router_activities = Rem6RunFabricRouterActivity::from_hops(&hop_activities);
         let active_virtual_networks = lane_activities
@@ -96,6 +98,7 @@ impl Rem6RunFabricSummary {
             link_activities: FabricLinkActivity::from_lanes(lane_activities.iter()),
             lane_activities,
             hop_activities,
+            qos_grant_activities,
             router_activities,
             wait_for_edge_count: 0,
             wait_for_edge_kind_windows: Vec::new(),
@@ -171,6 +174,40 @@ impl Rem6RunFabricSummary {
 
     pub(crate) fn router_activities(&self) -> &[Rem6RunFabricRouterActivity] {
         &self.router_activities
+    }
+
+    pub(crate) fn qos_grant_activities(&self) -> &[FabricQosGrantActivity] {
+        &self.qos_grant_activities
+    }
+
+    pub(crate) fn qos_candidate_count(&self) -> u64 {
+        self.qos_grant_activities
+            .iter()
+            .map(|activity| activity.candidates().len() as u64)
+            .sum()
+    }
+
+    pub(crate) fn qos_suppressed_count(&self) -> u64 {
+        self.qos_grant_activities
+            .iter()
+            .map(|activity| activity.suppressed().len() as u64)
+            .sum()
+    }
+
+    pub(crate) fn qos_batch_count(&self) -> u64 {
+        self.qos_grant_activities
+            .iter()
+            .map(FabricQosGrantActivity::batch)
+            .collect::<BTreeSet<_>>()
+            .len() as u64
+    }
+
+    pub(crate) fn qos_max_candidate_count(&self) -> u64 {
+        self.qos_grant_activities
+            .iter()
+            .map(|activity| activity.candidates().len() as u64)
+            .max()
+            .unwrap_or(0)
     }
 
     pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {

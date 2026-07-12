@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricHopActivity,
-    FabricLaneActivity, FabricModel, FabricPacket, FabricPacketId, FabricWaitForMarker,
-    QosFixedPriorityPolicy, QosPriorityPolicy, QosQueueArbiter,
+    FabricLaneActivity, FabricModel, FabricPacket, FabricPacketId, FabricTransfer,
+    FabricWaitForMarker, QosFixedPriorityPolicy, QosPriorityPolicy, QosQueueArbiter,
 };
 pub use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -18,12 +18,17 @@ mod message_buffer;
 mod ordering;
 mod parallel_qos;
 mod parallel_submit;
+mod qos_activity;
 mod route;
 mod trace;
 
 pub use message_buffer::{
     TransportMessageAdmission, TransportMessageBuffer, TransportMessageBufferConfig,
     TransportMessageBufferError, TransportMessageBufferSnapshot, TransportQueuedMessage,
+};
+pub use qos_activity::{
+    FabricQosGrantActivity, FabricQosSuppressedRequest, FabricQosSuppressionReason,
+    SharedFabricQosState,
 };
 use route::StoredRoute;
 pub use route::{
@@ -130,7 +135,7 @@ pub struct MemoryTransport {
     next_route_id: u64,
     routes: Vec<StoredRoute>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
-    qos_arbiter: Option<Arc<Mutex<QosQueueArbiter>>>,
+    qos_state: Option<SharedFabricQosState>,
     qos_priority_policy: Option<Arc<Mutex<QosPriorityPolicy>>>,
     direct_target_batch_responder: Option<ParallelTargetBatchResponder>,
     direct_target_batches:
@@ -143,7 +148,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: None,
-            qos_arbiter: None,
+            qos_state: None,
             qos_priority_policy: None,
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -155,7 +160,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
-            qos_arbiter: None,
+            qos_state: None,
             qos_priority_policy: None,
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -167,7 +172,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(fabric),
-            qos_arbiter: None,
+            qos_state: None,
             qos_priority_policy: None,
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -179,7 +184,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
-            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_state: Some(SharedFabricQosState::new(arbiter)),
             qos_priority_policy: None,
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -201,7 +206,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: None,
-            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_state: Some(SharedFabricQosState::new(arbiter)),
             qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -225,7 +230,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
-            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_state: Some(SharedFabricQosState::new(arbiter)),
             qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -234,13 +239,13 @@ impl MemoryTransport {
 
     pub fn with_shared_fabric_qos(
         fabric: Arc<Mutex<FabricModel>>,
-        arbiter: Arc<Mutex<QosQueueArbiter>>,
+        qos_state: SharedFabricQosState,
     ) -> Self {
         Self {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(fabric),
-            qos_arbiter: Some(arbiter),
+            qos_state: Some(qos_state),
             qos_priority_policy: None,
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -249,14 +254,14 @@ impl MemoryTransport {
 
     pub fn with_shared_fabric_qos_policy(
         fabric: Arc<Mutex<FabricModel>>,
-        arbiter: Arc<Mutex<QosQueueArbiter>>,
+        qos_state: SharedFabricQosState,
         priority_policy: QosFixedPriorityPolicy,
     ) -> Self {
         Self {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(fabric),
-            qos_arbiter: Some(arbiter),
+            qos_state: Some(qos_state),
             qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy.into()))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
@@ -303,6 +308,21 @@ impl MemoryTransport {
         self.fabric
             .as_ref()
             .map(|fabric| fabric.lock().expect("fabric lock").hop_activities())
+    }
+
+    pub fn fabric_qos_grant_activities(&self) -> Vec<FabricQosGrantActivity> {
+        self.qos_state
+            .as_ref()
+            .map(|state| {
+                state
+                    .inner
+                    .lock()
+                    .expect("fabric QoS state lock")
+                    .activity
+                    .grants()
+                    .to_vec()
+            })
+            .unwrap_or_default()
     }
 
     pub fn fabric_lane_activities_since(
@@ -468,11 +488,6 @@ impl MemoryTransport {
                 priority_policy.as_mut(),
             )?);
         }
-        let first_hop_delays =
-            self.reserve_parallel_batch_first_hops(start_tick, prepared.iter())?;
-        for (transaction, delay) in prepared.iter_mut().zip(first_hop_delays) {
-            transaction.first_hop_delay = delay;
-        }
 
         if self.can_submit_direct_qos_parallel_batch(&prepared) {
             let result = self.submit_direct_qos_parallel_batch(scheduler, start_tick, prepared);
@@ -482,52 +497,15 @@ impl MemoryTransport {
             return result;
         }
 
-        let mut events = Vec::with_capacity(prepared.len());
-        for transaction in prepared {
-            let PreparedParallelTransaction {
-                route_id,
-                route,
-                request,
-                trace,
-                responder,
-                response_sink,
-                first_hop_delay,
-                qos_requestor: _,
-                qos_priority: _,
-            } = transaction;
-            let source_partition = route.source_partition();
-            let fabric = self.fabric.clone();
-            let request_id = request.id();
-            events.push(
-                scheduler
-                    .schedule_parallel_at(source_partition, start_tick, move |context| {
-                        trace.record(MemoryTraceEvent::request(
-                            context.now(),
-                            route_id,
-                            route.source().clone(),
-                            MemoryTraceKind::RequestSent,
-                            request_id,
-                        ));
-
-                        Self::schedule_parallel_request_hop_with_delay(
-                            context,
-                            route_id,
-                            route,
-                            0,
-                            request,
-                            trace,
-                            fabric,
-                            responder,
-                            response_sink,
-                            first_hop_delay,
-                        );
-                    })
-                    .map_err(TransportError::Scheduler)?,
-            );
+        let (delays, fabric_requests) = self.prepare_parallel_batch_first_hops(&prepared)?;
+        let result =
+            self.reserve_parallel_batch_first_hops(start_tick, delays, fabric_requests, |delays| {
+                self.schedule_prepared_parallel_batch(scheduler, start_tick, prepared, delays)
+            });
+        if result.is_ok() {
+            self.commit_qos_priority_policy(priority_policy);
         }
-
-        self.commit_qos_priority_policy(priority_policy);
-        Ok(events)
+        result
     }
 
     fn commit_qos_priority_policy(&self, priority_policy: Option<QosPriorityPolicy>) {
@@ -587,15 +565,10 @@ impl MemoryTransport {
         })
     }
 
-    fn reserve_parallel_batch_first_hops<'a, I>(
+    fn prepare_parallel_batch_first_hops(
         &self,
-        now: Tick,
-        transactions: I,
-    ) -> Result<Vec<Tick>, TransportError>
-    where
-        I: IntoIterator<Item = &'a PreparedParallelTransaction>,
-    {
-        let transactions = transactions.into_iter().collect::<Vec<_>>();
+        transactions: &[PreparedParallelTransaction],
+    ) -> Result<(Vec<Tick>, Vec<ordering::OrderedFabricQosRequest>), TransportError> {
         let mut delays = vec![0; transactions.len()];
         let mut fabric_requests = Vec::new();
 
@@ -624,56 +597,77 @@ impl MemoryTransport {
                 index,
                 packet,
                 path.clone(),
+                transaction.request.clone(),
                 transaction.qos_requestor,
                 transaction.qos_priority,
             ));
         }
 
+        Ok((delays, fabric_requests))
+    }
+
+    fn reserve_parallel_batch_first_hops<T, F>(
+        &self,
+        now: Tick,
+        mut delays: Vec<Tick>,
+        fabric_requests: Vec<ordering::OrderedFabricQosRequest>,
+        commit: F,
+    ) -> Result<T, TransportError>
+    where
+        F: FnOnce(Vec<Tick>) -> Result<T, TransportError>,
+    {
         if fabric_requests.is_empty() {
-            return Ok(delays);
+            return commit(delays);
         }
 
         let fabric = self
             .fabric
             .as_ref()
             .expect("fabric presence is checked before batch reservation");
-        let transfers = if let Some(arbiter) = &self.qos_arbiter {
+        if let Some(qos_state) = &self.qos_state {
             let mut fabric = fabric.lock().expect("fabric lock");
-            let mut arbiter = arbiter.lock().expect("QoS arbiter lock");
-            ordering::transmit_ordered_qos_fabric_batch(
-                now,
-                &transactions,
-                &fabric_requests,
-                &mut fabric,
-                &mut arbiter,
-            )
-        } else {
-            fabric.lock().expect("fabric lock").transmit_batch(
-                now,
-                fabric_requests
-                    .iter()
-                    .map(|request| (request.packet().clone(), request.path().clone())),
-            )
+            let mut qos_state = qos_state.inner.lock().expect("fabric QoS state lock");
+            let arbiter_checkpoint = qos_state.arbiter.clone();
+            let batch = qos_state.activity.next_batch();
+            let result = fabric.try_transaction(|fabric| {
+                let (transfers, activities) = ordering::transmit_ordered_qos_fabric_batch(
+                    now,
+                    batch,
+                    &fabric_requests,
+                    fabric,
+                    &mut qos_state.arbiter,
+                )
+                .map_err(TransportError::Fabric)?;
+                apply_fabric_transfer_delays(now, &fabric_requests, transfers, &mut delays)?;
+                commit(delays).map(|value| (value, activities))
+            });
+            return match result {
+                Ok((value, activities)) => {
+                    qos_state.activity.commit_batch(batch, activities);
+                    Ok(value)
+                }
+                Err(error) => {
+                    qos_state.arbiter = arbiter_checkpoint;
+                    Err(error)
+                }
+            };
         }
-        .map_err(TransportError::Fabric)?;
-        let mut arrivals = transfers
-            .into_iter()
-            .map(|transfer| {
-                let delay = transfer
-                    .arrival_tick()
-                    .checked_sub(now)
-                    .ok_or(TransportError::Fabric(FabricError::TickOverflow))?;
-                Ok((transfer.packet().id(), delay))
+
+        fabric
+            .lock()
+            .expect("fabric lock")
+            .try_transaction(|fabric| {
+                let transfers = fabric
+                    .transmit_batch(
+                        now,
+                        fabric_requests
+                            .iter()
+                            .map(|request| (request.packet().clone(), request.path().clone())),
+                    )
+                    .map_err(TransportError::Fabric)?;
+                apply_fabric_transfer_delays(now, &fabric_requests, transfers, &mut delays)?;
+                commit(delays)
             })
-            .collect::<Result<BTreeMap<_, _>, TransportError>>()?;
-
-        for request in fabric_requests {
-            delays[request.transaction_index()] = arrivals
-                .remove(&request.packet().id())
-                .expect("fabric batch returns every accepted packet");
-        }
-
-        Ok(delays)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1068,7 +1062,7 @@ impl MemoryTransport {
             {
                 return Err(TransportError::MissingFabricModel { route: route_id });
             }
-            scheduler
+            let target_now = scheduler
                 .partition_now(hop.partition())
                 .map_err(TransportError::Scheduler)?;
 
@@ -1079,6 +1073,13 @@ impl MemoryTransport {
                 hop.request_latency(),
                 scheduler.min_remote_delay(),
             )?;
+            if request_tick < target_now {
+                return Err(TransportError::Scheduler(SchedulerError::InThePast {
+                    partition: hop.partition(),
+                    now: target_now,
+                    requested: request_tick,
+                }));
+            }
             previous_partition = hop.partition();
         }
 
@@ -1097,6 +1098,16 @@ impl MemoryTransport {
                 hop.response_latency(),
                 scheduler.min_remote_delay(),
             )?;
+            let target_now = scheduler
+                .partition_now(response_target)
+                .map_err(TransportError::Scheduler)?;
+            if response_tick < target_now {
+                return Err(TransportError::Scheduler(SchedulerError::InThePast {
+                    partition: response_target,
+                    now: target_now,
+                    requested: response_tick,
+                }));
+            }
             response_source = response_target;
         }
 
@@ -1147,6 +1158,31 @@ impl Default for MemoryTransport {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn apply_fabric_transfer_delays(
+    now: Tick,
+    requests: &[ordering::OrderedFabricQosRequest],
+    transfers: Vec<FabricTransfer>,
+    delays: &mut [Tick],
+) -> Result<(), TransportError> {
+    let mut arrivals = transfers
+        .into_iter()
+        .map(|transfer| {
+            let delay = transfer
+                .arrival_tick()
+                .checked_sub(now)
+                .ok_or(TransportError::Fabric(FabricError::TickOverflow))?;
+            Ok((transfer.packet().id(), delay))
+        })
+        .collect::<Result<BTreeMap<_, _>, TransportError>>()?;
+
+    for request in requests {
+        delays[request.transaction_index()] = arrivals
+            .remove(&request.packet().id())
+            .expect("fabric batch returns every accepted packet");
+    }
+    Ok(())
 }
 
 fn request_hop_delay(

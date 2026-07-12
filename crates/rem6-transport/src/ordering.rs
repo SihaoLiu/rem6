@@ -1,16 +1,18 @@
 use std::collections::BTreeSet;
 
-use crate::PreparedParallelTransaction;
+use crate::{FabricQosGrantActivity, FabricQosSuppressedRequest, FabricQosSuppressionReason};
 use rem6_fabric::{
-    FabricError, FabricModel, FabricPacket, FabricPath, FabricTransfer, QosPriority,
+    FabricError, FabricPacket, FabricPath, FabricTransaction, FabricTransfer, QosPriority,
     QosQueueArbiter, QosQueuedRequest, QosRequestId, QosRequestorId,
 };
 use rem6_kernel::Tick;
+use rem6_memory::MemoryRequest;
 
 pub(crate) struct OrderedFabricQosRequest {
     transaction_index: usize,
     packet: FabricPacket,
     path: FabricPath,
+    memory_request: MemoryRequest,
     requestor: QosRequestorId,
     priority: QosPriority,
 }
@@ -20,6 +22,7 @@ impl OrderedFabricQosRequest {
         transaction_index: usize,
         packet: FabricPacket,
         path: FabricPath,
+        memory_request: MemoryRequest,
         requestor: QosRequestorId,
         priority: QosPriority,
     ) -> Self {
@@ -27,6 +30,7 @@ impl OrderedFabricQosRequest {
             transaction_index,
             packet,
             path,
+            memory_request,
             requestor,
             priority,
         }
@@ -47,42 +51,70 @@ impl OrderedFabricQosRequest {
 
 pub(crate) fn transmit_ordered_qos_fabric_batch(
     now: Tick,
-    transactions: &[&PreparedParallelTransaction],
+    batch: u64,
     requests: &[OrderedFabricQosRequest],
-    fabric: &mut FabricModel,
+    fabric: &mut FabricTransaction<'_>,
     arbiter: &mut QosQueueArbiter,
-) -> Result<Vec<FabricTransfer>, FabricError> {
+) -> Result<(Vec<FabricTransfer>, Vec<FabricQosGrantActivity>), FabricError> {
     reject_duplicate_packets(requests)?;
-
     let mut pending = (0..requests.len()).collect::<Vec<_>>();
     let mut transfers = Vec::with_capacity(requests.len());
+    let mut activities = Vec::with_capacity(requests.len());
     while !pending.is_empty() {
-        let eligible_indexes = eligible_fabric_qos_requests(&pending, requests, transactions);
+        let eligible_indexes = eligible_fabric_qos_requests(&pending, requests);
         let queue = pending
             .iter()
             .enumerate()
             .filter(|(index, _)| eligible_indexes.contains(index))
+            .map(|(_, request_index)| qos_queued_request(&requests[*request_index]))
+            .collect::<Vec<_>>();
+        let suppressed = pending
+            .iter()
+            .enumerate()
+            .filter(|(pending_index, _)| !eligible_indexes.contains(pending_index))
             .map(|(_, request_index)| {
-                let request = &requests[*request_index];
-                QosQueuedRequest::new(
-                    QosRequestId::new(request.packet.id().get()),
-                    request.requestor,
-                    request.priority,
-                    request.packet.bytes(),
-                    request.transaction_index as u64,
+                FabricQosSuppressedRequest::new(
+                    qos_queued_request(&requests[*request_index]),
+                    FabricQosSuppressionReason::MemoryOrder,
                 )
-                .expect("fabric packets always have nonzero bytes")
             })
             .collect::<Vec<_>>();
+        let before = arbiter.snapshot();
         let Some(grant) = arbiter.grant(&queue) else {
             return Err(FabricError::QosNoGrant);
         };
+        let after = arbiter.snapshot();
         let request_index = pending.remove(eligible_indexes[grant.queue_index()]);
         let request = &requests[request_index];
-        transfers.push(fabric.transmit(now, request.packet.clone(), request.path.clone())?);
+        let transfer = fabric.transmit(now, request.packet.clone(), request.path.clone())?;
+        let selected = queue[grant.queue_index()].clone();
+        activities.push(FabricQosGrantActivity::new(
+            now,
+            batch,
+            activities.len(),
+            before.policy(),
+            queue,
+            suppressed,
+            grant.queue_index(),
+            selected,
+            before.lrg_requestors().to_vec(),
+            after.lrg_requestors().to_vec(),
+        ));
+        transfers.push(transfer);
     }
 
-    Ok(transfers)
+    Ok((transfers, activities))
+}
+
+fn qos_queued_request(request: &OrderedFabricQosRequest) -> QosQueuedRequest {
+    QosQueuedRequest::new(
+        QosRequestId::new(request.packet.id().get()),
+        request.requestor,
+        request.priority,
+        request.packet.bytes(),
+        request.transaction_index as u64,
+    )
+    .expect("fabric packets always have nonzero bytes")
 }
 
 fn reject_duplicate_packets(requests: &[OrderedFabricQosRequest]) -> Result<(), FabricError> {
@@ -100,21 +132,18 @@ fn reject_duplicate_packets(requests: &[OrderedFabricQosRequest]) -> Result<(), 
 fn eligible_fabric_qos_requests(
     pending: &[usize],
     requests: &[OrderedFabricQosRequest],
-    transactions: &[&PreparedParallelTransaction],
 ) -> Vec<usize> {
     let eligible = pending
         .iter()
         .enumerate()
         .filter_map(|(candidate_pending_index, request_index)| {
             let candidate = &requests[*request_index];
-            let candidate_transaction = transactions[candidate.transaction_index()];
             let blocked = pending.iter().any(|other_request_index| {
                 let other = &requests[*other_request_index];
                 other.transaction_index() < candidate.transaction_index()
-                    && transaction_orders_before(
-                        transactions[other.transaction_index()],
-                        candidate_transaction,
-                    )
+                    && other
+                        .memory_request
+                        .orders_before(&candidate.memory_request)
             });
             (!blocked).then_some(candidate_pending_index)
         })
@@ -127,8 +156,8 @@ fn eligible_fabric_qos_requests(
 }
 
 pub(crate) fn transaction_orders_before(
-    earlier: &PreparedParallelTransaction,
-    later: &PreparedParallelTransaction,
+    earlier: &crate::PreparedParallelTransaction,
+    later: &crate::PreparedParallelTransaction,
 ) -> bool {
     earlier.request.orders_before(&later.request)
 }

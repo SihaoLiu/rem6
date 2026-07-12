@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
-    FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosFixedPriorityPolicy, QosPriority,
-    QosPriorityPolicy, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind,
+    FabricError, FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosFixedPriorityPolicy,
+    QosPriority, QosPriorityPolicy, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind,
     QosQueuedRequest, QosRequestId, QosRequestorId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForNode};
@@ -13,7 +13,8 @@ use rem6_memory::{
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
     MemoryTransport, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery,
-    TargetBatchOutcome, TargetOutcome, TransportEndpointId, TransportError, TransportQosClass,
+    SharedFabricQosState, TargetBatchOutcome, TargetOutcome, TransportEndpointId, TransportError,
+    TransportQosClass,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -73,6 +74,66 @@ fn qos_request(id: u64, requestor: u32, priority: u8, bytes: u64, order: u64) ->
         order,
     )
     .unwrap()
+}
+
+fn fabric_qos_grant_activities(
+    policy: QosQueuePolicyKind,
+) -> Vec<rem6_transport::FabricQosGrantActivity> {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport =
+        MemoryTransport::with_fabric_qos(FabricModel::new(), QosQueueArbiter::new(policy));
+    let memory = endpoint("memory0");
+    let shared_path = fabric_path("mesh_qos_grant_activity", 2, 4);
+    let routes = [0, 1, 2].map(|partition| {
+        transport
+            .add_route(
+                MemoryRoute::new_path(
+                    endpoint(&format!("core{partition}.dmem")),
+                    PartitionId::new(partition),
+                    [
+                        MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                            .unwrap()
+                            .with_request_fabric_path(shared_path.clone()),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    });
+    let requests = [
+        request_from(1, 101, 0x1000, 8),
+        request_from(2, 102, 0x2000, 8),
+        request_from(3, 103, 0x3000, 8),
+    ];
+    let requestors = [100, 100, 200];
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+    let transactions = routes
+        .into_iter()
+        .zip(requests)
+        .zip(requestors)
+        .map(|((route, request), requestor)| {
+            let deliveries = Arc::clone(&deliveries);
+            ParallelMemoryTransaction::new(
+                route,
+                request,
+                trace.clone(),
+                move |delivery, _context| {
+                    deliveries.lock().unwrap().push(delivery.request().id());
+                    TargetOutcome::NoResponse
+                },
+                |_| panic!("request-only transfer must not deliver a response"),
+            )
+            .with_qos_requestor(QosRequestorId::new(requestor))
+        })
+        .collect::<Vec<_>>();
+
+    transport
+        .submit_parallel_batch(&mut scheduler, transactions)
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    transport.fabric_qos_grant_activities()
 }
 
 fn request_fabric_packet_node(route: MemoryRouteId, request: MemoryRequestId) -> WaitForNode {
@@ -1196,21 +1257,196 @@ fn transport_parallel_batch_can_use_qos_for_shared_fabric_order() {
 }
 
 #[test]
+fn transport_records_fifo_lifo_and_lrg_fabric_qos_grant_decisions() {
+    for (policy, expected_orders, expected_selected_indexes) in [
+        (QosQueuePolicyKind::Fifo, [0, 1, 2], [0, 0, 0]),
+        (QosQueuePolicyKind::Lifo, [2, 1, 0], [2, 1, 0]),
+        (
+            QosQueuePolicyKind::LeastRecentlyGranted,
+            [0, 2, 1],
+            [0, 1, 0],
+        ),
+    ] {
+        let activities = fabric_qos_grant_activities(policy);
+
+        assert_eq!(activities.len(), 3, "{policy:?}");
+        assert_eq!(
+            activities
+                .iter()
+                .map(|activity| activity.grant().order())
+                .collect::<Vec<_>>(),
+            expected_orders,
+            "{policy:?}"
+        );
+        assert_eq!(
+            activities
+                .iter()
+                .map(rem6_transport::FabricQosGrantActivity::selected_queue_index)
+                .collect::<Vec<_>>(),
+            expected_selected_indexes,
+            "{policy:?}"
+        );
+        assert_eq!(
+            activities
+                .iter()
+                .map(|activity| activity.candidates().len())
+                .collect::<Vec<_>>(),
+            [3, 2, 1],
+            "{policy:?}"
+        );
+        assert!(activities
+            .iter()
+            .all(|activity| activity.policy() == policy));
+        assert!(activities.iter().all(|activity| activity.tick() == 0));
+        assert!(activities.iter().all(|activity| activity.batch() == 0));
+        assert_eq!(
+            activities
+                .iter()
+                .map(rem6_transport::FabricQosGrantActivity::grant_index)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert!(activities
+            .iter()
+            .all(|activity| activity.suppressed().is_empty()));
+
+        let before = activities
+            .iter()
+            .map(|activity| activity.lrg_requestors_before().to_vec())
+            .collect::<Vec<_>>();
+        let after = activities
+            .iter()
+            .map(|activity| activity.lrg_requestors_after().to_vec())
+            .collect::<Vec<_>>();
+        if policy == QosQueuePolicyKind::LeastRecentlyGranted {
+            assert_eq!(
+                before,
+                vec![
+                    vec![],
+                    vec![QosRequestorId::new(200), QosRequestorId::new(100)],
+                    vec![QosRequestorId::new(100), QosRequestorId::new(200)],
+                ]
+            );
+            assert_eq!(
+                after,
+                vec![
+                    vec![QosRequestorId::new(200), QosRequestorId::new(100)],
+                    vec![QosRequestorId::new(100), QosRequestorId::new(200)],
+                    vec![QosRequestorId::new(200), QosRequestorId::new(100)],
+                ]
+            );
+        } else {
+            assert_eq!(before, vec![vec![], vec![], vec![]]);
+            assert_eq!(after, vec![vec![], vec![], vec![]]);
+        }
+    }
+}
+
+#[test]
+fn transport_failed_fabric_qos_batch_rolls_back_state_activity_and_batch_id() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+    );
+    let memory = endpoint("memory0");
+    let good_path = fabric_path("mesh_qos_atomic", 2, 4);
+    let bad_path = fabric_path("mesh_qos_atomic", u64::MAX, 4);
+    let routes = [
+        ("core0.dmem", 0, good_path.clone()),
+        ("core1.bad", 1, bad_path),
+        ("core1.dmem", 1, good_path),
+    ]
+    .map(|(source, partition, path)| {
+        transport
+            .add_route(
+                MemoryRoute::new_path(
+                    endpoint(source),
+                    PartitionId::new(partition),
+                    [
+                        MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                            .unwrap()
+                            .with_request_fabric_path(path),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    });
+    let trace = MemoryTrace::new();
+
+    let error = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    routes[0],
+                    request_from(1, 301, 0x3000, 8),
+                    trace.clone(),
+                    |_, _| TargetOutcome::NoResponse,
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_requestor(QosRequestorId::new(10)),
+                ParallelMemoryTransaction::new(
+                    routes[1],
+                    request_from(2, 302, 0x3100, 8),
+                    trace.clone(),
+                    |_, _| TargetOutcome::NoResponse,
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_requestor(QosRequestorId::new(20)),
+            ],
+        )
+        .unwrap_err();
+
+    assert_eq!(error, TransportError::Fabric(FabricError::TickOverflow));
+    assert!(transport.fabric_hop_activities().unwrap().is_empty());
+    assert!(transport.fabric_qos_grant_activities().is_empty());
+
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    routes[0],
+                    request_from(1, 303, 0x3200, 8),
+                    trace.clone(),
+                    |_, _| TargetOutcome::NoResponse,
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_requestor(QosRequestorId::new(10)),
+                ParallelMemoryTransaction::new(
+                    routes[2],
+                    request_from(2, 304, 0x3300, 8),
+                    trace,
+                    |_, _| TargetOutcome::NoResponse,
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_requestor(QosRequestorId::new(20)),
+            ],
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let activities = transport.fabric_qos_grant_activities();
+    assert_eq!(activities.len(), 2);
+    assert!(activities.iter().all(|activity| activity.batch() == 0));
+    assert!(activities[0].lrg_requestors_before().is_empty());
+    assert_eq!(transport.fabric_hop_activities().unwrap().len(), 2);
+}
+
+#[test]
 fn transport_parallel_batch_uses_explicit_qos_requestor_for_shared_fabric_lrg() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let fabric = Arc::new(Mutex::new(FabricModel::new()));
-    let arbiter = Arc::new(Mutex::new(QosQueueArbiter::new(
-        QosQueuePolicyKind::LeastRecentlyGranted,
-    )));
-    {
-        let mut arbiter = arbiter.lock().unwrap();
-        let priming = [qos_request(1, 200, 0, 8, 0), qos_request(2, 100, 0, 8, 1)];
-        assert_eq!(
-            arbiter.grant(&priming).unwrap().requestor(),
-            QosRequestorId::new(200)
-        );
-    }
-    let mut transport = MemoryTransport::with_shared_fabric_qos(fabric, arbiter);
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted);
+    let priming = [qos_request(1, 200, 0, 8, 0), qos_request(2, 100, 0, 8, 1)];
+    assert_eq!(
+        arbiter.grant(&priming).unwrap().requestor(),
+        QosRequestorId::new(200)
+    );
+    let qos = SharedFabricQosState::new(arbiter);
+    let mut transport = MemoryTransport::with_shared_fabric_qos(fabric, qos);
     let memory = endpoint("memory0");
     let shared_path = fabric_path("mesh_qos_requestor", 2, 4);
     let route_cache_a = transport
@@ -1301,6 +1537,63 @@ fn transport_parallel_batch_uses_explicit_qos_requestor_for_shared_fabric_lrg() 
             (route_cache_b, 4, cache_b_request.id()),
             (route_cache_a, 6, cache_a_request.id()),
         ],
+    );
+}
+
+#[test]
+fn shared_fabric_qos_state_owns_one_grant_ledger_across_transports() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let qos = SharedFabricQosState::new(QosQueueArbiter::new(QosQueuePolicyKind::Fifo));
+    let memory = endpoint("memory0");
+    let path = fabric_path("mesh_shared_qos_activity", 2, 4);
+    let mut transports = [
+        MemoryTransport::with_shared_fabric_qos(Arc::clone(&fabric), qos.clone()),
+        MemoryTransport::with_shared_fabric_qos(fabric, qos),
+    ];
+    let routes = transports.each_mut().map(|transport| {
+        transport
+            .add_route(
+                MemoryRoute::new_path(
+                    endpoint("core.dmem"),
+                    PartitionId::new(0),
+                    [
+                        MemoryRouteHop::new(memory.clone(), PartitionId::new(1), 2, 2)
+                            .unwrap()
+                            .with_request_fabric_path(path.clone()),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    });
+
+    for (index, (transport, route)) in transports.iter().zip(routes).enumerate() {
+        transport
+            .submit_parallel_batch(
+                &mut scheduler,
+                [ParallelMemoryTransaction::new(
+                    route,
+                    request_from(index as u32 + 1, index as u64 + 401, 0x4000, 8),
+                    MemoryTrace::new(),
+                    |_, _| TargetOutcome::NoResponse,
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )],
+            )
+            .unwrap();
+    }
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let first = transports[0].fabric_qos_grant_activities();
+    let second = transports[1].fabric_qos_grant_activities();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first
+            .iter()
+            .map(|activity| activity.batch())
+            .collect::<Vec<_>>(),
+        [0, 1]
     );
 }
 

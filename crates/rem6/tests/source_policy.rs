@@ -19,6 +19,7 @@ const MAX_STATS_COMPAT_ROOT_LINES: usize = 16_650;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
 const MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES: usize = 1000;
+const MAX_DATA_CACHE_MULTICORE_LINES: usize = 800;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -142,13 +143,17 @@ fn cli_source_files_stay_within_size_limit() {
 
 #[test]
 fn source_policy_driver_keeps_anchor_data_out_of_root() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/source_policy.rs");
-    let lines = line_count(&path);
-
-    assert!(
-        lines <= MAX_SOURCE_POLICY_DRIVER_LINES,
-        "tests/source_policy.rs should keep anchor data in focused modules, but it has {lines} lines"
-    );
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (relative, maximum) in [
+        ("tests/source_policy.rs", MAX_SOURCE_POLICY_DRIVER_LINES),
+        (
+            "tests/cli_run/data_cache_multicore.rs",
+            MAX_DATA_CACHE_MULTICORE_LINES,
+        ),
+    ] {
+        let lines = line_count(&root.join(relative));
+        assert!(lines <= maximum, "{relative} has {lines} lines");
+    }
 }
 
 #[test]

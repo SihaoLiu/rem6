@@ -89,7 +89,7 @@ fn fabric_runtime_domains_live_in_focused_modules() {
                 "FabricVirtualNetworkActivity",
             ][..],
         ),
-        ("model", &["FabricModel"][..]),
+        ("model", &["FabricModel", "FabricTransaction"][..]),
         (
             "path",
             &[

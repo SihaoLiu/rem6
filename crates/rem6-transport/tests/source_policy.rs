@@ -60,6 +60,34 @@ fn message_buffer_contracts_live_in_focused_module() {
 }
 
 #[test]
+fn fabric_qos_activity_contracts_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let qos_activity_rs = crate_dir.join("src/qos_activity.rs");
+
+    assert!(
+        qos_activity_rs.exists(),
+        "fabric QoS activity contracts belong in src/qos_activity.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct FabricQosGrantActivity {"),
+        "src/lib.rs should re-export fabric QoS grant activity from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct FabricQosSuppressedRequest {"),
+        "src/lib.rs should re-export suppressed fabric QoS requests from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub enum FabricQosSuppressionReason {"),
+        "src/lib.rs should re-export fabric QoS suppression reasons from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct SharedFabricQosState {"),
+        "src/lib.rs should re-export shared fabric QoS state from a focused module"
+    );
+}
+
+#[test]
 fn transport_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
