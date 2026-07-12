@@ -464,7 +464,10 @@ pub(crate) struct RiscvResidentScalarMemoryHandoff {
 impl RiscvCore {
     pub fn capture_o3_live_data_handoff(&self) -> Option<RiscvO3LiveDataHandoff> {
         let state = self.state.lock().expect("riscv core lock");
-        if state.data_translation.is_some()
+        if state
+            .data_translation
+            .as_ref()
+            .is_some_and(|frontend| !frontend.is_empty())
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty()
             || !state.buffered_o3_stores.is_empty()

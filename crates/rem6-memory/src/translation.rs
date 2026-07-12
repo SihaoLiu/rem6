@@ -4,6 +4,8 @@ use std::fmt;
 
 use crate::{AccessSize, Address, AddressRange, AgentId};
 
+mod queue_readiness;
+
 const QUEUE_CHECKPOINT_MAGIC: [u8; 4] = *b"MTLQ";
 const QUEUE_CHECKPOINT_VERSION: u32 = 1;
 const U32_BYTES: usize = 4;
@@ -733,14 +735,6 @@ impl TranslationQueue {
             },
         );
         Ok(())
-    }
-
-    pub fn pending_request_ids(&self) -> Vec<TranslationRequestId> {
-        self.service_order_ids(None)
-    }
-
-    pub fn ready_request_ids(&self, tick: u64) -> Vec<TranslationRequestId> {
-        self.service_order_ids(Some(tick))
     }
 
     pub fn complete(

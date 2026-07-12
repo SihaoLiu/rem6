@@ -20,6 +20,7 @@ use crate::riscv_cluster_run::{RiscvClusterDriveEvent, RiscvClusterTurn};
 use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
+use crate::riscv_cluster_translation::schedule_pending_data_translation_wake;
 use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
@@ -112,7 +113,7 @@ impl RiscvCluster {
         })
     }
 
-    fn reconcile_reservation_invalidations(&self) {
+    pub(crate) fn reconcile_reservation_invalidations(&self) {
         self.reservations
             .lock()
             .expect("riscv cluster reservation tracker lock")
@@ -671,6 +672,7 @@ impl RiscvCluster {
                     &mut transactions,
                 );
                 if !prepared_data {
+                    schedule_pending_data_translation_wake(*cpu, core, scheduler)?;
                     if let Some(event) = core.take_pending_trap_event() {
                         prepared_actions.push(PreparedParallelAction::Ready(
                             RiscvClusterDriveEvent::new(
@@ -832,6 +834,7 @@ impl RiscvCluster {
                     &mut transactions,
                 );
                 if !prepared_data {
+                    schedule_pending_data_translation_wake(*cpu, core, scheduler)?;
                     if let Some(event) = core.take_pending_trap_event() {
                         prepared_actions.push(PreparedParallelAction::Ready(
                             RiscvClusterDriveEvent::new(

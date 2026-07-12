@@ -10,6 +10,8 @@ mod multicore_mmio_scalar_load;
 mod multicore_scalar_load;
 #[path = "switch/scalar_load.rs"]
 mod scalar_load;
+#[path = "switch/translated_scalar_load.rs"]
+mod translated_scalar_load;
 
 #[test]
 fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {

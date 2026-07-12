@@ -98,6 +98,9 @@ pub enum Rem6CliError {
     InvalidRiscvInOrderWidth {
         value: String,
     },
+    InvalidRiscvDataTranslation {
+        error: String,
+    },
     InvalidStartAddress {
         value: String,
     },
@@ -581,6 +584,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvInOrderWidth { value } => {
                 write!(formatter, "invalid RISC-V in-order width {value}")
+            }
+            Self::InvalidRiscvDataTranslation { error } => {
+                write!(formatter, "invalid RISC-V data translation: {error}")
             }
             Self::InvalidStartAddress { value } => {
                 write!(formatter, "invalid start address {value}")

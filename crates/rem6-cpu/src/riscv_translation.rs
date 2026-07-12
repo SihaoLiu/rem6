@@ -999,6 +999,15 @@ impl RiscvCore {
         state.flush_data_translation_tlb_physical_range(physical_range)
     }
 
+    pub(crate) fn next_data_translation_ready_tick(&self) -> Option<Tick> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation
+            .as_ref()
+            .and_then(CpuTranslationFrontend::next_ready_tick)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_next_action_with_data_translation<F, D>(
         &self,

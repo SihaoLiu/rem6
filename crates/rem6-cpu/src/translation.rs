@@ -958,6 +958,10 @@ impl CpuTranslationFrontend {
         self.queue.ready_request_ids(tick)
     }
 
+    pub fn next_ready_tick(&self) -> Option<u64> {
+        self.queue.next_ready_tick()
+    }
+
     pub fn ready_cpu_requests(&self, tick: u64) -> Vec<CpuTranslationRequest> {
         self.queue
             .ready_request_ids(tick)

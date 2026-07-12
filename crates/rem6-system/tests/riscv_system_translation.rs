@@ -100,6 +100,10 @@ struct CoreSpec<'a> {
 }
 
 fn translated_riscv_core(spec: CoreSpec<'_>) -> RiscvCore {
+    translated_riscv_core_with_latency(spec, 0)
+}
+
+fn translated_riscv_core_with_latency(spec: CoreSpec<'_>, latency: u64) -> RiscvCore {
     let core = CpuCore::new(
         CpuResetState::new(
             CpuId::new(spec.cpu),
@@ -120,7 +124,7 @@ fn translated_riscv_core(spec: CoreSpec<'_>) -> RiscvCore {
         core,
         CpuDataConfig::new(endpoint(spec.data_endpoint), spec.data_route, layout()),
         CpuTranslationFrontend::with_tlb(
-            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationQueueConfig::new(4, latency).unwrap(),
             TranslationTlbConfig::new(4).unwrap(),
         ),
     )
@@ -414,26 +418,32 @@ fn riscv_system_parallel_driver_supplies_page_map_to_translated_data_path() {
         .unwrap();
 
     let cluster = RiscvCluster::new([
-        translated_riscv_core(CoreSpec {
-            cpu: 0,
-            partition: 0,
-            agent: 7,
-            entry: 0x8000,
-            fetch_endpoint: "cpu0.ifetch",
-            fetch_route: cpu0_fetch,
-            data_endpoint: "cpu0.dmem",
-            data_route: cpu0_data,
-        }),
-        translated_riscv_core(CoreSpec {
-            cpu: 1,
-            partition: 1,
-            agent: 8,
-            entry: 0x8100,
-            fetch_endpoint: "cpu1.ifetch",
-            fetch_route: cpu1_fetch,
-            data_endpoint: "cpu1.dmem",
-            data_route: cpu1_data,
-        }),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 0,
+                partition: 0,
+                agent: 7,
+                entry: 0x8000,
+                fetch_endpoint: "cpu0.ifetch",
+                fetch_route: cpu0_fetch,
+                data_endpoint: "cpu0.dmem",
+                data_route: cpu0_data,
+            },
+            2,
+        ),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 1,
+                partition: 1,
+                agent: 8,
+                entry: 0x8100,
+                fetch_endpoint: "cpu1.ifetch",
+                fetch_route: cpu1_fetch,
+                data_endpoint: "cpu1.dmem",
+                data_route: cpu1_data,
+            },
+            2,
+        ),
     ])
     .unwrap();
     cluster
@@ -470,7 +480,7 @@ fn riscv_system_parallel_driver_supplies_page_map_to_translated_data_path() {
     let driver = RiscvSystemRunDriver::new(trap_port);
 
     let run = driver
-        .drive_until_host_stop_parallel_with_data_translation(
+        .drive_until_host_stop_or_tick_limit_parallel_with_data_translation(
             &cluster,
             &mut scheduler,
             &transport,
@@ -492,7 +502,7 @@ fn riscv_system_parallel_driver_supplies_page_map_to_translated_data_path() {
                     memory_response(&store, &delivery)
                 }
             },
-            40,
+            200,
             |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1449,26 +1459,32 @@ fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
         .unwrap();
 
     let cluster = RiscvCluster::new([
-        translated_riscv_core(CoreSpec {
-            cpu: 0,
-            partition: 0,
-            agent: 7,
-            entry: 0x8000,
-            fetch_endpoint: "cpu0.ifetch",
-            fetch_route: cpu0_fetch,
-            data_endpoint: "cpu0.dmem",
-            data_route: cpu0_data,
-        }),
-        translated_riscv_core(CoreSpec {
-            cpu: 1,
-            partition: 1,
-            agent: 8,
-            entry: 0x8100,
-            fetch_endpoint: "cpu1.ifetch",
-            fetch_route: cpu1_fetch,
-            data_endpoint: "cpu1.dmem",
-            data_route: cpu1_data,
-        }),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 0,
+                partition: 0,
+                agent: 7,
+                entry: 0x8000,
+                fetch_endpoint: "cpu0.ifetch",
+                fetch_route: cpu0_fetch,
+                data_endpoint: "cpu0.dmem",
+                data_route: cpu0_data,
+            },
+            2,
+        ),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 1,
+                partition: 1,
+                agent: 8,
+                entry: 0x8100,
+                fetch_endpoint: "cpu1.ifetch",
+                fetch_route: cpu1_fetch,
+                data_endpoint: "cpu1.dmem",
+                data_route: cpu1_data,
+            },
+            2,
+        ),
     ])
     .unwrap();
     cluster

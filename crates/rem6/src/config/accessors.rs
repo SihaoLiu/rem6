@@ -9,8 +9,8 @@ use super::{
     CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig, KernelResourceSelector,
     LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig,
     RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig,
-    RunHostExecutionModeSwitchSpec, RunMemorySystem, StatsFormat, TraceReplayHostEventSpec,
-    DEFAULT_RISCV_IN_ORDER_WIDTH,
+    RunHostExecutionModeSwitchSpec, RunMemorySystem, RunRiscvDataTranslationConfig, StatsFormat,
+    TraceReplayHostEventSpec, DEFAULT_RISCV_IN_ORDER_WIDTH,
 };
 
 impl Rem6RunConfig {
@@ -134,6 +134,10 @@ impl Rem6RunConfig {
 
     pub const fn riscv_execution_mode_is_explicit(&self) -> bool {
         self.riscv_execution_mode.is_some()
+    }
+
+    pub(crate) fn riscv_data_translation(&self) -> Option<&RunRiscvDataTranslationConfig> {
+        self.riscv_data_translation.as_ref()
     }
 
     pub const fn m5_switch_cpu_mode(&self) -> ExecutionMode {

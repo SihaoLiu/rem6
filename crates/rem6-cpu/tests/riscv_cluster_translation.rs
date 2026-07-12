@@ -65,6 +65,10 @@ struct CoreSpec<'a> {
 }
 
 fn translated_riscv_core(spec: CoreSpec<'_>) -> RiscvCore {
+    translated_riscv_core_with_latency(spec, 0)
+}
+
+fn translated_riscv_core_with_latency(spec: CoreSpec<'_>, latency: u64) -> RiscvCore {
     let core = CpuCore::new(
         CpuResetState::new(
             CpuId::new(spec.cpu),
@@ -84,7 +88,7 @@ fn translated_riscv_core(spec: CoreSpec<'_>) -> RiscvCore {
         core,
         CpuDataConfig::new(endpoint(spec.data_endpoint), spec.data_route, layout()),
         CpuTranslationFrontend::with_tlb(
-            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationQueueConfig::new(4, latency).unwrap(),
             TranslationTlbConfig::new(4).unwrap(),
         ),
     )
@@ -206,26 +210,32 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
         )
         .unwrap();
     let cluster = RiscvCluster::new([
-        translated_riscv_core(CoreSpec {
-            cpu: 0,
-            partition: 0,
-            agent: 7,
-            entry: 0x8000,
-            fetch_endpoint: "cpu0.ifetch",
-            fetch_route: cpu0_fetch,
-            data_endpoint: "cpu0.dmem",
-            data_route: cpu0_data,
-        }),
-        translated_riscv_core(CoreSpec {
-            cpu: 1,
-            partition: 1,
-            agent: 8,
-            entry: 0x8100,
-            fetch_endpoint: "cpu1.ifetch",
-            fetch_route: cpu1_fetch,
-            data_endpoint: "cpu1.dmem",
-            data_route: cpu1_data,
-        }),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 0,
+                partition: 0,
+                agent: 7,
+                entry: 0x8000,
+                fetch_endpoint: "cpu0.ifetch",
+                fetch_route: cpu0_fetch,
+                data_endpoint: "cpu0.dmem",
+                data_route: cpu0_data,
+            },
+            2,
+        ),
+        translated_riscv_core_with_latency(
+            CoreSpec {
+                cpu: 1,
+                partition: 1,
+                agent: 8,
+                entry: 0x8100,
+                fetch_endpoint: "cpu1.ifetch",
+                fetch_route: cpu1_fetch,
+                data_endpoint: "cpu1.dmem",
+                data_route: cpu1_data,
+            },
+            2,
+        ),
     ])
     .unwrap();
     cluster

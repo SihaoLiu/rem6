@@ -1,5 +1,6 @@
 use rem6_cpu::{CpuId, RiscvCluster};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_memory::TranslationPageMap;
 use rem6_mmio::MmioBus;
 use rem6_system::{GuestEventId, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason};
 use rem6_transport::{MemoryTrace, MemoryTransport};
@@ -9,6 +10,94 @@ use crate::data_cache_runtime::{cli_data_memory_response, CliCacheHierarchy};
 use crate::runtime_memory::CliMemoryRuntime;
 
 const RUN_HOST_CONTROL_EVENT_BASE: u64 = 10_000;
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_cli_riscv_run_configured(
+    config: &Rem6RunConfig,
+    driver: &RiscvSystemRunDriver,
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    readfile_bus: Option<&MmioBus>,
+    memory: &CliMemoryRuntime,
+    instruction_cache: CliCacheHierarchy,
+    data_cache: CliCacheHierarchy,
+    fetch_trace: MemoryTrace,
+    data_trace: MemoryTrace,
+    tick_limit: u64,
+    retired_instruction_count: u64,
+) -> Result<RiscvSystemRun, rem6_system::SystemError> {
+    match config.riscv_data_translation() {
+        Some(translation) => drive_cli_riscv_run_with_data_translation(
+            driver,
+            cluster,
+            scheduler,
+            transport,
+            memory,
+            instruction_cache,
+            data_cache,
+            fetch_trace,
+            data_trace,
+            translation.page_map(),
+            tick_limit,
+        ),
+        None => drive_cli_riscv_run(
+            driver,
+            cluster,
+            scheduler,
+            transport,
+            readfile_bus,
+            memory,
+            instruction_cache,
+            data_cache,
+            fetch_trace,
+            data_trace,
+            tick_limit,
+            config.max_instructions(),
+            retired_instruction_count,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drive_cli_riscv_run_with_data_translation(
+    driver: &RiscvSystemRunDriver,
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    memory: &CliMemoryRuntime,
+    instruction_cache: CliCacheHierarchy,
+    data_cache: CliCacheHierarchy,
+    fetch_trace: MemoryTrace,
+    data_trace: MemoryTrace,
+    page_map: &TranslationPageMap,
+    tick_limit: u64,
+) -> Result<RiscvSystemRun, rem6_system::SystemError> {
+    let fetch_memory = memory.clone();
+    let data_memory = memory.clone();
+    driver.drive_until_host_stop_or_tick_limit_parallel_with_data_translation(
+        cluster,
+        scheduler,
+        transport,
+        fetch_trace,
+        data_trace,
+        page_map,
+        move |_cpu| {
+            let memory = fetch_memory.clone();
+            let instruction_cache = instruction_cache.clone();
+            move |delivery, _context| {
+                cli_data_memory_response(&instruction_cache, &memory, &delivery)
+            }
+        },
+        move |_cpu| {
+            let memory = data_memory.clone();
+            let data_cache = data_cache.clone();
+            move |delivery, _context| cli_data_memory_response(&data_cache, &memory, &delivery)
+        },
+        tick_limit,
+        guest_event_for_cpu,
+    )
+}
 
 pub(super) fn schedule_cli_riscv_host_events(
     driver: &RiscvSystemRunDriver,
@@ -41,7 +130,7 @@ pub(super) fn schedule_cli_riscv_host_events(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn drive_cli_riscv_run(
+fn drive_cli_riscv_run(
     driver: &RiscvSystemRunDriver,
     cluster: &RiscvCluster,
     scheduler: &mut PartitionedScheduler,

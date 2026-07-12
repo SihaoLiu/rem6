@@ -1,7 +1,7 @@
 use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_system::RiscvDataCacheProtocol;
 
-use crate::config::{Rem6RunConfig, RequestedIsa, StatsFormat};
+use crate::config::{Rem6RunConfig, RequestedIsa, RunMemorySystem, StatsFormat};
 use crate::run_gdb::validate_run_gdb_listen_config;
 use crate::Rem6CliError;
 
@@ -14,9 +14,58 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
     validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
     validate_riscv_sbi_inputs(config)?;
+    validate_riscv_data_translation_inputs(config)?;
     validate_host_execution_mode_switches(config)?;
     if config.gdb_listen().is_some() {
         validate_run_gdb_listen_config(config)?;
+    }
+    Ok(())
+}
+
+fn validate_riscv_data_translation_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if config.riscv_data_translation().is_none() {
+        return Ok(());
+    }
+    if !config.execute() {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation requires --execute".to_string(),
+        });
+    }
+    if config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation requires --isa riscv".to_string(),
+        });
+    }
+    if config.cores() != 1 {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation currently requires exactly one core".to_string(),
+        });
+    }
+    if config.memory_system() != Some(RunMemorySystem::Direct) {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation currently requires memory_system = \"direct\""
+                .to_string(),
+        });
+    }
+    if config.riscv_se() {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation does not yet support RISC-V SE".to_string(),
+        });
+    }
+    if config.max_instructions().is_some() {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation does not yet support max_instructions".to_string(),
+        });
+    }
+    if config.gdb_listen().is_some() {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation does not yet support GDB run control".to_string(),
+        });
+    }
+    if !config.readfiles().is_empty() {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V data translation does not yet support readfile MMIO".to_string(),
+        });
     }
     Ok(())
 }

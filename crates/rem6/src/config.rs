@@ -23,6 +23,7 @@ mod output_format;
 mod parse;
 mod request;
 mod riscv_branch;
+mod riscv_data_translation;
 mod riscv_se_input;
 mod riscv_timing;
 mod trace_replay;
@@ -63,6 +64,8 @@ use riscv_branch::{
     parse_riscv_branch_lookahead, parse_riscv_branch_predictor, parse_riscv_pc_count_target,
     validate_riscv_branch_lookahead,
 };
+pub(crate) use riscv_data_translation::RunRiscvDataTranslationConfig;
+use riscv_data_translation::RunRiscvDataTranslationFileConfig;
 use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub(crate) use riscv_timing::DEFAULT_RISCV_IN_ORDER_WIDTH;
@@ -101,6 +104,7 @@ pub struct Rem6RunConfig {
     riscv_branch_predictor: RiscvBranchPredictorKind,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<ExecutionMode>,
+    riscv_data_translation: Option<RunRiscvDataTranslationConfig>,
     m5_switch_cpu_mode: Option<ExecutionMode>,
     guest_host_call_responses: Vec<GuestHostCallResponseConfig>,
     max_instructions: Option<u64>,
@@ -225,6 +229,7 @@ struct Rem6RunFileConfig {
     riscv_branch_predictor: Option<String>,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<String>,
+    riscv_data_translation: Option<RunRiscvDataTranslationFileConfig>,
     m5_switch_cpu_mode: Option<String>,
     guest_host_call_responses: Option<Vec<String>>,
     max_instructions: Option<u64>,
@@ -516,6 +521,11 @@ impl Rem6RunConfig {
         }
         let mut riscv_branch_lookahead =
             validate_riscv_branch_lookahead(file_config.riscv_branch_lookahead.unwrap_or(1))?;
+        let riscv_data_translation = file_config
+            .riscv_data_translation
+            .as_ref()
+            .map(RunRiscvDataTranslationConfig::from_file)
+            .transpose()?;
         let mut riscv_o3_scalar_memory_depth = validate_optional_riscv_o3_scalar_memory_depth(
             file_config.riscv_o3_scalar_memory_depth,
         )?;
@@ -1374,6 +1384,7 @@ impl Rem6RunConfig {
             riscv_branch_predictor,
             riscv_in_order_width,
             riscv_execution_mode,
+            riscv_data_translation,
             m5_switch_cpu_mode,
             guest_host_call_responses,
             max_instructions,

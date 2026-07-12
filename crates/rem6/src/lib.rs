@@ -7,13 +7,12 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::{BootElfArchitecture, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
-    InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster, RiscvCore,
+    CpuId, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster,
 };
 use rem6_fabric::VirtualNetworkId;
-use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvPrivilegeMode};
+use rem6_isa_riscv::RiscvGdbXlen;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{Address, AgentId, CacheLineLayout};
 use rem6_stats::{
     MemFootprintAddressRange, MemFootprintProbeConfig, PcCountPair, StackDistProbeConfig,
     StatsRegistry,
@@ -57,6 +56,7 @@ mod readfile_runtime;
 mod resource_acquire_cli;
 mod resource_acquire_config;
 mod riscv_checkpoint_runtime;
+mod riscv_core_runtime;
 mod riscv_guest_output;
 mod riscv_run_driver;
 mod riscv_sbi_runtime;
@@ -127,14 +127,15 @@ pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquire
 use riscv_checkpoint_runtime::{
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
+use riscv_core_runtime::build_cli_riscv_cores;
 pub(crate) use riscv_guest_output::{
     Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary,
     Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
     Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
     Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
 };
-use riscv_run_driver::{drive_cli_riscv_run, schedule_cli_riscv_host_events};
-use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
+use riscv_run_driver::{drive_cli_riscv_run_configured, schedule_cli_riscv_host_events};
+use riscv_sbi_runtime::attach_cli_riscv_sbi_firmware;
 use riscv_se_inputs::{read_riscv_sbi_console_input, read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
 use run_fabric::{run_fabric_path, run_memory_transport, RunFabricPathDirection};
@@ -794,74 +795,18 @@ fn execute_riscv(
     )
     .map_err(execute_error)?;
     let mut transport = run_memory_transport(config.fabric());
-    let mut cores = Vec::new();
     let in_order_pipeline_config = cli_in_order_pipeline_config(config.riscv_in_order_width())?;
-    for cpu_index in 0..core_count {
-        let cpu_partition = PartitionId::new(cpu_index);
-        let fetch_route = add_memory_route(
-            &mut transport,
-            format!("cpu{cpu_index}.ifetch"),
-            cpu_partition,
-            memory_partition,
-            config.memory_route_delay(),
-            config.fabric(),
-        )?;
-        let data_route = add_memory_route(
-            &mut transport,
-            format!("cpu{cpu_index}.dmem"),
-            cpu_partition,
-            memory_partition,
-            config.memory_route_delay(),
-            config.fabric(),
-        )?;
-        let core = RiscvCore::with_data(
-            CpuCore::new(
-                CpuResetState::new(
-                    CpuId::new(cpu_index),
-                    cpu_partition,
-                    AgentId::new(cpu_index),
-                    start_address,
-                ),
-                CpuFetchConfig::new(
-                    transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,
-                    fetch_route,
-                    line_layout,
-                    AccessSize::new(4).map_err(execute_error)?,
-                ),
-            )
-            .map_err(execute_error)?,
-            CpuDataConfig::new(
-                transport_endpoint(format!("cpu{cpu_index}.dmem"))?,
-                data_route,
-                line_layout,
-            ),
-        );
-        core.set_xlen(gdb_xlen);
-        core.write_register(
-            Register::new(RISCV_BOOT_A0_REGISTER).map_err(execute_error)?,
-            config.riscv_boot_a0(),
-        );
-        core.write_register(
-            Register::new(RISCV_BOOT_A1_REGISTER).map_err(execute_error)?,
-            config.riscv_boot_a1(),
-        );
-        if let Some(startup) = &riscv_se_startup {
-            core.set_privilege_mode(RiscvPrivilegeMode::User);
-            core.write_register(
-                Register::new(RISCV_STACK_POINTER_REGISTER).map_err(execute_error)?,
-                startup.initial_stack_pointer().get(),
-            );
-        }
-        configure_cli_riscv_sbi_core(config, cpu_index, &core, start_address);
-        if config.checker_cpu() {
-            core.enable_checker_cpu();
-        }
-        core.reset_in_order_pipeline_config(in_order_pipeline_config.clone());
-        core.set_branch_lookahead(config.riscv_branch_lookahead());
-        core.set_o3_scalar_memory_depth(config.riscv_o3_scalar_memory_depth());
-        core.set_branch_predictor_kind(config.riscv_branch_predictor());
-        cores.push(core);
-    }
+    let cores = build_cli_riscv_cores(
+        config,
+        &mut transport,
+        core_count,
+        memory_partition,
+        start_address,
+        line_layout,
+        gdb_xlen,
+        riscv_se_startup.as_ref(),
+        &in_order_pipeline_config,
+    )?;
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
     let instruction_stats = cli_instruction_stats(core_count, config.riscv_pc_count_targets());
     let controller = Arc::new(Mutex::new(SystemHostController::new(
@@ -1019,7 +964,8 @@ fn execute_riscv(
     let run_result = if let Some(run) = gdb_outcome.take_completed_run() {
         Ok(run)
     } else {
-        drive_cli_riscv_run(
+        drive_cli_riscv_run_configured(
+            config,
             &driver,
             &cluster,
             &mut scheduler,
@@ -1031,7 +977,6 @@ fn execute_riscv(
             fetch_trace.clone(),
             data_trace.clone(),
             tick_limit,
-            config.max_instructions(),
             gdb_outcome.retired_instruction_count(),
         )
     };
