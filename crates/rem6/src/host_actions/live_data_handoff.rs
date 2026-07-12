@@ -1,4 +1,6 @@
-use rem6_cpu::{RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffTarget};
+use rem6_cpu::{
+    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffTarget,
+};
 
 use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 
@@ -6,6 +8,8 @@ use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) decode_error: bool,
     pub(crate) row_count: Option<u64>,
+    pub(crate) resident_rows: Option<u64>,
+    pub(crate) forwarded_rows: Option<u64>,
     pub(crate) younger_rows: Option<u64>,
     pub(crate) first_fetch_request_agent: Option<u64>,
     pub(crate) first_fetch_request_sequence: Option<u64>,
@@ -13,11 +17,25 @@ pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) first_data_request_sequence: Option<u64>,
     pub(crate) first_issue_tick: Option<u64>,
     pub(crate) last_issue_tick: Option<u64>,
+    pub(crate) first_operation: Option<RiscvO3LiveDataHandoffOperation>,
     pub(crate) first_target: Option<Rem6HostO3LiveDataHandoffTargetSummary>,
     pub(crate) first_address: Option<u64>,
     pub(crate) first_bytes: Option<u64>,
     pub(crate) first_o3_sequence: Option<u64>,
     pub(crate) first_trace_sequence: Option<u64>,
+    pub(crate) first_forwarded_fetch_request_agent: Option<u64>,
+    pub(crate) first_forwarded_fetch_request_sequence: Option<u64>,
+    pub(crate) first_forwarded_data_request_agent: Option<u64>,
+    pub(crate) first_forwarded_data_request_sequence: Option<u64>,
+    pub(crate) first_forwarding_source_data_request_agent: Option<u64>,
+    pub(crate) first_forwarding_source_data_request_sequence: Option<u64>,
+    pub(crate) first_forwarded_issue_tick: Option<u64>,
+    pub(crate) first_forwarded_response_tick: Option<u64>,
+    pub(crate) first_forwarded_address: Option<u64>,
+    pub(crate) first_forwarded_bytes: Option<u64>,
+    pub(crate) first_forwarded_data: Option<Vec<u8>>,
+    pub(crate) first_forwarded_o3_sequence: Option<u64>,
+    pub(crate) first_forwarded_trace_sequence: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,9 +63,12 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
         return Some(Rem6HostO3LiveDataHandoffChunkSummary::decode_error());
     };
     let first = handoff.entries().first().copied();
+    let first_forwarded = handoff.forwarded_rows().first().copied();
     Some(Rem6HostO3LiveDataHandoffChunkSummary {
         decode_error: false,
         row_count: Some(handoff.entries().len() as u64),
+        resident_rows: Some(handoff.resident_rows() as u64),
+        forwarded_rows: Some(handoff.forwarded_rows().len() as u64),
         younger_rows: Some(u64::from(handoff.younger_rows())),
         first_fetch_request_agent: first
             .map(|entry| u64::from(entry.fetch_request().agent().get())),
@@ -59,7 +80,9 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
             .entries()
             .iter()
             .map(|entry| entry.issue_tick())
+            .chain(handoff.forwarded_rows().iter().map(|row| row.issue_tick()))
             .max(),
+        first_operation: first.map(|entry| entry.operation()),
         first_target: first.map(|entry| match entry.target() {
             RiscvO3LiveDataHandoffTarget::Memory { route } => {
                 Rem6HostO3LiveDataHandoffTargetSummary::Memory {
@@ -80,6 +103,25 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
         first_bytes: first.map(|entry| u64::from(entry.bytes())),
         first_o3_sequence: first.map(|entry| entry.o3_sequence()),
         first_trace_sequence: first.and_then(|entry| entry.trace_sequence()),
+        first_forwarded_fetch_request_agent: first_forwarded
+            .map(|row| u64::from(row.fetch_request().agent().get())),
+        first_forwarded_fetch_request_sequence: first_forwarded
+            .map(|row| row.fetch_request().sequence()),
+        first_forwarded_data_request_agent: first_forwarded
+            .map(|row| u64::from(row.data_request().agent().get())),
+        first_forwarded_data_request_sequence: first_forwarded
+            .map(|row| row.data_request().sequence()),
+        first_forwarding_source_data_request_agent: first_forwarded
+            .map(|row| u64::from(row.source_data_request().agent().get())),
+        first_forwarding_source_data_request_sequence: first_forwarded
+            .map(|row| row.source_data_request().sequence()),
+        first_forwarded_issue_tick: first_forwarded.map(|row| row.issue_tick()),
+        first_forwarded_response_tick: first_forwarded.map(|row| row.response_tick()),
+        first_forwarded_address: first_forwarded.map(|row| row.address().get()),
+        first_forwarded_bytes: first_forwarded.map(|row| u64::from(row.bytes())),
+        first_forwarded_data: first_forwarded.map(|row| row.data().to_vec()),
+        first_forwarded_o3_sequence: first_forwarded.map(|row| row.o3_sequence()),
+        first_forwarded_trace_sequence: first_forwarded.and_then(|row| row.trace_sequence()),
     })
 }
 
@@ -88,6 +130,8 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
         Self {
             decode_error: true,
             row_count: None,
+            resident_rows: None,
+            forwarded_rows: None,
             younger_rows: None,
             first_fetch_request_agent: None,
             first_fetch_request_sequence: None,
@@ -95,11 +139,25 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             first_data_request_sequence: None,
             first_issue_tick: None,
             last_issue_tick: None,
+            first_operation: None,
             first_target: None,
             first_address: None,
             first_bytes: None,
             first_o3_sequence: None,
             first_trace_sequence: None,
+            first_forwarded_fetch_request_agent: None,
+            first_forwarded_fetch_request_sequence: None,
+            first_forwarded_data_request_agent: None,
+            first_forwarded_data_request_sequence: None,
+            first_forwarding_source_data_request_agent: None,
+            first_forwarding_source_data_request_sequence: None,
+            first_forwarded_issue_tick: None,
+            first_forwarded_response_tick: None,
+            first_forwarded_address: None,
+            first_forwarded_bytes: None,
+            first_forwarded_data: None,
+            first_forwarded_o3_sequence: None,
+            first_forwarded_trace_sequence: None,
         }
     }
 
@@ -112,6 +170,33 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             .first_target
             .map(Rem6HostO3LiveDataHandoffTargetSummary::to_json)
             .unwrap_or_else(|| "null".to_string());
+        let first_operation = self
+            .first_operation
+            .map(|operation| match operation {
+                RiscvO3LiveDataHandoffOperation::Load => "\"load\"",
+                RiscvO3LiveDataHandoffOperation::Store => "\"store\"",
+            })
+            .unwrap_or("null");
+        let first_forwarded_address = self
+            .first_forwarded_address
+            .map(|address| format!("\"0x{address:x}\""))
+            .unwrap_or_else(|| "null".to_string());
+        let first_forwarded_operation = self
+            .first_forwarded_data_request_agent
+            .map(|_| "\"load\"")
+            .unwrap_or("null");
+        let first_forwarded_data = self
+            .first_forwarded_data
+            .as_deref()
+            .map(|data| {
+                format!(
+                    "\"{}\"",
+                    data.iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>()
+                )
+            })
+            .unwrap_or_else(|| "null".to_string());
         let first_partition = self
             .first_target
             .map(Rem6HostO3LiveDataHandoffTargetSummary::source_partition);
@@ -119,10 +204,12 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             .first_target
             .and_then(Rem6HostO3LiveDataHandoffTargetSummary::memory_route);
         format!(
-            "{{\"decode_error\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{}}}",
+            "{{\"decode_error\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"forwarded_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{}}}",
             self.decode_error,
             optional_u64_json(self.row_count),
+            optional_u64_json(self.resident_rows),
             optional_u64_json(self.row_count),
+            optional_u64_json(self.forwarded_rows),
             optional_u64_json(self.younger_rows),
             optional_u64_json(self.first_fetch_request_agent),
             optional_u64_json(self.first_fetch_request_sequence),
@@ -130,6 +217,7 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             optional_u64_json(self.first_data_request_sequence),
             optional_u64_json(self.first_issue_tick),
             optional_u64_json(self.last_issue_tick),
+            first_operation,
             optional_u64_json(first_partition),
             optional_u64_json(first_route),
             first_target,
@@ -137,6 +225,20 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             optional_u64_json(self.first_bytes),
             optional_u64_json(self.first_o3_sequence),
             optional_u64_json(self.first_trace_sequence),
+            first_forwarded_operation,
+            optional_u64_json(self.first_forwarded_fetch_request_agent),
+            optional_u64_json(self.first_forwarded_fetch_request_sequence),
+            optional_u64_json(self.first_forwarded_data_request_agent),
+            optional_u64_json(self.first_forwarded_data_request_sequence),
+            optional_u64_json(self.first_forwarding_source_data_request_agent),
+            optional_u64_json(self.first_forwarding_source_data_request_sequence),
+            optional_u64_json(self.first_forwarded_issue_tick),
+            optional_u64_json(self.first_forwarded_response_tick),
+            first_forwarded_address,
+            optional_u64_json(self.first_forwarded_bytes),
+            first_forwarded_data,
+            optional_u64_json(self.first_forwarded_o3_sequence),
+            optional_u64_json(self.first_forwarded_trace_sequence),
         )
     }
 }

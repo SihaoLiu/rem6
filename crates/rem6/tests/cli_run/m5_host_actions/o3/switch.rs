@@ -10,6 +10,8 @@ mod multicore_mmio_scalar_load;
 mod multicore_scalar_load;
 #[path = "switch/scalar_load.rs"]
 mod scalar_load;
+#[path = "switch/store_load_forwarding.rs"]
+mod store_load_forwarding;
 #[path = "switch/translated_mmio_scalar_load.rs"]
 mod translated_mmio_scalar_load;
 #[path = "switch/translated_multicore_scalar_load.rs"]

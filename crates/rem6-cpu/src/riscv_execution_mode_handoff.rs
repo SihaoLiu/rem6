@@ -14,6 +14,7 @@ pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 const MAGIC: [u8; 4] = *b"O3DH";
 const VERSION_MEMORY_ROUTE: u8 = 1;
 const VERSION_TYPED_TARGET: u8 = 2;
+const VERSION_FORWARDING: u8 = 3;
 const HEADER_BYTES: usize = MAGIC.len() + 1 + 4 + 4;
 const V1_ENTRY_BYTES: usize = 73;
 const MAX_ROWS: usize = 4;
@@ -30,6 +31,14 @@ const V2_MMIO_REQUEST_LATENCY_OFFSET: usize = 41;
 
 const TARGET_MEMORY: u8 = 0;
 const TARGET_MMIO: u8 = 1;
+const OPERATION_LOAD: u8 = 0;
+const OPERATION_STORE: u8 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvO3LiveDataHandoffOperation {
+    Load,
+    Store,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvO3LiveDataHandoffTarget {
@@ -43,6 +52,7 @@ pub struct RiscvO3LiveDataHandoffEntry {
     data_request: MemoryRequestId,
     issue_tick: Tick,
     partition: PartitionId,
+    operation: RiscvO3LiveDataHandoffOperation,
     target: RiscvO3LiveDataHandoffTarget,
     address: Address,
     bytes: u32,
@@ -65,6 +75,10 @@ impl RiscvO3LiveDataHandoffEntry {
 
     pub const fn partition(self) -> PartitionId {
         self.partition
+    }
+
+    pub const fn operation(self) -> RiscvO3LiveDataHandoffOperation {
+        self.operation
     }
 
     pub const fn target(self) -> RiscvO3LiveDataHandoffTarget {
@@ -102,9 +116,66 @@ impl RiscvO3LiveDataHandoffEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvO3LiveDataHandoffForwardedRow {
+    fetch_request: MemoryRequestId,
+    data_request: MemoryRequestId,
+    source_data_request: MemoryRequestId,
+    issue_tick: Tick,
+    response_tick: Tick,
+    address: Address,
+    bytes: u32,
+    data: [u8; 8],
+    o3_sequence: u64,
+    trace_sequence: Option<u64>,
+}
+
+impl RiscvO3LiveDataHandoffForwardedRow {
+    pub const fn fetch_request(self) -> MemoryRequestId {
+        self.fetch_request
+    }
+
+    pub const fn data_request(self) -> MemoryRequestId {
+        self.data_request
+    }
+
+    pub const fn source_data_request(self) -> MemoryRequestId {
+        self.source_data_request
+    }
+
+    pub const fn issue_tick(self) -> Tick {
+        self.issue_tick
+    }
+
+    pub const fn response_tick(self) -> Tick {
+        self.response_tick
+    }
+
+    pub const fn address(self) -> Address {
+        self.address
+    }
+
+    pub const fn bytes(self) -> u32 {
+        self.bytes
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data[..self.bytes as usize]
+    }
+
+    pub const fn o3_sequence(self) -> u64 {
+        self.o3_sequence
+    }
+
+    pub const fn trace_sequence(self) -> Option<u64> {
+        self.trace_sequence
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvO3LiveDataHandoff {
     entries: Vec<RiscvO3LiveDataHandoffEntry>,
+    forwarded_rows: Vec<RiscvO3LiveDataHandoffForwardedRow>,
     younger_rows: u32,
 }
 
@@ -113,6 +184,26 @@ impl RiscvO3LiveDataHandoff {
         let row_count = entries.len().checked_add(younger_rows)?;
         (!entries.is_empty() && row_count <= MAX_ROWS).then_some(Self {
             entries,
+            forwarded_rows: Vec::new(),
+            younger_rows: u32::try_from(younger_rows).ok()?,
+        })
+    }
+
+    fn with_forwarded_rows(
+        entries: Vec<RiscvO3LiveDataHandoffEntry>,
+        forwarded_rows: Vec<RiscvO3LiveDataHandoffForwardedRow>,
+        younger_rows: usize,
+    ) -> Option<Self> {
+        if entries.len() != 1 || forwarded_rows.len() != 1 || younger_rows != 0 {
+            return None;
+        }
+        let row_count = entries
+            .len()
+            .checked_add(forwarded_rows.len())?
+            .checked_add(younger_rows)?;
+        (!entries.is_empty() && row_count <= MAX_ROWS).then_some(Self {
+            entries,
+            forwarded_rows,
             younger_rows: u32::try_from(younger_rows).ok()?,
         })
     }
@@ -121,13 +212,30 @@ impl RiscvO3LiveDataHandoff {
         &self.entries
     }
 
+    pub fn forwarded_rows(&self) -> &[RiscvO3LiveDataHandoffForwardedRow] {
+        &self.forwarded_rows
+    }
+
+    pub fn resident_rows(&self) -> usize {
+        self.entries.len() + self.forwarded_rows.len()
+    }
+
     pub const fn younger_rows(&self) -> u32 {
         self.younger_rows
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let entry_count = u32::try_from(self.entries.len()).expect("handoff entry count fits u32");
-        let version = if self
+        let forwarded_count =
+            u32::try_from(self.forwarded_rows.len()).expect("handoff forwarded row count fits u32");
+        let version = if !self.forwarded_rows.is_empty()
+            || self
+                .entries
+                .iter()
+                .any(|entry| entry.operation != RiscvO3LiveDataHandoffOperation::Load)
+        {
+            VERSION_FORWARDING
+        } else if self
             .entries
             .iter()
             .all(|entry| matches!(entry.target, RiscvO3LiveDataHandoffTarget::Memory { .. }))
@@ -141,16 +249,27 @@ impl RiscvO3LiveDataHandoff {
         payload.push(version);
         payload.extend_from_slice(&entry_count.to_le_bytes());
         payload.extend_from_slice(&self.younger_rows.to_le_bytes());
+        if version == VERSION_FORWARDING {
+            payload.extend_from_slice(&forwarded_count.to_le_bytes());
+        }
         for entry in &self.entries {
             write_request(&mut payload, entry.fetch_request);
             write_request(&mut payload, entry.data_request);
             payload.extend_from_slice(&entry.issue_tick.to_le_bytes());
             payload.extend_from_slice(&entry.partition.index().to_le_bytes());
+            if version == VERSION_FORWARDING {
+                payload.push(match entry.operation {
+                    RiscvO3LiveDataHandoffOperation::Load => OPERATION_LOAD,
+                    RiscvO3LiveDataHandoffOperation::Store => OPERATION_STORE,
+                });
+            }
             match (version, entry.target) {
                 (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Memory { route }) => {
                     payload.extend_from_slice(&route.get().to_le_bytes())
                 }
-                (VERSION_TYPED_TARGET, target) => write_target(&mut payload, target),
+                (VERSION_TYPED_TARGET | VERSION_FORWARDING, target) => {
+                    write_target(&mut payload, target)
+                }
                 (VERSION_MEMORY_ROUTE, RiscvO3LiveDataHandoffTarget::Mmio { .. }) => {
                     unreachable!("MMIO handoffs require typed-target encoding")
                 }
@@ -161,6 +280,19 @@ impl RiscvO3LiveDataHandoff {
             payload.extend_from_slice(&entry.o3_sequence.to_le_bytes());
             payload.push(u8::from(entry.trace_sequence.is_some()));
             payload.extend_from_slice(&entry.trace_sequence.unwrap_or_default().to_le_bytes());
+        }
+        for row in &self.forwarded_rows {
+            write_request(&mut payload, row.fetch_request);
+            write_request(&mut payload, row.data_request);
+            write_request(&mut payload, row.source_data_request);
+            payload.extend_from_slice(&row.issue_tick.to_le_bytes());
+            payload.extend_from_slice(&row.response_tick.to_le_bytes());
+            payload.extend_from_slice(&row.address.get().to_le_bytes());
+            payload.extend_from_slice(&row.bytes.to_le_bytes());
+            payload.extend_from_slice(&row.data);
+            payload.extend_from_slice(&row.o3_sequence.to_le_bytes());
+            payload.push(u8::from(row.trace_sequence.is_some()));
+            payload.extend_from_slice(&row.trace_sequence.unwrap_or_default().to_le_bytes());
         }
         payload
     }
@@ -176,25 +308,49 @@ impl RiscvO3LiveDataHandoff {
             return Err(RiscvO3LiveDataHandoffError::InvalidMagic);
         }
         let version = payload[MAGIC.len()];
-        if !matches!(version, VERSION_MEMORY_ROUTE | VERSION_TYPED_TARGET) {
+        if !matches!(
+            version,
+            VERSION_MEMORY_ROUTE | VERSION_TYPED_TARGET | VERSION_FORWARDING
+        ) {
             return Err(RiscvO3LiveDataHandoffError::UnsupportedVersion { version });
         }
         let mut offset = MAGIC.len() + 1;
         let entry_count = read_u32(payload, &mut offset)? as usize;
         let younger_rows = read_u32(payload, &mut offset)?;
+        let forwarded_count = if version == VERSION_FORWARDING {
+            read_u32(payload, &mut offset)? as usize
+        } else {
+            0
+        };
         if entry_count == 0 {
             return Err(RiscvO3LiveDataHandoffError::EmptyEntries);
         }
-        let row_count = entry_count.checked_add(younger_rows as usize).ok_or(
-            RiscvO3LiveDataHandoffError::TooManyRows {
+        if version == VERSION_FORWARDING
+            && (entry_count != 1 || forwarded_count != 1 || younger_rows != 0)
+        {
+            return Err(RiscvO3LiveDataHandoffError::InvalidForwardingShape {
                 entries: entry_count,
+                forwarded_rows: forwarded_count,
+                younger_rows,
+            });
+        }
+        let resident_rows = entry_count.checked_add(forwarded_count).ok_or(
+            RiscvO3LiveDataHandoffError::TooManyRows {
+                entries: usize::MAX,
+                younger_rows,
+                maximum: MAX_ROWS,
+            },
+        )?;
+        let row_count = resident_rows.checked_add(younger_rows as usize).ok_or(
+            RiscvO3LiveDataHandoffError::TooManyRows {
+                entries: resident_rows,
                 younger_rows,
                 maximum: MAX_ROWS,
             },
         )?;
         if row_count > MAX_ROWS {
             return Err(RiscvO3LiveDataHandoffError::TooManyRows {
-                entries: entry_count,
+                entries: resident_rows,
                 younger_rows,
                 maximum: MAX_ROWS,
             });
@@ -230,7 +386,23 @@ impl RiscvO3LiveDataHandoff {
             }
             let issue_tick = read_u64(payload, &mut offset)?;
             let partition = PartitionId::new(read_u32(payload, &mut offset)?);
+            let operation = if version == VERSION_FORWARDING {
+                match read_u8(payload, &mut offset)? {
+                    OPERATION_LOAD => RiscvO3LiveDataHandoffOperation::Load,
+                    OPERATION_STORE => RiscvO3LiveDataHandoffOperation::Store,
+                    value => {
+                        return Err(RiscvO3LiveDataHandoffError::InvalidOperationKind { value })
+                    }
+                }
+            } else {
+                RiscvO3LiveDataHandoffOperation::Load
+            };
             let target = read_target(payload, &mut offset, version, issue_tick, partition)?;
+            if operation == RiscvO3LiveDataHandoffOperation::Store
+                && !matches!(target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+            {
+                return Err(RiscvO3LiveDataHandoffError::InvalidStoreTarget);
+            }
             let address = Address::new(read_u64(payload, &mut offset)?);
             let bytes = read_u32(payload, &mut offset)?;
             if !matches!(bytes, 1 | 2 | 4 | 8) {
@@ -275,9 +447,111 @@ impl RiscvO3LiveDataHandoff {
                 data_request,
                 issue_tick,
                 partition,
+                operation,
                 target,
                 address,
                 bytes,
+                o3_sequence,
+                trace_sequence: (trace_present == 1).then_some(trace_sequence),
+            });
+        }
+        let mut forwarded_rows = Vec::with_capacity(forwarded_count);
+        for _ in 0..forwarded_count {
+            let fetch_request = read_request(payload, &mut offset)?;
+            let data_request = read_request(payload, &mut offset)?;
+            let source_data_request = read_request(payload, &mut offset)?;
+            if !fetch_requests.insert(fetch_request) {
+                return Err(RiscvO3LiveDataHandoffError::DuplicateFetchRequest {
+                    request: fetch_request,
+                });
+            }
+            if !data_requests.insert(data_request) {
+                return Err(RiscvO3LiveDataHandoffError::DuplicateDataRequest {
+                    request: data_request,
+                });
+            }
+            let issue_tick = read_u64(payload, &mut offset)?;
+            let response_tick = read_u64(payload, &mut offset)?;
+            if response_tick < issue_tick {
+                return Err(RiscvO3LiveDataHandoffError::ForwardedResponseBeforeIssue {
+                    issue_tick,
+                    response_tick,
+                });
+            }
+            let address = Address::new(read_u64(payload, &mut offset)?);
+            let bytes = read_u32(payload, &mut offset)?;
+            if !matches!(bytes, 1 | 2 | 4 | 8) {
+                return Err(RiscvO3LiveDataHandoffError::InvalidScalarBytes { bytes });
+            }
+            if address.get().checked_add(u64::from(bytes) - 1).is_none() {
+                return Err(RiscvO3LiveDataHandoffError::AddressRangeOverflow { address, bytes });
+            }
+            let data = read_array::<8>(payload, &mut offset)?;
+            if let Some((index, value)) = data
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(bytes as usize)
+                .find(|(_, value)| *value != 0)
+            {
+                return Err(RiscvO3LiveDataHandoffError::NonZeroForwardedDataPadding {
+                    index,
+                    value,
+                });
+            }
+            let o3_sequence = read_u64(payload, &mut offset)?;
+            if !o3_sequences.insert(o3_sequence) {
+                return Err(RiscvO3LiveDataHandoffError::DuplicateO3Sequence {
+                    sequence: o3_sequence,
+                });
+            }
+            if let Some(previous) = previous_o3_sequence.filter(|previous| *previous >= o3_sequence)
+            {
+                return Err(RiscvO3LiveDataHandoffError::NonIncreasingO3Sequence {
+                    previous,
+                    current: o3_sequence,
+                });
+            }
+            previous_o3_sequence = Some(o3_sequence);
+            let source = entries
+                .iter()
+                .find(|entry| entry.data_request == source_data_request);
+            if !source.is_some_and(|source| {
+                source.operation == RiscvO3LiveDataHandoffOperation::Store
+                    && source.address == address
+                    && source.bytes == bytes
+                    && source.o3_sequence < o3_sequence
+            }) {
+                return Err(RiscvO3LiveDataHandoffError::InvalidForwardingSource {
+                    request: source_data_request,
+                });
+            }
+            let trace_present = read_u8(payload, &mut offset)?;
+            if trace_present > 1 {
+                return Err(RiscvO3LiveDataHandoffError::InvalidTracePresence {
+                    value: trace_present,
+                });
+            }
+            let trace_sequence = read_u64(payload, &mut offset)?;
+            if trace_present == 0 && trace_sequence != 0 {
+                return Err(RiscvO3LiveDataHandoffError::UnexpectedTraceSequence {
+                    sequence: trace_sequence,
+                });
+            }
+            if trace_present == 1 && !trace_sequences.insert(trace_sequence) {
+                return Err(RiscvO3LiveDataHandoffError::DuplicateTraceSequence {
+                    sequence: trace_sequence,
+                });
+            }
+            forwarded_rows.push(RiscvO3LiveDataHandoffForwardedRow {
+                fetch_request,
+                data_request,
+                source_data_request,
+                issue_tick,
+                response_tick,
+                address,
+                bytes,
+                data,
                 o3_sequence,
                 trace_sequence: (trace_present == 1).then_some(trace_sequence),
             });
@@ -290,6 +564,7 @@ impl RiscvO3LiveDataHandoff {
         }
         Ok(Self {
             entries,
+            forwarded_rows,
             younger_rows,
         })
     }
@@ -307,6 +582,15 @@ pub enum RiscvO3LiveDataHandoffError {
     },
     InvalidTargetKind {
         value: u8,
+    },
+    InvalidOperationKind {
+        value: u8,
+    },
+    InvalidStoreTarget,
+    InvalidForwardingShape {
+        entries: usize,
+        forwarded_rows: usize,
+        younger_rows: u32,
     },
     InvalidMmioRoute {
         request_latency: Tick,
@@ -346,6 +630,17 @@ pub enum RiscvO3LiveDataHandoffError {
         address: Address,
         bytes: u32,
     },
+    ForwardedResponseBeforeIssue {
+        issue_tick: Tick,
+        response_tick: Tick,
+    },
+    NonZeroForwardedDataPadding {
+        index: usize,
+        value: u8,
+    },
+    InvalidForwardingSource {
+        request: MemoryRequestId,
+    },
     InvalidTracePresence {
         value: u8,
     },
@@ -371,6 +666,20 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
             Self::InvalidTargetKind { value } => {
                 write!(formatter, "live-data handoff target kind {value} is invalid")
             }
+            Self::InvalidOperationKind { value } => {
+                write!(formatter, "live-data handoff operation kind {value} is invalid")
+            }
+            Self::InvalidStoreTarget => {
+                write!(formatter, "live-data handoff store target must be memory")
+            }
+            Self::InvalidForwardingShape {
+                entries,
+                forwarded_rows,
+                younger_rows,
+            } => write!(
+                formatter,
+                "live-data handoff forwarding shape has {entries} transport entries, {forwarded_rows} forwarded rows, and {younger_rows} younger rows"
+            ),
             Self::InvalidMmioRoute {
                 request_latency,
                 response_latency,
@@ -427,6 +736,23 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
                 "live-data handoff entry at 0x{:x} with {bytes} bytes overflows the address range",
                 address.get()
             ),
+            Self::ForwardedResponseBeforeIssue {
+                issue_tick,
+                response_tick,
+            } => write!(
+                formatter,
+                "live-data handoff forwarded response tick {response_tick} precedes issue tick {issue_tick}"
+            ),
+            Self::NonZeroForwardedDataPadding { index, value } => write!(
+                formatter,
+                "live-data handoff forwarded data padding byte {index} has value {value}"
+            ),
+            Self::InvalidForwardingSource { request } => write!(
+                formatter,
+                "live-data handoff forwarding source {}:{} is invalid",
+                request.agent().get(),
+                request.sequence()
+            ),
             Self::InvalidTracePresence { value } => write!(
                 formatter,
                 "live-data handoff trace-presence value {value} is invalid"
@@ -442,14 +768,16 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
 impl Error for RiscvO3LiveDataHandoffError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RiscvIssuedScalarLoadHandoff {
+pub(crate) struct RiscvIssuedScalarMemoryHandoff {
     pub(crate) fetch_request: MemoryRequestId,
     pub(crate) data_request: MemoryRequestId,
     pub(crate) issue_tick: Tick,
     pub(crate) partition: PartitionId,
+    pub(crate) operation: RiscvO3LiveDataHandoffOperation,
     pub(crate) target: RiscvO3LiveDataHandoffTarget,
     pub(crate) address: Address,
     pub(crate) bytes: u32,
+    pub(crate) store_data: Option<[u8; 8]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -457,6 +785,20 @@ pub(crate) struct RiscvResidentScalarMemoryHandoff {
     pub(crate) fetch_request: MemoryRequestId,
     pub(crate) data_request: MemoryRequestId,
     pub(crate) issue_tick: Tick,
+    pub(crate) operation: RiscvO3LiveDataHandoffOperation,
+    pub(crate) o3_sequence: u64,
+    pub(crate) trace_sequence: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvForwardedScalarLoadHandoff {
+    pub(crate) fetch_request: MemoryRequestId,
+    pub(crate) data_request: MemoryRequestId,
+    pub(crate) issue_tick: Tick,
+    pub(crate) response_tick: Tick,
+    pub(crate) address: Address,
+    pub(crate) bytes: u32,
+    pub(crate) data: [u8; 8],
     pub(crate) o3_sequence: u64,
     pub(crate) trace_sequence: Option<u64>,
 }
@@ -481,7 +823,8 @@ impl RiscvCore {
         {
             return None;
         }
-        let (resident_rows, younger_rows) = state.o3_runtime.resident_scalar_memory_handoff()?;
+        let (resident_rows, forwarded_rows, younger_rows) =
+            state.o3_runtime.live_scalar_memory_handoff()?;
         let mut rows = resident_rows
             .into_iter()
             .map(|row| (row.data_request, row))
@@ -491,11 +834,13 @@ impl RiscvCore {
         }
 
         let mut entries = Vec::with_capacity(rows.len());
+        let mut issued_rows = Vec::with_capacity(rows.len());
         for issued in state.outstanding_data.values() {
-            let issued = issued.scalar_load_handoff()?;
+            let issued = issued.scalar_memory_handoff()?;
             let resident = rows.remove(&issued.data_request)?;
             if resident.fetch_request != issued.fetch_request
                 || resident.issue_tick != issued.issue_tick
+                || resident.operation != issued.operation
             {
                 return None;
             }
@@ -520,18 +865,60 @@ impl RiscvCore {
                 data_request: issued.data_request,
                 issue_tick: issued.issue_tick,
                 partition: issued.partition,
+                operation: issued.operation,
                 target: issued.target,
                 address: issued.address,
                 bytes: issued.bytes,
                 o3_sequence: resident.o3_sequence,
                 trace_sequence: resident.trace_sequence,
             });
+            issued_rows.push(issued);
         }
         if !rows.is_empty() {
             return None;
         }
         entries.sort_by_key(|entry| entry.o3_sequence);
-        RiscvO3LiveDataHandoff::new(entries, younger_rows)
+        if forwarded_rows.is_empty() {
+            if entries
+                .iter()
+                .any(|entry| entry.operation != RiscvO3LiveDataHandoffOperation::Load)
+            {
+                return None;
+            }
+            return RiscvO3LiveDataHandoff::new(entries, younger_rows);
+        }
+        if forwarded_rows.len() != 1 || entries.len() != 1 || younger_rows != 0 {
+            return None;
+        }
+        let forwarded = forwarded_rows[0];
+        let source = issued_rows.iter().find(|issued| {
+            issued.operation == RiscvO3LiveDataHandoffOperation::Store
+                && matches!(issued.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                && issued.address == forwarded.address
+                && issued.bytes == forwarded.bytes
+                && issued.store_data.is_some_and(|data| {
+                    data[..forwarded.bytes as usize] == forwarded.data[..forwarded.bytes as usize]
+                })
+        })?;
+        let source_entry = entries
+            .iter()
+            .find(|entry| entry.data_request == source.data_request)?;
+        if source_entry.o3_sequence >= forwarded.o3_sequence {
+            return None;
+        }
+        let forwarded_rows = vec![RiscvO3LiveDataHandoffForwardedRow {
+            fetch_request: forwarded.fetch_request,
+            data_request: forwarded.data_request,
+            source_data_request: source.data_request,
+            issue_tick: forwarded.issue_tick,
+            response_tick: forwarded.response_tick,
+            address: forwarded.address,
+            bytes: forwarded.bytes,
+            data: forwarded.data,
+            o3_sequence: forwarded.o3_sequence,
+            trace_sequence: forwarded.trace_sequence,
+        }];
+        RiscvO3LiveDataHandoff::with_forwarded_rows(entries, forwarded_rows, younger_rows)
     }
 }
 
@@ -668,6 +1055,7 @@ mod tests {
             data_request: MemoryRequestId::new(AgentId::new(4), sequence + 10),
             issue_tick: 29 + sequence,
             partition: PartitionId::new(2),
+            operation: RiscvO3LiveDataHandoffOperation::Load,
             target: RiscvO3LiveDataHandoffTarget::Memory {
                 route: MemoryRouteId::new(7),
             },
@@ -685,6 +1073,21 @@ mod tests {
                     .unwrap(),
             },
             ..entry(sequence)
+        }
+    }
+
+    fn forwarded_row(sequence: u64, source: MemoryRequestId) -> RiscvO3LiveDataHandoffForwardedRow {
+        RiscvO3LiveDataHandoffForwardedRow {
+            fetch_request: MemoryRequestId::new(AgentId::new(3), sequence),
+            data_request: MemoryRequestId::new(AgentId::new(4), sequence + 10),
+            source_data_request: source,
+            issue_tick: 29 + sequence,
+            response_tick: 31 + sequence,
+            address: Address::new(0x8004),
+            bytes: 4,
+            data: [0x2a, 0, 0, 0, 0, 0, 0, 0],
+            o3_sequence: sequence,
+            trace_sequence: Some(sequence + 20),
         }
     }
 
@@ -750,6 +1153,30 @@ mod tests {
     }
 
     #[test]
+    fn live_data_handoff_round_trips_transport_store_and_forwarded_load() {
+        let mut store = entry(1);
+        store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        store.address = Address::new(0x8004);
+        let forwarded = forwarded_row(2, store.data_request);
+        let handoff =
+            RiscvO3LiveDataHandoff::with_forwarded_rows(vec![store], vec![forwarded], 0).unwrap();
+        let payload = handoff.encode();
+
+        assert_eq!(payload[MAGIC.len()], VERSION_FORWARDING);
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&payload),
+            Ok(handoff.clone())
+        );
+        assert_eq!(
+            handoff.entries()[0].operation(),
+            RiscvO3LiveDataHandoffOperation::Store
+        );
+        assert_eq!(handoff.forwarded_rows(), &[forwarded]);
+        assert_eq!(handoff.resident_rows(), 2);
+        assert_eq!(forwarded.data(), &[0x2a, 0, 0, 0]);
+    }
+
+    #[test]
     fn live_data_handoff_rejects_unknown_or_invalid_typed_targets() {
         let payload = RiscvO3LiveDataHandoff::new(vec![mmio_entry(1)], 0)
             .unwrap()
@@ -801,11 +1228,11 @@ mod tests {
             Err(RiscvO3LiveDataHandoffError::InvalidMagic)
         );
         let mut bad_version = payload.clone();
-        bad_version[MAGIC.len()] = VERSION_TYPED_TARGET + 1;
+        bad_version[MAGIC.len()] = VERSION_FORWARDING + 1;
         assert_eq!(
             RiscvO3LiveDataHandoff::decode(&bad_version),
             Err(RiscvO3LiveDataHandoffError::UnsupportedVersion {
-                version: VERSION_TYPED_TARGET + 1,
+                version: VERSION_FORWARDING + 1,
             })
         );
         assert!(matches!(
@@ -818,6 +1245,45 @@ mod tests {
             RiscvO3LiveDataHandoff::decode(&trailing),
             Err(RiscvO3LiveDataHandoffError::InvalidPayloadSize { .. })
         ));
+    }
+
+    #[test]
+    fn live_data_handoff_rejects_unknown_forwarding_source() {
+        let mut store = entry(1);
+        store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        store.address = Address::new(0x8004);
+        let unknown = MemoryRequestId::new(AgentId::new(9), 99);
+        let handoff = RiscvO3LiveDataHandoff::with_forwarded_rows(
+            vec![store],
+            vec![forwarded_row(2, unknown)],
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&handoff.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidForwardingSource { request: unknown })
+        );
+    }
+
+    #[test]
+    fn live_data_handoff_rejects_store_only_v3_shape() {
+        let mut store = entry(1);
+        store.operation = RiscvO3LiveDataHandoffOperation::Store;
+        let handoff = RiscvO3LiveDataHandoff {
+            entries: vec![store],
+            forwarded_rows: Vec::new(),
+            younger_rows: 0,
+        };
+
+        assert_eq!(
+            RiscvO3LiveDataHandoff::decode(&handoff.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidForwardingShape {
+                entries: 1,
+                forwarded_rows: 0,
+                younger_rows: 0,
+            })
+        );
     }
 
     #[test]
@@ -865,6 +1331,7 @@ mod tests {
     fn live_data_handoff_rejects_duplicate_o3_and_trace_sequences() {
         let handoff = RiscvO3LiveDataHandoff {
             entries: vec![entry(1), entry(2)],
+            forwarded_rows: Vec::new(),
             younger_rows: 0,
         };
         let payload = handoff.encode();
