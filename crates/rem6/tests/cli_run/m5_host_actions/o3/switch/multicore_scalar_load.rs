@@ -262,55 +262,68 @@ pub(super) struct DataWindow {
 }
 
 pub(super) fn first_data_window(json: &Value, request_agent: u64) -> DataWindow {
+    data_windows(json, request_agent)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("missing data request for agent {request_agent}: {json}"))
+}
+
+pub(super) fn data_windows(json: &Value, request_agent: u64) -> Vec<DataWindow> {
     let trace = json
         .pointer("/debug/memory_trace")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("missing Memory trace: {json}"));
-    let request = trace
+    let mut requests = trace
         .iter()
         .filter(|record| {
             record.pointer("/channel").and_then(Value::as_str) == Some("data")
                 && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
                 && record.pointer("/request_agent").and_then(Value::as_u64) == Some(request_agent)
         })
-        .min_by_key(|record| record.pointer("/tick").and_then(Value::as_u64))
-        .unwrap_or_else(|| panic!("missing data request for agent {request_agent}: {trace:?}"));
-    let request_tick = request
-        .pointer("/tick")
-        .and_then(Value::as_u64)
-        .expect("data request tick");
-    let request_sequence = request
-        .pointer("/request")
-        .and_then(Value::as_u64)
-        .expect("data request sequence");
-    let route = request
-        .pointer("/route")
-        .and_then(Value::as_u64)
-        .expect("data request route");
-    let response_tick = trace
-        .iter()
-        .find(|record| {
-            record.pointer("/channel").and_then(Value::as_str) == Some("data")
-                && record.pointer("/kind").and_then(Value::as_str) == Some("response_arrived")
-                && record
-                    .pointer("/request_agent")
-                    .and_then(Value::as_u64)
-                    == Some(request_agent)
-                && record.pointer("/request").and_then(Value::as_u64)
-                    == Some(request_sequence)
+        .collect::<Vec<_>>();
+    requests.sort_by_key(|record| record.pointer("/tick").and_then(Value::as_u64));
+    requests
+        .into_iter()
+        .map(|request| {
+            let request_tick = request
+                .pointer("/tick")
+                .and_then(Value::as_u64)
+                .expect("data request tick");
+            let request_sequence = request
+                .pointer("/request")
+                .and_then(Value::as_u64)
+                .expect("data request sequence");
+            let route = request
+                .pointer("/route")
+                .and_then(Value::as_u64)
+                .expect("data request route");
+            let response_tick = trace
+                .iter()
+                .find(|record| {
+                    record.pointer("/channel").and_then(Value::as_str) == Some("data")
+                        && record.pointer("/kind").and_then(Value::as_str)
+                            == Some("response_arrived")
+                        && record
+                            .pointer("/request_agent")
+                            .and_then(Value::as_u64)
+                            == Some(request_agent)
+                        && record.pointer("/request").and_then(Value::as_u64)
+                            == Some(request_sequence)
+                })
+                .and_then(|record| record.pointer("/tick").and_then(Value::as_u64))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing data response for agent {request_agent} request {request_sequence}: {trace:?}"
+                    )
+                });
+            DataWindow {
+                request_tick,
+                response_tick,
+                request_sequence,
+                route,
+            }
         })
-        .and_then(|record| record.pointer("/tick").and_then(Value::as_u64))
-        .unwrap_or_else(|| {
-            panic!(
-                "missing data response for agent {request_agent} request {request_sequence}: {trace:?}"
-            )
-        });
-    DataWindow {
-        request_tick,
-        response_tick,
-        request_sequence,
-        route,
-    }
+        .collect()
 }
 
 pub(super) fn assert_parallel_two_worker_run(json: &Value) {

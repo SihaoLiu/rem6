@@ -91,9 +91,21 @@ fn rem6_run_host_switch_transfers_outstanding_o3_translated_scalar_load_direct()
 
 #[test]
 fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_direct() {
-    let path =
-        cached_translated_scalar_load_binary("host-switch-live-o3-cached-translated-scalar-load");
-    let baseline = run_translated_scalar_load(&path, None, "cached");
+    assert_cached_translated_scalar_load_younger_window_handoff("direct");
+}
+
+#[test]
+fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_cache_fabric_dram() {
+    assert_cached_translated_scalar_load_younger_window_handoff("cache-fabric-dram");
+}
+
+fn assert_cached_translated_scalar_load_younger_window_handoff(memory_system: &str) {
+    let path = cached_translated_scalar_load_binary(&format!(
+        "host-switch-live-o3-cached-translated-scalar-load-{}",
+        memory_system.replace('-', "_")
+    ));
+    let baseline =
+        run_translated_scalar_load_in_memory_system(&path, memory_system, None, "cached");
     let baseline_load = event_at_pc(&baseline, CACHED_LOAD_PC);
     let issue_tick = event_u64(baseline_load, "issue_tick");
     let response_tick = event_u64(baseline_load, "lsq_data_response_tick");
@@ -101,7 +113,12 @@ fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_d
     let switch_tick = issue_tick.saturating_add(response_tick.saturating_sub(issue_tick) / 2);
     assert!(issue_tick < switch_tick && switch_tick < response_tick);
 
-    let json = run_translated_scalar_load(&path, Some(switch_tick), "cached");
+    let json = run_translated_scalar_load_in_memory_system(
+        &path,
+        memory_system,
+        Some(switch_tick),
+        "cached",
+    );
 
     assert_stopped_with_headroom(&json, response_tick);
     assert_eq!(
@@ -189,6 +206,7 @@ fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_d
             .pointer("/tick")
             .and_then(Value::as_u64)
             .is_some_and(|tick| tick > action_tick)));
+    super::scalar_load::assert_memory_resources(&json, memory_system);
 }
 
 #[test]
@@ -492,21 +510,6 @@ fn rem6_run_rejects_unsupported_riscv_data_translation_combinations() {
     let base = translated_config(&path, None, "", "");
     let cases = [
         (
-            "multicore",
-            translated_config(&path, None, "", "cores = 2\n"),
-            &[][..],
-            "RISC-V data translation currently requires exactly one core",
-        ),
-        (
-            "cache-fabric-dram",
-            base.replace(
-                "memory_system = \"direct\"",
-                "memory_system = \"cache-fabric-dram\"",
-            ),
-            &[][..],
-            "RISC-V data translation currently requires memory_system = \"direct\"",
-        ),
-        (
             "riscv-se",
             translated_config(&path, None, "", "riscv_se = true\n"),
             &[][..],
@@ -536,21 +539,37 @@ fn rem6_run_rejects_unsupported_riscv_data_translation_combinations() {
 }
 
 fn run_translated_scalar_load(path: &Path, switch_tick: Option<u64>, scenario: &str) -> Value {
+    run_translated_scalar_load_in_memory_system(path, "direct", switch_tick, scenario)
+}
+
+fn run_translated_scalar_load_in_memory_system(
+    path: &Path,
+    memory_system: &str,
+    switch_tick: Option<u64>,
+    scenario: &str,
+) -> Value {
     let phase = if switch_tick.is_some() {
         "switch"
     } else {
         "baseline"
     };
-    let workspace = temp_workspace(&format!("translated-scalar-load-{scenario}-{phase}"));
+    let workspace = temp_workspace(&format!(
+        "translated-scalar-load-{scenario}-{}-{phase}",
+        memory_system.replace('-', "_")
+    ));
     let config = workspace.join("run.toml");
-    std::fs::write(&config, translated_config(path, switch_tick, "", "")).unwrap();
+    std::fs::write(
+        &config,
+        translated_config_in_memory_system(path, switch_tick, memory_system, "", ""),
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args(["run", "--config", config.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "translated {scenario} switch {switch_tick:?}; stderr: {}",
+        "translated {scenario} {memory_system} switch {switch_tick:?}; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)
@@ -560,6 +579,16 @@ fn run_translated_scalar_load(path: &Path, switch_tick: Option<u64>, scenario: &
 fn translated_config(
     path: &Path,
     switch_tick: Option<u64>,
+    extra_mapping: &str,
+    extra_run: &str,
+) -> String {
+    translated_config_in_memory_system(path, switch_tick, "direct", extra_mapping, extra_run)
+}
+
+fn translated_config_in_memory_system(
+    path: &Path,
+    switch_tick: Option<u64>,
+    memory_system: &str,
     extra_mapping: &str,
     extra_run: &str,
 ) -> String {
@@ -573,7 +602,7 @@ binary = "{}"
 max_tick = {MAX_TICK}
 stats_format = "json"
 execute = true
-memory_system = "direct"
+memory_system = "{memory_system}"
 memory_route_delay = 16
 m5_switch_cpu_mode = "detailed"
 riscv_o3_scalar_memory_depth = 4
@@ -611,6 +640,7 @@ fn cold_translated_scalar_load_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.push(42);
+    words.extend([0; 15]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(PHYSICAL_PAGE, PHYSICAL_PAGE, &program);
     temp_binary(name, &elf)
@@ -634,6 +664,7 @@ fn cached_translated_scalar_load_binary(name: &str) -> std::path::PathBuf {
         words.push(0);
     }
     words.push(42);
+    words.extend([0; 15]);
     let program = riscv64_program(&words);
     let elf = riscv64_elf(PHYSICAL_PAGE, PHYSICAL_PAGE, &program);
     temp_binary(name, &elf)
