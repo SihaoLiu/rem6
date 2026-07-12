@@ -798,12 +798,14 @@ fn execution_mode_switch_record(
 
 fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> String {
     format!(
-        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{},\"components\":{}}}",
+        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"quiescence_gate\":{},\"components\":{}}}",
         json_escape(&transfer.manifest_label),
         transfer.manifest_tick,
         transfer.component_count,
         transfer.chunk_count,
         transfer.payload_bytes,
+        transfer.restorable,
+        transfer.live_data_handoff,
         quiescence_gate_json(&transfer.quiescence_gate),
         checkpoint_components_to_json(&transfer.components),
     )
@@ -943,6 +945,7 @@ mod tests {
                     payload_bytes: 1,
                     payload_checksum: 1,
                     o3_runtime: None,
+                    o3_live_data_handoff: None,
                 }],
             }],
         }

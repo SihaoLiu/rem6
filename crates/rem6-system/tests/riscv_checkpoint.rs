@@ -28,7 +28,10 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext, Scheduler
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
 };
-use rem6_system::{RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
+use rem6_system::{
+    ExecutionModeTarget, RiscvCoreCheckpointBank, RiscvCoreCheckpointError,
+    RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
@@ -257,9 +260,10 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     )
     .unwrap();
     scheduler.run_until_idle_conservative();
+    let cpu1_port = RiscvCoreCheckpointPort::new(cpu1_component.clone(), cpu1.clone());
     let bank = RiscvCoreCheckpointBank::new([
         RiscvCoreCheckpointPort::new(cpu0_component.clone(), cpu0),
-        RiscvCoreCheckpointPort::new(cpu1_component.clone(), cpu1.clone()),
+        cpu1_port.clone(),
     ])
     .unwrap();
     let mut registry = CheckpointRegistry::new();
@@ -299,6 +303,26 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert_eq!(resident.reorder_buffer()[0].pc(), Address::new(0x9000));
     assert_eq!(resident.reorder_buffer()[1].pc(), Address::new(0x9004));
     assert_eq!(resident.load_store_queue().len(), 1);
+    let mut handoff_registry = CheckpointRegistry::new();
+    let handoff = bank
+        .capture_all_for_execution_mode_handoff_into(
+            &mut handoff_registry,
+            &ExecutionModeTarget::new("cpu1"),
+        )
+        .unwrap();
+    assert!(
+        handoff,
+        "resident scalar load should produce a typed mode handoff"
+    );
+    assert!(handoff_registry
+        .chunk(&cpu1_component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
+        .is_some());
+    assert_eq!(
+        cpu1_port.restore_from(&handoff_registry),
+        Err(RiscvCoreCheckpointError::LiveDataHandoffNotRestorable {
+            component: cpu1_component.clone(),
+        })
+    );
     cpu1.set_detailed_live_retire_gate_enabled(false);
     assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     assert_eq!(
@@ -314,6 +338,12 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     cpu1.redirect_pc(Address::new(0x9100));
     assert!(!cpu1.has_pending_data_access());
     assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    cpu1_port.capture_into(&mut handoff_registry).unwrap();
+    assert_eq!(
+        handoff_registry.chunk(&cpu1_component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK),
+        None
+    );
+    cpu1_port.restore_from(&handoff_registry).unwrap();
     bank.capture_all_into(&mut registry).unwrap();
     assert!(registry.chunk(&cpu0_component, "pc").is_some());
     assert!(registry.chunk(&cpu1_component, "pc").is_some());

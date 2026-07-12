@@ -20,6 +20,8 @@ mod o3_runtime_authority;
 mod o3_runtime_checkpoint;
 #[path = "o3_runtime_checkpoint_branch_mismatch.rs"]
 mod o3_runtime_checkpoint_branch_mismatch;
+#[path = "o3_runtime_handoff.rs"]
+mod o3_runtime_handoff;
 #[path = "o3_runtime_helpers.rs"]
 mod o3_runtime_helpers;
 #[path = "o3_runtime_live_window.rs"]

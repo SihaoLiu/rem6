@@ -114,6 +114,10 @@ pub use crate::riscv_execution_event::{
     RiscvMultiperspectivePerceptronBranchUpdate, RiscvTageScLBranchUpdate,
     RiscvTournamentBranchUpdate,
 };
+pub use crate::riscv_execution_mode_handoff::{
+    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffEntry, RiscvO3LiveDataHandoffError,
+    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+};
 pub use crate::riscv_hart_run_state::RiscvHartRunState;
 pub use crate::riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,

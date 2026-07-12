@@ -158,6 +158,7 @@ pub use plic_checkpoint::{
     PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort, PlicCheckpointRecord,
 };
 pub use readfile_checkpoint::*;
+pub use rem6_cpu::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 pub use rem6_storage::{
     IdeControllerCheckpointBank, IdeControllerCheckpointPort, IdeControllerCheckpointRecord,
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
@@ -165,7 +166,7 @@ pub use rem6_storage::{
 };
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
-    RiscvCoreCheckpointRecord,
+    RiscvCoreCheckpointRecord, RISCV_O3_RUNTIME_STATE_CHUNK,
 };
 pub use riscv_data_access_stats::{RiscvDataAccessProbeSnapshot, RiscvDataAccessStats};
 pub use riscv_debug::{

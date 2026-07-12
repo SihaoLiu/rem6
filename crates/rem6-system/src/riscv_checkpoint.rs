@@ -12,6 +12,7 @@ use rem6_cpu::{
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats, RiscvCore,
     RiscvHartRunState, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
+    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
@@ -25,6 +26,8 @@ use crate::ExecutionModeTarget;
 mod o3_payload;
 
 use o3_payload::{decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK, O3_RUNTIME_STATE_CHUNK};
+
+pub const RISCV_O3_RUNTIME_STATE_CHUNK: &str = O3_RUNTIME_STATE_CHUNK;
 
 const FREGS_CHUNK: &str = "fregs";
 const BIMODE_BRANCH_PREDICTOR_CHUNK: &str = "bimode-branch-predictor";
@@ -270,6 +273,7 @@ impl RiscvCoreCheckpointPort {
         registry: &mut CheckpointRegistry,
         record: &RiscvCoreCheckpointRecord,
     ) -> Result<(), CheckpointError> {
+        registry.remove_chunk(&self.component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK);
         registry.remove_chunk(&self.component, O3_PENDING_STATE_CHUNK);
         registry.write_chunk(
             &self.component,
@@ -366,6 +370,14 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, RiscvCoreCheckpointError> {
+        if registry
+            .chunk(&self.component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
+            .is_some()
+        {
+            return Err(RiscvCoreCheckpointError::LiveDataHandoffNotRestorable {
+                component: self.component.clone(),
+            });
+        }
         let pc = decode_pc(
             &self.component,
             registry.chunk(&self.component, PC_CHUNK).ok_or_else(|| {
@@ -744,6 +756,52 @@ impl RiscvCoreCheckpointBank {
         Ok(captured.into_iter().map(|(_, record)| record).collect())
     }
 
+    pub fn capture_all_for_execution_mode_handoff_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+        target: &ExecutionModeTarget,
+    ) -> Result<bool, CheckpointError> {
+        let Some(target_port) = self
+            .ports
+            .iter()
+            .find_map(|(component, port)| (component.as_str() == target.as_str()).then_some(port))
+        else {
+            return Ok(false);
+        };
+        let Some(handoff) = target_port.core.capture_o3_live_data_handoff() else {
+            return Ok(false);
+        };
+
+        let captured = self
+            .ports
+            .values()
+            .map(|port| {
+                if port.component == target_port.component {
+                    Ok((port, port.capture_record()))
+                } else {
+                    port.capture_checked_record().map(|record| (port, record))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut staged = registry.clone();
+        for port in self.ports.values() {
+            match port.register(&mut staged) {
+                Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        for (port, record) in &captured {
+            port.write_record(&mut staged, record)?;
+        }
+        staged.write_chunk(
+            &target_port.component,
+            RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+            handoff.encode(),
+        )?;
+        *registry = staged;
+        Ok(true)
+    }
+
     pub fn restore_all_from(
         &self,
         registry: &CheckpointRegistry,
@@ -837,6 +895,9 @@ pub enum RiscvCoreCheckpointError {
     MismatchedO3PendingStateSnapshot {
         component: CheckpointComponentId,
     },
+    LiveDataHandoffNotRestorable {
+        component: CheckpointComponentId,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -925,6 +986,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::MismatchedO3PendingStateSnapshot { component } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has mismatched O3 runtime and pending-state chunks",
+                component.as_str()
+            ),
+            Self::LiveDataHandoffNotRestorable { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} contains a same-run live-data handoff that is not restorable",
                 component.as_str()
             ),
         }

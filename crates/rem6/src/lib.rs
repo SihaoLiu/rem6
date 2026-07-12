@@ -104,9 +104,9 @@ pub(crate) use host_actions::{
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
     Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary,
-    Rem6HostO3RuntimeCheckpointChunkSummary, Rem6HostO3RuntimeCheckpointStatValue,
-    Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
-    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6HostO3LiveDataHandoffChunkSummary, Rem6HostO3RuntimeCheckpointChunkSummary,
+    Rem6HostO3RuntimeCheckpointStatValue, Rem6HostStatsDumpSampleSummary, Rem6HostStatsDumpSummary,
+    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 pub(crate) use instruction_probe_summary::{
     instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,

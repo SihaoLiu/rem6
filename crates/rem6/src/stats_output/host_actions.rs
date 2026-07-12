@@ -122,6 +122,9 @@ pub(super) fn emit_run_host_action_stats(
     let mut switch_state_transfer_components = 0;
     let mut switch_state_transfer_chunks = 0;
     let mut switch_state_transfer_payload_bytes = 0;
+    let mut switch_state_transfer_restorable = 0;
+    let mut switch_state_transfer_non_restorable = 0;
+    let mut switch_state_transfer_live_data_handoffs = 0;
     let mut switch_quiescence_validated = 0;
     let mut switch_quiescence_captured_components = 0;
     let mut switch_quiescence_captured_chunks = 0;
@@ -150,6 +153,14 @@ pub(super) fn emit_run_host_action_stats(
         switch_state_transfer_components += transfer.component_count;
         switch_state_transfer_chunks += transfer.chunk_count;
         switch_state_transfer_payload_bytes += transfer.payload_bytes;
+        if transfer.restorable {
+            switch_state_transfer_restorable += 1;
+        } else {
+            switch_state_transfer_non_restorable += 1;
+        }
+        if transfer.live_data_handoff {
+            switch_state_transfer_live_data_handoffs += 1;
+        }
         switch_state_transfer_target_stats.add_switch_transfer(
             target_path,
             transfer,
@@ -237,6 +248,18 @@ pub(super) fn emit_run_host_action_stats(
         (
             "execution_mode_switch_state_transfer_chunks",
             switch_state_transfer_chunks,
+        ),
+        (
+            "execution_mode_switch_state_transfer.restorable",
+            switch_state_transfer_restorable,
+        ),
+        (
+            "execution_mode_switch_state_transfer.non_restorable",
+            switch_state_transfer_non_restorable,
+        ),
+        (
+            "execution_mode_switch_state_transfer.live_data_handoffs",
+            switch_state_transfer_live_data_handoffs,
         ),
         (
             "execution_mode_switch.quiescence.validated",
@@ -596,6 +619,12 @@ pub(super) fn emit_run_host_action_stats(
             ("latest_component_count", "Count", transfer.component_count),
             ("latest_chunk_count", "Count", transfer.chunk_count),
             ("latest_payload_bytes", "Byte", transfer.payload_bytes),
+            ("latest_restorable", "Count", u64::from(transfer.restorable)),
+            (
+                "latest_live_data_handoff",
+                "Count",
+                u64::from(transfer.live_data_handoff),
+            ),
             (
                 "latest_quiescence_captured_components",
                 "Count",

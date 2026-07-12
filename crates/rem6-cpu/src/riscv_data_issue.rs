@@ -31,6 +31,7 @@ use crate::{
 
 mod buffered_store;
 mod forwarding;
+mod handoff;
 mod prepared;
 mod request_helpers;
 

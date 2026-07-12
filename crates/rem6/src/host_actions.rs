@@ -1,3 +1,4 @@
+mod live_data_handoff;
 mod o3_stats_dump_aliases;
 pub(crate) mod transfer_stats;
 
@@ -7,9 +8,12 @@ use rem6_system::{
     decode_execution_mode_authority_from_manifest, ExecutionMode, ExecutionModeSwitchCheckerGate,
     ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
     ExecutionModeSwitchStateTransferComponent, SystemActionOutcome, SystemHostController,
+    RISCV_O3_RUNTIME_STATE_CHUNK,
 };
 
 use self::o3_stats_dump_aliases::samples_with_gem5_aliases;
+use live_data_handoff::decode_o3_live_data_handoff_chunk;
+pub(crate) use live_data_handoff::Rem6HostO3LiveDataHandoffChunkSummary;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
@@ -280,6 +284,8 @@ pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) component_count: u64,
     pub(crate) chunk_count: u64,
     pub(crate) payload_bytes: u64,
+    pub(crate) restorable: bool,
+    pub(crate) live_data_handoff: bool,
     pub(crate) quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary,
     pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
 }
@@ -313,6 +319,8 @@ impl Rem6ExecutionModeStateTransferSummary {
             component_count: transfer.component_count(),
             chunk_count: transfer.chunk_count(),
             payload_bytes: transfer.payload_bytes(),
+            restorable: transfer.restorable(),
+            live_data_handoff: transfer.live_data_handoff(),
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary::from_gate(
                 transfer.quiescence_gate(),
             ),
@@ -446,6 +454,7 @@ impl Rem6HostStatsDumpSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
     use serde_json::Value;
 
     #[test]
@@ -525,6 +534,41 @@ mod tests {
             Some(&Value::Null)
         );
     }
+
+    #[test]
+    fn malformed_live_data_handoff_chunks_report_decode_error() {
+        let manifest = rem6_checkpoint::CheckpointManifest::new(
+            "bad-live-data-handoff",
+            19,
+            vec![rem6_checkpoint::CheckpointState::new(
+                rem6_checkpoint::CheckpointComponentId::new("cpu0").unwrap(),
+                vec![rem6_checkpoint::CheckpointChunk::new(
+                    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+                    b"not-live-data-handoff".to_vec(),
+                )],
+            )],
+        );
+
+        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, false);
+        let handoff = summary.components[0].chunks[0]
+            .o3_live_data_handoff
+            .as_ref()
+            .expect("handoff chunk should expose a decode summary");
+        assert!(handoff.decode_error);
+        assert_eq!(handoff.outstanding_requests, None);
+        assert_eq!(handoff.first_data_request_sequence, None);
+
+        let json: Value = serde_json::from_str(&summary.to_json()).unwrap();
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_live_data_handoff/decode_error")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_live_data_handoff/outstanding_requests"),
+            Some(&Value::Null)
+        );
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -587,6 +631,10 @@ impl Rem6HostCheckpointComponentSummary {
                 payload_bytes: chunk.payload().len() as u64,
                 payload_checksum: payload_checksum(chunk.payload()),
                 o3_runtime: decode_o3_runtime_checkpoint_chunk(chunk.name(), chunk.payload()),
+                o3_live_data_handoff: decode_o3_live_data_handoff_chunk(
+                    chunk.name(),
+                    chunk.payload(),
+                ),
             })
             .collect::<Vec<_>>();
         chunks.sort_by(|left, right| left.name.cmp(&right.name));
@@ -616,6 +664,9 @@ impl Rem6HostCheckpointComponentSummary {
                     o3_runtime: chunk.o3_runtime_payload().and_then(|payload| {
                         decode_o3_runtime_checkpoint_chunk(chunk.name(), payload)
                     }),
+                    o3_live_data_handoff: chunk.o3_live_data_handoff_payload().and_then(
+                        |payload| decode_o3_live_data_handoff_chunk(chunk.name(), payload),
+                    ),
                 })
                 .collect(),
         }
@@ -628,6 +679,7 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
     pub(crate) payload_bytes: u64,
     pub(crate) payload_checksum: u64,
     pub(crate) o3_runtime: Option<Rem6HostO3RuntimeCheckpointChunkSummary>,
+    pub(crate) o3_live_data_handoff: Option<Rem6HostO3LiveDataHandoffChunkSummary>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -992,7 +1044,7 @@ fn decode_o3_runtime_checkpoint_chunk(
     name: &str,
     payload: &[u8],
 ) -> Option<Rem6HostO3RuntimeCheckpointChunkSummary> {
-    if name != "o3-runtime-state" {
+    if name != RISCV_O3_RUNTIME_STATE_CHUNK {
         return None;
     }
     let Ok(decoded) = O3RuntimeCheckpointPayload::decode(payload) else {

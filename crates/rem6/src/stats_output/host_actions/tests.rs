@@ -1,4 +1,5 @@
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
+use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 
 use super::emit_run_host_action_stats;
 use crate::{
@@ -357,6 +358,49 @@ fn host_action_latest_transfer_stats_merge_normalized_path_collisions() {
 }
 
 #[test]
+fn host_action_live_data_handoff_stats_mark_non_restorable_transfer() {
+    let mut stats = StatsRegistry::new();
+    let mut switch =
+        switch_with_transfer_component_chunk("cpu0", RISCV_O3_LIVE_DATA_HANDOFF_CHUNK, 73, 17);
+    let transfer = switch.state_transfer.as_mut().unwrap();
+    transfer.restorable = false;
+    transfer.live_data_handoff = true;
+    let summary = Rem6HostActionSummary {
+        total_action_count: 1,
+        execution_mode_switch_count: 1,
+        execution_mode_switches: vec![switch],
+        ..Rem6HostActionSummary::default()
+    };
+
+    emit_run_host_action_stats(&mut stats, &summary).unwrap();
+    let snapshot = stats.snapshot(0);
+    for (path, value) in [
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.restorable",
+            0,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.non_restorable",
+            1,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.live_data_handoffs",
+            1,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_restorable",
+            0,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_live_data_handoff",
+            1,
+        ),
+    ] {
+        assert_snapshot_stat(&snapshot, path, "Count", StatResetPolicy::Monotonic, value);
+    }
+}
+
+#[test]
 fn host_action_quiescence_target_capture_stats_skip_uncaptured_transfers() {
     let mut stats = StatsRegistry::new();
     let summary = Rem6HostActionSummary {
@@ -421,6 +465,7 @@ fn restore_with_component_chunk(
                 payload_bytes,
                 payload_checksum,
                 o3_runtime: None,
+                o3_live_data_handoff: None,
             }],
         }],
     }
@@ -447,6 +492,8 @@ fn switch_with_transfer_component_chunk(
             component_count: 1,
             chunk_count: 1,
             payload_bytes,
+            restorable: true,
+            live_data_handoff: false,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: "cpu0".to_string(),
@@ -464,6 +511,7 @@ fn switch_with_transfer_component_chunk(
                     payload_bytes,
                     payload_checksum,
                     o3_runtime: None,
+                    o3_live_data_handoff: None,
                 }],
             }],
         }),
@@ -486,6 +534,8 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
             component_count: 2,
             chunk_count: 2,
             payload_bytes: 24,
+            restorable: true,
+            live_data_handoff: false,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: "cpu0".to_string(),
@@ -506,6 +556,7 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
                             payload_bytes,
                             payload_checksum,
                             o3_runtime: None,
+                            o3_live_data_handoff: None,
                         }],
                     }
                 })
@@ -530,6 +581,8 @@ fn switch_with_uncaptured_quiescence(target: &str) -> Rem6HostExecutionModeSwitc
             component_count: 0,
             chunk_count: 0,
             payload_bytes: 0,
+            restorable: true,
+            live_data_handoff: false,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: target.to_string(),

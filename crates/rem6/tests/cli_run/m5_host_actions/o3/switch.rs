@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "switch/checkpoint_rollback.rs"]
 mod checkpoint_rollback;
+#[path = "switch/scalar_load.rs"]
+mod scalar_load;
 
 #[test]
 fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {

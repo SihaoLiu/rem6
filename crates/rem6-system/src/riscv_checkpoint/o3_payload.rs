@@ -6,7 +6,7 @@ use rem6_cpu::{
 use super::RiscvCoreCheckpointError;
 
 pub(super) const O3_PENDING_STATE_CHUNK: &str = "o3-pending-state";
-pub(super) const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
+pub const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
 
 pub(super) fn decode_o3_runtime_authority(
     component: &CheckpointComponentId,

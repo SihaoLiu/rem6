@@ -1576,12 +1576,14 @@ impl Rem6ExecutionModeStateTransferSummary {
             .join(",");
         let quiescence_gate = self.quiescence_gate.to_json();
         format!(
-            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
+            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
             json_escape(&self.manifest_label),
             self.manifest_tick,
             self.component_count,
             self.chunk_count,
             self.payload_bytes,
+            self.restorable,
+            self.live_data_handoff,
             quiescence_gate,
             components,
         )

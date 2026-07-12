@@ -676,6 +676,7 @@ mod tests {
                     payload_bytes: 8,
                     payload_checksum: 11,
                     o3_runtime: None,
+                    o3_live_data_handoff: None,
                 }],
             }],
         }

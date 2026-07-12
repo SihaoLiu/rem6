@@ -62,6 +62,7 @@ mod riscv_defaults;
 mod riscv_drive;
 mod riscv_execute;
 mod riscv_execution_event;
+mod riscv_execution_mode_handoff;
 mod riscv_fetch;
 mod riscv_fetch_ahead;
 #[cfg(test)]

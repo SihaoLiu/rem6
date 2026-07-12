@@ -138,6 +138,7 @@ impl SystemActionExecutor {
                     .capture_execution_mode_switch_state_transfer_with_scheduler(
                         record,
                         target,
+                        *mode,
                         scheduler_checkpoint,
                         scheduler_checkpoint_bank.as_deref(),
                     )?;
@@ -167,6 +168,7 @@ impl SystemActionExecutor {
                     record.tick(),
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank.as_deref(),
+                    None,
                 )?;
                 self.capture_execution_modes_into(&mut staged_checkpoints)?;
                 let manifest = staged_checkpoints

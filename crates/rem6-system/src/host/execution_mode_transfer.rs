@@ -5,12 +5,20 @@ use crate::scheduler_checkpoint::{
     remove_scheduler_checkpoint_chunk, SchedulerCheckpointBankGuard, SchedulerCheckpointContext,
     SchedulerCheckpointOwnedEvent,
 };
-use crate::{ExecutionModeTarget, HostActionRecord, SchedulerCheckpointBank, SystemError};
+use crate::{
+    ExecutionMode, ExecutionModeTarget, HostActionRecord, SchedulerCheckpointBank, SystemError,
+};
 
 use super::{
-    ExecutionModeSwitchStateTransfer, SystemActionExecutor,
-    EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
+    execution_mode_handoff::supports_live_data_handoff, ExecutionModeSwitchStateTransfer,
+    SystemActionExecutor, EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
 };
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct AttachedCheckpointCapture {
+    borrowed_scheduler: bool,
+    live_data_handoff: bool,
+}
 
 impl SystemActionExecutor {
     pub fn attach_scheduler_checkpoint_bank(
@@ -41,23 +49,27 @@ impl SystemActionExecutor {
         &mut self,
         record: &HostActionRecord,
         target: &ExecutionModeTarget,
-        mut scheduler_checkpoint: Option<&mut SchedulerCheckpointContext<'_>>,
+        requested_mode: ExecutionMode,
+        scheduler_checkpoint: Option<&mut SchedulerCheckpointContext<'_>>,
         scheduler_checkpoint_bank: Option<&SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<Option<ExecutionModeSwitchStateTransfer>, SystemError> {
         let has_state_transfer_banks = self.has_execution_mode_switch_state_transfer_banks();
         if !has_state_transfer_banks && scheduler_checkpoint.is_none() {
             return Ok(None);
         }
+        let live_data_handoff_target =
+            supports_live_data_handoff(self.execution_mode(target), requested_mode)
+                .then_some(target);
 
         let mut staged_checkpoints = self.checkpoints.clone();
-        let captured_borrowed_scheduler = self
-            .capture_attached_checkpoint_banks_into_with_scheduler(
-                &mut staged_checkpoints,
-                record.tick(),
-                scheduler_checkpoint.as_deref_mut(),
-                scheduler_checkpoint_bank,
-            )?;
-        if !has_state_transfer_banks && !captured_borrowed_scheduler {
+        let capture = self.capture_attached_checkpoint_banks_into_with_scheduler(
+            &mut staged_checkpoints,
+            record.tick(),
+            scheduler_checkpoint,
+            scheduler_checkpoint_bank,
+            live_data_handoff_target,
+        )?;
+        if !has_state_transfer_banks && !capture.borrowed_scheduler {
             return Ok(None);
         }
         self.capture_execution_modes_into(&mut staged_checkpoints)?;
@@ -68,17 +80,24 @@ impl SystemActionExecutor {
                 record.tick(),
             )
             .map_err(SystemError::Checkpoint)?;
-        self.checkpoints = staged_checkpoints;
-        self.captured_manifests
-            .insert(manifest.label().to_string(), manifest.clone());
         let checker = self
             .riscv_checkpoints
             .as_ref()
             .and_then(|checkpoints| checkpoints.checker_summary_for_target(target));
-
-        Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
-            &manifest, target, checker,
-        )))
+        if capture.live_data_handoff {
+            Ok(Some(
+                ExecutionModeSwitchStateTransfer::from_live_data_handoff_manifest(
+                    &manifest, target, checker,
+                ),
+            ))
+        } else {
+            self.checkpoints = staged_checkpoints;
+            self.captured_manifests
+                .insert(manifest.label().to_string(), manifest.clone());
+            Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
+                &manifest, target, checker,
+            )))
+        }
     }
 
     pub(super) fn capture_attached_checkpoint_banks_into_with_scheduler(
@@ -87,7 +106,8 @@ impl SystemActionExecutor {
         tick: Tick,
         mut scheduler_checkpoint: Option<&mut SchedulerCheckpointContext<'_>>,
         scheduler_checkpoint_bank: Option<&SchedulerCheckpointBankGuard<'_>>,
-    ) -> Result<bool, SystemError> {
+        live_data_handoff_target: Option<&ExecutionModeTarget>,
+    ) -> Result<AttachedCheckpointCapture, SystemError> {
         for component in &self.borrowed_scheduler_checkpoint_components {
             if self
                 .scheduler_checkpoints
@@ -101,26 +121,46 @@ impl SystemActionExecutor {
         if let Some(scheduler_checkpoint) = scheduler_checkpoint.as_ref() {
             scheduler_checkpoint.remove_checkpoint_chunk(staged_checkpoints);
         }
-        let borrowed_scheduler_is_attached = match (
-            self.scheduler_checkpoints.as_ref(),
-            scheduler_checkpoint.as_ref(),
-        ) {
-            (Some(bank), Some(scheduler)) => bank
-                .validate_borrowed_scheduler(scheduler)
-                .map_err(SystemError::SchedulerCheckpoint)?,
+        let live_data_handoff = match (self.riscv_checkpoints.as_ref(), live_data_handoff_target) {
+            (Some(bank), Some(target)) => bank
+                .capture_all_for_execution_mode_handoff_into(staged_checkpoints, target)
+                .map_err(SystemError::Checkpoint)?,
             _ => false,
         };
+        if live_data_handoff {
+            if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+                for component in scheduler_checkpoints.components() {
+                    remove_scheduler_checkpoint_chunk(staged_checkpoints, &component);
+                }
+            }
+        }
+        let borrowed_scheduler_is_attached = if live_data_handoff {
+            false
+        } else {
+            match (
+                self.scheduler_checkpoints.as_ref(),
+                scheduler_checkpoint.as_ref(),
+            ) {
+                (Some(bank), Some(scheduler)) => bank
+                    .validate_borrowed_scheduler(scheduler)
+                    .map_err(SystemError::SchedulerCheckpoint)?,
+                _ => false,
+            }
+        };
         let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
-        let capture_borrowed_scheduler = scheduler_checkpoint.as_ref().is_some_and(|scheduler| {
-            borrowed_scheduler_is_attached
-                || scheduler.has_pending_discard_claim(&owned_scheduler_events)
-        });
+        let capture_borrowed_scheduler = !live_data_handoff
+            && scheduler_checkpoint.as_ref().is_some_and(|scheduler| {
+                borrowed_scheduler_is_attached
+                    || scheduler.has_pending_discard_claim(&owned_scheduler_events)
+            });
         let borrowed_scheduler_component = capture_borrowed_scheduler
             .then(|| scheduler_checkpoint.as_ref().unwrap().component().clone());
-        if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
-            scheduler_checkpoint_bank
-                .validate_quiescent_capture_with_owned_events(&owned_scheduler_events)
-                .map_err(SystemError::SchedulerCheckpoint)?;
+        if !live_data_handoff {
+            if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
+                scheduler_checkpoint_bank
+                    .validate_quiescent_capture_with_owned_events(&owned_scheduler_events)
+                    .map_err(SystemError::SchedulerCheckpoint)?;
+            }
         }
         if capture_borrowed_scheduler {
             let scheduler_checkpoint = scheduler_checkpoint
@@ -150,15 +190,19 @@ impl SystemActionExecutor {
                 .capture_all_into(staged_checkpoints)
                 .map_err(SystemError::Checkpoint)?;
         }
-        if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
-            riscv_checkpoints
-                .capture_all_into(staged_checkpoints)
-                .map_err(SystemError::Checkpoint)?;
+        if !live_data_handoff {
+            if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+                riscv_checkpoints
+                    .capture_all_into(staged_checkpoints)
+                    .map_err(SystemError::Checkpoint)?;
+            }
         }
-        if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
-            scheduler_checkpoint_bank
-                .capture_all_into_with_owned_events(staged_checkpoints, &owned_scheduler_events)
-                .map_err(SystemError::SchedulerCheckpoint)?;
+        if !live_data_handoff {
+            if let Some(scheduler_checkpoint_bank) = scheduler_checkpoint_bank {
+                scheduler_checkpoint_bank
+                    .capture_all_into_with_owned_events(staged_checkpoints, &owned_scheduler_events)
+                    .map_err(SystemError::SchedulerCheckpoint)?;
+            }
         }
         if capture_borrowed_scheduler {
             let scheduler_checkpoint =
@@ -314,7 +358,10 @@ impl SystemActionExecutor {
                 .capture_all_into(staged_checkpoints)
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
-        Ok(capture_borrowed_scheduler)
+        Ok(AttachedCheckpointCapture {
+            borrowed_scheduler: capture_borrowed_scheduler,
+            live_data_handoff,
+        })
     }
 
     pub(super) fn owned_scheduler_checkpoint_events(&self) -> Vec<SchedulerCheckpointOwnedEvent> {

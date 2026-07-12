@@ -1,6 +1,7 @@
 mod action_apply;
 mod checkpoint_accessors;
 mod execution_mode_checkpoint;
+mod execution_mode_handoff;
 mod execution_mode_transfer;
 mod stats_sync;
 
@@ -54,6 +55,8 @@ pub struct ExecutionModeSwitchStateTransfer {
     component_count: u64,
     chunk_count: u64,
     payload_bytes: u64,
+    restorable: bool,
+    live_data_handoff: bool,
     quiescence_gate: ExecutionModeSwitchQuiescenceGate,
     components: Vec<ExecutionModeSwitchStateTransferComponent>,
 }
@@ -86,6 +89,7 @@ pub struct ExecutionModeSwitchStateTransferComponent {
 pub struct ExecutionModeSwitchStateTransferChunk {
     name: String,
     o3_runtime_payload: Option<Vec<u8>>,
+    o3_live_data_handoff_payload: Option<Vec<u8>>,
     payload_bytes: u64,
     payload_checksum: u64,
 }
@@ -108,6 +112,8 @@ impl ExecutionModeSwitchStateTransfer {
             component_count: summary.component_count() as u64,
             chunk_count: summary.chunk_count() as u64,
             payload_bytes: summary.payload_bytes() as u64,
+            restorable: true,
+            live_data_handoff: false,
             quiescence_gate: ExecutionModeSwitchQuiescenceGate {
                 validated: true,
                 target: target.clone(),
@@ -224,7 +230,9 @@ impl ExecutionModeSwitchStateTransferChunk {
     fn from_chunk(chunk: &rem6_checkpoint::CheckpointChunk) -> Self {
         Self {
             name: chunk.name().to_string(),
-            o3_runtime_payload: (chunk.name() == "o3-runtime-state")
+            o3_runtime_payload: (chunk.name() == crate::RISCV_O3_RUNTIME_STATE_CHUNK)
+                .then(|| chunk.payload().to_vec()),
+            o3_live_data_handoff_payload: (chunk.name() == crate::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
                 .then(|| chunk.payload().to_vec()),
             payload_bytes: chunk.payload().len() as u64,
             payload_checksum: checkpoint_payload_checksum(chunk.payload()),
@@ -237,6 +245,10 @@ impl ExecutionModeSwitchStateTransferChunk {
 
     pub fn o3_runtime_payload(&self) -> Option<&[u8]> {
         self.o3_runtime_payload.as_deref()
+    }
+
+    pub fn o3_live_data_handoff_payload(&self) -> Option<&[u8]> {
+        self.o3_live_data_handoff_payload.as_deref()
     }
 
     pub const fn payload_bytes(&self) -> u64 {
