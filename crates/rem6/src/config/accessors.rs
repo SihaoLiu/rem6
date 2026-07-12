@@ -8,8 +8,9 @@ use super::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
     CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig, KernelResourceSelector,
     LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig,
-    RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig, RunMemorySystem,
-    StatsFormat, TraceReplayHostEventSpec, DEFAULT_RISCV_IN_ORDER_WIDTH,
+    RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig,
+    RunHostExecutionModeSwitchSpec, RunMemorySystem, StatsFormat, TraceReplayHostEventSpec,
+    DEFAULT_RISCV_IN_ORDER_WIDTH,
 };
 
 impl Rem6RunConfig {
@@ -51,6 +52,10 @@ impl Rem6RunConfig {
 
     pub(crate) fn host_checkpoint_restores(&self) -> &[TraceReplayHostEventSpec] {
         &self.host_checkpoint_restores
+    }
+
+    pub(crate) fn host_execution_mode_switches(&self) -> &[RunHostExecutionModeSwitchSpec] {
+        &self.host_execution_mode_switches
     }
 
     pub const fn start_address(&self) -> Option<u64> {

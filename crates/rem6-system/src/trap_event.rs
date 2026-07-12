@@ -1,3 +1,4 @@
+mod host_control_schedule;
 mod scheduler_checkpoint_delivery;
 
 use std::sync::{Arc, Mutex};
@@ -755,7 +756,7 @@ impl RiscvTrapEventPort {
         source_tick: Tick,
         label: String,
     ) -> Result<PartitionEventId, SystemError> {
-        self.schedule_host_checkpoint_event_kind(
+        self.schedule_host_control_event_kind(
             scheduler,
             event,
             source,
@@ -772,7 +773,7 @@ impl RiscvTrapEventPort {
         source_tick: Tick,
         label: String,
     ) -> Result<PartitionEventId, SystemError> {
-        self.schedule_host_checkpoint_event_kind(
+        self.schedule_host_control_event_kind(
             scheduler,
             event,
             source,
@@ -789,7 +790,7 @@ impl RiscvTrapEventPort {
         source_tick: Tick,
         label: String,
     ) -> Result<PartitionEventId, SystemError> {
-        self.schedule_host_checkpoint_event_kind_parallel(
+        self.schedule_host_control_event_kind_parallel(
             scheduler,
             event,
             source,
@@ -806,7 +807,7 @@ impl RiscvTrapEventPort {
         source_tick: Tick,
         label: String,
     ) -> Result<PartitionEventId, SystemError> {
-        self.schedule_host_checkpoint_event_kind_parallel(
+        self.schedule_host_control_event_kind_parallel(
             scheduler,
             event,
             source,
@@ -897,7 +898,7 @@ impl RiscvTrapEventPort {
         Ok(scheduled)
     }
 
-    fn schedule_host_checkpoint_event_kind(
+    fn schedule_host_control_event_kind(
         &self,
         scheduler: &mut PartitionedScheduler,
         event: GuestEventId,
@@ -917,7 +918,7 @@ impl RiscvTrapEventPort {
         Ok(scheduler_event)
     }
 
-    fn schedule_host_checkpoint_event_kind_parallel(
+    fn schedule_host_control_event_kind_parallel(
         &self,
         scheduler: &mut PartitionedScheduler,
         event: GuestEventId,

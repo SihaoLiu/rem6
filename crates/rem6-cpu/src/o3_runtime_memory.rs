@@ -882,29 +882,14 @@ mod tests {
         assert_eq!(runtime.stats().max_rob_occupancy(), 2);
         assert!(!runtime.scalar_memory_lifecycle_is_quiescent());
 
-        let instruction = RiscvInstruction::Addi {
-            rd: reg(13),
-            rs1: reg(0),
-            imm: Immediate::new(7),
-        };
-        let younger = RiscvCpuExecutionEvent::new(
-            fetch_event(0x8004, 11),
-            instruction,
-            RiscvExecutionRecord::new(
-                instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(reg(13), 7)],
-                None,
-            ),
-        );
+        let younger = independent_younger_event();
         runtime.retire_live_staged_instruction(&younger, &[younger.fetch().request_id()], 42);
         runtime.record_retired_instruction_with_trace(&younger, true);
         assert!(runtime.scalar_memory_lifecycle_is_quiescent());
     }
 
     #[test]
-    fn cleanup_mode_disable_removes_completed_scalar_younger_window() {
+    fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
         let mut runtime = O3RuntimeState::default();
         let execution = scalar_load_event(0x8000, 10);
         let data_request = memory_request(20);
@@ -931,9 +916,24 @@ mod tests {
 
         core.set_detailed_live_retire_gate_enabled(false);
 
-        let state = core.state.lock().expect("riscv core lock");
+        assert!(core.has_pending_o3_runtime_retirement());
+        let younger = independent_younger_event();
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
+        assert!(!state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+
+        state.o3_runtime.retire_live_staged_instruction(
+            &younger,
+            &[younger.fetch().request_id()],
+            42,
+        );
+        state
+            .o3_runtime
+            .record_retired_instruction_with_trace(&younger, true);
+
         assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
         assert!(state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+        assert!(!state.o3_runtime.has_pending_retirement_authority());
     }
 
     #[test]
@@ -1080,6 +1080,25 @@ mod tests {
                 },
             )],
         );
+    }
+
+    fn independent_younger_event() -> RiscvCpuExecutionEvent {
+        let instruction = RiscvInstruction::Addi {
+            rd: reg(13),
+            rs1: reg(0),
+            imm: Immediate::new(7),
+        };
+        RiscvCpuExecutionEvent::new(
+            fetch_event(0x8004, 11),
+            instruction,
+            RiscvExecutionRecord::new(
+                instruction,
+                0x8004,
+                0x8008,
+                vec![RegisterWrite::new(reg(13), 7)],
+                None,
+            ),
+        )
     }
 
     fn scalar_store_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {

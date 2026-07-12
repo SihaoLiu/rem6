@@ -16,6 +16,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--host-event-delay",
             "--host-checkpoint",
             "--host-restore-checkpoint",
+            "--host-switch-cpu-mode",
             "--start-address",
             "--riscv-boot-a0",
             "--riscv-boot-a1",

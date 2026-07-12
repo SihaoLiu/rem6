@@ -286,7 +286,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
-            if state.o3_runtime.has_pending_scalar_memory_retirement() {
+            if state.o3_runtime.has_pending_retirement_authority() {
                 return;
             }
             if state.o3_runtime.has_live_scalar_memory_window() {

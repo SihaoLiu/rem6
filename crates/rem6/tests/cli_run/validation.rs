@@ -414,6 +414,151 @@ fn rem6_run_rejects_host_checkpoint_flags_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_host_switch_cpu_mode_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("host-switch-cpu-mode-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--host-switch-cpu-mode",
+            "8:cpu0:timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--host-switch-cpu-mode requires --execute"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn rem6_run_rejects_malformed_host_switch_cpu_mode_specs() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("malformed-host-switch-cpu-mode", &elf);
+
+    for value in [
+        "missing-fields",
+        "tick:cpu0:timing",
+        "8::timing",
+        "8:cpu00:timing",
+        "8:not-a-cpu:timing",
+        "8:cpu0:unsupported",
+        "8:cpu0:timing:extra",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--memory-system",
+                "direct",
+                "--host-switch-cpu-mode",
+                value,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success(), "value {value} should be rejected");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("expected tick:target:mode"),
+            "value {value}; stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_rejects_host_switch_cpu_mode_target_outside_configured_cores() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("host-switch-cpu-mode-outside-configured-cores", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--cores",
+            "2",
+            "--host-switch-cpu-mode",
+            "8:cpu2:timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("host execution-mode switch target cpu2 is outside configured cores 2"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn rem6_run_rejects_host_switch_cpu_mode_for_non_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("host-switch-cpu-mode-non-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-switch-cpu-mode",
+            "8:cpu0:timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--host-switch-cpu-mode requires --isa riscv"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_rejects_riscv_branch_lookahead_without_riscv_isa() {
     let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
     let path = temp_binary("riscv-branch-lookahead-without-riscv", &elf);

@@ -200,7 +200,11 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) {
-    if !state.live_retire_gate.detailed_policy_enabled() {
+    if !state.live_retire_gate.detailed_policy_enabled()
+        && !state
+            .o3_runtime
+            .owns_pending_scalar_memory_retirement(execution.fetch().request_id())
+    {
         return;
     }
     let row_limit = state
@@ -235,9 +239,6 @@ pub(crate) fn wake_o3_scalar_memory_younger_window(
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) {
-    if !state.live_retire_gate.detailed_policy_enabled() {
-        return;
-    }
     let Some((tail_request, next_pc, younger_rows)) =
         state.o3_runtime.live_scalar_memory_younger_wakeup_seed()
     else {

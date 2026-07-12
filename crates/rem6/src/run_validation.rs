@@ -14,8 +14,26 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
     validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
     validate_riscv_sbi_inputs(config)?;
+    validate_host_execution_mode_switches(config)?;
     if config.gdb_listen().is_some() {
         validate_run_gdb_listen_config(config)?;
+    }
+    Ok(())
+}
+
+fn validate_host_execution_mode_switches(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.host_execution_mode_switches().is_empty() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::HostSwitchCpuModeRequiresRiscv);
+    }
+    for mode_switch in config.host_execution_mode_switches() {
+        if mode_switch.cpu() >= config.cores() {
+            return Err(
+                Rem6CliError::HostSwitchCpuModeTargetOutsideConfiguredCores {
+                    target: mode_switch.target().as_str().to_string(),
+                    cores: config.cores(),
+                },
+            );
+        }
     }
     Ok(())
 }
@@ -98,6 +116,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     }
     if !config.host_checkpoint_restores().is_empty() {
         return Err(Rem6CliError::HostCheckpointRestoreRequiresExecution);
+    }
+    if !config.host_execution_mode_switches().is_empty() {
+        return Err(Rem6CliError::HostSwitchCpuModeRequiresExecution);
     }
     if !config.debug_flags().is_empty() {
         return Err(Rem6CliError::DebugFlagsRequireExecution);

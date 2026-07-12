@@ -16,6 +16,7 @@ mod dram;
 mod fabric;
 mod file_scan;
 mod guest_host_call;
+mod host_event;
 mod isa;
 mod memory_system;
 mod output_format;
@@ -43,6 +44,12 @@ use file_scan::{
 };
 use guest_host_call::parse_guest_host_call_response;
 pub(crate) use guest_host_call::GuestHostCallResponseConfig;
+pub(crate) use host_event::RunHostExecutionModeSwitchSpec;
+pub use host_event::TraceReplayHostEventSpec;
+use host_event::{
+    parse_run_host_event, parse_run_host_execution_mode_switch, run_host_events_from_file,
+    run_host_execution_mode_switches_from_file,
+};
 pub use isa::RequestedIsa;
 pub use memory_system::RunMemorySystem;
 use memory_system::{apply_run_memory_system_preset, default_run_memory_system_for_execution};
@@ -77,6 +84,7 @@ pub struct Rem6RunConfig {
     host_event_delay: u64,
     host_checkpoints: Vec<TraceReplayHostEventSpec>,
     host_checkpoint_restores: Vec<TraceReplayHostEventSpec>,
+    host_execution_mode_switches: Vec<RunHostExecutionModeSwitchSpec>,
     start_address: Option<u64>,
     riscv_boot_a0: u64,
     riscv_boot_a1: u64,
@@ -179,29 +187,6 @@ pub struct Rem6TraceReplayConfig {
     power_output: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TraceReplayHostEventSpec {
-    tick: u64,
-    label: String,
-}
-
-impl TraceReplayHostEventSpec {
-    pub(crate) fn new(tick: u64, label: impl Into<String>) -> Self {
-        Self {
-            tick,
-            label: label.into(),
-        }
-    }
-
-    pub const fn tick(&self) -> u64 {
-        self.tick
-    }
-
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-}
-
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rem6FileConfig {
@@ -223,6 +208,7 @@ struct Rem6RunFileConfig {
     host_event_delay: Option<u64>,
     host_checkpoints: Option<Vec<String>>,
     host_checkpoint_restores: Option<Vec<String>>,
+    host_execution_mode_switches: Option<Vec<String>>,
     start_address: Option<u64>,
     riscv_boot_a0: Option<u64>,
     riscv_boot_a1: Option<u64>,
@@ -396,35 +382,6 @@ fn resolve_config_path(config_dir: Option<&Path>, path: &Path) -> PathBuf {
     }
 }
 
-fn run_host_events_from_file(
-    values: Option<&[String]>,
-) -> Result<Vec<TraceReplayHostEventSpec>, Rem6CliError> {
-    values
-        .unwrap_or_default()
-        .iter()
-        .map(|value| parse_run_host_event(value))
-        .collect()
-}
-
-fn parse_run_host_event(value: &str) -> Result<TraceReplayHostEventSpec, Rem6CliError> {
-    let Some((tick, label)) = value.split_once(':') else {
-        return Err(Rem6CliError::InvalidRunHostCheckpointEvent {
-            value: value.to_string(),
-        });
-    };
-    let tick = tick
-        .parse::<u64>()
-        .map_err(|_| Rem6CliError::InvalidRunHostCheckpointEvent {
-            value: value.to_string(),
-        })?;
-    if label.is_empty() {
-        return Err(Rem6CliError::InvalidRunHostCheckpointEvent {
-            value: value.to_string(),
-        });
-    }
-    Ok(TraceReplayHostEventSpec::new(tick, label))
-}
-
 impl Rem6RunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -491,6 +448,9 @@ impl Rem6RunConfig {
             run_host_events_from_file(file_config.host_checkpoints.as_deref())?;
         let mut host_checkpoint_restores =
             run_host_events_from_file(file_config.host_checkpoint_restores.as_deref())?;
+        let mut host_execution_mode_switches = run_host_execution_mode_switches_from_file(
+            file_config.host_execution_mode_switches.as_deref(),
+        )?;
         let mut start_address = file_config.start_address;
         let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
         let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
@@ -886,6 +846,11 @@ impl Rem6RunConfig {
                 "--host-restore-checkpoint" => {
                     let value = required_value(&flag, args.next())?;
                     host_checkpoint_restores.push(parse_run_host_event(&value)?);
+                }
+                "--host-switch-cpu-mode" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_execution_mode_switches
+                        .push(parse_run_host_execution_mode_switch(&value)?);
                 }
                 "--start-address" => {
                     let value = required_value(&flag, args.next())?;
@@ -1392,6 +1357,7 @@ impl Rem6RunConfig {
             host_event_delay,
             host_checkpoints,
             host_checkpoint_restores,
+            host_execution_mode_switches,
             start_address,
             riscv_boot_a0,
             riscv_boot_a1,

@@ -4,6 +4,259 @@ use super::*;
 mod checkpoint_rollback;
 
 #[test]
+fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {
+    let path = live_o3_mode_transfer_binary("host-switch-live-o3-fu-authority");
+    let baseline = run_live_o3_mode_transfer(&path, &[]);
+    let baseline_div = live_mode_transfer_event(&baseline, "0x8000000c");
+    let baseline_first = live_mode_transfer_event(&baseline, "0x80000010");
+    let baseline_second = live_mode_transfer_event(&baseline, "0x80000014");
+    let baseline_third = live_mode_transfer_event(&baseline, "0x80000018");
+    assert!(live_mode_transfer_event_if_present(&baseline, "0x8000001c").is_some());
+    let switch_tick = event_u64_field(baseline_div, "writeback_tick").saturating_sub(4);
+    assert!(switch_tick > event_u64_field(baseline_div, "issue_tick"));
+    assert!(switch_tick < event_u64_field(baseline_div, "writeback_tick"));
+
+    let json = run_live_o3_mode_transfer(&path, &[(switch_tick, "timing")]);
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("01000000100000000a000000")
+    );
+
+    let switches = json
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution-mode switches: {json}"));
+    assert_eq!(switches.len(), 3, "switches: {switches:?}");
+    let timing_switch = switches
+        .iter()
+        .find(|switch| {
+            switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+        })
+        .unwrap_or_else(|| panic!("missing live detailed-to-timing switch: {switches:?}"));
+    let timing_action_tick = timing_switch
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .expect("timing switch tick");
+    assert!(timing_action_tick > event_u64_field(baseline_div, "issue_tick"));
+    assert!(timing_action_tick < event_u64_field(baseline_div, "writeback_tick"));
+
+    let timing_transfer = timing_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing live timing switch transfer: {timing_switch}"));
+    let timing_runtime = latest_transfer_o3_runtime_chunk(timing_transfer, "cpu0");
+    assert_eq!(
+        timing_runtime
+            .pointer("/decode_error")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        timing_runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(4),
+        "the switch must capture DIV plus three younger live FU rows: {timing_runtime}"
+    );
+    assert!(
+        timing_runtime
+            .pointer("/stats_rename_map_entries")
+            .and_then(Value::as_u64)
+            .is_some_and(|entries| entries >= 6),
+        "the switch must carry the live rename owners: {timing_runtime}"
+    );
+    assert_eq!(
+        timing_runtime
+            .pointer("/live_retire_gate_ready_tick")
+            .and_then(Value::as_u64),
+        Some(event_u64_field(baseline_div, "writeback_tick")),
+        "the switch transfer must retain the absolute DIV wake: {timing_runtime}"
+    );
+
+    let resumed_switch = switches
+        .iter()
+        .find(|switch| {
+            switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                && switch.pointer("/mode").and_then(Value::as_str) == Some("detailed")
+                && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("timing")
+        })
+        .unwrap_or_else(|| panic!("missing timing-to-detailed switch: {switches:?}"));
+    let resumed_runtime = latest_transfer_o3_runtime_chunk(
+        resumed_switch
+            .pointer("/state_transfer")
+            .expect("resumed switch transfer"),
+        "cpu0",
+    );
+    assert!(
+        resumed_runtime
+            .pointer("/live_retire_gate_ready_tick")
+            .is_some_and(Value::is_null),
+        "the inherited gate must drain before detailed admission resumes: {resumed_runtime}"
+    );
+
+    for (pc, baseline_event) in [
+        ("0x8000000c", baseline_div),
+        ("0x80000010", baseline_first),
+        ("0x80000014", baseline_second),
+        ("0x80000018", baseline_third),
+    ] {
+        let transferred = live_mode_transfer_event(&json, pc);
+        assert_eq!(
+            event_u64_field(transferred, "issue_tick"),
+            event_u64_field(baseline_event, "issue_tick"),
+            "mode transfer must preserve the original O3 issue tick for {pc}: {transferred}"
+        );
+        assert_eq!(
+            event_u64_field(transferred, "writeback_tick"),
+            event_u64_field(baseline_event, "writeback_tick"),
+            "mode transfer must preserve the original O3 writeback tick for {pc}: {transferred}"
+        );
+        assert_eq!(
+            event_u64_field(transferred, "commit_tick"),
+            event_u64_field(baseline_event, "commit_tick"),
+            "mode transfer must preserve the original O3 commit tick for {pc}: {transferred}"
+        );
+    }
+    let transferred_events = [
+        live_mode_transfer_event(&json, "0x8000000c"),
+        live_mode_transfer_event(&json, "0x80000010"),
+        live_mode_transfer_event(&json, "0x80000014"),
+        live_mode_transfer_event(&json, "0x80000018"),
+    ];
+    assert!(transferred_events.windows(2).all(|events| {
+        event_u64_field(events[0], "commit_tick") <= event_u64_field(events[1], "commit_tick")
+    }));
+    assert!(
+        live_mode_transfer_event_if_present(&json, "0x8000001c").is_none(),
+        "timing mode must not admit the first instruction beyond inherited O3 authority"
+    );
+    assert_json_stat(
+        &json,
+        "sim.cpu0.o3.live_retire_gate.scheduled_waits",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_toml_schedules_host_execution_mode_switch() {
+    let path = live_o3_mode_transfer_binary("toml-host-switch-live-o3-fu-authority");
+    let baseline = run_live_o3_mode_transfer(&path, &[]);
+    let divide = live_mode_transfer_event(&baseline, "0x8000000c");
+    let switch_tick = event_u64_field(divide, "writeback_tick").saturating_sub(4);
+    let workspace = temp_workspace("toml-host-switch-live-o3");
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"[run]
+isa = "riscv"
+binary = "{}"
+max_tick = 260
+stats_format = "json"
+execute = true
+memory_system = "direct"
+m5_switch_cpu_mode = "detailed"
+host_execution_mode_switches = ["{switch_tick}:cpu0:timing"]
+memory_dumps = ["0x80000080:12"]
+"#,
+            path.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("01000000100000000a000000")
+    );
+    let switches = json
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution-mode switches: {json}"));
+    assert!(switches.iter().any(|switch| {
+        switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+            && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+            && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+    }));
+}
+
+#[test]
+fn rem6_run_orders_same_tick_host_mode_switch_before_checkpoint() {
+    let mut words = vec![i_type(1, 0, 0x0, 5, 0x13)];
+    append_host_stop(&mut words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("same-tick-host-mode-switch-before-checkpoint", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--host-switch-cpu-mode",
+            "0:cpu0:detailed",
+            "--host-checkpoint",
+            "0:same-tick-mode",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let checkpoint = json
+        .pointer("/host_actions/checkpoints/0")
+        .unwrap_or_else(|| panic!("missing same-tick checkpoint: {json}"));
+    assert_eq!(
+        checkpoint.pointer("/label").and_then(Value::as_str),
+        Some("same-tick-mode")
+    );
+    let modes = checkpoint
+        .pointer("/execution_modes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint execution modes: {checkpoint}"));
+    assert_eq!(modes.len(), 1, "checkpoint execution modes: {modes:?}");
+    assert_eq!(
+        modes[0].pointer("/target").and_then(Value::as_str),
+        Some("cpu0")
+    );
+    assert_eq!(
+        modes[0].pointer("/mode").and_then(Value::as_str),
+        Some("detailed")
+    );
+}
+
+#[test]
 fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     let path = multicore_hart1_detailed_o3_binary("m5-switch-cpu-hart1-detailed-o3-transfer-scope");
 
@@ -810,6 +1063,94 @@ fn assert_trace_switch_component_chunk(switch: &Value, component: &str, chunk: &
             .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
         "trace chunk should expose payload checksum: {chunk}"
     );
+}
+
+fn run_live_o3_mode_transfer(path: &Path, switches: &[(u64, &str)]) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "260",
+        "--stats-format",
+        "json",
+        "--execute",
+        "--memory-system",
+        "direct",
+        "--m5-switch-cpu-mode",
+        "detailed",
+        "--debug-flags",
+        "O3,HostAction",
+        "--dump-memory",
+        "0x80000080:12",
+    ]);
+    for (tick, mode) in switches {
+        command.args(["--host-switch-cpu-mode", &format!("{tick}:cpu0:{mode}")]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "scheduled switches {switches:?}; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn live_o3_mode_transfer_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 128_i32;
+    let mut words = vec![
+        m5op(M5_SWITCH_CPU),
+        i_type(6, 0, 0x0, 1, 0x13),
+        i_type(7, 0, 0x0, 2, 0x13),
+        r_type(1, 1, 2, 0x4, 3, 0x33),
+        i_type(5, 0, 0x0, 4, 0x13),
+        i_type(11, 4, 0x0, 5, 0x13),
+        i_type(9, 0, 0x0, 6, 0x13),
+        i_type(10, 0, 0x0, 7, 0x13),
+        m5op(M5_SWITCH_CPU),
+    ];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 12, 0x17),
+        i_type(data_start - auipc_pc, 12, 0x0, 12, 0x13),
+        s_type(0, 3, 12, 0b010),
+        s_type(4, 5, 12, 0b010),
+        s_type(8, 7, 12, 0b010),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn live_mode_transfer_event<'a>(json: &'a Value, pc: &str) -> &'a Value {
+    live_mode_transfer_event_if_present(json, pc)
+        .unwrap_or_else(|| panic!("missing O3 event at {pc}: {json}"))
+}
+
+fn live_mode_transfer_event_if_present<'a>(json: &'a Value, pc: &str) -> Option<&'a Value> {
+    json.pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        })
+}
+
+fn event_u64_field(event: &Value, field: &str) -> u64 {
+    event
+        .pointer(&format!("/{field}"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing {field}: {event}"))
 }
 
 fn latest_transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {

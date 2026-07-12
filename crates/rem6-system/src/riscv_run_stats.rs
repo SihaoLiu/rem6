@@ -86,7 +86,8 @@ impl RiscvSystemRunDriver {
         tick: Tick,
         retirement_budget: Option<u64>,
     ) -> Result<Vec<RiscvRetirementObservation>, SystemError> {
-        let detailed_cpus = self.detailed_cpus(cluster);
+        let detailed_cpus = self.configured_detailed_cpus(cluster);
+        let o3_authority_cpus = self.o3_authority_cpus(cluster, &detailed_cpus);
         let mut retired = Vec::new();
         let mut updated_cpus = BTreeSet::new();
 
@@ -95,8 +96,22 @@ impl RiscvSystemRunDriver {
                 RiscvCoreDriveAction::InstructionExecuted(instruction)
                     if instruction.counts_as_retired_instruction() =>
                 {
+                    let core = cluster
+                        .core(event.cpu())
+                        .map_err(SystemError::RiscvCluster)?;
                     let detailed = detailed_cpus.contains(&event.cpu());
-                    let deferred_scalar_memory = detailed && instruction.is_scalar_memory_access();
+                    let deferred_scalar_memory = instruction.is_scalar_memory_access()
+                        && core.owns_pending_o3_scalar_memory_retirement(
+                            instruction.fetch().request_id(),
+                        );
+                    let owns_inherited_retirement =
+                        core.owns_pending_o3_runtime_retirement(instruction.fetch().request_id());
+                    if detailed && instruction.is_scalar_memory_access() {
+                        assert!(
+                            deferred_scalar_memory,
+                            "detailed scalar execution must reserve CPU-owned retirement"
+                        );
+                    }
                     if !deferred_scalar_memory {
                         retired.push(RiscvRetirementObservation {
                             tick,
@@ -104,28 +119,16 @@ impl RiscvSystemRunDriver {
                             pc: instruction.fetch_pc().get(),
                         });
                     }
-                    if detailed {
-                        let core = cluster
-                            .core(event.cpu())
-                            .map_err(SystemError::RiscvCluster)?;
-                        if deferred_scalar_memory {
-                            assert!(
-                                core.owns_pending_o3_scalar_memory_retirement(
-                                    instruction.fetch().request_id()
-                                ),
-                                "detailed scalar execution must reserve CPU-owned retirement"
-                            );
-                        } else {
-                            core.record_o3_retired_instruction_with_trace(
-                                instruction,
-                                self.o3_runtime_trace_enabled,
-                            );
-                            updated_cpus.insert(event.cpu());
-                        }
+                    if !deferred_scalar_memory && (detailed || owns_inherited_retirement) {
+                        core.record_o3_retired_instruction_with_trace(
+                            instruction,
+                            self.o3_runtime_trace_enabled,
+                        );
+                        updated_cpus.insert(event.cpu());
                     }
                 }
                 RiscvCoreDriveAction::DataAccessIssued { .. }
-                    if detailed_cpus.contains(&event.cpu()) =>
+                    if o3_authority_cpus.contains(&event.cpu()) =>
                 {
                     let core = cluster
                         .core(event.cpu())
@@ -143,7 +146,7 @@ impl RiscvSystemRunDriver {
         let mut remaining_scalar_retirements = retirement_budget
             .unwrap_or(u64::MAX)
             .saturating_sub(u64::try_from(retired.len()).unwrap_or(u64::MAX));
-        for cpu in detailed_cpus {
+        for cpu in o3_authority_cpus {
             let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
             loop {
                 let kind = core.ready_o3_scalar_memory_event_kind();
@@ -186,8 +189,8 @@ impl RiscvSystemRunDriver {
         Ok(retired)
     }
 
-    fn detailed_cpus(&self, cluster: &RiscvCluster) -> BTreeSet<CpuId> {
-        let configured = {
+    fn configured_detailed_cpus(&self, cluster: &RiscvCluster) -> BTreeSet<CpuId> {
+        {
             let controller = self.trap_port.controller();
             let controller = controller.lock().expect("system host controller lock");
             cluster
@@ -200,7 +203,14 @@ impl RiscvSystemRunDriver {
                         .is_some_and(|mode| mode == ExecutionMode::Detailed)
                 })
                 .collect::<BTreeSet<_>>()
-        };
+        }
+    }
+
+    fn o3_authority_cpus(
+        &self,
+        cluster: &RiscvCluster,
+        configured: &BTreeSet<CpuId>,
+    ) -> BTreeSet<CpuId> {
         cluster
             .core_ids()
             .into_iter()
@@ -208,7 +218,7 @@ impl RiscvSystemRunDriver {
                 configured.contains(cpu)
                     || cluster
                         .core(*cpu)
-                        .is_ok_and(|core| core.has_pending_o3_scalar_memory_retirement())
+                        .is_ok_and(|core| core.has_pending_o3_runtime_retirement())
             })
             .collect()
     }

@@ -74,6 +74,9 @@ pub enum Rem6CliError {
     InvalidRunHostCheckpointEvent {
         value: String,
     },
+    InvalidRunHostExecutionModeSwitch {
+        value: String,
+    },
     InvalidDramLowPowerTiming {
         value: String,
     },
@@ -341,6 +344,12 @@ pub enum Rem6CliError {
     M5SwitchCpuModeRequiresExecution,
     HostCheckpointRequiresExecution,
     HostCheckpointRestoreRequiresExecution,
+    HostSwitchCpuModeRequiresExecution,
+    HostSwitchCpuModeRequiresRiscv,
+    HostSwitchCpuModeTargetOutsideConfiguredCores {
+        target: String,
+        cores: usize,
+    },
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -678,6 +687,10 @@ impl fmt::Display for Rem6CliError {
                     "invalid run host checkpoint event {value}; expected tick:label"
                 )
             }
+            Self::InvalidRunHostExecutionModeSwitch { value } => write!(
+                formatter,
+                "invalid run host execution-mode switch {value}; expected tick:target:mode"
+            ),
             Self::InvalidGpuRunFabricBandwidth { value } => {
                 write!(formatter, "invalid gpu run fabric bandwidth {value}")
             }
@@ -926,6 +939,16 @@ impl fmt::Display for Rem6CliError {
             Self::HostCheckpointRestoreRequiresExecution => {
                 write!(formatter, "--host-restore-checkpoint requires --execute")
             }
+            Self::HostSwitchCpuModeRequiresExecution => {
+                write!(formatter, "--host-switch-cpu-mode requires --execute")
+            }
+            Self::HostSwitchCpuModeRequiresRiscv => {
+                write!(formatter, "--host-switch-cpu-mode requires --isa riscv")
+            }
+            Self::HostSwitchCpuModeTargetOutsideConfiguredCores { target, cores } => write!(
+                formatter,
+                "host execution-mode switch target {target} is outside configured cores {cores}"
+            ),
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")
             }

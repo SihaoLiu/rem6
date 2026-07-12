@@ -14,6 +14,8 @@ use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind}
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::{RiscvCoreState, RiscvDataAccessEventKind};
 
+#[path = "o3_runtime_authority.rs"]
+mod o3_runtime_authority;
 #[path = "o3_runtime_checkpoint.rs"]
 mod o3_runtime_checkpoint;
 #[path = "o3_runtime_checkpoint_branch_mismatch.rs"]

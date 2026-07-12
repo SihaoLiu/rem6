@@ -534,7 +534,7 @@ impl RiscvCore {
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
-        let (detailed_scalar_memory, detailed_scalar_load) = {
+        let (o3_scalar_memory, o3_scalar_load) = {
             let state = self.state.lock().expect("riscv core lock");
             let detailed = state.live_retire_gate.detailed_policy_enabled();
             let untranslated = state.data_translation.is_none();
@@ -542,16 +542,17 @@ impl RiscvCore {
                 issue.access,
                 MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
             );
-            (
-                scalar_memory
-                    && (detailed
-                        || state
-                            .o3_runtime
-                            .owns_pending_scalar_memory_retirement(issue.fetch_request)),
-                detailed && untranslated && matches!(issue.access, MemoryAccessKind::Load { .. }),
-            )
+            let o3_scalar_memory = scalar_memory
+                && (detailed
+                    || state
+                        .o3_runtime
+                        .owns_pending_scalar_memory_retirement(issue.fetch_request));
+            let o3_scalar_load = o3_scalar_memory
+                && untranslated
+                && matches!(issue.access, MemoryAccessKind::Load { .. });
+            (o3_scalar_memory, o3_scalar_load)
         };
-        let fetch_events = if detailed_scalar_load {
+        let fetch_events = if o3_scalar_load {
             self.core.fetch_events()
         } else {
             Vec::new()
@@ -566,7 +567,7 @@ impl RiscvCore {
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        if detailed_scalar_memory {
+        if o3_scalar_memory {
             let execution = execution
                 .as_ref()
                 .expect("issued scalar data access has a matching execution event");
@@ -577,10 +578,9 @@ impl RiscvCore {
             );
             assert!(
                 staged,
-                "detailed scalar data issue must own an available O3 memory slot"
+                "O3-owned scalar data issue must own an available memory slot"
             );
-            if detailed_scalar_load && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
-            {
+            if o3_scalar_load && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. }) {
                 stage_o3_scalar_memory_younger_window(
                     &mut state,
                     execution,
@@ -671,11 +671,10 @@ impl RiscvCore {
     ) -> Vec<CpuFetchEvent> {
         let should_snapshot = {
             let state = self.state.lock().expect("riscv core lock");
-            state.live_retire_gate.detailed_policy_enabled()
-                && state
-                    .outstanding_data
-                    .get(&request_id)
-                    .is_some_and(|access| matches!(access.access, MemoryAccessKind::Load { .. }))
+            state
+                .outstanding_data
+                .get(&request_id)
+                .is_some_and(|access| matches!(access.access, MemoryAccessKind::Load { .. }))
                 && state
                     .o3_runtime
                     .live_scalar_memory_younger_wakeup_seed()
