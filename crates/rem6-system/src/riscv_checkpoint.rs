@@ -694,9 +694,7 @@ impl RiscvCoreCheckpointBank {
         &self,
         target: &ExecutionModeTarget,
     ) -> Option<RiscvCoreCheckerSnapshotSummary> {
-        let component = CheckpointComponentId::new(target.as_str()).ok()?;
-        self.ports
-            .get(&component)?
+        self.port_for_execution_mode_target(target)?
             .core()
             .checker_cpu_snapshot()
             .map(|snapshot| {
@@ -756,43 +754,35 @@ impl RiscvCoreCheckpointBank {
         Ok(captured.into_iter().map(|(_, record)| record).collect())
     }
 
+    /// On success, replaces every RISC-V component in `registry` with the
+    /// target's non-restorable live-data handoff state. `Ok(false)` leaves it unchanged.
     pub fn capture_all_for_execution_mode_handoff_into(
         &self,
         registry: &mut CheckpointRegistry,
         target: &ExecutionModeTarget,
     ) -> Result<bool, CheckpointError> {
-        let Some(target_port) = self
-            .ports
-            .iter()
-            .find_map(|(component, port)| (component.as_str() == target.as_str()).then_some(port))
-        else {
+        self.capture_target_for_execution_mode_handoff_into(registry, target)
+    }
+
+    pub(crate) fn capture_target_for_execution_mode_handoff_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+        target: &ExecutionModeTarget,
+    ) -> Result<bool, CheckpointError> {
+        let Some(target_port) = self.port_for_execution_mode_target(target) else {
             return Ok(false);
         };
         let Some(handoff) = target_port.core.capture_o3_live_data_handoff() else {
             return Ok(false);
         };
 
-        let captured = self
-            .ports
-            .values()
-            .map(|port| {
-                if port.component == target_port.component {
-                    Ok((port, port.capture_record()))
-                } else {
-                    port.capture_checked_record().map(|record| (port, record))
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let record = target_port.capture_record();
         let mut staged = registry.clone();
-        for port in self.ports.values() {
-            match port.register(&mut staged) {
-                Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
-                Err(error) => return Err(error),
-            }
+        for component in self.ports.keys() {
+            staged.remove_component(component);
         }
-        for (port, record) in &captured {
-            port.write_record(&mut staged, record)?;
-        }
+        target_port.register(&mut staged)?;
+        target_port.write_record(&mut staged, &record)?;
         staged.write_chunk(
             &target_port.component,
             RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
@@ -800,6 +790,14 @@ impl RiscvCoreCheckpointBank {
         )?;
         *registry = staged;
         Ok(true)
+    }
+
+    fn port_for_execution_mode_target(
+        &self,
+        target: &ExecutionModeTarget,
+    ) -> Option<&RiscvCoreCheckpointPort> {
+        let component = CheckpointComponentId::new(target.as_str()).ok()?;
+        self.ports.get(&component)
     }
 
     pub fn restore_all_from(

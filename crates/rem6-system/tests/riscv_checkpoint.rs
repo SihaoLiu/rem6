@@ -196,7 +196,52 @@ fn fetch_and_execute_one(
 fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     let cpu0_component = CheckpointComponentId::new("cpu0").unwrap();
     let cpu1_component = CheckpointComponentId::new("cpu1").unwrap();
-    let cpu0 = riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    let mut cpu0_scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut cpu0_transport = MemoryTransport::new();
+    let cpu0_fetch_route = cpu0_transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0.ifetch"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data_route = cpu0_transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0.dmem"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0 = RiscvCore::with_data(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                cpu0_fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), cpu0_data_route, layout()),
+    );
 
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -262,7 +307,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     scheduler.run_until_idle_conservative();
     let cpu1_port = RiscvCoreCheckpointPort::new(cpu1_component.clone(), cpu1.clone());
     let bank = RiscvCoreCheckpointBank::new([
-        RiscvCoreCheckpointPort::new(cpu0_component.clone(), cpu0),
+        RiscvCoreCheckpointPort::new(cpu0_component.clone(), cpu0.clone()),
         cpu1_port.clone(),
     ])
     .unwrap();
@@ -303,6 +348,21 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert_eq!(resident.reorder_buffer()[0].pc(), Address::new(0x9000));
     assert_eq!(resident.reorder_buffer()[1].pc(), Address::new(0x9004));
     assert_eq!(resident.load_store_queue().len(), 1);
+    fetch_and_execute_one(
+        &cpu0,
+        loaded_store(0x8000, i_type(0, 0, 0x2, 10, 0x03)),
+        &mut cpu0_scheduler,
+        &cpu0_transport,
+    );
+    cpu0.issue_next_data_access(
+        &mut cpu0_scheduler,
+        &cpu0_transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(!cpu0.data_access_lifecycle_is_quiescent());
     let mut handoff_registry = CheckpointRegistry::new();
     let handoff = bank
         .capture_all_for_execution_mode_handoff_into(
@@ -317,12 +377,19 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert!(handoff_registry
         .chunk(&cpu1_component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
         .is_some());
+    assert_eq!(handoff_registry.chunk(&cpu0_component, "pc"), None);
+    assert_eq!(
+        handoff_registry.chunk(&cpu0_component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK),
+        None
+    );
     assert_eq!(
         cpu1_port.restore_from(&handoff_registry),
         Err(RiscvCoreCheckpointError::LiveDataHandoffNotRestorable {
             component: cpu1_component.clone(),
         })
     );
+    cpu0.redirect_pc(Address::new(0x8100));
+    assert!(cpu0.data_access_lifecycle_is_quiescent());
     cpu1.set_detailed_live_retire_gate_enabled(false);
     assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
     assert_eq!(

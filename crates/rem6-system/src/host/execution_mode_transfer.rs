@@ -123,7 +123,7 @@ impl SystemActionExecutor {
         }
         let live_data_handoff = match (self.riscv_checkpoints.as_ref(), live_data_handoff_target) {
             (Some(bank), Some(target)) => bank
-                .capture_all_for_execution_mode_handoff_into(staged_checkpoints, target)
+                .capture_target_for_execution_mode_handoff_into(staged_checkpoints, target)
                 .map_err(SystemError::Checkpoint)?,
             _ => false,
         };

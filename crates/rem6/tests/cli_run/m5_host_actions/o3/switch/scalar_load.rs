@@ -381,7 +381,7 @@ fn assert_data_and_memory_trace(
     }));
 }
 
-fn assert_memory_resources(json: &Value, memory_system: &str) {
+pub(super) fn assert_memory_resources(json: &Value, memory_system: &str) {
     assert!(json
         .pointer("/memory_resources/transport/data/activity")
         .and_then(Value::as_u64)
@@ -494,7 +494,7 @@ fn event_u64(event: &Value, field: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing {field}: {event}"))
 }
 
-fn transfer_handoff_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+pub(super) fn transfer_handoff_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
     transfer
         .pointer("/components")
         .and_then(Value::as_array)
