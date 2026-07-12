@@ -300,6 +300,10 @@ impl CheckpointRegistry {
             .is_some()
     }
 
+    pub fn remove_component(&mut self, component: &CheckpointComponentId) -> bool {
+        self.components.remove(component).is_some()
+    }
+
     pub fn remove_component_if_empty(&mut self, component: &CheckpointComponentId) -> bool {
         if self
             .components

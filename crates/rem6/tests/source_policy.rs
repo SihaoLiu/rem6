@@ -545,9 +545,26 @@ fn checkpoint_restore_outputs_share_system_and_latest_authority() {
         "pub fn decode_execution_mode_authority_from_manifest(",
         "pub(super) fn encode_execution_modes(",
     );
+    for marker in [
+        "let modes = decode_execution_modes(&component, payload)?;",
+        "if modes.is_empty()",
+        "Ok(None)",
+        "Ok(Some(modes))",
+    ] {
+        assert!(
+            manifest_decoder.contains(marker),
+            "the public manifest decoder must validate payloads and normalize empty authority via `{marker}`"
+        );
+    }
+    let capture = source_section(
+        &system_host,
+        "fn capture_execution_modes_into(",
+        "fn stage_execution_mode_checkpoint_restore(",
+    );
     assert!(
-        manifest_decoder.contains("decode_execution_modes(&component, payload).map(Some)"),
-        "the public manifest decoder must delegate payload validation to the system decoder"
+        capture.contains("if self.execution_modes.is_empty()")
+            && capture.contains("remove_component(&component)"),
+        "empty live execution-mode authority must remove its complete owned checkpoint component"
     );
     let restore_stage = source_section(
         &system_host,
@@ -557,6 +574,14 @@ fn checkpoint_restore_outputs_share_system_and_latest_authority() {
     assert!(
         restore_stage.contains("decode_execution_mode_authority_from_manifest(manifest)"),
         "system restore staging must consume the same manifest decoder as CLI summaries"
+    );
+    assert!(
+        restore_stage.contains("remove_component(&component)"),
+        "authority-clearing restore must prune the complete owned checkpoint component"
+    );
+    assert!(
+        !system_host.contains("execution_mode_checkpoint_registered"),
+        "execution-mode checkpoint authority must not regain a historical registration latch"
     );
 
     assert!(

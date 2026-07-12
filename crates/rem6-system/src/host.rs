@@ -362,7 +362,6 @@ pub struct SystemActionExecutor {
     virtio_pci_device_config_checkpoints: Option<VirtioPciDeviceConfigCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
     guest_host_call_responses: BTreeMap<u64, GuestHostCallResponse>,
-    execution_mode_checkpoint_registered: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,7 +439,6 @@ impl SystemActionExecutor {
             virtio_pci_device_config_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
         }
     }
 
@@ -596,12 +594,13 @@ impl SystemActionExecutor {
     fn capture_execution_modes_into(
         &self,
         checkpoints: &mut CheckpointRegistry,
-    ) -> Result<bool, SystemError> {
-        if self.execution_modes.is_empty() && !self.execution_mode_checkpoint_registered {
-            return Ok(false);
+    ) -> Result<(), SystemError> {
+        let component = execution_mode_checkpoint_component();
+        if self.execution_modes.is_empty() {
+            checkpoints.remove_component(&component);
+            return Ok(());
         }
 
-        let component = execution_mode_checkpoint_component();
         match checkpoints.register(component.clone()) {
             Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
             Err(error) => return Err(SystemError::Checkpoint(error)),
@@ -613,36 +612,25 @@ impl SystemActionExecutor {
                 encode_execution_modes(&self.execution_modes),
             )
             .map_err(SystemError::Checkpoint)
-            .map(|()| true)
     }
 
     fn stage_execution_mode_checkpoint_restore(
-        &self,
         checkpoints: &mut CheckpointRegistry,
         manifest: &CheckpointManifest,
-    ) -> Result<(BTreeMap<ExecutionModeTarget, ExecutionMode>, bool), SystemError> {
+    ) -> Result<BTreeMap<ExecutionModeTarget, ExecutionMode>, SystemError> {
         let component = execution_mode_checkpoint_component();
         let modes = decode_execution_mode_authority_from_manifest(manifest)
             .map_err(SystemError::ExecutionModeCheckpoint)?;
         let Some(modes) = modes else {
-            let modes = BTreeMap::new();
-            if self.execution_mode_checkpoint_registered {
-                checkpoints
-                    .write_chunk(
-                        &component,
-                        EXECUTION_MODE_CHECKPOINT_CHUNK,
-                        encode_execution_modes(&modes),
-                    )
-                    .map_err(SystemError::Checkpoint)?;
-            }
-            return Ok((modes, self.execution_mode_checkpoint_registered));
+            checkpoints.remove_component(&component);
+            return Ok(BTreeMap::new());
         };
 
         match checkpoints.register(component.clone()) {
             Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
             Err(error) => return Err(SystemError::Checkpoint(error)),
         }
-        Ok((modes, true))
+        Ok(modes)
     }
 
     pub fn attach_memory_checkpoint_bank(
@@ -1125,8 +1113,8 @@ impl SystemActionExecutor {
                 staged_checkpoints.remove_component_if_empty(scheduler_checkpoint.component());
             }
         }
-        let (staged_execution_modes, staged_execution_mode_checkpoint_registered) =
-            self.stage_execution_mode_checkpoint_restore(&mut staged_checkpoints, manifest)?;
+        let staged_execution_modes =
+            Self::stage_execution_mode_checkpoint_restore(&mut staged_checkpoints, manifest)?;
         self.validate_checkpoint_banks(
             &staged_checkpoints,
             scheduler_checkpoint.as_deref_mut(),
@@ -1134,7 +1122,6 @@ impl SystemActionExecutor {
         )?;
         self.checkpoints = staged_checkpoints;
         self.execution_modes = staged_execution_modes;
-        self.execution_mode_checkpoint_registered = staged_execution_mode_checkpoint_registered;
         self.restore_checkpoint_banks(scheduler_checkpoint, scheduler_checkpoint_bank)
     }
 

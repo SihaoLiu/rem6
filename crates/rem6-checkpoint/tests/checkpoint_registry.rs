@@ -60,6 +60,20 @@ fn checkpoint_registry_removes_only_empty_components() {
 }
 
 #[test]
+fn checkpoint_registry_removes_owned_component_with_chunks() {
+    let component = CheckpointComponentId::new("owned").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, "state", vec![1, 2, 3])
+        .unwrap();
+
+    assert!(registry.remove_component(&component));
+    assert!(!registry.contains_component(&component));
+    assert!(!registry.remove_component(&component));
+}
+
+#[test]
 fn checkpoint_manifest_reports_component_chunk_and_payload_totals() {
     let cpu = CheckpointComponentId::new("cpu0").unwrap();
     let memory = CheckpointComponentId::new("memory0").unwrap();

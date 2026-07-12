@@ -168,15 +168,11 @@ impl SystemActionExecutor {
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank.as_deref(),
                 )?;
-                let execution_mode_registered =
-                    self.capture_execution_modes_into(&mut staged_checkpoints)?;
+                self.capture_execution_modes_into(&mut staged_checkpoints)?;
                 let manifest = staged_checkpoints
                     .capture(label.clone(), record.tick())
                     .map_err(SystemError::Checkpoint)?;
                 self.checkpoints = staged_checkpoints;
-                if execution_mode_registered {
-                    self.execution_mode_checkpoint_registered = true;
-                }
                 self.captured_manifests
                     .insert(manifest.label().to_string(), manifest.clone());
                 Ok(SystemActionOutcome::Checkpoint {

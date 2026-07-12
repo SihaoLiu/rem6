@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "switch/checkpoint_rollback.rs"]
+mod checkpoint_rollback;
+
 #[test]
 fn rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target() {
     let path = multicore_hart1_detailed_o3_binary("m5-switch-cpu-hart1-detailed-o3-transfer-scope");

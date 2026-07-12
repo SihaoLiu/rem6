@@ -97,7 +97,12 @@ pub fn decode_execution_mode_authority_from_manifest(
             component: component.clone(),
             name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
         })?;
-    decode_execution_modes(&component, payload).map(Some)
+    let modes = decode_execution_modes(&component, payload)?;
+    if modes.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(modes))
+    }
 }
 
 pub(super) fn encode_execution_modes(
@@ -228,6 +233,27 @@ mod tests {
     #[test]
     fn manifest_decoder_returns_none_without_execution_mode_authority() {
         let manifest = CheckpointManifest::new("without-authority", 17, Vec::new());
+
+        assert_eq!(
+            decode_execution_mode_authority_from_manifest(&manifest),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn manifest_decoder_returns_none_for_empty_execution_mode_authority() {
+        let component = execution_mode_checkpoint_component();
+        let manifest = CheckpointManifest::new(
+            "empty-authority",
+            17,
+            vec![CheckpointState::new(
+                component,
+                vec![CheckpointChunk::new(
+                    EXECUTION_MODE_CHECKPOINT_CHUNK,
+                    encode_execution_modes(&BTreeMap::new()),
+                )],
+            )],
+        );
 
         assert_eq!(
             decode_execution_mode_authority_from_manifest(&manifest),
