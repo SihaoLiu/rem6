@@ -850,7 +850,9 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
-                    && can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
+                    && crate::riscv_cluster_translation::can_retire_mmio_aware_translated_fetch_pending(
+                        *cpu, core, bus,
+                    )?
                     && push_prepared_completed_fetch_drive_event(
                         *cpu,
                         core,
@@ -866,7 +868,9 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(decision) = core.next_fetch_ahead_before_retire() {
+            if let Some(decision) =
+                core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(bus)
+            {
                 let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 push_prepared_parallel_fetch_action(

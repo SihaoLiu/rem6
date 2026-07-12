@@ -191,6 +191,77 @@ fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_d
             .is_some_and(|tick| tick > action_tick)));
 }
 
+#[test]
+fn rem6_run_unused_readfile_preserves_cached_translated_memory_younger_window() {
+    let path = cached_translated_scalar_load_binary(
+        "unused-readfile-cached-translated-memory-younger-window",
+    );
+    let readfile = temp_binary("unused-readfile-cached-translated-memory-data", &[0; 8]);
+    let baseline = run_translated_scalar_load(&path, None, "cached-unused-readfile-baseline");
+    let workspace = temp_workspace("cached-translated-memory-unused-readfile");
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        translated_config(
+            &path,
+            None,
+            "",
+            &format!(
+                "readfiles = [\"0x10000000:0x100:{}\"]\n",
+                readfile.display()
+            ),
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "unused readfile translated run; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+
+    assert_stopped_with_headroom(
+        &json,
+        event_u64(
+            event_at_pc(&baseline, CACHED_LOAD_PC),
+            "lsq_data_response_tick",
+        ),
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some(CACHED_RESULTS)
+    );
+    for pc in [CACHED_LOAD_PC, FIRST_ALU_PC, SECOND_ALU_PC, THIRD_ALU_PC] {
+        let baseline_event = event_at_pc(&baseline, pc);
+        let event = event_at_pc(&json, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(event, field),
+                event_u64(baseline_event, field),
+                "unused readfile changed translated-memory {field} for {pc}: {event}"
+            );
+        }
+    }
+    assert_eq!(
+        event_u64(event_at_pc(&json, CACHED_LOAD_PC), "lsq_data_response_tick"),
+        event_u64(
+            event_at_pc(&baseline, CACHED_LOAD_PC),
+            "lsq_data_response_tick"
+        )
+    );
+    assert!(json
+        .pointer("/debug/data_trace")
+        .and_then(Value::as_array)
+        .is_some_and(|records| records.iter().all(|record| {
+            record.pointer("/address").and_then(Value::as_str) != Some("0x10000000")
+        })));
+}
+
 fn assert_stopped_with_headroom(json: &Value, response_tick: u64) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
@@ -418,7 +489,6 @@ fn rem6_run_rejects_riscv_data_translation_with_instruction_limit() {
 #[test]
 fn rem6_run_rejects_unsupported_riscv_data_translation_combinations() {
     let path = cold_translated_scalar_load_binary("unsupported-riscv-data-translation");
-    let readfile = temp_binary("unsupported-riscv-data-translation-readfile", &[0; 8]);
     let base = translated_config(&path, None, "", "");
     let cases = [
         (
@@ -447,20 +517,6 @@ fn rem6_run_rejects_unsupported_riscv_data_translation_combinations() {
             base.clone(),
             &["--gdb-listen", "127.0.0.1:1"][..],
             "RISC-V data translation does not yet support GDB run control",
-        ),
-        (
-            "readfile",
-            translated_config(
-                &path,
-                None,
-                "",
-                &format!(
-                    "readfiles = [\"0x10000000:0x100:{}\"]\n",
-                    readfile.display()
-                ),
-            ),
-            &[][..],
-            "RISC-V data translation does not yet support readfile MMIO",
         ),
     ];
 

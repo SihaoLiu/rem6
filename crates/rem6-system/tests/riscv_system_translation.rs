@@ -1401,6 +1401,15 @@ fn riscv_sbi_remote_hfence_gvma_range_flushes_each_overlapping_physical_page() {
 
 #[test]
 fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
+    assert_riscv_system_parallel_driver_routes_translated_mmio_and_memory_data(false);
+}
+
+#[test]
+fn riscv_system_tick_limited_parallel_driver_routes_translated_mmio_and_memory_data() {
+    assert_riscv_system_parallel_driver_routes_translated_mmio_and_memory_data(true);
+}
+
+fn assert_riscv_system_parallel_driver_routes_translated_mmio_and_memory_data(tick_limited: bool) {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(53);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -1500,9 +1509,13 @@ fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
     let store = store_with_programs_and_data(
         &[
             (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
-            (0x8004, 0x0000_0073),
+            (0x8004, i_type(8, 2, 0x3, 6, 0x03)),
+            (0x8008, 0x0000_0073),
             (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
-            (0x8104, 0x0010_0073),
+            (0x8104, i_type(1, 0, 0x0, 6, 0x13)),
+            (0x8108, i_type(1, 6, 0x0, 6, 0x13)),
+            (0x810c, i_type(1, 6, 0x0, 6, 0x13)),
+            (0x8110, 0x0010_0073),
         ],
         &[(0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f])],
     );
@@ -1535,8 +1548,35 @@ fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
     );
     let driver = RiscvSystemRunDriver::new(trap_port);
 
-    let run = driver
-        .drive_until_host_stop_parallel_with_mmio_and_data_translation(
+    let run = if tick_limited {
+        driver.drive_until_host_stop_or_tick_limit_parallel_with_mmio_and_data_translation(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                let memory_deliveries = Arc::clone(&memory_deliveries);
+                move |delivery, _context| {
+                    memory_deliveries
+                        .lock()
+                        .unwrap()
+                        .push((delivery.request().id(), delivery.request().range().start()));
+                    memory_response(&store, &delivery)
+                }
+            },
+            200,
+            |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
+        )
+    } else {
+        driver.drive_until_host_stop_parallel_with_mmio_and_data_translation(
             &cluster,
             &mut scheduler,
             &transport,
@@ -1562,13 +1602,24 @@ fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
             40,
             |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
         )
-        .unwrap();
+    }
+    .unwrap();
 
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(160), source, 0);
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
     assert_eq!(
         cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
         0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(6)),
+        0xfedc_ba98_7654_3210,
+        "cpu0 events={:?} tlb={:?}",
+        cluster.core(CpuId::new(0)).unwrap().data_access_events(),
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .data_translation_tlb_stats()
     );
     assert_eq!(
         cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
@@ -1584,11 +1635,20 @@ fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
 
     let cpu0_events = cluster.core(CpuId::new(0)).unwrap().data_access_events();
     let cpu1_events = cluster.core(CpuId::new(1)).unwrap().data_access_events();
-    assert!(matches!(
-        cpu0_events[0].target(),
-        rem6_cpu::RiscvDataAccessTarget::Mmio { route } if route == mmio_route
-    ));
-    assert_eq!(cpu0_events[0].physical_address(), Address::new(0x1008));
+    assert_eq!(cpu0_events.len(), 4);
+    assert!(cpu0_events.iter().all(|event| {
+        matches!(
+            event.target(),
+            rem6_cpu::RiscvDataAccessTarget::Mmio { route } if route == mmio_route
+        ) && event.physical_address() == Address::new(0x1008)
+    }));
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .data_translation_tlb_stats(),
+        Some(TranslationTlbStats::new(1, 1, 0, 1, 0))
+    );
     assert!(matches!(
         cpu1_events[0].target(),
         rem6_cpu::RiscvDataAccessTarget::Memory { route, .. } if route == cpu1_data

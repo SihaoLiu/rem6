@@ -1,5 +1,6 @@
 use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::Address;
+use rem6_mmio::{MmioBus, MmioError, MmioRequest, MmioRequestId};
 
 use crate::{CpuFetchEventKind, RiscvCore, RiscvCpuError};
 
@@ -23,6 +24,17 @@ impl RiscvCore {
         self.next_fetch_ahead_before_retire_with_translation(
             detailed_o3::TranslatedMemoryFetchAhead::CachedMemory,
         )
+    }
+
+    pub(crate) fn next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(
+        &self,
+        bus: &MmioBus,
+    ) -> Option<RiscvFetchAheadDecision> {
+        if self.cached_translated_scalar_load_head_targets_mmio(bus) {
+            self.next_fetch_ahead_before_retire()
+        } else {
+            self.next_cached_translated_memory_fetch_ahead_before_retire()
+        }
     }
 
     fn next_fetch_ahead_before_retire_with_translation(
@@ -172,6 +184,39 @@ impl RiscvCore {
         self.can_retire_completed_fetch_while_fetch_pending_with_translation(
             detailed_o3::TranslatedMemoryFetchAhead::CachedMemory,
         )
+    }
+
+    pub(crate) fn can_retire_completed_fetch_while_mmio_aware_cached_translated_memory_fetch_pending(
+        &self,
+        bus: &MmioBus,
+    ) -> Result<bool, RiscvCpuError> {
+        if self.cached_translated_scalar_load_head_targets_mmio(bus) {
+            self.can_retire_completed_fetch_while_fetch_pending()
+        } else {
+            self.can_retire_completed_fetch_while_cached_translated_memory_fetch_pending()
+        }
+    }
+
+    fn cached_translated_scalar_load_head_targets_mmio(&self, bus: &MmioBus) -> bool {
+        let fetch_events = self.core.fetch_events();
+        let state = self.state.lock().expect("riscv core lock");
+        let Some((fetch_request, range)) =
+            detailed_o3::cached_translated_scalar_load_head_physical_range(&state, &fetch_events)
+        else {
+            return false;
+        };
+        let Ok(probe) = MmioRequest::read(
+            MmioRequestId::new(fetch_request.sequence()),
+            range.start(),
+            range.size(),
+        ) else {
+            return true;
+        };
+        match bus.route_for(self.partition(), &probe) {
+            Ok(_) => true,
+            Err(MmioError::UnmappedAddress { .. }) => false,
+            Err(_) => true,
+        }
     }
 
     fn can_retire_completed_fetch_while_fetch_pending_with_translation(

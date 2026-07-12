@@ -33,6 +33,7 @@ pub(super) fn drive_cli_riscv_run_configured(
             cluster,
             scheduler,
             transport,
+            readfile_bus,
             memory,
             instruction_cache,
             data_cache,
@@ -65,6 +66,7 @@ fn drive_cli_riscv_run_with_data_translation(
     cluster: &RiscvCluster,
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
+    readfile_bus: Option<&MmioBus>,
     memory: &CliMemoryRuntime,
     instruction_cache: CliCacheHierarchy,
     data_cache: CliCacheHierarchy,
@@ -73,6 +75,34 @@ fn drive_cli_riscv_run_with_data_translation(
     page_map: &TranslationPageMap,
     tick_limit: u64,
 ) -> Result<RiscvSystemRun, rem6_system::SystemError> {
+    if let Some(bus) = readfile_bus {
+        let fetch_memory = memory.clone();
+        let data_memory = memory.clone();
+        return driver.drive_until_host_stop_or_tick_limit_parallel_with_mmio_and_data_translation(
+            cluster,
+            scheduler,
+            transport,
+            bus,
+            fetch_trace,
+            data_trace,
+            page_map,
+            move |_cpu| {
+                let memory = fetch_memory.clone();
+                let instruction_cache = instruction_cache.clone();
+                move |delivery, _context| {
+                    cli_data_memory_response(&instruction_cache, &memory, &delivery)
+                }
+            },
+            move |_cpu| {
+                let memory = data_memory.clone();
+                let data_cache = data_cache.clone();
+                move |delivery, _context| cli_data_memory_response(&data_cache, &memory, &delivery)
+            },
+            tick_limit,
+            guest_event_for_cpu,
+        );
+    }
+
     let fetch_memory = memory.clone();
     let data_memory = memory.clone();
     driver.drive_until_host_stop_or_tick_limit_parallel_with_data_translation(

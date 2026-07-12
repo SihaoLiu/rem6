@@ -1,4 +1,4 @@
-use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError};
+use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn};
 use rem6_kernel::{ParallelSchedulerContext, PartitionedScheduler};
 use rem6_memory::TranslationPageMap;
 use rem6_mmio::MmioBus;
@@ -11,6 +11,59 @@ use crate::{
 
 impl RiscvSystemRunDriver {
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_until_host_stop_or_tick_limit_parallel_with_mmio_and_data_translation<
+        F,
+        D,
+        FR,
+        DR,
+        E,
+    >(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        bus: &MmioBus,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        page_map: &TranslationPageMap,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        tick_limit: u64,
+        event_for: E,
+    ) -> Result<RiscvSystemRun, SystemError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        E: FnMut(CpuId) -> GuestEventId,
+    {
+        self.drive_until_host_stop_or_tick_limit_parallel_with_translation(
+            cluster,
+            scheduler,
+            tick_limit,
+            |scheduler, tick_limit| {
+                cluster.drive_turn_parallel_with_mmio_and_data_translation_until_tick(
+                    scheduler,
+                    transport,
+                    bus,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    page_map,
+                    &mut fetch_responder,
+                    &mut data_responder,
+                    tick_limit,
+                )
+            },
+            event_for,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_until_host_stop_or_tick_limit_parallel_with_data_translation<F, D, FR, DR, E>(
         &self,
         cluster: &RiscvCluster,
@@ -22,7 +75,7 @@ impl RiscvSystemRunDriver {
         mut fetch_responder: F,
         mut data_responder: D,
         tick_limit: u64,
-        mut event_for: E,
+        event_for: E,
     ) -> Result<RiscvSystemRun, SystemError>
     where
         F: FnMut(CpuId) -> FR,
@@ -33,6 +86,41 @@ impl RiscvSystemRunDriver {
         DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
             + Send
             + 'static,
+        E: FnMut(CpuId) -> GuestEventId,
+    {
+        self.drive_until_host_stop_or_tick_limit_parallel_with_translation(
+            cluster,
+            scheduler,
+            tick_limit,
+            |scheduler, tick_limit| {
+                cluster.drive_turn_parallel_with_data_translation_until_tick(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    page_map,
+                    &mut fetch_responder,
+                    &mut data_responder,
+                    tick_limit,
+                )
+            },
+            event_for,
+        )
+    }
+
+    fn drive_until_host_stop_or_tick_limit_parallel_with_translation<T, E>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        tick_limit: u64,
+        mut drive_turn: T,
+        mut event_for: E,
+    ) -> Result<RiscvSystemRun, SystemError>
+    where
+        T: FnMut(
+            &mut PartitionedScheduler,
+            u64,
+        ) -> Result<Option<RiscvClusterTurn>, RiscvClusterError>,
         E: FnMut(CpuId) -> GuestEventId,
     {
         let mut turns = Vec::new();
@@ -62,18 +150,8 @@ impl RiscvSystemRunDriver {
             }
 
             self.snapshot_live_retire_gate_policy(cluster)?;
-            let Some(turn) = cluster
-                .drive_turn_parallel_with_data_translation_until_tick(
-                    scheduler,
-                    transport,
-                    fetch_trace.clone(),
-                    data_trace.clone(),
-                    page_map,
-                    &mut fetch_responder,
-                    &mut data_responder,
-                    tick_limit,
-                )
-                .map_err(SystemError::RiscvCluster)?
+            let Some(turn) =
+                drive_turn(scheduler, tick_limit).map_err(SystemError::RiscvCluster)?
             else {
                 return Ok(self.run_result(
                     cluster,

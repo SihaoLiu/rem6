@@ -16,7 +16,7 @@ use rem6_memory::{
     MemoryRequestId, MemoryResponse, ResponseStatus, TranslationAddressSpaceId, TranslationFault,
     TranslationPageMap, TranslationRequestId, TranslationResolution, TranslationTlbStats,
 };
-use rem6_mmio::{MmioBus, MmioError};
+use rem6_mmio::{MmioBus, MmioError, MmioRequest, MmioRequestId};
 use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
     TransportError,
@@ -26,8 +26,8 @@ use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
 use crate::riscv_data_issue::{
-    access_address, access_size, masked_vector_memory_request_span, mmio_request,
-    OutstandingDataAccess, PreparedDataParallelAccess,
+    access_address, access_size, masked_vector_memory_request_span, OutstandingDataAccess,
+    PreparedDataParallelAccess,
 };
 use crate::{
     riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslationFrontend,
@@ -1496,14 +1496,13 @@ impl RiscvCore {
             translated.physical_address,
             translated.request_byte_offset,
         )?;
-        let request = mmio_request(
-            translated.request_id,
-            &translated.access,
-            translated.size,
+        let route_probe = MmioRequest::read(
+            MmioRequestId::new(translated.request_id.sequence()),
             translated.physical_address,
-            translated.request_byte_offset,
-        )?;
-        let route = match bus.route_for(self.core.partition(), &request) {
+            translated.size,
+        )
+        .map_err(RiscvCpuError::Mmio)?;
+        let route = match bus.route_for(self.core.partition(), &route_probe) {
             Ok(route) => route,
             Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
             Err(error) => return Err(RiscvCpuError::Mmio(error)),

@@ -62,11 +62,6 @@ fn validate_riscv_data_translation_inputs(config: &Rem6RunConfig) -> Result<(), 
             error: "RISC-V data translation does not yet support GDB run control".to_string(),
         });
     }
-    if !config.readfiles().is_empty() {
-        return Err(Rem6CliError::Execute {
-            error: "RISC-V data translation does not yet support readfile MMIO".to_string(),
-        });
-    }
     Ok(())
 }
 

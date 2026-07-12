@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use super::*;
 use crate::{
     BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchTargetBuffer,
@@ -19,6 +21,7 @@ use rem6_memory::{
     TranslationAddressSpaceId, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
     TranslationQueueConfig, TranslationRequest, TranslationRequestId, TranslationTlbConfig,
 };
+use rem6_mmio::{MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 mod btb;
@@ -153,13 +156,20 @@ fn btb_entry_kind(core: &RiscvCore, pc: u64) -> Option<BranchTargetKind> {
 fn core_with_completed_fetches(
     fetches: impl IntoIterator<Item = (u64, u64, Vec<u8>)>,
 ) -> RiscvCore {
+    core_with_completed_fetches_at(0x8000, fetches)
+}
+
+fn core_with_completed_fetches_at(
+    entry: u64,
+    fetches: impl IntoIterator<Item = (u64, u64, Vec<u8>)>,
+) -> RiscvCore {
     let core = RiscvCore::new(
         CpuCore::new(
             CpuResetState::new(
                 CpuId::new(0),
                 PartitionId::new(0),
                 AgentId::new(7),
-                Address::new(0x8000),
+                Address::new(entry),
             ),
             CpuFetchConfig::new(
                 endpoint("cpu0.ifetch"),
@@ -995,6 +1005,60 @@ fn translated_cached_memory_driver_fetches_third_younger_alu() {
         .unwrap();
 
     assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
+fn mmio_aware_cached_translated_compressed_load_suppresses_younger_fetch_ahead() {
+    let memory_core = compressed_cached_translated_load_core();
+    assert_eq!(
+        memory_core
+            .next_cached_translated_memory_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8010))
+    );
+
+    let core = compressed_cached_translated_load_core();
+    let bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        rem6_memory::AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap())
+            .unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+
+    assert_eq!(
+        core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(&bus),
+        None
+    );
+}
+
+fn compressed_cached_translated_load_core() -> RiscvCore {
+    let compressed_ld_x9_from_x8 = 0x6004_u16;
+    let core = core_with_completed_fetches_at(
+        0x800e,
+        [(0, 0x800e, compressed_ld_x9_from_x8.to_le_bytes().to_vec())],
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(2);
+    core.write_register(Register::new(8).unwrap(), 0x4000);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x1000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
+    core
 }
 
 #[test]

@@ -57,11 +57,20 @@ impl RiscvCoreState {
         instruction: RiscvInstruction,
         fetch_request: MemoryRequestId,
     ) -> bool {
+        self.cached_translated_scalar_load_physical_range(instruction, fetch_request)
+            .is_some()
+    }
+
+    pub(super) fn cached_translated_scalar_load_physical_range(
+        &self,
+        instruction: RiscvInstruction,
+        fetch_request: MemoryRequestId,
+    ) -> Option<AddressRange> {
         if !matches!(instruction, RiscvInstruction::Load { .. }) {
-            return false;
+            return None;
         }
         let Some(virtual_range) = self.scalar_memory_instruction_range(instruction) else {
-            return false;
+            return None;
         };
         let Ok(request) = TranslationRequest::new(
             TranslationRequestId::new(fetch_request.agent(), fetch_request.sequence()),
@@ -69,7 +78,7 @@ impl RiscvCoreState {
             virtual_range.size(),
             TranslationAccessKind::Load,
         ) else {
-            return false;
+            return None;
         };
         let address_space = TranslationAddressSpaceId::new(self.hart.translation_address_space());
         let Some(tlb) = self
@@ -77,7 +86,7 @@ impl RiscvCoreState {
             .as_ref()
             .and_then(|frontend| frontend.tlb())
         else {
-            return false;
+            return None;
         };
         let Some(physical_address) = tlb
             .peek_cached_in_address_space(address_space, &request)
@@ -85,13 +94,16 @@ impl RiscvCoreState {
             .flatten()
             .and_then(|lookup| lookup.physical_address())
         else {
-            return false;
+            return None;
         };
-        matches!(
+        if !matches!(
             self.pma
                 .is_uncacheable(physical_address.get(), virtual_range.size().bytes()),
             Ok(false)
-        )
+        ) {
+            return None;
+        }
+        AddressRange::new(physical_address, virtual_range.size()).ok()
     }
 
     fn scalar_memory_instruction_range(

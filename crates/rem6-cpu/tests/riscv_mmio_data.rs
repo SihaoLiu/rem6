@@ -37,6 +37,17 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
+}
+
 fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
     CpuCore::new(
         CpuResetState::new(
@@ -264,5 +275,63 @@ fn riscv_core_rejects_parallel_translated_mmio_response_below_lookahead_before_w
         ))
     );
     assert!(core.data_access_events().is_empty());
+    assert!(core.has_pending_data_access());
+}
+
+#[test]
+fn riscv_core_leaves_unmapped_translated_atomic_for_memory_after_mmio_probe() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(Register::new(2).unwrap(), 0x2000);
+    core.write_register(Register::new(6).unwrap(), 1);
+    let store = loaded_store(0x8000, atomic_type(0x00, false, false, 6, 2, 0x3, 7));
+    let page_map = single_page_map(0x2000, 0x9000);
+
+    let bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        rem6_memory::AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap())
+            .unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+
+    fetch_one_parallel(&core, store, &mut scheduler, &transport);
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(
+        core.issue_next_translated_mmio_data_access_parallel(&mut scheduler, &bus, &page_map)
+            .unwrap(),
+        None
+    );
     assert!(core.has_pending_data_access());
 }

@@ -135,6 +135,30 @@ pub(super) fn scalar_memory_waits_for_younger_fetch(
     ) && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
 }
 
+pub(super) fn cached_translated_scalar_load_head_physical_range(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Option<(MemoryRequestId, AddressRange)> {
+    let architectural = Address::new(state.hart.pc());
+    let memory = fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.pc() == architectural
+                && !state.executed_fetches.contains(&event.request_id())
+        })
+        .min_by_key(|event| event.request_id().sequence())?;
+    let current =
+        completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, memory)?;
+    let fetch_request = current.last_consumed_request();
+    state
+        .cached_translated_scalar_load_physical_range(
+            current.decoded().instruction(),
+            fetch_request,
+        )
+        .map(|range| (fetch_request, range))
+}
+
 pub(super) fn additional_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],

@@ -332,7 +332,7 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
 }
 
 #[test]
-fn riscv_cluster_mmio_translation_driver_suppresses_cached_memory_fetch_ahead() {
+fn riscv_cluster_mmio_translation_driver_preserves_unmapped_cached_memory_fetch_ahead() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let fetch_route = transport
@@ -435,7 +435,7 @@ fn riscv_cluster_mmio_translation_driver_suppresses_cached_memory_fetch_ahead() 
                 .inner()
                 .fetch_events()
                 .iter()
-                .all(|event| event.pc() != Address::new(0x8008)));
+                .any(|event| event.pc() == Address::new(0x8008)));
             saw_cached_load_execute = true;
             break;
         }
