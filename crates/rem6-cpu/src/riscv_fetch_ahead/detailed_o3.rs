@@ -8,7 +8,9 @@ use crate::{
         RiscvCompletedFetchInstruction,
     },
     riscv_o3_window_policy::{RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision},
-    riscv_scalar_memory_window::independent_scalar_load_destination,
+    riscv_scalar_memory_window::{
+        independent_scalar_load_destination, store_range_extends_overlap_prefix,
+    },
     CpuFetchEvent, CpuFetchEventKind, RiscvCoreState,
 };
 
@@ -291,12 +293,12 @@ fn scalar_memory_window_candidate(
     let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let mut store_range = window.store_range();
+    let mut store_ranges = window.store_ranges();
     let mut destinations = window.load_destinations().to_vec();
     if !admit_scalar_memory_prefix_instruction(
         state,
         current.decoded().instruction(),
-        &mut store_range,
+        &mut store_ranges,
         &mut destinations,
     ) {
         return DetailedFetchAheadCandidate::Blocked;
@@ -331,7 +333,7 @@ fn scalar_memory_window_candidate(
             if !admit_scalar_memory_prefix_instruction(
                 state,
                 instruction,
-                &mut store_range,
+                &mut store_ranges,
                 &mut destinations,
             ) {
                 return DetailedFetchAheadCandidate::Blocked;
@@ -380,7 +382,7 @@ fn scalar_memory_window_candidate(
 fn admit_scalar_memory_prefix_instruction(
     state: &RiscvCoreState,
     instruction: RiscvInstruction,
-    store_range: &mut Option<AddressRange>,
+    store_ranges: &mut Vec<AddressRange>,
     destinations: &mut Vec<Register>,
 ) -> bool {
     let Some(range) = state.cacheable_scalar_memory_instruction_range(instruction) else {
@@ -396,13 +398,14 @@ fn admit_scalar_memory_prefix_instruction(
             destinations.push(destination);
             true
         }
-        RiscvInstruction::Store { .. } if destinations.is_empty() => match store_range {
-            Some(older) => *older == range,
-            None => {
-                *store_range = Some(range);
-                true
-            }
-        },
+        RiscvInstruction::Store { .. }
+            if destinations.is_empty()
+                && (store_ranges.is_empty()
+                    || store_range_extends_overlap_prefix(store_ranges.iter().copied(), range)) =>
+        {
+            store_ranges.push(range);
+            true
+        }
         _ => false,
     }
 }

@@ -271,7 +271,7 @@ fn o3_store_forwarding_policy_lives_in_focused_module() {
         "struct O3StoreLoadForwardingPlan",
         "enum O3StoreLoadRelation",
         "enum O3StoreLoadSuppressionReason",
-        "fn o3_store_load_relation",
+        "fn o3_store_load_composition",
     ] {
         assert!(
             module.contains(anchor),

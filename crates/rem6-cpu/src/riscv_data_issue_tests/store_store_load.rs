@@ -448,6 +448,27 @@ fn failed_middle_store_cancels_only_the_forwarded_load_suffix() {
     assert!(!state.issued_data_for_fetches.contains(&requests[2].0));
 }
 
+#[test]
+fn failed_middle_partial_store_cancels_the_younger_composed_suffix() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_multi_store_byte_composition_core(fetch_route, data_route);
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
+    let requests = outstanding_data_requests_in_fetch_order(&core);
+    assert_eq!(requests.len(), 4);
+
+    core.record_data_failure(requests[1].1, scheduler.now());
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.outstanding_data.len(), 1);
+    assert!(state.outstanding_data.contains_key(&requests[0].1));
+    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 2);
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
+    assert!(state.issued_data_for_fetches.contains(&requests[1].0));
+    assert!(!state.issued_data_for_fetches.contains(&requests[2].0));
+    assert!(!state.issued_data_for_fetches.contains(&requests[3].0));
+}
+
 fn detailed_store_store_load_core(
     fetch_route: MemoryRouteId,
     data_route: MemoryRouteId,
@@ -464,6 +485,28 @@ fn detailed_store_store_load_core(
         scalar_store_event_with_width_and_value(0x8000, 1, 0x9000, MemoryWidth::Word, 0x2a),
         scalar_store_event_with_width_and_value(0x8004, 2, 0x9000, MemoryWidth::Word, 0x63),
         scalar_load_event_with_base(0x8008, 3, 6, 2, 0x9000),
+    ]);
+    drop(state);
+    core
+}
+
+fn detailed_multi_store_byte_composition_core(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+) -> RiscvCore {
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    let mut state = core.state.lock().expect("riscv core lock");
+    state.hart.write(reg(2), 0x9000);
+    state.events.extend([
+        scalar_store_event_with_width_and_value(0x8000, 1, 0x9000, MemoryWidth::Word, 0xaa),
+        scalar_store_event_with_width_and_value(0x8004, 2, 0x9002, MemoryWidth::Halfword, 0xccbb),
+        scalar_store_event_with_width_and_value(0x8008, 3, 0x9002, MemoryWidth::Byte, 0xdd),
+        scalar_load_event_with_base_width(0x800c, 4, 6, 2, 0x9000, MemoryWidth::Doubleword, false),
     ]);
     drop(state);
     core

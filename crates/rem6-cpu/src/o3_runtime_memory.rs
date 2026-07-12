@@ -13,7 +13,7 @@ pub(super) struct O3LiveScalarMemory {
     pub(super) latency_ticks: Option<u64>,
     pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
-    pub(super) forwarded: bool,
+    pub(super) forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     pub(super) outcome: O3LiveScalarMemoryOutcome,
     pub(super) event_taken: bool,
 }
@@ -240,7 +240,7 @@ impl O3RuntimeState {
             latency_ticks: None,
             commit_tick: None,
             load_data: None,
-            forwarded: false,
+            forwarding_plan: None,
             outcome: O3LiveScalarMemoryOutcome::Resident,
             event_taken: false,
         });
@@ -261,7 +261,7 @@ impl O3RuntimeState {
             response_tick,
             latency_ticks,
             load_data,
-            false,
+            None,
         )
     }
 
@@ -272,6 +272,7 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
         load_data: &[u8],
+        forwarding_plan: O3StoreLoadForwardingPlan,
     ) -> bool {
         self.complete_live_scalar_memory(
             execution,
@@ -279,7 +280,7 @@ impl O3RuntimeState {
             response_tick,
             latency_ticks,
             Some(load_data),
-            true,
+            Some(forwarding_plan),
         )
     }
 
@@ -290,7 +291,7 @@ impl O3RuntimeState {
         response_tick: u64,
         latency_ticks: u64,
         load_data: Option<&[u8]>,
-        forwarded: bool,
+        forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     ) -> bool {
         let Some(index) = self.live_scalar_memories.iter().position(|live| {
             live.data_request == data_request
@@ -337,7 +338,7 @@ impl O3RuntimeState {
         live.latency_ticks = Some(latency_ticks);
         live.commit_tick = None;
         live.load_data = load_data.map(ToOwned::to_owned);
-        live.forwarded = forwarded;
+        live.forwarding_plan = forwarding_plan;
         live.outcome = outcome;
         live.event_taken = false;
         let remove_rows = matches!(

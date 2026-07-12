@@ -1541,7 +1541,7 @@ impl RiscvCore {
             request_byte_offset: translated.request_byte_offset,
             line_layout: None,
             forwarded_load_data: None,
-            store_load_overlay: None,
+            store_load_forwarding_plan: None,
         }))
     }
 
@@ -1628,7 +1628,7 @@ impl RiscvCore {
             request_byte_offset: translated.request_byte_offset,
             line_layout: Some(line_layout),
             forwarded_load_data: None,
-            store_load_overlay: None,
+            store_load_forwarding_plan: None,
         })
     }
 }

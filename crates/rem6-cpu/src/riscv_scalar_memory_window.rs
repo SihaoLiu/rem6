@@ -152,3 +152,39 @@ where
     }
     Some(rd)
 }
+
+pub(crate) fn store_range_extends_overlap_prefix<I>(
+    older_ranges: I,
+    younger_range: AddressRange,
+) -> bool
+where
+    I: IntoIterator<Item = AddressRange>,
+{
+    older_ranges
+        .into_iter()
+        .any(|older_range| older_range.overlaps(younger_range))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlap_prefix_can_extend_through_an_intermediate_store() {
+        let first = range(0x9000, 2);
+        let middle = range(0x9001, 2);
+        let younger = range(0x9002, 2);
+
+        assert!(!first.overlaps(younger));
+        assert!(middle.overlaps(younger));
+        assert!(store_range_extends_overlap_prefix([first, middle], younger));
+    }
+
+    fn range(address: u64, bytes: u64) -> AddressRange {
+        AddressRange::new(
+            Address::new(address),
+            AccessSize::new(bytes).expect("test access size"),
+        )
+        .expect("test address range")
+    }
+}

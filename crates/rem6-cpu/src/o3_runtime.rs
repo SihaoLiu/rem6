@@ -374,7 +374,7 @@ impl O3RuntimeState {
         let observation = self.record_store_forwarding_window(
             execution,
             trace_enabled.then_some(trace_record.sequence()),
-            completed_live_scalar_memory.is_some_and(|live| live.forwarded),
+            completed_live_scalar_memory.and_then(|live| live.forwarding_plan),
         );
         trace_record.set_store_load_forwarding(
             observation.candidate,
@@ -410,7 +410,7 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         trace_sequence: Option<u64>,
-        forwarded: bool,
+        forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     ) -> O3StoreForwardingObservation {
         let record = execution.execution();
         match record.memory_access() {
@@ -421,7 +421,7 @@ impl O3RuntimeState {
                     record.register_writes(),
                     self.store_forwarding_window.store,
                     trace_sequence,
-                    forwarded,
+                    forwarding_plan,
                 );
                 self.store_forwarding_window.pending_load_match = pending_load_match;
                 self.store_forwarding_window.store = None;

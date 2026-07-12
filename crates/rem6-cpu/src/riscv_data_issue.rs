@@ -348,12 +348,10 @@ impl RiscvCore {
             self.check_pmp_data_access(fetch_request, &access, size, address)?;
             self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
         }
-        let (forwarded_load_data, store_load_overlay) =
-            match self.scalar_load_forwarding_plan(fetch_request, &access) {
-                Some(plan) if plan.is_partial() => (None, Some(plan)),
-                Some(plan) => (Some(plan.data()), None),
-                None => (None, None),
-            };
+        let store_load_forwarding_plan = self.scalar_load_forwarding_plan(fetch_request, &access);
+        let forwarded_load_data = store_load_forwarding_plan
+            .filter(|plan| !plan.is_partial())
+            .map(O3StoreLoadForwardingPlan::data);
 
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
 
@@ -372,7 +370,7 @@ impl RiscvCore {
             request_byte_offset,
             line_layout: Some(line_layout),
             forwarded_load_data,
-            store_load_overlay,
+            store_load_forwarding_plan,
         })))
     }
 
@@ -425,7 +423,7 @@ impl RiscvCore {
             request_byte_offset: 0,
             line_layout: None,
             forwarded_load_data: None,
-            store_load_overlay: None,
+            store_load_forwarding_plan: None,
         }))
     }
 
@@ -670,7 +668,7 @@ impl RiscvCore {
             tick,
             RiscvDataAccessEventKind::ConditionalFailed,
         );
-        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, false);
+        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, None);
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -713,9 +711,11 @@ impl RiscvCore {
         match delivery.response().status() {
             ResponseStatus::Completed => {
                 let mut data = delivery.response().data().map(ToOwned::to_owned);
-                let forwarded = access.store_load_overlay.is_some_and(|plan| {
-                    data.as_mut()
-                        .is_some_and(|data| plan.overlay_response_data(data))
+                let forwarding_plan = access.store_load_forwarding_plan.filter(|plan| {
+                    plan.is_partial()
+                        && data
+                            .as_mut()
+                            .is_some_and(|data| plan.overlay_response_data(data))
                 });
                 let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
@@ -748,7 +748,7 @@ impl RiscvCore {
                     completed_event,
                     delivery.tick(),
                     data.as_deref(),
-                    forwarded,
+                    forwarding_plan,
                 );
                 if matches!(access.access, MemoryAccessKind::Load { .. }) {
                     wake_o3_scalar_memory_younger_window(
@@ -774,7 +774,7 @@ impl RiscvCore {
                     retry_event,
                     delivery.tick(),
                     None,
-                    false,
+                    None,
                 );
                 state
                     .data_events
@@ -812,7 +812,7 @@ impl RiscvCore {
                     completed_event,
                     delivery.tick(),
                     None,
-                    false,
+                    None,
                 );
                 state
                     .data_events
@@ -830,7 +830,7 @@ impl RiscvCore {
         };
         let failed_event =
             mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Failed);
-        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None, false);
+        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None, None);
         state
             .data_events
             .push(RiscvDataAccessEvent::failed(access.record(tick)));
@@ -880,7 +880,7 @@ impl RiscvCore {
                     completed_event,
                     completion.tick(),
                     data.as_deref(),
-                    false,
+                    None,
                 );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
@@ -899,7 +899,7 @@ impl RiscvCore {
                     retry_event,
                     completion.tick(),
                     None,
-                    false,
+                    None,
                 );
                 state.data_events.push(RiscvDataAccessEvent::retry(
                     access.record(completion.tick()),
@@ -1021,7 +1021,7 @@ fn record_o3_data_access_outcome(
     execution: Option<RiscvCpuExecutionEvent>,
     response_tick: Tick,
     load_data: Option<&[u8]>,
-    forwarded: bool,
+    forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 ) {
     let Some(execution) = execution else {
         state.buffered_o3_stores.remove(&access.request);
@@ -1042,7 +1042,7 @@ fn record_o3_data_access_outcome(
             .younger_live_scalar_memory_requests(access.fetch_request, access.request)
     })
     .unwrap_or_default();
-    let completed_live_scalar_memory = if forwarded {
+    let completed_live_scalar_memory = if let Some(forwarding_plan) = forwarding_plan {
         load_data.is_some_and(|data| {
             state.o3_runtime.complete_live_scalar_memory_forwarding(
                 &execution,
@@ -1050,6 +1050,7 @@ fn record_o3_data_access_outcome(
                 response_tick,
                 latency_ticks,
                 data,
+                forwarding_plan,
             )
         })
     } else {
@@ -1145,7 +1146,7 @@ pub(crate) struct OutstandingDataAccess {
     pub(crate) request_byte_offset: usize,
     pub(crate) line_layout: Option<CacheLineLayout>,
     pub(crate) forwarded_load_data: Option<Vec<u8>>,
-    pub(crate) store_load_overlay: Option<O3StoreLoadForwardingPlan>,
+    pub(crate) store_load_forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 }
 
 impl OutstandingDataAccess {
@@ -1319,7 +1320,7 @@ impl OutstandingDataAccess {
             size: self.size,
             physical_address: self.physical_address,
             request_byte_offset: self.request_byte_offset,
-            store_load_overlay: self.store_load_overlay,
+            store_load_forwarding_plan: self.store_load_forwarding_plan,
         }
     }
 
@@ -1339,7 +1340,7 @@ pub(crate) struct IssuedDataAccess {
     size: AccessSize,
     physical_address: Address,
     request_byte_offset: usize,
-    store_load_overlay: Option<O3StoreLoadForwardingPlan>,
+    store_load_forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 }
 
 impl IssuedDataAccess {

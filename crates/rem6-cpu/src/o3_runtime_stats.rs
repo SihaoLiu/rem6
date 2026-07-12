@@ -9,7 +9,8 @@ use crate::o3_runtime_trace::{
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 
 use super::o3_store_forwarding::{
-    o3_load_forwarding_access, o3_load_register_value, O3StoreForwardingEntry, O3StoreLoadRelation,
+    o3_load_forwarding_access, o3_load_register_value, o3_store_load_composition,
+    O3StoreForwardingEntry, O3StoreLoadForwardingPlan, O3StoreLoadRelation,
     O3StoreLoadSuppressionReason,
 };
 use super::{
@@ -774,6 +775,19 @@ mod tests {
     use super::*;
     use crate::o3_runtime::o3_store_forwarding_entry;
 
+    fn forwarding_plan(
+        stores: &[O3StoreForwardingEntry],
+        load: &MemoryAccessKind,
+    ) -> O3StoreLoadForwardingPlan {
+        let load_range = o3_load_forwarding_access(load).unwrap().range();
+        match o3_store_load_composition(stores.iter().copied(), load_range).unwrap() {
+            O3StoreLoadRelation::Forwarded(plan) | O3StoreLoadRelation::Overlay(plan) => plan,
+            O3StoreLoadRelation::Independent(reason) => {
+                panic!("stores should contribute to the load: {reason:?}")
+            }
+        }
+    }
+
     #[test]
     fn contained_forwarded_load_is_a_match_not_an_address_mismatch() {
         let store = o3_store_forwarding_entry(&MemoryAccessKind::Store {
@@ -789,6 +803,7 @@ mod tests {
             width: MemoryWidth::Byte,
             signed: true,
         };
+        let plan = forwarding_plan(&[store], &load);
         let mut stats = O3RuntimeStats::default();
 
         let (observation, pending) = stats.record_store_to_load_forwarding(
@@ -797,7 +812,7 @@ mod tests {
             &[RegisterWrite::new(load_register, 0xffff_ffff_ffff_ff80)],
             Some(store),
             Some(3),
-            true,
+            Some(plan),
         );
 
         assert!(observation.candidate);
@@ -827,6 +842,7 @@ mod tests {
             width: MemoryWidth::Word,
             signed: true,
         };
+        let plan = forwarding_plan(&[store], &load);
         let mut stats = O3RuntimeStats::default();
 
         let (observation, pending) = stats.record_store_to_load_forwarding(
@@ -835,7 +851,7 @@ mod tests {
             &[RegisterWrite::new(load_register, 0xffff_ffff_8033_5a11)],
             Some(store),
             Some(3),
-            true,
+            Some(plan),
         );
 
         assert!(observation.candidate);
@@ -851,6 +867,140 @@ mod tests {
         assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 0);
         assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 0);
         assert_eq!(stats.lsq_store_to_load_forwarding_byte_mismatches(), 0);
+    }
+
+    #[test]
+    fn multiple_store_forwarding_records_composed_bytes_and_match() {
+        let stores = [
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9001,
+                width: MemoryWidth::Byte,
+                value: 0xaa,
+            })
+            .unwrap(),
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9002,
+                width: MemoryWidth::Halfword,
+                value: 0xccbb,
+            })
+            .unwrap(),
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9002,
+                width: MemoryWidth::Byte,
+                value: 0xdd,
+            })
+            .unwrap(),
+        ];
+        let load_register = Register::new(12).unwrap();
+        let load = MemoryAccessKind::Load {
+            rd: load_register,
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let plan = forwarding_plan(&stores, &load);
+        let mut stats = O3RuntimeStats::default();
+
+        let (observation, pending) = stats.record_store_to_load_forwarding(
+            &load,
+            MemoryRequestId::new(AgentId::new(7), 1),
+            &[RegisterWrite::new(load_register, 0xccdd_aa11)],
+            stores.last().copied(),
+            Some(3),
+            Some(plan),
+        );
+
+        assert!(observation.candidate);
+        assert!(observation.matched);
+        assert!(observation.partial);
+        assert_eq!(observation.forwarded_bytes, 3);
+        assert!(pending.is_none());
+        assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 0);
+    }
+
+    #[test]
+    fn unforwarded_load_preserves_latest_store_suppression() {
+        let stores = [
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9001,
+                width: MemoryWidth::Byte,
+                value: 0xaa,
+            })
+            .unwrap(),
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9040,
+                width: MemoryWidth::Word,
+                value: 0x2a,
+            })
+            .unwrap(),
+        ];
+        let load = MemoryAccessKind::Load {
+            rd: Register::new(12).unwrap(),
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let mut stats = O3RuntimeStats::default();
+
+        let (observation, pending) = stats.record_store_to_load_forwarding(
+            &load,
+            MemoryRequestId::new(AgentId::new(7), 1),
+            &[],
+            stores.last().copied(),
+            Some(3),
+            None,
+        );
+
+        assert!(observation.suppressed);
+        assert!(observation.address_mismatch);
+        assert!(!observation.candidate);
+        assert!(pending.is_none());
+        assert_eq!(stats.lsq_store_to_load_forwarding_suppressed(), 1);
+        assert_eq!(stats.lsq_store_to_load_forwarding_address_mismatches(), 1);
+    }
+
+    #[test]
+    fn forwarding_stats_do_not_compose_a_stale_retired_store() {
+        let stores = [
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9000,
+                width: MemoryWidth::Byte,
+                value: 0xaa,
+            })
+            .unwrap(),
+            o3_store_forwarding_entry(&MemoryAccessKind::Store {
+                address: 0x9001,
+                width: MemoryWidth::Byte,
+                value: 0xbb,
+            })
+            .unwrap(),
+        ];
+        let load_register = Register::new(12).unwrap();
+        let load = MemoryAccessKind::Load {
+            rd: load_register,
+            address: 0x9000,
+            width: MemoryWidth::Word,
+            signed: false,
+        };
+        let live_plan = forwarding_plan(&stores[1..], &load);
+        let mut stats = O3RuntimeStats::default();
+
+        let (observation, pending) = stats.record_store_to_load_forwarding(
+            &load,
+            MemoryRequestId::new(AgentId::new(7), 1),
+            &[RegisterWrite::new(load_register, 0x4433_bbaa)],
+            Some(stores[0]),
+            Some(3),
+            Some(live_plan),
+        );
+
+        assert!(observation.candidate);
+        assert!(observation.matched);
+        assert!(observation.partial);
+        assert_eq!(observation.forwarded_bytes, 1);
+        assert!(pending.is_none());
     }
 }
 
@@ -1181,36 +1331,45 @@ impl O3RuntimeStats {
         register_writes: &[RegisterWrite],
         prior_store: Option<O3StoreForwardingEntry>,
         trace_sequence: Option<u64>,
-        forwarded: bool,
+        forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     ) -> (
         O3StoreForwardingObservation,
         Option<O3PendingLoadForwardingMatch>,
     ) {
-        let Some(prior_store) = prior_store else {
-            return (O3StoreForwardingObservation::default(), None);
-        };
         let Some(load) = o3_load_forwarding_access(access) else {
             return (O3StoreForwardingObservation::default(), None);
         };
-        let (plan, partial) = match prior_store.relation(load.range()) {
-            O3StoreLoadRelation::Forwarded(plan) => (plan, false),
-            O3StoreLoadRelation::Overlay(plan) => (plan, true),
-            O3StoreLoadRelation::Independent(reason) => {
-                self.record_store_to_load_forwarding_suppressed(o3_lsq_operation(access), reason);
-                return (
-                    O3StoreForwardingObservation {
-                        suppressed: true,
-                        address_mismatch: reason == O3StoreLoadSuppressionReason::AddressMismatch,
-                        byte_mismatch: reason == O3StoreLoadSuppressionReason::ByteMismatch,
-                        ..O3StoreForwardingObservation::default()
-                    },
-                    None,
-                );
+        let (plan, partial) = match forwarding_plan {
+            Some(plan) => (plan, plan.is_partial()),
+            None => {
+                let Some(relation) =
+                    prior_store.and_then(|store| o3_store_load_composition([store], load.range()))
+                else {
+                    return (O3StoreForwardingObservation::default(), None);
+                };
+                match relation {
+                    O3StoreLoadRelation::Independent(reason) => {
+                        self.record_store_to_load_forwarding_suppressed(
+                            o3_lsq_operation(access),
+                            reason,
+                        );
+                        return (
+                            O3StoreForwardingObservation {
+                                suppressed: true,
+                                address_mismatch: reason
+                                    == O3StoreLoadSuppressionReason::AddressMismatch,
+                                byte_mismatch: reason == O3StoreLoadSuppressionReason::ByteMismatch,
+                                ..O3StoreForwardingObservation::default()
+                            },
+                            None,
+                        );
+                    }
+                    O3StoreLoadRelation::Forwarded(_) | O3StoreLoadRelation::Overlay(_) => {
+                        return (O3StoreForwardingObservation::default(), None);
+                    }
+                }
             }
         };
-        if !forwarded {
-            return (O3StoreForwardingObservation::default(), None);
-        }
 
         self.lsq_store_to_load_forwarding_candidates = self
             .lsq_store_to_load_forwarding_candidates

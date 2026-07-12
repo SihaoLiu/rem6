@@ -98,7 +98,7 @@ impl RiscvCore {
             completed_event,
             tick,
             Some(&data),
-            true,
+            access.store_load_forwarding_plan,
         );
         wake_o3_scalar_memory_younger_window(&mut state, tick, &fetch_events);
         state.data_events.push(RiscvDataAccessEvent::completed(
