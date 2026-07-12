@@ -15,9 +15,10 @@ const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
-const MAX_STATS_COMPAT_ROOT_LINES: usize = 17_500;
+const MAX_STATS_COMPAT_ROOT_LINES: usize = 16_650;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
+const MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES: usize = 1000;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
@@ -661,6 +662,20 @@ fn checkpoint_restore_outputs_share_system_and_latest_authority() {
 }
 
 #[test]
+fn exact_trimmed_source_line_rejects_commented_include() {
+    let include = "include!(\"stats_compat/selected_branch_predictor_matrix.rs\");";
+
+    assert!(has_exact_trimmed_source_line(
+        "  include!(\"stats_compat/selected_branch_predictor_matrix.rs\");\n",
+        include,
+    ));
+    assert!(!has_exact_trimmed_source_line(
+        "// include!(\"stats_compat/selected_branch_predictor_matrix.rs\");\n",
+        include,
+    ));
+}
+
+#[test]
 fn stats_compat_root_keeps_current_ratchet() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/stats_compat.rs");
     let lines = line_count(&path);
@@ -720,6 +735,75 @@ fn stats_compat_in_order_branch_prediction_matrix_lives_in_focused_module() {
         assert!(
             !root.contains(family),
             "tests/cli_run/stats_compat.rs still owns CPU branch binary family `{family}`"
+        );
+    }
+}
+
+#[test]
+fn stats_compat_selected_branch_prediction_matrix_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let include = "include!(\"stats_compat/selected_branch_predictor_matrix.rs\");";
+
+    assert!(
+        has_exact_trimmed_source_line(&root, include),
+        "tests/cli_run/stats_compat.rs must include the focused selected branch predictor matrix"
+    );
+
+    let module_path =
+        crate_dir.join("tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs");
+    assert!(
+        module_path.exists(),
+        "selected branch predictor compatibility tests belong in tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES,
+        "tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs exceeds {MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES} lines: {module_lines}"
+    );
+    let module_function_names = module.lines().filter_map(|line| {
+        let signature = line.trim_start().strip_prefix("fn ")?;
+        signature.split_once('(').map(|(name, _)| name)
+    });
+    for function_name in module_function_names {
+        let definition = format!("fn {function_name}(");
+        assert!(
+            !root.contains(&definition),
+            "tests/cli_run/stats_compat.rs still owns `{definition}`"
+        );
+    }
+
+    for anchor in [
+        "fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback",
+        "fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters",
+        "fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering",
+        "fn rem6_run_stats_use_retired_tage_sc_l_training_for_later_fetch_steering",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "tests/cli_run/stats_compat.rs still owns `{anchor}`"
+        );
+    }
+
+    for family in [
+        "in-order-nested-branch-speculation",
+        "in-order-gshare-branch-steering",
+        "in-order-multiperspective-perceptron-branch-steering",
+        "in-order-tage-sc-l-training-feedback",
+    ] {
+        assert!(
+            module.contains(family),
+            "tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs is missing matrix binary family `{family}`"
+        );
+        assert!(
+            !root.contains(family),
+            "tests/cli_run/stats_compat.rs still owns selected predictor binary family `{family}`"
         );
     }
 }
@@ -1242,6 +1326,10 @@ fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
 
 fn line_count(path: &Path) -> usize {
     fs::read_to_string(path).unwrap().lines().count()
+}
+
+fn has_exact_trimmed_source_line(source: &str, expected: &str) -> bool {
+    source.lines().any(|line| line.trim() == expected)
 }
 
 fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
