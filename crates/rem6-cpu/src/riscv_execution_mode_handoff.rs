@@ -71,21 +71,6 @@ impl RiscvO3LiveDataHandoffEntry {
         self.target
     }
 
-    /// Returns the legacy memory-transport route.
-    ///
-    /// # Panics
-    ///
-    /// Panics for MMIO targets. Use [`Self::target`] or [`Self::mmio_route`]
-    /// when consuming typed-target payloads.
-    pub const fn route(self) -> MemoryRouteId {
-        match self.target {
-            RiscvO3LiveDataHandoffTarget::Memory { route } => route,
-            RiscvO3LiveDataHandoffTarget::Mmio { .. } => {
-                panic!("MMIO live-data handoff targets have no memory route ID")
-            }
-        }
-    }
-
     pub const fn memory_route(self) -> Option<MemoryRouteId> {
         match self.target {
             RiscvO3LiveDataHandoffTarget::Memory { route } => Some(route),
@@ -726,7 +711,10 @@ mod tests {
             decoded,
             RiscvO3LiveDataHandoff::new(vec![entry(1)], 0).unwrap()
         );
-        assert_eq!(decoded.entries()[0].route(), MemoryRouteId::new(7));
+        assert_eq!(
+            decoded.entries()[0].memory_route(),
+            Some(MemoryRouteId::new(7))
+        );
         assert_eq!(decoded.encode(), LEGACY_V1_SINGLE_ENTRY_PAYLOAD);
     }
 

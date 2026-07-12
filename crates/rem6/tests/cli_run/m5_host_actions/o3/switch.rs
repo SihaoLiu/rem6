@@ -4,6 +4,8 @@ use super::*;
 mod checkpoint_rollback;
 #[path = "switch/mmio_scalar_load.rs"]
 mod mmio_scalar_load;
+#[path = "switch/multicore_mmio_scalar_load.rs"]
+mod multicore_mmio_scalar_load;
 #[path = "switch/multicore_scalar_load.rs"]
 mod multicore_scalar_load;
 #[path = "switch/scalar_load.rs"]

@@ -254,14 +254,14 @@ fn assert_multicore_cpu1_scalar_load_handoff(memory_system: &str) {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct DataWindow {
-    request_tick: u64,
-    response_tick: u64,
-    request_sequence: u64,
-    route: u64,
+pub(super) struct DataWindow {
+    pub(super) request_tick: u64,
+    pub(super) response_tick: u64,
+    pub(super) request_sequence: u64,
+    pub(super) route: u64,
 }
 
-fn first_data_window(json: &Value, request_agent: u64) -> DataWindow {
+pub(super) fn first_data_window(json: &Value, request_agent: u64) -> DataWindow {
     let trace = json
         .pointer("/debug/memory_trace")
         .and_then(Value::as_array)
@@ -313,7 +313,7 @@ fn first_data_window(json: &Value, request_agent: u64) -> DataWindow {
     }
 }
 
-fn assert_parallel_two_worker_run(json: &Value) {
+pub(super) fn assert_parallel_two_worker_run(json: &Value) {
     assert_eq!(
         json.pointer("/parallel/scheduler/worker_limit")
             .and_then(Value::as_u64),
