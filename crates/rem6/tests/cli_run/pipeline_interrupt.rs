@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::Path, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    process::Command,
+};
 
 use serde_json::Value;
 
@@ -261,7 +265,7 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger
         .and_then(Value::as_array)
         .expect("debug pipeline trace array");
     assert_pipeline_summary_matches_trace(&json);
-    let fetch_pcs = fetch_trace_pcs_by_sequence(&json);
+    let fetch_pcs = fetch_trace_pcs_by_sequence(&json, 0);
     let interrupt_redirect = trace
         .iter()
         .filter(|record| {
@@ -599,7 +603,7 @@ fn run_interrupt_timer_program(
     stats_format: &str,
     debug_flag: Option<&str>,
 ) -> String {
-    run_interrupt_timer_program_with_args(
+    run_interrupt_program_with_args(
         path,
         stats_format,
         debug_flag,
@@ -613,7 +617,7 @@ fn run_interrupt_timer_program_with_lookahead(
     debug_flag: Option<&str>,
     branch_lookahead: &str,
 ) -> String {
-    run_interrupt_timer_program_with_args(
+    run_interrupt_program_with_args(
         path,
         stats_format,
         debug_flag,
@@ -627,7 +631,7 @@ fn run_interrupt_timer_program_in_mode(
     debug_flag: Option<&str>,
     mode: &str,
 ) -> String {
-    run_interrupt_timer_program_with_args(
+    run_interrupt_program_with_args(
         path,
         stats_format,
         debug_flag,
@@ -640,7 +644,7 @@ fn run_interrupt_timer_program_in_mode(
     )
 }
 
-fn run_interrupt_timer_program_with_args(
+fn run_interrupt_program_with_args(
     path: &Path,
     stats_format: &str,
     debug_flag: Option<&str>,
@@ -698,11 +702,12 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | opcode
 }
 
-fn fetch_trace_pcs_by_sequence(json: &Value) -> BTreeMap<u64, String> {
+fn fetch_trace_pcs_by_sequence(json: &Value, cpu: u64) -> BTreeMap<u64, String> {
     json.pointer("/debug/fetch_trace")
         .and_then(Value::as_array)
         .expect("debug fetch trace array")
         .iter()
+        .filter(|record| json_record_u64(record, "cpu") == cpu)
         .map(|record| {
             let sequence = json_record_u64(record, "sequence");
             let pc = record
@@ -713,6 +718,85 @@ fn fetch_trace_pcs_by_sequence(json: &Value) -> BTreeMap<u64, String> {
             (sequence, pc)
         })
         .collect()
+}
+
+fn assert_interrupt_terminal_advance(
+    json: &Value,
+    interrupt: &Value,
+    cpu: u64,
+    expected_pc: u64,
+) -> u64 {
+    let advanced = record_array(interrupt, "advanced");
+    assert_eq!(advanced.len(), 1, "{interrupt:?}");
+    let terminal = &advanced[0];
+    assert_eq!(
+        terminal.get("source_stage").and_then(Value::as_str),
+        Some("commit")
+    );
+    assert!(terminal
+        .get("destination_stage")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        terminal.get("retires").and_then(Value::as_bool),
+        Some(false)
+    );
+    let sequence = json_record_u64(terminal, "sequence");
+    let fetch_pcs = fetch_trace_pcs_by_sequence(json, cpu);
+    let expected_pc = format!("0x{expected_pc:x}");
+    assert_eq!(
+        fetch_pcs.get(&sequence).map(String::as_str),
+        Some(expected_pc.as_str()),
+        "cpu {cpu} terminal {terminal:?}, fetch PCs {fetch_pcs:?}, flags {:?}",
+        json.pointer("/debug/flags"),
+    );
+    assert_eq!(
+        json.pointer(&format!("/cores/{cpu}/registers/x6"))
+            .and_then(Value::as_str),
+        Some(expected_pc.as_str())
+    );
+    sequence
+}
+
+fn assert_fetch_sequence_pc_set(
+    json: &Value,
+    cpu: u64,
+    sequences: &BTreeSet<u64>,
+    expected_pcs: &[u64],
+) {
+    let fetch_pcs = fetch_trace_pcs_by_sequence(json, cpu);
+    let actual = sequences
+        .iter()
+        .map(|sequence| {
+            fetch_pcs
+                .get(sequence)
+                .unwrap_or_else(|| panic!("missing CPU{cpu} fetch PC for sequence {sequence}"))
+                .clone()
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = expected_pcs
+        .iter()
+        .map(|pc| format!("0x{pc:x}"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+}
+
+fn assert_primary_timer_fixture_evidence(json: &Value, deadline: u64) {
+    let timers = json
+        .pointer("/riscv_sbi_timers")
+        .and_then(Value::as_array)
+        .expect("timer event array");
+    assert_eq!(timers.len(), 1, "{timers:?}");
+    assert_eq!(timers[0].get("cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        timers[0].get("deadline").and_then(Value::as_u64),
+        Some(deadline)
+    );
+    for path in ["/riscv_sbi_hsm_events", "/riscv_sbi_ipis"] {
+        assert!(json
+            .pointer(path)
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty));
+    }
 }
 
 fn record_array<'a>(record: &'a Value, key: &str) -> &'a [Value] {

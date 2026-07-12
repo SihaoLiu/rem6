@@ -108,24 +108,61 @@ impl PipelineStallBacklogFlushSummary {
         record: &Rem6PipelineTraceRecord,
         active: &mut BTreeMap<(u32, u64), PipelineSequenceBacklog>,
     ) {
-        let Some(flush_cause) = record.flush_cause.and_then(pipeline_redirect_cause_index) else {
+        if let Some(flush_cause) = record.flush_cause.and_then(pipeline_redirect_cause_index) {
+            for flushed in &record.flushed {
+                let Some(flushed_stage) = pipeline_stage_index(flushed.stage()) else {
+                    continue;
+                };
+                self.record_terminal_sequence(
+                    record.cpu,
+                    flushed.sequence(),
+                    flush_cause,
+                    flushed_stage,
+                    active,
+                );
+            }
+        }
+
+        if record.redirect_cause == Some("interrupt_redirect") {
+            let interrupt = pipeline_redirect_cause_index("interrupt_redirect")
+                .expect("interrupt redirect is a configured pipeline cause");
+            for advance in record
+                .advanced
+                .iter()
+                .copied()
+                .filter(|advance| !advance.retires() && advance.destination_stage().is_none())
+            {
+                let Some(stage) = pipeline_stage_index(advance.source_stage()) else {
+                    continue;
+                };
+                self.record_terminal_sequence(
+                    record.cpu,
+                    advance.sequence(),
+                    interrupt,
+                    stage,
+                    active,
+                );
+            }
+        }
+    }
+
+    fn record_terminal_sequence(
+        &mut self,
+        cpu: u32,
+        sequence: u64,
+        flush_cause: usize,
+        flushed_stage: usize,
+        active: &mut BTreeMap<(u32, u64), PipelineSequenceBacklog>,
+    ) {
+        let Some(backlog) = active.remove(&(cpu, sequence)) else {
             return;
         };
-        for flushed in &record.flushed {
-            let Some(flushed_stage) = pipeline_stage_index(flushed.stage()) else {
-                continue;
-            };
-            let Some(backlog) = active.remove(&(record.cpu, flushed.sequence())) else {
-                continue;
-            };
-            self.aggregate
-                .record_sequence(flush_cause, flushed_stage, &backlog);
-            self.cpus.entry(record.cpu).or_default().record_sequence(
-                flush_cause,
-                flushed_stage,
-                &backlog,
-            );
-        }
+        self.aggregate
+            .record_sequence(flush_cause, flushed_stage, &backlog);
+        self.cpus
+            .entry(cpu)
+            .or_default()
+            .record_sequence(flush_cause, flushed_stage, &backlog);
     }
 
     fn record_stalls(
@@ -372,8 +409,8 @@ mod tests {
     use serde_json::Value;
 
     use super::super::{
-        Rem6PipelineTraceInstruction, Rem6PipelineTraceRecord, PIPELINE_REDIRECT_CAUSES,
-        PIPELINE_STALL_CAUSES,
+        Rem6PipelineTraceAdvance, Rem6PipelineTraceInstruction, Rem6PipelineTraceRecord,
+        PIPELINE_REDIRECT_CAUSES, PIPELINE_STALL_CAUSES,
     };
     use super::PipelineStallBacklogFlushSummary;
 
@@ -655,6 +692,100 @@ mod tests {
 
         assert_eq!(
             json.pointer("/stall_cause/data_wait/flush_cause/interrupt_redirect/sequences")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn interrupt_cancelled_advance_correlates_resource_blocked_backlog() {
+        let mut interrupt = trace_record(
+            1,
+            9,
+            None,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        interrupt.redirect_cause = Some("interrupt_redirect");
+        interrupt.advanced.push(Rem6PipelineTraceAdvance {
+            sequence: 11,
+            source_stage: "commit",
+            destination_stage: None,
+            retires: false,
+        });
+        let records = [
+            trace_record(
+                1,
+                8,
+                Some("execute_wait"),
+                4,
+                vec![instruction(11, "execute")],
+                Vec::new(),
+                Vec::new(),
+                vec![instruction(11, "execute")],
+            ),
+            interrupt,
+        ];
+
+        let summary = PipelineStallBacklogFlushSummary::from_records(&records);
+        let json: Value = serde_json::from_str(&summary.to_json()).unwrap();
+        let path = "/stall_cause/execute_wait/flush_cause/interrupt_redirect/block_kind/resource_blocked/blocked_stage/execute/flushed_stage/commit";
+        for (metric, expected) in [("sequences", 1), ("stall_records", 1), ("stall_cycles", 4)] {
+            assert_eq!(
+                json.pointer(&format!("{path}/{metric}"))
+                    .and_then(Value::as_u64),
+                Some(expected)
+            );
+            assert_eq!(
+                json.pointer(&format!("/cpu/cpu1{path}/{metric}"))
+                    .and_then(Value::as_u64),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn interrupt_live_advance_does_not_terminate_backlog() {
+        let mut interrupt = trace_record(
+            1,
+            9,
+            None,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![instruction(12, "commit")],
+        );
+        interrupt.redirect_cause = Some("interrupt_redirect");
+        interrupt.advanced.push(Rem6PipelineTraceAdvance {
+            sequence: 12,
+            source_stage: "execute",
+            destination_stage: Some("commit"),
+            retires: false,
+        });
+        let records = [
+            trace_record(
+                1,
+                8,
+                Some("execute_wait"),
+                4,
+                vec![instruction(12, "execute")],
+                Vec::new(),
+                Vec::new(),
+                vec![instruction(12, "execute")],
+            ),
+            interrupt,
+        ];
+
+        let json: Value = serde_json::from_str(
+            &PipelineStallBacklogFlushSummary::from_records(&records).to_json(),
+        )
+        .unwrap();
+        assert_eq!(
+            json.pointer("/stall_cause/execute_wait/flush_cause/interrupt_redirect/sequences")
                 .and_then(Value::as_u64),
             Some(0)
         );

@@ -21,6 +21,8 @@ const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
+const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_LINES: usize = 1700;
+const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_IPI_LINES: usize = 500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
 const REQUIRED_MIGRATION_LEDGER_LINES: usize = 1200;
 const MAX_ARCHITECTURE_README_LINES: usize = 80;
@@ -222,6 +224,49 @@ fn cli_riscv_se_smoke_modules_stay_within_size_limit() {
         "RISC-V SE CLI smoke modules exceed {MAX_SOURCE_LINES} lines: {}",
         oversized.join(", ")
     );
+}
+
+#[test]
+fn cli_pipeline_interrupt_stall_backlog_flush_modules_stay_focused() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let parent_path = manifest_dir.join("tests/cli_run/pipeline_interrupt/stall_backlog_flush.rs");
+    let child_path =
+        manifest_dir.join("tests/cli_run/pipeline_interrupt/stall_backlog_flush/ipi.rs");
+    let parent = fs::read_to_string(&parent_path).unwrap();
+    let child = fs::read_to_string(&child_path).unwrap();
+
+    assert!(
+        parent.contains("#[path = \"stall_backlog_flush/ipi.rs\"]") && parent.contains("mod ipi;"),
+        "the stall-backlog parent must declare the focused IPI child module"
+    );
+    let ipi_test =
+        "fn rem6_run_pipeline_debug_correlates_cpu1_ipi_fetch_wait_backlog_with_interrupt_flush()";
+    assert!(
+        child.contains(ipi_test),
+        "CPU1 IPI interrupt-correlation evidence belongs in the focused child module"
+    );
+    assert!(
+        !parent.contains(ipi_test),
+        "the stall-backlog parent must not regain the CPU1 IPI evidence"
+    );
+
+    for (relative_path, maximum) in [
+        (
+            "tests/cli_run/pipeline_interrupt/stall_backlog_flush.rs",
+            MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_LINES,
+        ),
+        (
+            "tests/cli_run/pipeline_interrupt/stall_backlog_flush/ipi.rs",
+            MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_IPI_LINES,
+        ),
+    ] {
+        let path = manifest_dir.join(relative_path);
+        let lines = line_count(&path);
+        assert!(
+            lines <= maximum,
+            "{relative_path} should remain a focused interrupt-correlation module, but it has {lines} lines"
+        );
+    }
 }
 
 #[test]

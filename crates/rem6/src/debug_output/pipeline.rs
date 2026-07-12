@@ -584,8 +584,20 @@ impl Rem6PipelineTraceInstruction {
 }
 
 impl Rem6PipelineTraceAdvance {
+    pub(super) const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub(super) const fn destination_stage(self) -> Option<&'static str> {
+        self.destination_stage
+    }
+
     pub(super) const fn source_stage(self) -> &'static str {
         self.source_stage
+    }
+
+    pub(super) const fn retires(self) -> bool {
+        self.retires
     }
 
     fn to_json(self) -> String {

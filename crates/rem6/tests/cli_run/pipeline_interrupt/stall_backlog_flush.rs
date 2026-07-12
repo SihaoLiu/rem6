@@ -2,17 +2,34 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+#[path = "stall_backlog_flush/ipi.rs"]
+mod ipi;
+
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
 const SBI_HSM_HART_START: i32 = 0;
 
 const CPU0_FETCH_WAIT_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "fetch_wait", "ordering_blocked", "execute", "execute");
+const CPU0_FETCH_WAIT_COMMIT_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(0, "fetch_wait", "ordering_blocked", "fetch2", "commit");
+const CPU0_FETCH_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(0, "fetch_wait", "resource_blocked", "commit", "commit");
+const CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(0, "fetch_wait", "resource_blocked", "fetch2", "commit");
 const CPU0_EXECUTE_WAIT_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "execute_wait", "ordering_blocked", "decode", "execute");
+const CPU0_EXECUTE_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(0, "execute_wait", "resource_blocked", "execute", "commit");
 const CPU0_DATA_WAIT_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "data_wait", "ordering_blocked", "decode", "commit");
+const CPU1_DATA_WAIT_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(1, "data_wait", "ordering_blocked", "decode", "commit");
 const CPU1_EXECUTE_WAIT_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(1, "execute_wait", "ordering_blocked", "decode", "execute");
+const CPU1_EXECUTE_WAIT_COMMIT_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(1, "execute_wait", "ordering_blocked", "decode", "commit");
+const CPU1_EXECUTE_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(1, "execute_wait", "resource_blocked", "execute", "commit");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InterruptBacklogPair {
@@ -21,6 +38,12 @@ struct InterruptBacklogPair {
     block_kind: &'static str,
     blocked_stage: &'static str,
     flushed_stage: &'static str,
+}
+
+struct SecondaryDataInterruptProgram {
+    path: std::path::PathBuf,
+    handler_pc: u64,
+    load_pc: u64,
 }
 
 impl InterruptBacklogPair {
@@ -119,16 +142,35 @@ fn raw_interrupt_backlog_flush_totals(
             continue;
         }
 
-        let matches_interrupt =
-            record.get("flush_cause").and_then(Value::as_str) == Some("interrupt_redirect");
-        for flushed in record_array(record, "flushed") {
-            let sequence = json_record_u64(flushed, "sequence");
+        let mut terminal_sequences = BTreeSet::new();
+        if record.get("flush_cause").and_then(Value::as_str) == Some("interrupt_redirect") {
+            terminal_sequences.extend(
+                record_array(record, "flushed")
+                    .iter()
+                    .filter(|flushed| {
+                        flushed.get("stage").and_then(Value::as_str) == Some(pair.flushed_stage)
+                    })
+                    .map(|flushed| json_record_u64(flushed, "sequence")),
+            );
+        }
+        if record.get("redirect_cause").and_then(Value::as_str) == Some("interrupt_redirect") {
+            terminal_sequences.extend(
+                record_array(record, "advanced")
+                    .iter()
+                    .filter(|advance| {
+                        advance.get("retires").and_then(Value::as_bool) == Some(false)
+                            && advance.get("destination_stage").is_some_and(Value::is_null)
+                            && advance.get("source_stage").and_then(Value::as_str)
+                                == Some(pair.flushed_stage)
+                    })
+                    .map(|advance| json_record_u64(advance, "sequence")),
+            );
+        }
+        for sequence in terminal_sequences {
             if let Some((stall_records, stall_cycles)) = active.remove(&sequence) {
-                if matches_interrupt {
-                    totals.sequences += 1;
-                    totals.stall_records += stall_records;
-                    totals.stall_cycles += stall_cycles;
-                }
+                totals.sequences += 1;
+                totals.stall_records += stall_records;
+                totals.stall_cycles += stall_cycles;
             }
         }
 
@@ -136,6 +178,9 @@ fn raw_interrupt_backlog_flush_totals(
             let stall_cycles = json_record_u64(record, "stall_cycles");
             let blocked_sequences = record_array(record, pair.block_kind)
                 .iter()
+                .filter(|blocked| {
+                    blocked.get("stage").and_then(Value::as_str) == Some(pair.blocked_stage)
+                })
                 .map(|blocked| json_record_u64(blocked, "sequence"))
                 .collect::<BTreeSet<_>>();
             for sequence in blocked_sequences {
@@ -188,6 +233,66 @@ fn interrupt_timer_data_wait_program_path(name: &str, timer_deadline: i32) -> In
         path: temp_binary(name, &elf),
         handler_pc: RISCV_SBI_ENTRY + handler_index as u64 * 4,
         loop_pc: RISCV_SBI_ENTRY + loop_index as u64 * 4,
+    }
+}
+
+fn secondary_interrupt_timer_data_wait_program_path(
+    name: &str,
+    timer_deadline: i32,
+) -> SecondaryDataInterruptProgram {
+    const DATA_OFFSET: usize = 256;
+
+    let mut words = vec![i_type(1, 0, 0x0, 10, 0x13)];
+    let secondary_auipc_index = words.len();
+    words.extend([
+        u_type(0, 11, 0x17),
+        i_type(0, 11, 0x0, 11, 0x13),
+        i_type(0x67, 0, 0x0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        b_type(0, 0, 0, 0x0),
+    ]);
+
+    let secondary_index = words.len();
+    let stvec_auipc_index = append_interrupt_timer_setup(&mut words, timer_deadline);
+    let data_auipc_index = words.len();
+    let load_index = data_auipc_index + 2;
+    words.extend([
+        u_type(0, 2, 0x17),
+        i_type(
+            DATA_OFFSET as i32 - (data_auipc_index * 4) as i32,
+            2,
+            0x0,
+            2,
+            0x13,
+        ),
+        i_type(0, 2, 0x3, 10, 0x03),
+        i_type(1, 8, 0x0, 8, 0x13),
+        i_type(1, 9, 0x0, 9, 0x13),
+        i_type(1, 13, 0x0, 13, 0x13),
+    ]);
+    words.push(b_type(0, 0, 0, 0x0));
+    let handler_index = append_interrupt_breakpoint_handler(&mut words);
+    words[secondary_auipc_index + 1] = i_type(
+        ((secondary_index - secondary_auipc_index) * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    patch_interrupt_handler_pc(&mut words, stvec_auipc_index, handler_index);
+    while words.len() * 4 < DATA_OFFSET {
+        words.push(0);
+    }
+    words.extend([0x5566_7788, 0x1122_3344]);
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    SecondaryDataInterruptProgram {
+        path: temp_binary(name, &elf),
+        handler_pc: RISCV_SBI_ENTRY + handler_index as u64 * 4,
+        load_pc: RISCV_SBI_ENTRY + load_index as u64 * 4,
     }
 }
 
@@ -257,6 +362,7 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
         .expect("debug pipeline trace array");
     assert_pipeline_summary_matches_trace(&json);
     assert_timer_handler_completed(&json);
+    assert_primary_timer_fixture_evidence(&json, INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE as u64);
 
     let interrupt_redirects = trace
         .iter()
@@ -278,6 +384,8 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
             .and_then(Value::as_str),
         Some(format!("0x{:x}", program.handler_pc).as_str())
     );
+    let terminal_sequence =
+        assert_interrupt_terminal_advance(&json, interrupt_redirect, 0, program.loop_pc);
 
     let flushed = record_array(interrupt_redirect, "flushed");
     assert_eq!(
@@ -290,7 +398,8 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
         Some("execute")
     );
     let flushed_sequence = json_record_u64(&flushed[0], "sequence");
-    let fetch_pcs = fetch_trace_pcs_by_sequence(&json);
+    assert_ne!(terminal_sequence, flushed_sequence);
+    let fetch_pcs = fetch_trace_pcs_by_sequence(&json, 0);
     assert_eq!(
         fetch_pcs.get(&flushed_sequence).map(String::as_str),
         Some(format!("0x{:x}", program.loop_pc).as_str())
@@ -333,20 +442,51 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
         }),
         "the correlated sequence must remain live through every prior wait: {raw_backlog:?}"
     );
-    let expected = BacklogFlushTotals {
+    let ordering_expected = BacklogFlushTotals {
         sequences: 1,
         stall_records: 6,
         stall_cycles: 6,
     };
+    let commit_ordering_expected = ordering_expected;
+    let resource_expected = ordering_expected;
+    let aggregate_expected = BacklogFlushTotals {
+        sequences: 2,
+        stall_records: 18,
+        stall_cycles: 18,
+    };
     assert_eq!(
         raw_interrupt_backlog_flush_totals(trace, CPU0_FETCH_WAIT_INTERRUPT),
-        expected,
+        ordering_expected,
         "{trace:?}"
     );
-    assert_interrupt_backlog_flush_outputs(&json, &stdout, CPU0_FETCH_WAIT_INTERRUPT, expected);
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(trace, CPU0_FETCH_WAIT_COMMIT_INTERRUPT),
+        commit_ordering_expected,
+        "{trace:?}"
+    );
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(trace, CPU0_FETCH_WAIT_RESOURCE_INTERRUPT),
+        resource_expected,
+        "{trace:?}"
+    );
+    assert_interrupt_backlog_flush_outputs(
+        &json,
+        &stdout,
+        CPU0_FETCH_WAIT_INTERRUPT,
+        aggregate_expected,
+        &[
+            (CPU0_FETCH_WAIT_RESOURCE_INTERRUPT, resource_expected),
+            (CPU0_FETCH_WAIT_COMMIT_INTERRUPT, commit_ordering_expected),
+            (CPU0_FETCH_WAIT_INTERRUPT, ordering_expected),
+        ],
+    );
 
-    let suppressed_stdout =
-        run_interrupt_timer_program_with_lookahead(&program.path, "json", Some("Pipeline"), "1");
+    let suppressed_stdout = run_interrupt_timer_program_with_lookahead(
+        &program.path,
+        "json",
+        Some("Pipeline,Fetch"),
+        "1",
+    );
     let suppressed_json: Value = serde_json::from_str(&suppressed_stdout).unwrap();
     let suppressed_trace = suppressed_json
         .pointer("/debug/pipeline_trace")
@@ -354,6 +494,10 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
         .expect("debug pipeline trace array");
     assert_pipeline_summary_matches_trace(&suppressed_json);
     assert_timer_handler_completed(&suppressed_json);
+    assert_primary_timer_fixture_evidence(
+        &suppressed_json,
+        INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE as u64,
+    );
     let suppressed_interrupts = suppressed_trace
         .iter()
         .filter(|record| {
@@ -378,6 +522,7 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
             .and_then(Value::as_str),
         Some(format!("0x{:x}", program.handler_pc).as_str())
     );
+    assert_interrupt_terminal_advance(&suppressed_json, suppressed_interrupt, 0, program.loop_pc);
     assert_eq!(
         json_path_u64(
             &suppressed_json,
@@ -392,17 +537,51 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
         ),
         0
     );
-    let expected = BacklogFlushTotals::default();
+    let ordering_expected = BacklogFlushTotals::default();
+    let commit_ordering_expected = BacklogFlushTotals::default();
+    let resource_expected = BacklogFlushTotals::default();
+    let suppressed_resource_expected = BacklogFlushTotals {
+        sequences: 1,
+        stall_records: 6,
+        stall_cycles: 6,
+    };
     assert_eq!(
         raw_interrupt_backlog_flush_totals(suppressed_trace, CPU0_FETCH_WAIT_INTERRUPT),
-        expected,
+        ordering_expected,
+        "{suppressed_trace:?}"
+    );
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(suppressed_trace, CPU0_FETCH_WAIT_COMMIT_INTERRUPT),
+        commit_ordering_expected,
+        "{suppressed_trace:?}"
+    );
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(suppressed_trace, CPU0_FETCH_WAIT_RESOURCE_INTERRUPT),
+        resource_expected,
+        "{suppressed_trace:?}"
+    );
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(
+            suppressed_trace,
+            CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT
+        ),
+        suppressed_resource_expected,
         "{suppressed_trace:?}"
     );
     assert_interrupt_backlog_flush_outputs(
         &suppressed_json,
         &suppressed_stdout,
         CPU0_FETCH_WAIT_INTERRUPT,
-        expected,
+        suppressed_resource_expected,
+        &[
+            (CPU0_FETCH_WAIT_RESOURCE_INTERRUPT, resource_expected),
+            (
+                CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT,
+                suppressed_resource_expected,
+            ),
+            (CPU0_FETCH_WAIT_COMMIT_INTERRUPT, commit_ordering_expected),
+            (CPU0_FETCH_WAIT_INTERRUPT, ordering_expected),
+        ],
     );
 }
 
@@ -410,16 +589,31 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_interrupt_flush() 
 fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush() {
     let program =
         interrupt_timer_flush_program_path("pipeline-interrupt-execute-wait-backlog-flush", 103);
-    for (mode, expected) in [
+    for (mode, aggregate_expected, resource_expected, ordering_expected) in [
         (
             "detailed",
+            BacklogFlushTotals {
+                sequences: 4,
+                stall_records: 76,
+                stall_cycles: 76,
+            },
+            BacklogFlushTotals {
+                sequences: 1,
+                stall_records: 19,
+                stall_cycles: 19,
+            },
             BacklogFlushTotals {
                 sequences: 3,
                 stall_records: 57,
                 stall_cycles: 57,
             },
         ),
-        ("timing", BacklogFlushTotals::default()),
+        (
+            "timing",
+            BacklogFlushTotals::default(),
+            BacklogFlushTotals::default(),
+            BacklogFlushTotals::default(),
+        ),
     ] {
         let stdout = run_interrupt_timer_program_in_mode(
             &program.path,
@@ -434,6 +628,7 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed(&json);
+        assert_primary_timer_fixture_evidence(&json, 103);
 
         let interrupts = trace
             .iter()
@@ -447,14 +642,15 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
             interrupt.get("redirect_target").and_then(Value::as_str),
             Some(format!("0x{:x}", program.handler_pc).as_str())
         );
+        let terminal_pc = if mode == "detailed" {
+            0x8000_0038
+        } else {
+            program.loop_pc
+        };
+        let terminal_sequence = assert_interrupt_terminal_advance(&json, interrupt, 0, terminal_pc);
 
         let flushed = record_array(interrupt, "flushed");
         if mode == "detailed" {
-            assert_eq!(
-                json.pointer("/cores/0/registers/x6")
-                    .and_then(Value::as_str),
-                Some("0x80000038")
-            );
             assert!(
                 json.pointer("/cores/0/registers/x10").is_none(),
                 "the interrupting DIV must not write its architectural destination: {json}"
@@ -471,6 +667,13 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
                 .iter()
                 .map(|instruction| json_record_u64(instruction, "sequence"))
                 .collect::<BTreeSet<_>>();
+            assert!(!flushed_sequences.contains(&terminal_sequence));
+            assert_fetch_sequence_pc_set(
+                &json,
+                0,
+                &flushed_sequences,
+                &[terminal_pc + 4, terminal_pc + 8, program.loop_pc],
+            );
             let raw = trace
                 .iter()
                 .filter(|record| {
@@ -523,14 +726,23 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
         }
         assert_eq!(
             raw_interrupt_backlog_flush_totals(trace, CPU0_EXECUTE_WAIT_INTERRUPT),
-            expected,
+            ordering_expected,
+            "mode {mode}: {trace:?}"
+        );
+        assert_eq!(
+            raw_interrupt_backlog_flush_totals(trace, CPU0_EXECUTE_WAIT_RESOURCE_INTERRUPT),
+            resource_expected,
             "mode {mode}: {trace:?}"
         );
         assert_interrupt_backlog_flush_outputs(
             &json,
             &stdout,
             CPU0_EXECUTE_WAIT_INTERRUPT,
-            expected,
+            aggregate_expected,
+            &[
+                (CPU0_EXECUTE_WAIT_RESOURCE_INTERRUPT, resource_expected),
+                (CPU0_EXECUTE_WAIT_INTERRUPT, ordering_expected),
+            ],
         );
     }
 }
@@ -543,14 +755,14 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
         (
             "detailed",
             BacklogFlushTotals {
-                sequences: 2,
-                stall_records: 12,
-                stall_cycles: 12,
+                sequences: 3,
+                stall_records: 18,
+                stall_cycles: 18,
             },
         ),
         ("timing", BacklogFlushTotals::default()),
     ] {
-        let stdout = run_interrupt_timer_program_with_args(
+        let stdout = run_interrupt_program_with_args(
             &program.path,
             "json",
             Some("Pipeline,O3,Fetch,Memory,Data"),
@@ -570,12 +782,13 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed(&json);
+        assert_primary_timer_fixture_evidence(&json, 110);
         assert_eq!(
             json.pointer("/cores/0/registers/x10")
                 .and_then(Value::as_str),
             Some("0x1122334455667788")
         );
-        assert_one_completed_data_load(&json);
+        assert_one_completed_data_load(&json, 0);
 
         let interrupts = trace
             .iter()
@@ -589,13 +802,14 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
             interrupt.get("redirect_target").and_then(Value::as_str),
             Some(format!("0x{:x}", program.handler_pc).as_str())
         );
+        let terminal_pc = if mode == "detailed" {
+            program.loop_pc - 12
+        } else {
+            program.loop_pc - 4
+        };
+        let terminal_sequence = assert_interrupt_terminal_advance(&json, interrupt, 0, terminal_pc);
         let flushed = record_array(interrupt, "flushed");
         if mode == "detailed" {
-            assert_eq!(
-                json.pointer("/cores/0/registers/x6")
-                    .and_then(Value::as_str),
-                Some("0x8000003c")
-            );
             assert_eq!(
                 interrupt.get("flush_cause").and_then(Value::as_str),
                 Some("interrupt_redirect")
@@ -608,6 +822,13 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
                 .iter()
                 .map(|instruction| json_record_u64(instruction, "sequence"))
                 .collect::<BTreeSet<_>>();
+            assert!(!flushed_sequences.contains(&terminal_sequence));
+            assert_fetch_sequence_pc_set(
+                &json,
+                0,
+                &flushed_sequences,
+                &[terminal_pc + 4, terminal_pc + 8],
+            );
             let waits = trace
                 .iter()
                 .filter(|record| {
@@ -665,7 +886,161 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
             expected,
             "mode {mode}: {trace:?}"
         );
-        assert_interrupt_backlog_flush_outputs(&json, &stdout, CPU0_DATA_WAIT_INTERRUPT, expected);
+        assert_interrupt_backlog_flush_outputs(
+            &json,
+            &stdout,
+            CPU0_DATA_WAIT_INTERRUPT,
+            expected,
+            &[(CPU0_DATA_WAIT_INTERRUPT, expected)],
+        );
+    }
+}
+
+#[test]
+fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flush() {
+    let program = secondary_interrupt_timer_data_wait_program_path(
+        "pipeline-cpu1-interrupt-data-wait-backlog-flush",
+        158,
+    );
+    for (mode, expected) in [
+        (
+            "detailed",
+            BacklogFlushTotals {
+                sequences: 3,
+                stall_records: 18,
+                stall_cycles: 18,
+            },
+        ),
+        ("timing", BacklogFlushTotals::default()),
+    ] {
+        let stdout = run_interrupt_program_with_args(
+            &program.path,
+            "json",
+            Some("Pipeline,O3,Fetch,Memory,Data"),
+            &[
+                "--cores",
+                "2",
+                "--parallel-workers",
+                "2",
+                "--riscv-branch-lookahead",
+                "2",
+                "--riscv-execution-mode",
+                mode,
+                "--riscv-o3-scalar-memory-depth",
+                "4",
+            ],
+        );
+        let json: Value = serde_json::from_str(&stdout).unwrap();
+        let trace = json
+            .pointer("/debug/pipeline_trace")
+            .and_then(Value::as_array)
+            .expect("debug pipeline trace array");
+        assert_pipeline_summary_matches_trace(&json);
+        assert_timer_handler_completed_for_cpu(&json, 1);
+        assert_secondary_timer_fixture_evidence(&json, "0x67", 158);
+        assert_eq!(
+            json_path_u64(&json, "/cores/0/in_order_pipeline/interrupt_redirects"),
+            0
+        );
+        assert_cpu_interrupt_backlog_empty(&json, &stdout, CPU0_DATA_WAIT_INTERRUPT);
+        assert_eq!(
+            json.pointer("/cores/1/registers/x10")
+                .and_then(Value::as_str),
+            Some("0x1122334455667788")
+        );
+        assert_one_completed_data_load(&json, 1);
+
+        let interrupts = trace
+            .iter()
+            .filter(|record| {
+                record.get("redirect_cause").and_then(Value::as_str) == Some("interrupt_redirect")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(interrupts.len(), 1, "mode {mode}: {interrupts:?}");
+        let interrupt = interrupts[0];
+        assert_eq!(interrupt.get("cpu").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            interrupt.get("redirect_target").and_then(Value::as_str),
+            Some(format!("0x{:x}", program.handler_pc).as_str())
+        );
+        let terminal_pc = if mode == "detailed" {
+            program.load_pc + 4
+        } else {
+            program.load_pc + 12
+        };
+        let terminal_sequence = assert_interrupt_terminal_advance(&json, interrupt, 1, terminal_pc);
+        let flushed = record_array(interrupt, "flushed");
+        if mode == "detailed" {
+            assert_eq!(
+                interrupt.get("flush_cause").and_then(Value::as_str),
+                Some("interrupt_redirect")
+            );
+            assert_eq!(flushed.len(), 2, "{interrupt:?}");
+            assert!(flushed.iter().all(|instruction| {
+                instruction.get("stage").and_then(Value::as_str) == Some("commit")
+            }));
+            let flushed_sequences = flushed
+                .iter()
+                .map(|instruction| json_record_u64(instruction, "sequence"))
+                .collect::<BTreeSet<_>>();
+            assert!(!flushed_sequences.contains(&terminal_sequence));
+            assert_fetch_sequence_pc_set(
+                &json,
+                1,
+                &flushed_sequences,
+                &[terminal_pc + 4, terminal_pc + 8],
+            );
+            let waits = trace
+                .iter()
+                .filter(|record| {
+                    record.get("cpu").and_then(Value::as_u64) == Some(1)
+                        && record.get("stall_cause").and_then(Value::as_str) == Some("data_wait")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(waits.len(), 6, "{waits:?}");
+            assert!(waits.iter().all(|record| {
+                json_record_u64(record, "stall_cycles") == 1
+                    && flushed_sequences.iter().all(|sequence| {
+                        record_array(record, "ordering_blocked")
+                            .iter()
+                            .any(|blocked| {
+                                blocked.get("stage").and_then(Value::as_str) == Some("decode")
+                                    && json_record_u64(blocked, "sequence") == *sequence
+                            })
+                    })
+            }));
+            assert_detailed_secondary_interrupt_discards_younger_load_window(&json, &program);
+        } else {
+            assert!(flushed.is_empty(), "mode {mode}: {interrupt:?}");
+            assert!(interrupt.get("flush_cause").is_none_or(Value::is_null));
+            assert_eq!(
+                json.pointer("/cores/1/registers/x8")
+                    .and_then(Value::as_str),
+                Some("0x1")
+            );
+            assert_eq!(
+                json.pointer("/cores/1/registers/x9")
+                    .and_then(Value::as_str),
+                Some("0x1")
+            );
+            assert!(json.pointer("/cores/1/registers/x13").is_none());
+            assert!(json
+                .pointer("/debug/o3_trace")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty));
+        }
+        assert_eq!(
+            raw_interrupt_backlog_flush_totals(trace, CPU1_DATA_WAIT_INTERRUPT),
+            expected,
+            "mode {mode}: {trace:?}"
+        );
+        assert_interrupt_backlog_flush_outputs(
+            &json,
+            &stdout,
+            CPU1_DATA_WAIT_INTERRUPT,
+            expected,
+            &[(CPU1_DATA_WAIT_INTERRUPT, expected)],
+        );
     }
 }
 
@@ -675,18 +1050,49 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
         "pipeline-cpu1-interrupt-execute-wait-backlog-flush",
         145,
     );
-    for (mode, expected) in [
+    for (
+        mode,
+        aggregate_expected,
+        resource_expected,
+        execute_ordering_expected,
+        commit_ordering_expected,
+    ) in [
         (
             "detailed",
+            BacklogFlushTotals {
+                sequences: 2,
+                stall_records: 38,
+                stall_cycles: 38,
+            },
+            BacklogFlushTotals {
+                sequences: 1,
+                stall_records: 19,
+                stall_cycles: 19,
+            },
+            BacklogFlushTotals {
+                sequences: 1,
+                stall_records: 19,
+                stall_cycles: 19,
+            },
+            BacklogFlushTotals::default(),
+        ),
+        (
+            "timing",
+            BacklogFlushTotals {
+                sequences: 1,
+                stall_records: 19,
+                stall_cycles: 19,
+            },
+            BacklogFlushTotals::default(),
+            BacklogFlushTotals::default(),
             BacklogFlushTotals {
                 sequences: 1,
                 stall_records: 19,
                 stall_cycles: 19,
             },
         ),
-        ("timing", BacklogFlushTotals::default()),
     ] {
-        let stdout = run_interrupt_timer_program_with_args(
+        let stdout = run_interrupt_program_with_args(
             &program.path,
             "json",
             Some("Pipeline,Fetch"),
@@ -708,18 +1114,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed_for_cpu(&json, 1);
-        let hsm = json
-            .pointer("/riscv_sbi_hsm_events/0")
-            .expect("CPU0 HSM start event");
-        assert_eq!(hsm.get("source_cpu").and_then(Value::as_u64), Some(0));
-        assert_eq!(hsm.get("function").and_then(Value::as_u64), Some(0));
-        assert_eq!(hsm.get("target_hart").and_then(Value::as_u64), Some(1));
-        assert_eq!(hsm.get("opaque").and_then(Value::as_str), Some("0x66"));
-        let timer = json
-            .pointer("/riscv_sbi_timers/0")
-            .expect("CPU1 timer event");
-        assert_eq!(timer.get("cpu").and_then(Value::as_u64), Some(1));
-        assert_eq!(timer.get("deadline").and_then(Value::as_u64), Some(145));
+        assert_secondary_timer_fixture_evidence(&json, "0x66", 145);
         assert_eq!(
             json_path_u64(&json, "/cores/0/in_order_pipeline/interrupt_redirects"),
             0
@@ -739,13 +1134,14 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
             interrupt.get("redirect_target").and_then(Value::as_str),
             Some(format!("0x{:x}", program.handler_pc).as_str())
         );
+        let terminal_pc = if mode == "detailed" {
+            0x8000_005c
+        } else {
+            0x8000_0060
+        };
+        let terminal_sequence = assert_interrupt_terminal_advance(&json, interrupt, 1, terminal_pc);
         let flushed = record_array(interrupt, "flushed");
         if mode == "detailed" {
-            assert_eq!(
-                json.pointer("/cores/1/registers/x6")
-                    .and_then(Value::as_str),
-                Some("0x8000005c")
-            );
             assert!(
                 json.pointer("/cores/1/registers/x10").is_none(),
                 "the interrupting CPU1 DIV must not write its architectural destination: {json}"
@@ -760,6 +1156,8 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
                 Some("execute")
             );
             let sequence = json_record_u64(&flushed[0], "sequence");
+            assert_ne!(sequence, terminal_sequence);
+            assert_fetch_sequence_pc_set(&json, 1, &BTreeSet::from([sequence]), &[terminal_pc + 4]);
             let waits = trace
                 .iter()
                 .filter(|record| {
@@ -788,24 +1186,40 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
         }
         assert_eq!(
             raw_interrupt_backlog_flush_totals(trace, CPU1_EXECUTE_WAIT_INTERRUPT),
-            expected,
+            execute_ordering_expected,
+            "mode {mode}: {trace:?}"
+        );
+        assert_eq!(
+            raw_interrupt_backlog_flush_totals(trace, CPU1_EXECUTE_WAIT_COMMIT_INTERRUPT),
+            commit_ordering_expected,
+            "mode {mode}: {trace:?}"
+        );
+        assert_eq!(
+            raw_interrupt_backlog_flush_totals(trace, CPU1_EXECUTE_WAIT_RESOURCE_INTERRUPT),
+            resource_expected,
             "mode {mode}: {trace:?}"
         );
         assert_interrupt_backlog_flush_outputs(
             &json,
             &stdout,
             CPU1_EXECUTE_WAIT_INTERRUPT,
-            expected,
+            aggregate_expected,
+            &[
+                (CPU1_EXECUTE_WAIT_RESOURCE_INTERRUPT, resource_expected),
+                (CPU1_EXECUTE_WAIT_INTERRUPT, execute_ordering_expected),
+                (CPU1_EXECUTE_WAIT_COMMIT_INTERRUPT, commit_ordering_expected),
+            ],
         );
     }
 }
 
-fn assert_one_completed_data_load(json: &Value) {
+fn assert_one_completed_data_load(json: &Value, cpu: u64) {
     let data = json
         .pointer("/debug/data_trace")
         .and_then(Value::as_array)
         .expect("Data debug trace");
     assert_eq!(data.len(), 1, "{data:?}");
+    assert_eq!(data[0].get("cpu").and_then(Value::as_u64), Some(cpu));
     assert_eq!(data[0].get("kind").and_then(Value::as_str), Some("load"));
     assert_eq!(
         data[0].get("address").and_then(Value::as_str),
@@ -822,6 +1236,17 @@ fn assert_one_completed_data_load(json: &Value) {
         .filter(|record| record.get("channel").and_then(Value::as_str) == Some("data"))
         .collect::<Vec<_>>();
     assert_eq!(data_records.len(), 3, "{data_records:?}");
+    assert!(data_records
+        .iter()
+        .all(|record| { record.get("request_agent").and_then(Value::as_u64) == Some(cpu) }));
+    assert_eq!(
+        data_records[0].get("endpoint").and_then(Value::as_str),
+        Some(format!("cpu{cpu}.dmem").as_str())
+    );
+    assert_eq!(
+        data_records[2].get("endpoint").and_then(Value::as_str),
+        Some(format!("cpu{cpu}.dmem").as_str())
+    );
     assert_eq!(
         data_records
             .iter()
@@ -835,6 +1260,70 @@ fn assert_one_completed_data_load(json: &Value) {
             .and_then(Value::as_u64),
         Some(6)
     );
+}
+
+fn assert_detailed_secondary_interrupt_discards_younger_load_window(
+    json: &Value,
+    program: &SecondaryDataInterruptProgram,
+) {
+    for register in ["x8", "x9", "x13"] {
+        assert!(
+            json.pointer(&format!("/cores/1/registers/{register}"))
+                .is_none(),
+            "interrupt-flushed CPU1 {register} must remain architecturally absent: {json}"
+        );
+    }
+    assert_eq!(
+        json.pointer("/cores/1/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        json.pointer("/cores/1/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let o3 = json
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .and_then(|trace| {
+            trace
+                .iter()
+                .find(|summary| summary.get("cpu").and_then(Value::as_u64) == Some(1))
+        })
+        .expect("detailed CPU1 O3 trace summary");
+    assert_eq!(o3.get("max_rob_occupancy").and_then(Value::as_u64), Some(4));
+    assert_eq!(o3.get("max_lsq_occupancy").and_then(Value::as_u64), Some(1));
+    let events = o3
+        .get("events")
+        .and_then(Value::as_array)
+        .expect("detailed CPU1 O3 events");
+    let load_pc = format!("0x{:x}", program.load_pc);
+    let load = events
+        .iter()
+        .find(|event| event.get("pc").and_then(Value::as_str) == Some(load_pc.as_str()))
+        .expect("completed detailed CPU1 load O3 event");
+    let issue_tick = load
+        .get("issue_tick")
+        .and_then(Value::as_u64)
+        .expect("CPU1 load issue tick");
+    assert_eq!(
+        load.get("lsq_data_response_tick").and_then(Value::as_u64),
+        Some(issue_tick + 6)
+    );
+    for pc in [
+        program.load_pc + 4,
+        program.load_pc + 8,
+        program.load_pc + 12,
+    ] {
+        let pc = format!("0x{pc:x}");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.get("pc").and_then(Value::as_str) != Some(pc.as_str())),
+            "interrupt-flushed CPU1 instruction {pc} must not retire through O3: {events:?}"
+        );
+    }
 }
 
 fn assert_detailed_interrupt_discards_younger_load_window(json: &Value) {
@@ -950,6 +1439,34 @@ fn assert_timer_handler_completed_for_cpu(json: &Value, cpu: u64) {
     );
 }
 
+fn assert_secondary_timer_fixture_evidence(json: &Value, opaque: &str, deadline: u64) {
+    let hsm_events = json
+        .pointer("/riscv_sbi_hsm_events")
+        .and_then(Value::as_array)
+        .expect("HSM event array");
+    assert_eq!(hsm_events.len(), 1, "{hsm_events:?}");
+    let hsm = &hsm_events[0];
+    assert_eq!(hsm.get("source_cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(hsm.get("function").and_then(Value::as_u64), Some(0));
+    assert_eq!(hsm.get("target_hart").and_then(Value::as_u64), Some(1));
+    assert_eq!(hsm.get("opaque").and_then(Value::as_str), Some(opaque));
+
+    let timers = json
+        .pointer("/riscv_sbi_timers")
+        .and_then(Value::as_array)
+        .expect("timer event array");
+    assert_eq!(timers.len(), 1, "{timers:?}");
+    assert_eq!(timers[0].get("cpu").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        timers[0].get("deadline").and_then(Value::as_u64),
+        Some(deadline)
+    );
+    assert!(json
+        .pointer("/riscv_sbi_ipis")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+}
+
 fn assert_cpu_interrupt_backlog_empty(json: &Value, stdout: &str, pair: InterruptBacklogPair) {
     let summary_prefix = pair.cpu_summary_prefix();
     let stat_prefix = pair.cpu_stat_prefix();
@@ -983,11 +1500,18 @@ fn assert_interrupt_backlog_flush_outputs(
     stdout: &str,
     pair: InterruptBacklogPair,
     expected: BacklogFlushTotals,
+    cells: &[(InterruptBacklogPair, BacklogFlushTotals)],
 ) {
+    assert!(cells
+        .iter()
+        .all(|(cell, _)| { cell.cpu == pair.cpu && cell.stall_cause == pair.stall_cause }));
+    let expected_cells = cells
+        .iter()
+        .copied()
+        .filter(|(_, totals)| totals.sequences > 0)
+        .collect::<Vec<_>>();
     let summary_prefixes = pair.summary_prefixes();
     let stat_prefixes = pair.stat_prefixes();
-    let json_stage_suffix = pair.json_stage_suffix();
-    let stat_stage_suffix = pair.stat_stage_suffix();
     for (metric, unit, expected) in [
         ("sequences", "Count", expected.sequences),
         ("stall_records", "Count", expected.stall_records),
@@ -1013,6 +1537,7 @@ fn assert_interrupt_backlog_flush_outputs(
     }
 
     if expected.sequences == 0 {
+        assert!(expected_cells.is_empty());
         for prefix in &summary_prefixes {
             let block_kind = json
                 .pointer(&format!("{prefix}/block_kind"))
@@ -1025,58 +1550,95 @@ fn assert_interrupt_backlog_flush_outputs(
         }
         return;
     }
+    assert!(!expected_cells.is_empty());
 
     for prefix in &summary_prefixes {
         let block_kinds = json
             .pointer(&format!("{prefix}/block_kind"))
             .and_then(Value::as_object)
             .expect("interrupt backlog block-kind object");
-        assert_eq!(block_kinds.len(), 1, "{block_kinds:?}");
-        let blocked_stages = json
-            .pointer(&format!(
-                "{prefix}/block_kind/{}/blocked_stage",
-                pair.block_kind
-            ))
-            .and_then(Value::as_object)
-            .expect("interrupt backlog blocked-stage object");
-        assert_eq!(blocked_stages.len(), 1, "{blocked_stages:?}");
-        let flushed_stages = json
-            .pointer(&format!(
-                "{prefix}/block_kind/{}/blocked_stage/{}/flushed_stage",
-                pair.block_kind, pair.blocked_stage
-            ))
-            .and_then(Value::as_object)
-            .expect("interrupt backlog flushed-stage object");
-        assert_eq!(flushed_stages.len(), 1, "{flushed_stages:?}");
-        for (metric, expected) in [
-            ("sequences", expected.sequences),
-            ("stall_records", expected.stall_records),
-            ("stall_cycles", expected.stall_cycles),
-        ] {
-            assert_eq!(
-                json.pointer(&format!("{prefix}{json_stage_suffix}/{metric}"))
-                    .and_then(Value::as_u64),
-                Some(expected)
-            );
+        let observed_block_kinds = block_kinds
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let expected_block_kinds = expected_cells
+            .iter()
+            .map(|(cell, _)| cell.block_kind)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(observed_block_kinds, expected_block_kinds);
+
+        for block_kind in expected_block_kinds {
+            let blocked_stages = json
+                .pointer(&format!("{prefix}/block_kind/{block_kind}/blocked_stage"))
+                .and_then(Value::as_object)
+                .expect("interrupt backlog blocked-stage object");
+            let observed_blocked_stages = blocked_stages
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            let expected_blocked_stages = expected_cells
+                .iter()
+                .filter(|(cell, _)| cell.block_kind == block_kind)
+                .map(|(cell, _)| cell.blocked_stage)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(observed_blocked_stages, expected_blocked_stages);
+
+            for blocked_stage in expected_blocked_stages {
+                let flushed_stages = json
+                    .pointer(&format!(
+                        "{prefix}/block_kind/{block_kind}/blocked_stage/{blocked_stage}/flushed_stage"
+                    ))
+                    .and_then(Value::as_object)
+                    .expect("interrupt backlog flushed-stage object");
+                let observed_flushed_stages = flushed_stages
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                let expected_flushed_stages = expected_cells
+                    .iter()
+                    .filter(|(cell, _)| {
+                        cell.block_kind == block_kind && cell.blocked_stage == blocked_stage
+                    })
+                    .map(|(cell, _)| cell.flushed_stage)
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(observed_flushed_stages, expected_flushed_stages);
+            }
+        }
+
+        for (cell, totals) in &expected_cells {
+            let json_stage_suffix = cell.json_stage_suffix();
+            for (metric, expected) in [
+                ("sequences", totals.sequences),
+                ("stall_records", totals.stall_records),
+                ("stall_cycles", totals.stall_cycles),
+            ] {
+                assert_eq!(
+                    json.pointer(&format!("{prefix}{json_stage_suffix}/{metric}"))
+                        .and_then(Value::as_u64),
+                    Some(expected)
+                );
+            }
         }
     }
     for prefix in &stat_prefixes {
-        for (metric, unit, expected) in [
-            ("sequences", "Count", expected.sequences),
-            ("stall_records", "Count", expected.stall_records),
-            ("stall_cycles", "Cycle", expected.stall_cycles),
-        ] {
-            assert_stat(
-                stdout,
-                &format!("{prefix}{stat_stage_suffix}.{metric}"),
-                unit,
-                expected,
-                "monotonic",
-            );
+        for (cell, totals) in &expected_cells {
+            let stat_stage_suffix = cell.stat_stage_suffix();
+            for (metric, unit, expected) in [
+                ("sequences", "Count", totals.sequences),
+                ("stall_records", "Count", totals.stall_records),
+                ("stall_cycles", "Cycle", totals.stall_cycles),
+            ] {
+                assert_stat(
+                    stdout,
+                    &format!("{prefix}{stat_stage_suffix}.{metric}"),
+                    unit,
+                    expected,
+                    "monotonic",
+                );
+            }
         }
 
         let stage_prefix = format!("{prefix}.block_kind.");
-        let expected_prefix = format!("{prefix}{stat_stage_suffix}");
         let observed = json
             .pointer("/stats")
             .and_then(Value::as_array)
@@ -1085,9 +1647,14 @@ fn assert_interrupt_backlog_flush_outputs(
             .filter_map(|stat| stat.get("path").and_then(Value::as_str))
             .filter(|path| path.starts_with(&stage_prefix))
             .collect::<BTreeSet<_>>();
-        let expected = ["sequences", "stall_records", "stall_cycles"]
-            .into_iter()
-            .map(|metric| format!("{expected_prefix}.{metric}"))
+        let expected = expected_cells
+            .iter()
+            .flat_map(|(cell, _)| {
+                let expected_prefix = format!("{prefix}{}", cell.stat_stage_suffix());
+                ["sequences", "stall_records", "stall_cycles"]
+                    .into_iter()
+                    .map(move |metric| format!("{expected_prefix}.{metric}"))
+            })
             .collect::<BTreeSet<_>>();
         assert_eq!(observed, expected.iter().map(String::as_str).collect());
     }
