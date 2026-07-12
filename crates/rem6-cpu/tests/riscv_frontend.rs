@@ -6150,6 +6150,7 @@ fn riscv_core_driver_retires_fallthrough_branch_after_predicted_target_fetch_ahe
 fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
+    core.enable_checker_cpu();
     let interrupt_bit = 1_u64 << 1;
     core.set_status(RiscvStatusWord::new(0).with_mie(true));
     let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
@@ -6185,6 +6186,18 @@ fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
         interrupted.execution().trap().map(|trap| trap.kind()),
         Some(RiscvTrapKind::Interrupt { code: 1 })
     ));
+    assert!(!interrupted.counts_as_retired_instruction());
+    assert_eq!(
+        interrupted
+            .in_order_pipeline_cycle()
+            .expect("interrupt pipeline cycle")
+            .summary()
+            .retired_count(),
+        0
+    );
+    let checker = core.checker_cpu_snapshot().expect("checker snapshot");
+    assert_eq!(checker.checked_instructions(), 0);
+    assert_eq!(checker.hart().pc(), interrupted.execution().next_pc());
 }
 
 #[test]
@@ -6579,7 +6592,7 @@ fn riscv_core_driver_fetch_ahead_repairs_branch_speculation_on_trap() {
 
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
-        panic!("expected pending interrupt to retire the speculative branch fetch");
+        panic!("expected pending interrupt to redirect the speculative branch fetch");
     };
     assert_eq!(interrupted.branch_update(), None);
     assert_eq!(
@@ -6871,7 +6884,7 @@ fn riscv_core_driver_does_not_fetch_ahead_across_pending_interrupt() {
 
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
-        panic!("expected pending interrupt to retire before successor fetch");
+        panic!("expected pending interrupt redirect before successor execution");
     };
     assert_eq!(
         interrupted.instruction(),
@@ -6881,6 +6894,7 @@ fn riscv_core_driver_does_not_fetch_ahead_across_pending_interrupt() {
         interrupted.execution().trap().map(|trap| trap.kind()),
         Some(RiscvTrapKind::Interrupt { code: 1 })
     ));
+    assert!(!interrupted.counts_as_retired_instruction());
     assert_eq!(core.read_register(reg(1)), 0);
     assert!(core.has_pending_trap());
 }
@@ -7692,6 +7706,7 @@ fn riscv_core_interrupt_discards_live_gate_renames_without_committing_destinatio
         interrupted.execution().trap().map(|trap| trap.kind()),
         Some(RiscvTrapKind::Interrupt { code: 1 })
     ));
+    assert!(!interrupted.counts_as_retired_instruction());
     assert_eq!(core.read_register(reg(3)), 0);
     assert_eq!(core.read_register(reg(4)), 0);
     assert_eq!(core.read_register(reg(5)), 0);

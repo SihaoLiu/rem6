@@ -46,13 +46,7 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_cause() {
         i_type(0x5a, 0, 0x0, 7, 0x13),
         0x0010_0073, // ebreak
     ]);
-    words[stvec_auipc_index + 1] = i_type(
-        ((handler_index - stvec_auipc_index) * 4) as i32,
-        5,
-        0x0,
-        5,
-        0x13,
-    );
+    patch_interrupt_handler_pc(&mut words, stvec_auipc_index, handler_index);
 
     let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
     let path = temp_binary("pipeline-interrupt-redirect-cause", &elf);
@@ -539,6 +533,28 @@ struct InterruptProgram {
 
 fn interrupt_timer_flush_program_path(name: &str, timer_deadline: i32) -> InterruptProgram {
     let mut words = Vec::new();
+    let stvec_auipc_index = append_interrupt_timer_setup(&mut words, timer_deadline);
+    words.extend([
+        i_type(97, 0, 0x0, 11, 0x13),
+        i_type(3, 0, 0x0, 12, 0x13),
+        r_type(0x01, 12, 11, 0x4, 10, 0x33), // div x10, x11, x12
+        i_type(1, 8, 0x0, 8, 0x13),          // addi x8, x8, 1
+        i_type(1, 9, 0x0, 9, 0x13),          // addi x9, x9, 1
+    ]);
+    let loop_index = words.len();
+    words.push(b_type(0, 0, 0, 0x0)); // fallback self-loop if the interrupt does not fire
+    let handler_index = append_interrupt_breakpoint_handler(&mut words);
+    patch_interrupt_handler_pc(&mut words, stvec_auipc_index, handler_index);
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    InterruptProgram {
+        path: temp_binary(name, &elf),
+        handler_pc: RISCV_SBI_ENTRY + handler_index as u64 * 4,
+        loop_pc: RISCV_SBI_ENTRY + loop_index as u64 * 4,
+    }
+}
+
+fn append_interrupt_timer_setup(words: &mut Vec<u32>, timer_deadline: i32) -> usize {
     let stvec_auipc_index = words.len();
     words.extend([
         u_type(0, 5, 0x17), // auipc x5, handler
@@ -553,14 +569,11 @@ fn interrupt_timer_flush_program_path(name: &str, timer_deadline: i32) -> Interr
         i_type(SBI_TIME_SET_TIMER, 0, 0x0, 16, 0x13),
         i_type(timer_deadline, 0, 0x0, 10, 0x13),
         0x0000_0073, // SBI set_timer
-        i_type(97, 0, 0x0, 11, 0x13),
-        i_type(3, 0, 0x0, 12, 0x13),
-        r_type(0x01, 12, 11, 0x4, 10, 0x33), // div x10, x11, x12
-        i_type(1, 8, 0x0, 8, 0x13),          // addi x8, x8, 1
-        i_type(1, 9, 0x0, 9, 0x13),          // addi x9, x9, 1
     ]);
-    let loop_index = words.len();
-    words.push(b_type(0, 0, 0, 0x0)); // fallback self-loop if the interrupt does not fire
+    stvec_auipc_index
+}
+
+fn append_interrupt_breakpoint_handler(words: &mut Vec<u32>) -> usize {
     let handler_index = words.len();
     words.extend([
         csr_read(0x142, 5), // scause
@@ -568,6 +581,10 @@ fn interrupt_timer_flush_program_path(name: &str, timer_deadline: i32) -> Interr
         i_type(0x5a, 0, 0x0, 7, 0x13),
         0x0010_0073, // ebreak
     ]);
+    handler_index
+}
+
+fn patch_interrupt_handler_pc(words: &mut [u32], stvec_auipc_index: usize, handler_index: usize) {
     words[stvec_auipc_index + 1] = i_type(
         ((handler_index - stvec_auipc_index) * 4) as i32,
         5,
@@ -575,13 +592,6 @@ fn interrupt_timer_flush_program_path(name: &str, timer_deadline: i32) -> Interr
         5,
         0x13,
     );
-
-    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
-    InterruptProgram {
-        path: temp_binary(name, &elf),
-        handler_pc: RISCV_SBI_ENTRY + handler_index as u64 * 4,
-        loop_pc: RISCV_SBI_ENTRY + loop_index as u64 * 4,
-    }
 }
 
 fn run_interrupt_timer_program(
@@ -589,7 +599,12 @@ fn run_interrupt_timer_program(
     stats_format: &str,
     debug_flag: Option<&str>,
 ) -> String {
-    run_interrupt_timer_program_with_lookahead(path, stats_format, debug_flag, "2")
+    run_interrupt_timer_program_with_args(
+        path,
+        stats_format,
+        debug_flag,
+        &["--riscv-branch-lookahead", "2"],
+    )
 }
 
 fn run_interrupt_timer_program_with_lookahead(
@@ -598,7 +613,41 @@ fn run_interrupt_timer_program_with_lookahead(
     debug_flag: Option<&str>,
     branch_lookahead: &str,
 ) -> String {
-    let mut args = vec![
+    run_interrupt_timer_program_with_args(
+        path,
+        stats_format,
+        debug_flag,
+        &["--riscv-branch-lookahead", branch_lookahead],
+    )
+}
+
+fn run_interrupt_timer_program_in_mode(
+    path: &Path,
+    stats_format: &str,
+    debug_flag: Option<&str>,
+    mode: &str,
+) -> String {
+    run_interrupt_timer_program_with_args(
+        path,
+        stats_format,
+        debug_flag,
+        &[
+            "--riscv-branch-lookahead",
+            "2",
+            "--riscv-execution-mode",
+            mode,
+        ],
+    )
+}
+
+fn run_interrupt_timer_program_with_args(
+    path: &Path,
+    stats_format: &str,
+    debug_flag: Option<&str>,
+    extra_args: &[&str],
+) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
         "run",
         "--isa",
         "riscv",
@@ -613,19 +662,14 @@ fn run_interrupt_timer_program_with_lookahead(
         "direct",
         "--memory-route-delay",
         "3",
-        "--riscv-branch-lookahead",
-        branch_lookahead,
         "--riscv-sbi",
         "--riscv-in-order-width",
         "4",
-    ];
+    ]);
     if let Some(debug_flag) = debug_flag {
-        args.extend(["--debug-flags", debug_flag]);
+        command.args(["--debug-flags", debug_flag]);
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args(args)
-        .output()
-        .unwrap();
+    let output = command.args(extra_args).output().unwrap();
 
     assert!(
         output.status.success(),

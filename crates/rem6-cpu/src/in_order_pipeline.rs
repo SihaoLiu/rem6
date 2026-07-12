@@ -403,13 +403,16 @@ impl InOrderBranchPredictionRecord {
 pub struct InOrderPipelineAdvance {
     instruction: InOrderPipelineInstruction,
     destination_stage: Option<InOrderPipelineStage>,
+    retires: bool,
 }
 
 impl InOrderPipelineAdvance {
-    fn new(instruction: InOrderPipelineInstruction) -> Self {
+    fn new(instruction: InOrderPipelineInstruction, allows_retirement: bool) -> Self {
+        let destination_stage = instruction.stage().next();
         Self {
             instruction,
-            destination_stage: instruction.stage().next(),
+            destination_stage,
+            retires: allows_retirement && destination_stage.is_none(),
         }
     }
 
@@ -426,7 +429,7 @@ impl InOrderPipelineAdvance {
     }
 
     pub const fn retires(self) -> bool {
-        self.destination_stage.is_none()
+        self.retires
     }
 }
 
@@ -1222,6 +1225,17 @@ impl InOrderPipelineCycleRecord {
         &self.plan
     }
 
+    pub(crate) fn completes_sequence(&self, sequence: u64) -> bool {
+        self.plan.advanced().iter().any(|advance| {
+            advance.sequence() == sequence
+                && (advance.retires()
+                    || self.plan.redirect().is_some_and(|redirect| {
+                        redirect.cause() == InOrderPipelineRedirectCause::Interrupt
+                            && redirect.sequence() == sequence
+                    }))
+        })
+    }
+
     pub fn branch_predictions(&self) -> &[InOrderBranchPredictionRecord] {
         &self.branch_predictions
     }
@@ -1671,7 +1685,11 @@ impl InOrderPipelineScheduler {
                 older_blocked = true;
             } else {
                 *used += 1;
-                advanced.push(InOrderPipelineAdvance::new(instruction));
+                let allows_retirement = !redirect.is_some_and(|redirect| {
+                    redirect.cause() == InOrderPipelineRedirectCause::Interrupt
+                        && redirect.sequence() == instruction.sequence()
+                });
+                advanced.push(InOrderPipelineAdvance::new(instruction, allows_retirement));
             }
         }
 

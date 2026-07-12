@@ -103,14 +103,19 @@ impl RiscvCheckerCpu {
         }
     }
 
-    pub(crate) fn check_retired(
+    pub(crate) fn check_execution(
         &mut self,
+        retires_instruction: bool,
         sequence: u64,
         pc: Address,
         decoded: RiscvDecodedInstruction,
         primary_execution: &RiscvExecutionRecord,
         primary_hart: &RiscvHartState,
     ) -> Result<(), RiscvError> {
+        if !retires_instruction {
+            self.sync_hart(primary_hart);
+            return Ok(());
+        }
         let checker_execution = self.hart.execute_decoded(decoded)?;
         self.checked_instructions += 1;
         if &checker_execution != primary_execution || &self.hart != primary_hart {

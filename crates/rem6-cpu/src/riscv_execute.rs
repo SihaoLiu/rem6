@@ -238,10 +238,13 @@ impl RiscvCore {
             .hart
             .execute_decoded(decoded)
             .map_err(RiscvCpuError::Isa)?;
+        let trap_kind = execution.trap().map(|trap| trap.kind());
+        let retires_instruction = !matches!(trap_kind, Some(RiscvTrapKind::Interrupt { .. }));
         let primary_hart = state.hart.clone();
         if let Some(checker) = &mut state.checker {
             checker
-                .check_retired(
+                .check_execution(
+                    retires_instruction,
                     fetch.request_id().sequence(),
                     fetch.pc(),
                     decoded,
@@ -327,7 +330,6 @@ impl RiscvCore {
         } else {
             None
         };
-
         let event = RiscvCpuExecutionEvent::with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
             fetch.clone(),
             instruction,
@@ -335,15 +337,17 @@ impl RiscvCore {
             retired_branch.into_updates(),
             pipeline_cycle,
             0,
-            true,
+            retires_instruction,
         );
-        state
-            .o3_runtime
-            .retire_live_staged_instruction(&event, consumed_requests, retire_tick);
-        let detailed = state.live_retire_gate.detailed_policy_enabled();
-        assert!(state
-            .o3_runtime
-            .defer_scalar_memory_if_detailed(detailed, &event));
+        if retires_instruction {
+            state
+                .o3_runtime
+                .retire_live_staged_instruction(&event, consumed_requests, retire_tick);
+            let detailed = state.live_retire_gate.detailed_policy_enabled();
+            assert!(state
+                .o3_runtime
+                .defer_scalar_memory_if_detailed(detailed, &event));
+        }
         if redirects_fetch {
             state.o3_runtime.discard_live_staged_instructions();
         }
@@ -574,7 +578,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
                 active_redirect,
             )
             .map_err(RiscvCpuError::InOrderPipeline)?;
-        let retires_sequence = record_retires_sequence(&record, sequence);
+        let completes_sequence = record.completes_sequence(sequence);
         state.in_order_pipeline_cycle_records.push(record.clone());
         if !wait_recorded
             && record.after().in_flight().iter().any(|instruction| {
@@ -585,14 +589,14 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
             record_in_order_resource_waits(state, &waits)?;
             wait_recorded = true;
         }
-        wait_recorded |= retires_sequence;
-        if retires_sequence {
+        wait_recorded |= completes_sequence;
+        if completes_sequence {
             return Ok(record);
         }
     }
 
     unreachable!(
-        "default in-order pipeline retires an instruction within its stage count: retiring sequence {sequence}, in_flight {:?}",
+        "default in-order pipeline completes a sequence within its stage count: sequence {sequence}, in_flight {:?}",
         state.in_order_pipeline.in_flight()
     )
 }
@@ -858,14 +862,6 @@ fn vector_float_execute_wait_cycles(instruction: RiscvVectorFloatInstruction) ->
         }
         RiscvVectorFloatInstruction::SqrtV { .. } => RISCV_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES,
     }
-}
-
-fn record_retires_sequence(record: &InOrderPipelineCycleRecord, sequence: u64) -> bool {
-    record
-        .plan()
-        .advanced()
-        .iter()
-        .any(|advance| advance.sequence() == sequence && advance.retires())
 }
 
 fn squashed_fetch_requests(

@@ -742,7 +742,6 @@ fn in_order_pipeline_cycle_summary_records_interrupt_redirect_flush_counts() {
     let mut state = InOrderPipelineState::new(config_with_decode_width(1));
     state
         .replace_in_flight([
-            instruction(29, InOrderPipelineStage::Commit),
             instruction(30, InOrderPipelineStage::Commit),
             instruction(31, InOrderPipelineStage::Decode),
             instruction(32, InOrderPipelineStage::Fetch2),
@@ -750,11 +749,17 @@ fn in_order_pipeline_cycle_summary_records_interrupt_redirect_flush_counts() {
         .unwrap();
     let redirect = InOrderBranchRedirect::interrupt(30, InOrderPipelineStage::Commit, 0x100);
 
-    let summary = state
+    let record = state
         .try_advance_cycle_recorded_with_redirect(Some(redirect))
-        .unwrap()
-        .summary();
+        .unwrap();
+    let summary = record.summary();
 
+    assert_eq!(summary.retired_count(), 0);
+    assert!(record
+        .plan()
+        .advanced()
+        .iter()
+        .any(|advance| advance.sequence() == 30 && !advance.retires()));
     assert_eq!(summary.interrupt_redirect_count(), 1);
     assert_eq!(summary.interrupt_redirect_flushed_count(), 2);
     assert_eq!(summary.interrupt_redirect_flush_cycle_count(), 1);
