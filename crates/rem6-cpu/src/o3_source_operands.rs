@@ -215,6 +215,42 @@ pub(crate) fn o3_speculative_scalar_alu_operands(
     ))
 }
 
+pub(crate) fn o3_direct_conditional_sources(
+    instruction: RiscvInstruction,
+) -> Option<Vec<Register>> {
+    matches!(
+        instruction,
+        RiscvInstruction::Beq { .. }
+            | RiscvInstruction::Bne { .. }
+            | RiscvInstruction::Blt { .. }
+            | RiscvInstruction::Bge { .. }
+            | RiscvInstruction::Bltu { .. }
+            | RiscvInstruction::Bgeu { .. }
+    )
+    .then(|| o3_scalar_integer_source_registers(&instruction))
+}
+
+pub(crate) fn o3_predicted_scalar_descendant_operands(
+    instruction: RiscvInstruction,
+) -> Option<(Register, Vec<Register>)> {
+    let supported = o3_speculative_scalar_alu_operands(instruction).is_some()
+        || matches!(
+            instruction,
+            RiscvInstruction::Mul { .. }
+                | RiscvInstruction::Mulh { .. }
+                | RiscvInstruction::Mulhsu { .. }
+                | RiscvInstruction::Mulhu { .. }
+                | RiscvInstruction::Mulw { .. }
+        );
+    supported.then(|| {
+        (
+            o3_scalar_integer_destination(instruction)
+                .expect("predicted scalar descendant has an integer destination"),
+            o3_scalar_integer_source_registers(&instruction),
+        )
+    })
+}
+
 fn csr_operand_register(operand: RiscvCsrOperand) -> Option<Register> {
     match operand {
         RiscvCsrOperand::Register(register) => Some(register),

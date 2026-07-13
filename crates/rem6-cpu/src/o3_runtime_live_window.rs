@@ -82,6 +82,7 @@ impl O3RuntimeState {
                 decision,
                 RiscvScalarIntegerYoungerDecision::AdmitStop
                     | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+                    | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             ) {
                 break;
             }

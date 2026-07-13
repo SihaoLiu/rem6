@@ -63,6 +63,7 @@ pub use o3_runtime_snapshot_entries::{
 };
 pub use o3_runtime_stats::O3RuntimeStats;
 pub(crate) use o3_source_operands::{
+    o3_direct_conditional_sources, o3_predicted_scalar_descendant_operands,
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };

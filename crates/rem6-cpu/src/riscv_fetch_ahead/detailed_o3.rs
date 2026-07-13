@@ -268,6 +268,7 @@ fn scalar_integer_window_candidate_from(
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
             RiscvScalarIntegerYoungerDecision::AdmitStop
             | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }
@@ -374,6 +375,7 @@ fn scalar_memory_window_candidate(
             }
             RiscvScalarIntegerYoungerDecision::AdmitStop
             | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }

@@ -1,7 +1,10 @@
 use rem6_isa_riscv::{Register, RiscvInstruction};
 
 use crate::{
-    o3_runtime::{o3_scalar_integer_destination, o3_speculative_scalar_alu_operands},
+    o3_runtime::{
+        o3_direct_conditional_sources, o3_predicted_scalar_descendant_operands,
+        o3_scalar_integer_destination, o3_speculative_scalar_alu_operands,
+    },
     o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_fu_latency::riscv_o3_fu_latency_class,
 };
@@ -32,6 +35,8 @@ pub(crate) struct RiscvScalarIntegerLiveWindow {
     rows: usize,
     row_limit: usize,
     admits_terminal_control: bool,
+    control_open: bool,
+    control_closed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,6 +44,7 @@ pub(crate) enum RiscvScalarIntegerYoungerDecision {
     AdmitContinue,
     AdmitStop,
     AdmitTerminalControl,
+    AdmitPredictedControl,
     Reject,
 }
 
@@ -90,6 +96,8 @@ impl RiscvScalarIntegerLiveWindow {
             rows,
             row_limit: row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS),
             admits_terminal_control,
+            control_open: false,
+            control_closed: false,
         }
     }
 
@@ -101,12 +109,40 @@ impl RiscvScalarIntegerLiveWindow {
         &mut self,
         instruction: RiscvInstruction,
     ) -> RiscvScalarIntegerYoungerDecision {
-        if self.is_full() {
+        if self.is_full() || self.control_closed {
             return RiscvScalarIntegerYoungerDecision::Reject;
         }
-        if self.admits_terminal_control && scalar_integer_terminal_control(instruction) {
+        if self.control_open {
+            let Some((destination, sources)) =
+                o3_predicted_scalar_descendant_operands(instruction)
+            else {
+                return RiscvScalarIntegerYoungerDecision::Reject;
+            };
+            if destination.is_zero()
+                || sources
+                    .iter()
+                    .any(|source| self.unresolved_destinations.contains(source))
+            {
+                return RiscvScalarIntegerYoungerDecision::Reject;
+            }
             self.rows += 1;
-            return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
+            self.unresolved_destinations
+                .retain(|unresolved| *unresolved != destination);
+            return RiscvScalarIntegerYoungerDecision::AdmitContinue;
+        }
+        if self.admits_terminal_control && scalar_integer_terminal_control(instruction) {
+            let sources = o3_direct_conditional_sources(instruction)
+                .expect("terminal scalar control has direct conditional sources");
+            self.rows += 1;
+            if sources
+                .iter()
+                .any(|source| self.unresolved_destinations.contains(source))
+            {
+                self.control_closed = true;
+                return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
+            }
+            self.control_open = true;
+            return RiscvScalarIntegerYoungerDecision::AdmitPredictedControl;
         }
         let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
             return RiscvScalarIntegerYoungerDecision::Reject;
@@ -203,6 +239,22 @@ mod tests {
             rs1: Register::new(5).unwrap(),
             rs2: Register::new(6).unwrap(),
             offset: Immediate::new(8),
+        }
+    }
+
+    fn beq_with_sources(rs1: u8, rs2: u8) -> RiscvInstruction {
+        RiscvInstruction::Beq {
+            rs1: Register::new(rs1).unwrap(),
+            rs2: Register::new(rs2).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn mul(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+        RiscvInstruction::Mul {
+            rd: Register::new(rd).unwrap(),
+            rs1: Register::new(rs1).unwrap(),
+            rs2: Register::new(rs2).unwrap(),
         }
     }
 
@@ -331,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_memory_prefix_admits_direct_conditional_as_terminal_control() {
+    fn scalar_memory_prefix_opens_direct_conditional_predicted_control() {
         for branch in [beq(), bne(), blt(), bge(), bltu(), bgeu()] {
             let mut window = scalar_load_window(4);
 
@@ -345,12 +397,61 @@ mod tests {
             );
             assert_eq!(
                 window.classify_younger(branch),
-                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl,
-                "{branch:?} should be admitted as the terminal control row"
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl,
+                "{branch:?} should open the predicted control path"
             );
             assert!(
                 window.is_full(),
                 "{branch:?} should fill the four-row window"
+            );
+        }
+    }
+
+    #[test]
+    fn independent_branch_opens_one_predicted_control_path() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window.classify_younger(beq()),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(mul(7, 5, 6)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(addi(8, 7)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert!(window.is_full());
+    }
+
+    #[test]
+    fn load_dependent_branch_remains_terminal() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window.classify_younger(beq_with_sources(4, 0)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert_eq!(
+            window.classify_younger(addi(8, 0)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+    }
+
+    #[test]
+    fn predicted_control_rejects_memory_and_second_control_rows() {
+        for instruction in [scalar_load(), beq(), jal(), RiscvInstruction::Ecall] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(bne()),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::Reject
             );
         }
     }
