@@ -8,6 +8,11 @@ use crate::o3_branch_mismatch_aliases::{
 use crate::o3_iew_aliases::{
     O3IewGem5Alias, O3_IEW_GEM5_PHASE_ALIASES, O3_IEW_GEM5_RATE_ALIASES, O3_IEW_GEM5_TOTAL_ALIASES,
 };
+use crate::o3_lsq_aliases::{
+    o3_lsq_data_response_gem5_alias_by_source_suffix, o3_lsq_operation_gem5_alias_by_alias,
+    o3_lsq_operation_gem5_alias_by_source_name, o3_lsq_ordering_gem5_alias_by_alias,
+    O3LsqOperationGem5Alias, O3LsqOrderingGem5Alias, O3_LSQ_TOTAL_ALIAS,
+};
 
 pub(super) fn samples_with_gem5_aliases(
     record_samples: &[StatSample],
@@ -255,43 +260,27 @@ fn append_o3_stats_dump_lsq_count_bucket_alias_samples(
 fn o3_stats_dump_lsq_count_bucket_alias_path(path: &str) -> Option<String> {
     if let Some((prefix, suffix)) = path.split_once(".lsq0.operation.") {
         if is_o3_stats_dump_cpu_alias_prefix(prefix) {
-            let bucket = o3_stats_dump_lsq_operation_bucket_alias(suffix)?;
+            let bucket = if suffix == O3_LSQ_TOTAL_ALIAS {
+                O3_LSQ_TOTAL_ALIAS
+            } else {
+                o3_lsq_operation_gem5_alias_by_alias(suffix)
+                    .map(O3LsqOperationGem5Alias::bucket_alias)?
+            };
             return Some(format!("{prefix}.lsq0.operation_0::{bucket}"));
         }
     }
     if let Some((prefix, suffix)) = path.split_once(".lsq0.ordering.") {
         if is_o3_stats_dump_cpu_alias_prefix(prefix) {
-            let bucket = o3_stats_dump_lsq_ordering_bucket_alias(suffix)?;
+            let bucket = if suffix == O3_LSQ_TOTAL_ALIAS {
+                O3_LSQ_TOTAL_ALIAS
+            } else {
+                o3_lsq_ordering_gem5_alias_by_alias(suffix)
+                    .map(O3LsqOrderingGem5Alias::bucket_alias)?
+            };
             return Some(format!("{prefix}.lsq0.ordering_0::{bucket}"));
         }
     }
     None
-}
-
-fn o3_stats_dump_lsq_operation_bucket_alias(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "load" => Some("Load"),
-        "store" => Some("Store"),
-        "loadReserved" => Some("LoadReserved"),
-        "storeConditional" => Some("StoreConditional"),
-        "atomic" => Some("Atomic"),
-        "floatLoad" => Some("FloatLoad"),
-        "floatStore" => Some("FloatStore"),
-        "vectorLoad" => Some("VectorLoad"),
-        "vectorStore" => Some("VectorStore"),
-        "total" => Some("total"),
-        _ => None,
-    }
-}
-
-fn o3_stats_dump_lsq_ordering_bucket_alias(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "acquire" => Some("Acquire"),
-        "release" => Some("Release"),
-        "acquireRelease" => Some("AcquireRelease"),
-        "total" => Some("total"),
-        _ => None,
-    }
 }
 
 fn append_o3_stats_dump_branch_repair_bucket_alias_samples(
@@ -556,18 +545,18 @@ fn o3_stats_dump_lsq_data_response_alias_paths(core_count: u64, path: &str) -> O
     }
     let alias_prefix = o3_stats_dump_alias_prefix(core_count, cpu.parse().ok()?);
     if let Some(metric_suffix) = suffix.strip_prefix("lsq_data_latency_") {
-        let metric = o3_stats_dump_lsq_data_response_metric_alias(metric_suffix)?;
+        let metric = o3_lsq_data_response_gem5_alias_by_source_suffix(metric_suffix)?.alias();
         return Some(vec![
             format!("{alias_prefix}.lsq0.dataResponse.{metric}"),
-            format!("{alias_prefix}.lsq0.operation.total.dataResponse.{metric}"),
+            format!("{alias_prefix}.lsq0.operation.{O3_LSQ_TOTAL_ALIAS}.dataResponse.{metric}"),
         ]);
     }
 
     let suffix = suffix.strip_prefix("lsq_operation.")?;
     let (operation, metric_suffix) =
         o3_stats_dump_lsq_data_response_operation_metric_suffix(suffix)?;
-    let operation_alias = o3_stats_dump_lsq_operation_alias(operation)?;
-    let metric = o3_stats_dump_lsq_data_response_metric_alias(metric_suffix)?;
+    let operation_alias = o3_lsq_operation_gem5_alias_by_source_name(operation)?.alias();
+    let metric = o3_lsq_data_response_gem5_alias_by_source_suffix(metric_suffix)?.alias();
     Some(vec![
         format!("{alias_prefix}.lsq0.dataResponse.{operation_alias}.{metric}"),
         format!("{alias_prefix}.lsq0.operation.{operation_alias}.dataResponse.{metric}"),
@@ -580,32 +569,6 @@ fn o3_stats_dump_lsq_data_response_operation_metric_suffix(suffix: &str) -> Opti
     }
     let (operation, metric_suffix) = suffix.split_once(".latency.")?;
     Some((operation, metric_suffix))
-}
-
-fn o3_stats_dump_lsq_data_response_metric_alias(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "samples" => Some("samples"),
-        "ticks" => Some("totalLatency"),
-        "max_ticks" => Some("maxLatency"),
-        "min_ticks" => Some("minLatency"),
-        "avg_ticks" => Some("avgLatency"),
-        _ => None,
-    }
-}
-
-fn o3_stats_dump_lsq_operation_alias(operation: &str) -> Option<&'static str> {
-    match operation {
-        "load" => Some("load"),
-        "store" => Some("store"),
-        "load_reserved" => Some("loadReserved"),
-        "store_conditional" => Some("storeConditional"),
-        "atomic" => Some("atomic"),
-        "float_load" => Some("floatLoad"),
-        "float_store" => Some("floatStore"),
-        "vector_load" => Some("vectorLoad"),
-        "vector_store" => Some("vectorStore"),
-        _ => None,
-    }
 }
 
 fn stats_dump_sample_is_active(sample: &StatSample, active_o3_cpus: &[u32]) -> bool {

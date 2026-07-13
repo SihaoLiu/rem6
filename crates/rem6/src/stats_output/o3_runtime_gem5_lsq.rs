@@ -1,7 +1,11 @@
-use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats};
+use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeStats};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
+use crate::o3_lsq_aliases::{
+    O3LsqDataResponseMetric, O3_LSQ_DATA_RESPONSE_GEM5_ALIASES, O3_LSQ_OPERATION_GEM5_ALIASES,
+    O3_LSQ_ORDERING_GEM5_ALIASES, O3_LSQ_TOTAL_ALIAS,
+};
 use crate::Rem6CliError;
 
 pub(super) fn emit_gem5_o3_lsq_alias_stats(
@@ -23,10 +27,11 @@ pub(super) fn emit_gem5_o3_lsq_alias_stats(
     }
 
     let mut lsq_operation_total = 0_u64;
-    for operation in O3RuntimeLsqOperation::TRACKED {
+    for alias in O3_LSQ_OPERATION_GEM5_ALIASES {
+        let operation = alias.operation();
         let value = o3.lsq_operation_count(operation);
         lsq_operation_total = lsq_operation_total.saturating_add(value);
-        let operation_alias = o3_lsq_operation_alias(operation);
+        let operation_alias = alias.alias();
         increment_count_stat(
             stats,
             format!("{gem5_cpu_alias_prefix}.lsq0.operation.{operation_alias}"),
@@ -79,36 +84,31 @@ pub(super) fn emit_gem5_o3_lsq_alias_stats(
     }
     increment_count_stat(
         stats,
-        format!("{gem5_cpu_alias_prefix}.lsq0.operation.total"),
+        format!("{gem5_cpu_alias_prefix}.lsq0.operation.{O3_LSQ_TOTAL_ALIAS}"),
         lsq_operation_total,
     )?;
 
     let mut lsq_ordering_total = 0_u64;
-    for ordering in O3RuntimeLsqOrdering::TRACKED {
+    for alias in O3_LSQ_ORDERING_GEM5_ALIASES {
+        let ordering = alias.ordering();
         let value = o3.lsq_ordering_count(ordering);
         lsq_ordering_total = lsq_ordering_total.saturating_add(value);
         increment_count_stat(
             stats,
-            format!(
-                "{gem5_cpu_alias_prefix}.lsq0.ordering.{}",
-                o3_lsq_ordering_alias(ordering)
-            ),
+            format!("{gem5_cpu_alias_prefix}.lsq0.ordering.{}", alias.alias()),
             value,
         )?;
     }
     increment_count_stat(
         stats,
-        format!("{gem5_cpu_alias_prefix}.lsq0.ordering.total"),
+        format!("{gem5_cpu_alias_prefix}.lsq0.ordering.{O3_LSQ_TOTAL_ALIAS}"),
         lsq_ordering_total,
     )?;
 
-    for (name, unit, value) in [
-        ("samples", "Count", o3.lsq_data_latency_samples()),
-        ("totalLatency", "Tick", o3.lsq_data_latency_ticks()),
-        ("maxLatency", "Tick", o3.lsq_data_latency_max_ticks()),
-        ("minLatency", "Tick", o3.lsq_data_latency_min_ticks()),
-        ("avgLatency", "Tick", o3.lsq_data_latency_avg_ticks()),
-    ] {
+    for alias in O3_LSQ_DATA_RESPONSE_GEM5_ALIASES {
+        let name = alias.alias();
+        let unit = alias.unit();
+        let value = o3_lsq_data_response_value(o3, alias.metric());
         increment_stat(
             stats,
             &format!("{gem5_cpu_alias_prefix}.lsq0.dataResponse.{name}"),
@@ -118,41 +118,21 @@ pub(super) fn emit_gem5_o3_lsq_alias_stats(
         )?;
         increment_stat(
             stats,
-            &format!("{gem5_cpu_alias_prefix}.lsq0.operation.total.dataResponse.{name}"),
+            &format!(
+                "{gem5_cpu_alias_prefix}.lsq0.operation.{O3_LSQ_TOTAL_ALIAS}.dataResponse.{name}"
+            ),
             unit,
             StatResetPolicy::Monotonic,
             value,
         )?;
     }
-    for operation in O3RuntimeLsqOperation::TRACKED {
-        let operation_alias = o3_lsq_operation_alias(operation);
-        for (name, unit, value) in [
-            (
-                "samples",
-                "Count",
-                o3.lsq_operation_latency_samples(operation),
-            ),
-            (
-                "totalLatency",
-                "Tick",
-                o3.lsq_operation_latency_ticks(operation),
-            ),
-            (
-                "maxLatency",
-                "Tick",
-                o3.lsq_operation_latency_max_ticks(operation),
-            ),
-            (
-                "minLatency",
-                "Tick",
-                o3.lsq_operation_latency_min_ticks(operation),
-            ),
-            (
-                "avgLatency",
-                "Tick",
-                o3.lsq_operation_latency_avg_ticks(operation),
-            ),
-        ] {
+    for operation_alias in O3_LSQ_OPERATION_GEM5_ALIASES {
+        let operation = operation_alias.operation();
+        let operation_alias = operation_alias.alias();
+        for alias in O3_LSQ_DATA_RESPONSE_GEM5_ALIASES {
+            let name = alias.alias();
+            let unit = alias.unit();
+            let value = o3_lsq_operation_data_response_value(o3, operation, alias.metric());
             increment_stat(
                 stats,
                 &format!("{gem5_cpu_alias_prefix}.lsq0.dataResponse.{operation_alias}.{name}"),
@@ -182,26 +162,26 @@ fn increment_count_stat(
     increment_stat(stats, &name, "Count", StatResetPolicy::Monotonic, value)
 }
 
-fn o3_lsq_operation_alias(operation: O3RuntimeLsqOperation) -> &'static str {
-    match operation {
-        O3RuntimeLsqOperation::None => "none",
-        O3RuntimeLsqOperation::Load => "load",
-        O3RuntimeLsqOperation::Store => "store",
-        O3RuntimeLsqOperation::LoadReserved => "loadReserved",
-        O3RuntimeLsqOperation::StoreConditional => "storeConditional",
-        O3RuntimeLsqOperation::Atomic => "atomic",
-        O3RuntimeLsqOperation::FloatLoad => "floatLoad",
-        O3RuntimeLsqOperation::FloatStore => "floatStore",
-        O3RuntimeLsqOperation::VectorLoad => "vectorLoad",
-        O3RuntimeLsqOperation::VectorStore => "vectorStore",
+fn o3_lsq_data_response_value(o3: O3RuntimeStats, metric: O3LsqDataResponseMetric) -> u64 {
+    match metric {
+        O3LsqDataResponseMetric::Samples => o3.lsq_data_latency_samples(),
+        O3LsqDataResponseMetric::Ticks => o3.lsq_data_latency_ticks(),
+        O3LsqDataResponseMetric::MaxTicks => o3.lsq_data_latency_max_ticks(),
+        O3LsqDataResponseMetric::MinTicks => o3.lsq_data_latency_min_ticks(),
+        O3LsqDataResponseMetric::AvgTicks => o3.lsq_data_latency_avg_ticks(),
     }
 }
 
-fn o3_lsq_ordering_alias(ordering: O3RuntimeLsqOrdering) -> &'static str {
-    match ordering {
-        O3RuntimeLsqOrdering::None => "none",
-        O3RuntimeLsqOrdering::Acquire => "acquire",
-        O3RuntimeLsqOrdering::Release => "release",
-        O3RuntimeLsqOrdering::AcquireRelease => "acquireRelease",
+fn o3_lsq_operation_data_response_value(
+    o3: O3RuntimeStats,
+    operation: O3RuntimeLsqOperation,
+    metric: O3LsqDataResponseMetric,
+) -> u64 {
+    match metric {
+        O3LsqDataResponseMetric::Samples => o3.lsq_operation_latency_samples(operation),
+        O3LsqDataResponseMetric::Ticks => o3.lsq_operation_latency_ticks(operation),
+        O3LsqDataResponseMetric::MaxTicks => o3.lsq_operation_latency_max_ticks(operation),
+        O3LsqDataResponseMetric::MinTicks => o3.lsq_operation_latency_min_ticks(operation),
+        O3LsqDataResponseMetric::AvgTicks => o3.lsq_operation_latency_avg_ticks(operation),
     }
 }
