@@ -360,15 +360,46 @@ pub(super) fn completed_partial_overlay_is_valid(
         return false;
     }
 
+    let physical_masks = overlay
+        .sources
+        .iter()
+        .map(|source| {
+            partial_overlay_mask(
+                source.source_address,
+                source.source_bytes,
+                overlay.address,
+                overlay.bytes,
+            )
+        })
+        .collect::<Vec<_>>();
+    if physical_masks.iter().any(|physical_mask| {
+        *physical_mask == 0 || *physical_mask & !overlay.original_forwarded_mask != 0
+    }) || physical_masks.iter().fold(0_u8, |union, mask| union | mask)
+        != overlay.live_forwarded_mask
+    {
+        return false;
+    }
+
+    let mut expected_ownership_masks = vec![0_u8; overlay.sources.len()];
+    for load_index in 0..overlay.bytes as usize {
+        let bit = 1_u8 << load_index;
+        if overlay.live_forwarded_mask & bit == 0 {
+            continue;
+        }
+        let Some(source_index) = physical_masks.iter().rposition(|mask| mask & bit != 0) else {
+            return false;
+        };
+        expected_ownership_masks[source_index] |= bit;
+    }
+
     let mut owned = 0_u8;
-    for (entry, source) in entries.iter().zip(&overlay.sources) {
-        let physical_mask = partial_overlay_mask(
-            source.source_address,
-            source.source_bytes,
-            overlay.address,
-            overlay.bytes,
-        );
-        if physical_mask == 0
+    for (((entry, source), physical_mask), expected_ownership_mask) in entries
+        .iter()
+        .zip(&overlay.sources)
+        .zip(physical_masks)
+        .zip(expected_ownership_masks)
+    {
+        if source.ownership_mask != expected_ownership_mask
             || source.ownership_mask & !physical_mask != 0
             || entry.data_request != source.source_data_request
             || entry.address != source.source_address

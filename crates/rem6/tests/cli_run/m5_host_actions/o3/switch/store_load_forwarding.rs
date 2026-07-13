@@ -800,7 +800,9 @@ fn rem6_run_host_switch_rejects_completed_partial_forwarded_store_load_with_youn
     );
     let baseline = run_store_load_handoff_with_delay(&path, "direct", None, 4, ROUTE_DELAY);
     let load = event_at_pc(&baseline, MULTI_SOURCE_YOUNGER_ROW_LOAD_PC);
+    let younger = event_at_pc(&baseline, MULTI_SOURCE_YOUNGER_ROW_ALU_PC);
     let load_response = event_u64(load, "lsq_data_response_tick");
+    let younger_issue = event_u64(younger, "issue_tick");
     let next_source_response = [
         MULTI_SOURCE_YOUNGER_ROW_OLDER_STORE_PC,
         MULTI_SOURCE_YOUNGER_ROW_YOUNGEST_STORE_PC,
@@ -813,8 +815,10 @@ fn rem6_run_host_switch_rejects_completed_partial_forwarded_store_load_with_youn
     let switch_tick =
         load_response.saturating_add(next_source_response.saturating_sub(load_response) / 2);
     assert!(
-        load_response < switch_tick && switch_tick < next_source_response,
-        "completed partial younger-row window must follow load response and precede the next source response: load_response={load_response}, switch_tick={switch_tick}, next_source_response={next_source_response}"
+        load_response < switch_tick
+            && younger_issue < switch_tick
+            && switch_tick < next_source_response,
+        "completed partial younger-row window must follow load response and younger issue and precede the next source response: load_response={load_response}, younger_issue={younger_issue}, switch_tick={switch_tick}, next_source_response={next_source_response}"
     );
 
     let output =

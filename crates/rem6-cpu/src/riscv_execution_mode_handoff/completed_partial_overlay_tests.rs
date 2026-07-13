@@ -222,6 +222,19 @@ fn completed_partial_handoff_is_rejected(
     RiscvO3LiveDataHandoff::with_completed_partial_overlay(entries, overlay, 0).is_none()
 }
 
+fn forged_completed_partial_handoff(
+    entries: Vec<RiscvO3LiveDataHandoffEntry>,
+    overlay: RiscvO3LiveDataHandoffCompletedPartialOverlay,
+) -> RiscvO3LiveDataHandoff {
+    RiscvO3LiveDataHandoff {
+        entries,
+        forwarded_rows: Vec::new(),
+        partial_overlays: Vec::new(),
+        completed_partial_overlays: vec![overlay],
+        younger_rows: 0,
+    }
+}
+
 #[test]
 fn completed_partial_overlay_tracks_original_live_and_retired_masks() {
     let (entries, completed) = representative_completed_partial_parts();
@@ -351,6 +364,46 @@ fn completed_partial_overlay_rejects_invalid_source_ownership() {
     overlay.sources[0].ownership_mask = 0x0c;
     overlay.sources[0].source_data = [0xdd, 0x06, 0, 0, 0, 0, 0, 0];
     assert!(completed_partial_handoff_is_rejected(entries, overlay));
+}
+
+#[test]
+fn completed_partial_overlay_rejects_noncanonical_live_source_provenance() {
+    let (mut outside_entries, mut outside_overlay) = representative_completed_partial_parts();
+    outside_entries[0].address = Address::new(0x8000_0100);
+    outside_entries[0].bytes = 4;
+    outside_overlay.sources[0].source_address = outside_entries[0].address;
+    outside_overlay.sources[0].source_bytes = outside_entries[0].bytes;
+    outside_overlay.sources[0].source_data = [0, 0, 0, 0x06, 0, 0, 0, 0];
+
+    let (mut precedence_entries, mut precedence_overlay) = representative_completed_partial_parts();
+    precedence_entries[1].address = Address::new(0x8000_0101);
+    precedence_entries[1].bytes = 2;
+    precedence_overlay.live_forwarded_mask = 0x0e;
+    precedence_overlay.sources[0].ownership_mask = 0x0c;
+    precedence_overlay.sources[0].source_data = [0xdd, 0x06, 0, 0, 0, 0, 0, 0];
+    precedence_overlay.sources[1].source_address = precedence_entries[1].address;
+    precedence_overlay.sources[1].source_bytes = precedence_entries[1].bytes;
+    precedence_overlay.sources[1].ownership_mask = 0x02;
+    precedence_overlay.sources[1].source_data = [0; 8];
+
+    for (entries, overlay) in [
+        (outside_entries, outside_overlay),
+        (precedence_entries, precedence_overlay),
+    ] {
+        assert!(completed_partial_handoff_is_rejected(
+            entries.clone(),
+            overlay.clone()
+        ));
+        let payload = forged_completed_partial_handoff(entries, overlay).encode();
+        let decoded = RiscvO3LiveDataHandoff::decode(&payload);
+        assert!(
+            matches!(
+                decoded,
+                Err(RiscvO3LiveDataHandoffError::InvalidCurrentShape { .. })
+            ),
+            "unexpected forged completed-overlay decode result: {decoded:?}"
+        );
+    }
 }
 
 #[test]

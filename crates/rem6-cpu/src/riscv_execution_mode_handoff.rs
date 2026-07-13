@@ -13,6 +13,9 @@ mod codec;
 #[cfg(test)]
 #[path = "riscv_execution_mode_handoff/completed_partial_overlay_tests.rs"]
 mod completed_partial_overlay_tests;
+#[cfg(test)]
+#[path = "riscv_execution_mode_handoff/legacy_payload_fixtures.rs"]
+mod legacy_payload_fixtures;
 #[path = "riscv_execution_mode_handoff/partial_overlay.rs"]
 mod partial_overlay;
 
@@ -21,6 +24,11 @@ use codec::{
     HEADER_BYTES, MAGIC, V1_ENTRY_BYTES, VERSION_CURRENT, VERSION_FORWARDING,
     VERSION_MULTI_SOURCE_CURRENT, VERSION_PARTIAL_OVERLAY, VERSION_SINGLE_SOURCE_CURRENT,
     VERSION_TYPED_TARGET,
+};
+#[cfg(test)]
+use legacy_payload_fixtures::{
+    LEGACY_V2_TYPED_TARGET_PAYLOAD, LEGACY_V3_FORWARDED_PAYLOAD, LEGACY_V4_PARTIAL_OVERLAY_PAYLOAD,
+    LEGACY_V5_SINGLE_SOURCE_PARTIAL_OVERLAY_PAYLOAD,
 };
 
 pub(crate) use partial_overlay::RiscvPendingPartialScalarLoadHandoff;
@@ -1219,6 +1227,35 @@ mod tests {
             0,
         )
         .unwrap();
+
+        for (payload, handoff, version) in [
+            (
+                LEGACY_V2_TYPED_TARGET_PAYLOAD,
+                typed.clone(),
+                VERSION_TYPED_TARGET,
+            ),
+            (
+                LEGACY_V3_FORWARDED_PAYLOAD,
+                forwarded.clone(),
+                VERSION_FORWARDING,
+            ),
+            (
+                LEGACY_V4_PARTIAL_OVERLAY_PAYLOAD,
+                overlay.clone(),
+                VERSION_PARTIAL_OVERLAY,
+            ),
+            (
+                LEGACY_V5_SINGLE_SOURCE_PARTIAL_OVERLAY_PAYLOAD,
+                overlay.clone(),
+                VERSION_SINGLE_SOURCE_CURRENT,
+            ),
+        ] {
+            assert_eq!(
+                RiscvO3LiveDataHandoff::decode_with_version(payload),
+                Ok((handoff.clone(), version))
+            );
+            assert_eq!(handoff.encode_legacy_for_test(version), payload);
+        }
 
         for (handoff, version) in [
             (typed.clone(), VERSION_TYPED_TARGET),
