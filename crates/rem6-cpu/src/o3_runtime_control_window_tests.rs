@@ -43,6 +43,36 @@ fn unresolved_load_source_rejects_predicted_control_branch_candidate() {
 }
 
 #[test]
+fn scalar_load_stages_predicted_branch_and_two_descendants() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let branch = beq(5, 6);
+    let multiply = mul(7, 1, 2);
+    let dependent = addi(8, 7, 1);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), branch),
+            (Address::new(0x8008), multiply),
+            (Address::new(0x800c), dependent),
+        ],
+    );
+
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [0x8000, 0x8004, 0x8008, 0x800c].map(Address::new)
+    );
+}
+
+#[test]
 fn predicted_mul_wakes_dependent_add_candidate() {
     let mut runtime = O3RuntimeState::default();
     let head = addi(3, 0, 1);

@@ -226,14 +226,14 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     else {
         return;
     };
-    let younger = completed_fetch_instruction_window(
+    let younger = completed_scalar_integer_younger_window(
         state,
         fetch_events,
         execution.fetch().request_id(),
         Address::new(execution.execution().next_pc()),
+        window,
         row_limit.saturating_sub(1),
     );
-    let younger = accepted_scalar_integer_younger_window(window, younger);
     state.o3_runtime.stage_live_scalar_memory_younger_window(
         execution.fetch().request_id(),
         younger
@@ -248,20 +248,21 @@ pub(crate) fn wake_o3_scalar_memory_younger_window(
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) {
-    let Some((tail_request, next_pc, younger_rows)) =
+    let Some((tail_request, younger_pcs)) =
         state.o3_runtime.live_scalar_memory_younger_wakeup_seed()
     else {
         return;
     };
-    let younger = completed_fetch_instruction_window(
-        state,
-        fetch_events,
-        tail_request,
-        next_pc,
-        younger_rows,
-    );
-    if younger.len() != younger_rows {
-        return;
+    let mut current_request = tail_request;
+    let mut younger = Vec::with_capacity(younger_pcs.len());
+    for pc in younger_pcs {
+        let Some(instruction) =
+            completed_fetch_instruction_at(state, fetch_events, current_request, pc)
+        else {
+            return;
+        };
+        current_request = instruction.last_consumed_request();
+        younger.push(instruction);
     }
     record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
 }
@@ -339,6 +340,57 @@ fn completed_fetch_instruction_window(
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
         instructions.push(instruction);
+    }
+    instructions
+}
+
+fn completed_scalar_integer_younger_window(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    mut current_request: MemoryRequestId,
+    mut pc: Address,
+    mut window: RiscvScalarIntegerLiveWindow,
+    limit: usize,
+) -> Vec<RiscvCompletedFetchInstruction> {
+    let mut instructions = Vec::new();
+    for _ in 0..limit {
+        let Some(instruction) =
+            completed_fetch_instruction_at(state, fetch_events, current_request, pc)
+        else {
+            break;
+        };
+        let decision = window.classify_younger(instruction.decoded.instruction());
+        if decision == RiscvScalarIntegerYoungerDecision::Reject {
+            break;
+        }
+        current_request = instruction.last_consumed_request();
+        let sequential_pc = Address::new(
+            instruction
+                .pc
+                .get()
+                .wrapping_add(u64::from(instruction.decoded.bytes())),
+        );
+        let next_pc = if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
+            crate::riscv_fetch_ahead::recorded_predicted_pc(
+                state,
+                current_request,
+                sequential_pc,
+            )
+        } else {
+            Some(sequential_pc)
+        };
+        instructions.push(instruction);
+        if matches!(
+            decision,
+            RiscvScalarIntegerYoungerDecision::AdmitStop
+                | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        ) {
+            break;
+        }
+        let Some(next_pc) = next_pc else {
+            break;
+        };
+        pc = next_pc;
     }
     instructions
 }

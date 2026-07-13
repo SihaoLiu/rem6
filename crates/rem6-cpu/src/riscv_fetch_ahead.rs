@@ -20,6 +20,8 @@ mod detailed_o3;
 mod driver;
 mod speculation;
 
+pub(crate) use detailed_o3::recorded_predicted_pc;
+
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
 pub(crate) struct PreparedRiscvFetchAheadSpeculation {

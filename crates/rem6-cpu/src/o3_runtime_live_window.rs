@@ -82,7 +82,6 @@ impl O3RuntimeState {
                 decision,
                 RiscvScalarIntegerYoungerDecision::AdmitStop
                     | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-                    | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             ) {
                 break;
             }
@@ -183,17 +182,23 @@ impl O3RuntimeState {
 
     pub(crate) fn live_scalar_memory_younger_wakeup_seed(
         &self,
-    ) -> Option<(MemoryRequestId, Address, usize)> {
-        let younger_rows = self.live_scalar_memory_younger_sequences.len();
-        if younger_rows == 0 {
+    ) -> Option<(MemoryRequestId, Vec<Address>)> {
+        if self.live_scalar_memory_younger_sequences.is_empty() {
             return None;
         }
         let tail = self.live_scalar_memories.last()?;
-        Some((
-            tail.fetch_request,
-            Address::new(tail.execution.execution().next_pc()),
-            younger_rows,
-        ))
+        let younger_pcs = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .filter(|entry| {
+                self.live_scalar_memory_younger_sequences
+                    .contains(&entry.sequence())
+            })
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>();
+        (younger_pcs.len() == self.live_scalar_memory_younger_sequences.len())
+            .then_some((tail.fetch_request, younger_pcs))
     }
 
     pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {

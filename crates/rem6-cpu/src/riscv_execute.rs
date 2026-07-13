@@ -220,6 +220,17 @@ impl RiscvCore {
             .pc()
             .get()
             .wrapping_add(u64::from(execution.instruction_bytes()));
+        let live_control_sequence = instruction_is_conditional_branch(instruction)
+            .then(|| {
+                state
+                    .o3_runtime
+                    .snapshot()
+                    .reorder_buffer()
+                    .iter()
+                    .find(|entry| entry.is_live_staged() && entry.pc() == fetch.pc())
+                    .map(|entry| entry.sequence())
+            })
+            .flatten();
         let retired_branch = retire_branch_predictions(
             state,
             fetch.request_id().sequence(),
@@ -227,11 +238,12 @@ impl RiscvCore {
             instruction,
             &execution,
         )?;
+        let branch_prediction_redirects = retired_branch
+            .fetch_prediction()
+            .is_some_and(branch_prediction_redirects_fetch);
         let redirects_fetch = execution.trap().is_some()
             || next_pc.get() != sequential_next_pc
-            || retired_branch
-                .fetch_prediction()
-                .is_some_and(branch_prediction_redirects_fetch);
+            || branch_prediction_redirects;
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
@@ -312,7 +324,21 @@ impl RiscvCore {
                 .defer_scalar_memory_if_detailed(detailed, &event));
         }
         if redirects_fetch {
-            state.o3_runtime.discard_live_staged_instructions();
+            if instruction_is_conditional_branch(instruction)
+                && event.execution().trap().is_none()
+            {
+                if branch_prediction_redirects {
+                    if let Some(sequence) = live_control_sequence {
+                        state
+                            .o3_runtime
+                            .discard_live_control_descendants_from(sequence);
+                    } else {
+                        state.o3_runtime.discard_live_staged_instructions();
+                    }
+                }
+            } else {
+                state.o3_runtime.discard_live_staged_instructions();
+            }
         }
         let squashed_requests = event
             .in_order_pipeline_cycle()

@@ -463,7 +463,7 @@ fn admit_scalar_memory_prefix_instruction(
     }
 }
 
-pub(super) fn recorded_predicted_pc(
+pub(crate) fn recorded_predicted_pc(
     state: &RiscvCoreState,
     request: MemoryRequestId,
     sequential_pc: Address,
