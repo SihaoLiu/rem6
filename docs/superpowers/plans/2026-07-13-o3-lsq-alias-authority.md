@@ -321,19 +321,19 @@ impl O3LsqOperationGem5Alias {
         }
     }
 
-    pub(crate) const fn operation(self) -> O3RuntimeLsqOperation {
+    pub(crate) const fn operation(&self) -> O3RuntimeLsqOperation {
         self.operation
     }
 
-    pub(crate) const fn source_name(self) -> &'static str {
+    pub(crate) const fn source_name(&self) -> &'static str {
         self.operation.as_str()
     }
 
-    pub(crate) const fn alias(self) -> &'static str {
+    pub(crate) const fn alias(&self) -> &'static str {
         self.alias
     }
 
-    pub(crate) const fn bucket_alias(self) -> &'static str {
+    pub(crate) const fn bucket_alias(&self) -> &'static str {
         self.bucket_alias
     }
 }
@@ -352,11 +352,7 @@ pub(crate) const O3_LSQ_OPERATION_GEM5_ALIASES: &[O3LsqOperationGem5Alias] = &[
         "StoreConditional",
     ),
     O3LsqOperationGem5Alias::new(O3RuntimeLsqOperation::Atomic, "atomic", "Atomic"),
-    O3LsqOperationGem5Alias::new(
-        O3RuntimeLsqOperation::FloatLoad,
-        "floatLoad",
-        "FloatLoad",
-    ),
+    O3LsqOperationGem5Alias::new(O3RuntimeLsqOperation::FloatLoad, "floatLoad", "FloatLoad"),
     O3LsqOperationGem5Alias::new(
         O3RuntimeLsqOperation::FloatStore,
         "floatStore",
@@ -375,19 +371,19 @@ pub(crate) const O3_LSQ_OPERATION_GEM5_ALIASES: &[O3LsqOperationGem5Alias] = &[
 ];
 
 pub(crate) fn o3_lsq_operation_gem5_alias_by_source_name(
-    source: &str,
+    source_name: &str,
 ) -> Option<&'static O3LsqOperationGem5Alias> {
     O3_LSQ_OPERATION_GEM5_ALIASES
         .iter()
-        .find(|alias| alias.source_name() == source)
+        .find(|alias| alias.source_name() == source_name)
 }
 
 pub(crate) fn o3_lsq_operation_gem5_alias_by_alias(
-    name: &str,
+    alias_name: &str,
 ) -> Option<&'static O3LsqOperationGem5Alias> {
     O3_LSQ_OPERATION_GEM5_ALIASES
         .iter()
-        .find(|alias| alias.alias() == name)
+        .find(|alias| alias.alias() == alias_name)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -410,19 +406,15 @@ impl O3LsqOrderingGem5Alias {
         }
     }
 
-    pub(crate) const fn ordering(self) -> O3RuntimeLsqOrdering {
+    pub(crate) const fn ordering(&self) -> O3RuntimeLsqOrdering {
         self.ordering
     }
 
-    pub(crate) const fn source_name(self) -> &'static str {
-        self.ordering.as_str()
-    }
-
-    pub(crate) const fn alias(self) -> &'static str {
+    pub(crate) const fn alias(&self) -> &'static str {
         self.alias
     }
 
-    pub(crate) const fn bucket_alias(self) -> &'static str {
+    pub(crate) const fn bucket_alias(&self) -> &'static str {
         self.bucket_alias
     }
 }
@@ -438,11 +430,11 @@ pub(crate) const O3_LSQ_ORDERING_GEM5_ALIASES: &[O3LsqOrderingGem5Alias] = &[
 ];
 
 pub(crate) fn o3_lsq_ordering_gem5_alias_by_alias(
-    name: &str,
+    alias_name: &str,
 ) -> Option<&'static O3LsqOrderingGem5Alias> {
     O3_LSQ_ORDERING_GEM5_ALIASES
         .iter()
-        .find(|alias| alias.alias() == name)
+        .find(|alias| alias.alias() == alias_name)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -454,77 +446,57 @@ pub(crate) enum O3LsqDataResponseMetric {
     AvgTicks,
 }
 
+impl O3LsqDataResponseMetric {
+    const fn source_suffix(self) -> &'static str {
+        match self {
+            Self::Samples => "samples",
+            Self::Ticks => "ticks",
+            Self::MaxTicks => "max_ticks",
+            Self::MinTicks => "min_ticks",
+            Self::AvgTicks => "avg_ticks",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3LsqDataResponseGem5Alias {
     metric: O3LsqDataResponseMetric,
-    source_suffix: &'static str,
     alias: &'static str,
     unit: &'static str,
 }
 
 impl O3LsqDataResponseGem5Alias {
-    const fn new(
-        metric: O3LsqDataResponseMetric,
-        source_suffix: &'static str,
-        alias: &'static str,
-        unit: &'static str,
-    ) -> Self {
+    const fn new(metric: O3LsqDataResponseMetric, alias: &'static str, unit: &'static str) -> Self {
         Self {
             metric,
-            source_suffix,
             alias,
             unit,
         }
     }
 
-    pub(crate) const fn metric(self) -> O3LsqDataResponseMetric {
+    pub(crate) const fn metric(&self) -> O3LsqDataResponseMetric {
         self.metric
     }
 
-    pub(crate) const fn source_suffix(self) -> &'static str {
-        self.source_suffix
+    pub(crate) const fn source_suffix(&self) -> &'static str {
+        self.metric.source_suffix()
     }
 
-    pub(crate) const fn alias(self) -> &'static str {
+    pub(crate) const fn alias(&self) -> &'static str {
         self.alias
     }
 
-    pub(crate) const fn unit(self) -> &'static str {
+    pub(crate) const fn unit(&self) -> &'static str {
         self.unit
     }
 }
 
 pub(crate) const O3_LSQ_DATA_RESPONSE_GEM5_ALIASES: &[O3LsqDataResponseGem5Alias] = &[
-    O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::Samples,
-        "samples",
-        "samples",
-        "Count",
-    ),
-    O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::Ticks,
-        "ticks",
-        "totalLatency",
-        "Tick",
-    ),
-    O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::MaxTicks,
-        "max_ticks",
-        "maxLatency",
-        "Tick",
-    ),
-    O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::MinTicks,
-        "min_ticks",
-        "minLatency",
-        "Tick",
-    ),
-    O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::AvgTicks,
-        "avg_ticks",
-        "avgLatency",
-        "Tick",
-    ),
+    O3LsqDataResponseGem5Alias::new(O3LsqDataResponseMetric::Samples, "samples", "Count"),
+    O3LsqDataResponseGem5Alias::new(O3LsqDataResponseMetric::Ticks, "totalLatency", "Tick"),
+    O3LsqDataResponseGem5Alias::new(O3LsqDataResponseMetric::MaxTicks, "maxLatency", "Tick"),
+    O3LsqDataResponseGem5Alias::new(O3LsqDataResponseMetric::MinTicks, "minLatency", "Tick"),
+    O3LsqDataResponseGem5Alias::new(O3LsqDataResponseMetric::AvgTicks, "avgLatency", "Tick"),
 ];
 
 pub(crate) fn o3_lsq_data_response_gem5_alias_by_source_suffix(
@@ -546,92 +518,123 @@ mod tests {
     use super::*;
 
     #[test]
-    fn operation_aliases_match_tracked_order_and_public_spellings() {
-        let operations = O3_LSQ_OPERATION_GEM5_ALIASES
+    fn operation_aliases_match_tracked_order_and_spellings() {
+        let descriptors = O3_LSQ_OPERATION_GEM5_ALIASES
             .iter()
-            .map(|alias| alias.operation())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            operations.as_slice(),
-            O3RuntimeLsqOperation::TRACKED.as_slice()
-        );
-
-        let aliases = O3_LSQ_OPERATION_GEM5_ALIASES
-            .iter()
-            .map(|alias| (alias.source_name(), alias.alias(), alias.bucket_alias()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            aliases.as_slice(),
-            &[
-                ("load", "load", "Load"),
-                ("store", "store", "Store"),
-                ("load_reserved", "loadReserved", "LoadReserved"),
+            .map(|alias| {
                 (
+                    alias.operation(),
+                    alias.source_name(),
+                    alias.alias(),
+                    alias.bucket_alias(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            descriptors,
+            [
+                (O3RuntimeLsqOperation::Load, "load", "load", "Load"),
+                (O3RuntimeLsqOperation::Store, "store", "store", "Store"),
+                (
+                    O3RuntimeLsqOperation::LoadReserved,
+                    "load_reserved",
+                    "loadReserved",
+                    "LoadReserved",
+                ),
+                (
+                    O3RuntimeLsqOperation::StoreConditional,
                     "store_conditional",
                     "storeConditional",
                     "StoreConditional",
                 ),
-                ("atomic", "atomic", "Atomic"),
-                ("float_load", "floatLoad", "FloatLoad"),
-                ("float_store", "floatStore", "FloatStore"),
-                ("vector_load", "vectorLoad", "VectorLoad"),
-                ("vector_store", "vectorStore", "VectorStore"),
+                (O3RuntimeLsqOperation::Atomic, "atomic", "atomic", "Atomic"),
+                (
+                    O3RuntimeLsqOperation::FloatLoad,
+                    "float_load",
+                    "floatLoad",
+                    "FloatLoad",
+                ),
+                (
+                    O3RuntimeLsqOperation::FloatStore,
+                    "float_store",
+                    "floatStore",
+                    "FloatStore",
+                ),
+                (
+                    O3RuntimeLsqOperation::VectorLoad,
+                    "vector_load",
+                    "vectorLoad",
+                    "VectorLoad",
+                ),
+                (
+                    O3RuntimeLsqOperation::VectorStore,
+                    "vector_store",
+                    "vectorStore",
+                    "VectorStore",
+                ),
             ]
         );
-        assert!(operations
-            .iter()
-            .all(|operation| *operation != O3RuntimeLsqOperation::None));
+        assert_eq!(
+            O3_LSQ_OPERATION_GEM5_ALIASES
+                .iter()
+                .map(O3LsqOperationGem5Alias::operation)
+                .collect::<Vec<_>>(),
+            O3RuntimeLsqOperation::TRACKED
+        );
     }
 
     #[test]
-    fn ordering_aliases_match_tracked_order_and_public_spellings() {
-        let orderings = O3_LSQ_ORDERING_GEM5_ALIASES
+    fn ordering_aliases_match_tracked_order_and_spellings() {
+        let descriptors = O3_LSQ_ORDERING_GEM5_ALIASES
             .iter()
-            .map(|alias| alias.ordering())
+            .map(|alias| (alias.ordering(), alias.alias(), alias.bucket_alias()))
             .collect::<Vec<_>>();
+
         assert_eq!(
-            orderings.as_slice(),
-            O3RuntimeLsqOrdering::TRACKED.as_slice()
-        );
-        assert_eq!(
-            O3_LSQ_ORDERING_GEM5_ALIASES
-                .iter()
-                .map(|alias| (alias.source_name(), alias.alias(), alias.bucket_alias()))
-                .collect::<Vec<_>>()
-                .as_slice(),
-            &[
-                ("acquire", "acquire", "Acquire"),
-                ("release", "release", "Release"),
+            descriptors,
+            [
+                (O3RuntimeLsqOrdering::Acquire, "acquire", "Acquire"),
+                (O3RuntimeLsqOrdering::Release, "release", "Release"),
                 (
-                    "acquire_release",
+                    O3RuntimeLsqOrdering::AcquireRelease,
                     "acquireRelease",
                     "AcquireRelease",
                 ),
             ]
         );
-        assert!(orderings
-            .iter()
-            .all(|ordering| *ordering != O3RuntimeLsqOrdering::None));
+        assert_eq!(
+            O3_LSQ_ORDERING_GEM5_ALIASES
+                .iter()
+                .map(O3LsqOrderingGem5Alias::ordering)
+                .collect::<Vec<_>>(),
+            O3RuntimeLsqOrdering::TRACKED
+        );
     }
 
     #[test]
-    fn data_response_aliases_preserve_metric_order_units_and_spellings() {
-        assert_eq!(O3_LSQ_TOTAL_ALIAS, "total");
+    fn data_response_aliases_match_order_spellings_and_units() {
+        let descriptors = O3_LSQ_DATA_RESPONSE_GEM5_ALIASES
+            .iter()
+            .map(|alias| {
+                (
+                    alias.metric(),
+                    alias.source_suffix(),
+                    alias.alias(),
+                    alias.unit(),
+                )
+            })
+            .collect::<Vec<_>>();
+
         assert_eq!(
-            O3_LSQ_DATA_RESPONSE_GEM5_ALIASES
-                .iter()
-                .map(|alias| {
-                    (
-                        alias.metric(),
-                        alias.source_suffix(),
-                        alias.alias(),
-                        alias.unit(),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .as_slice(),
-            &[
-                (O3LsqDataResponseMetric::Samples, "samples", "samples", "Count"),
+            descriptors,
+            [
+                (
+                    O3LsqDataResponseMetric::Samples,
+                    "samples",
+                    "samples",
+                    "Count",
+                ),
                 (
                     O3LsqDataResponseMetric::Ticks,
                     "ticks",
@@ -661,31 +664,67 @@ mod tests {
     }
 
     #[test]
-    fn lsq_alias_names_are_unique_within_each_namespace() {
-        let mut operation_sources = BTreeSet::new();
-        let mut operation_aliases = BTreeSet::new();
-        let mut operation_buckets = BTreeSet::new();
-        for alias in O3_LSQ_OPERATION_GEM5_ALIASES {
-            assert!(operation_sources.insert(alias.source_name()));
-            assert!(operation_aliases.insert(alias.alias()));
-            assert!(operation_buckets.insert(alias.bucket_alias()));
+    fn aliases_are_unique() {
+        let mut source_names = BTreeSet::new();
+        let mut aliases = BTreeSet::new();
+        let mut bucket_aliases = BTreeSet::new();
+        for descriptor in O3_LSQ_OPERATION_GEM5_ALIASES {
+            assert!(source_names.insert(descriptor.source_name()));
+            assert!(aliases.insert(descriptor.alias()));
+            assert!(bucket_aliases.insert(descriptor.bucket_alias()));
         }
 
-        let mut ordering_sources = BTreeSet::new();
         let mut ordering_aliases = BTreeSet::new();
-        let mut ordering_buckets = BTreeSet::new();
-        for alias in O3_LSQ_ORDERING_GEM5_ALIASES {
-            assert!(ordering_sources.insert(alias.source_name()));
-            assert!(ordering_aliases.insert(alias.alias()));
-            assert!(ordering_buckets.insert(alias.bucket_alias()));
+        let mut ordering_bucket_aliases = BTreeSet::new();
+        for descriptor in O3_LSQ_ORDERING_GEM5_ALIASES {
+            assert!(ordering_aliases.insert(descriptor.alias()));
+            assert!(ordering_bucket_aliases.insert(descriptor.bucket_alias()));
         }
 
         let mut metric_sources = BTreeSet::new();
         let mut metric_aliases = BTreeSet::new();
-        for alias in O3_LSQ_DATA_RESPONSE_GEM5_ALIASES {
-            assert!(metric_sources.insert(alias.source_suffix()));
-            assert!(metric_aliases.insert(alias.alias()));
+        for descriptor in O3_LSQ_DATA_RESPONSE_GEM5_ALIASES {
+            assert!(metric_sources.insert(descriptor.source_suffix()));
+            assert!(metric_aliases.insert(descriptor.alias()));
         }
+    }
+
+    #[test]
+    fn lookup_functions_project_expected_aliases() {
+        assert_eq!(
+            o3_lsq_operation_gem5_alias_by_source_name("store_conditional")
+                .map(O3LsqOperationGem5Alias::alias),
+            Some("storeConditional")
+        );
+        assert_eq!(
+            o3_lsq_operation_gem5_alias_by_alias("vectorLoad")
+                .map(O3LsqOperationGem5Alias::bucket_alias),
+            Some("VectorLoad")
+        );
+        assert_eq!(
+            o3_lsq_ordering_gem5_alias_by_alias("acquireRelease")
+                .map(O3LsqOrderingGem5Alias::bucket_alias),
+            Some("AcquireRelease")
+        );
+        assert_eq!(
+            o3_lsq_data_response_gem5_alias_by_source_suffix("max_ticks")
+                .map(O3LsqDataResponseGem5Alias::alias),
+            Some("maxLatency")
+        );
+    }
+
+    #[test]
+    fn total_alias_is_shared_and_none_is_not_described() {
+        assert_eq!(O3_LSQ_TOTAL_ALIAS, "total");
+        assert!(O3_LSQ_OPERATION_GEM5_ALIASES
+            .iter()
+            .all(|alias| alias.operation() != O3RuntimeLsqOperation::None));
+        assert!(O3_LSQ_ORDERING_GEM5_ALIASES
+            .iter()
+            .all(|alias| alias.ordering() != O3RuntimeLsqOrdering::None));
+        assert!(o3_lsq_operation_gem5_alias_by_source_name("none").is_none());
+        assert!(o3_lsq_operation_gem5_alias_by_alias("none").is_none());
+        assert!(o3_lsq_ordering_gem5_alias_by_alias("none").is_none());
     }
 }
 ```
@@ -923,8 +962,15 @@ Append this check to `o3_lsq_gem5_aliases_have_one_projection_authority` in the
 focused policy module:
 
 ```rust
-let cli_helpers =
-    fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions.rs")).unwrap();
+let cli_helper = fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions.rs"))
+    .expect("shared CLI test helper should be readable");
+let cli_lsq = fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions/o3/lsq.rs"))
+    .expect("CLI O3 LSQ tests should be readable");
+let cli_lsq_runtime =
+    fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions/o3/lsq/runtime.rs"))
+        .expect("CLI O3 LSQ runtime tests should be readable");
+let helper_policy = "shared CLI LSQ alias helper must remain literal-only; \
+    call-site tables are the allowed independent oracle";
 for obsolete_helper in [
     "fn o3_lsq_operation_count_alias(",
     "fn o3_lsq_ordering_count_alias(",
@@ -932,14 +978,47 @@ for obsolete_helper in [
     "fn o3_lsq_ordering_bucket_alias(",
 ] {
     assert!(
-        !cli_helpers.contains(obsolete_helper),
-        "CLI LSQ tests must use explicit expected aliases, not mapper `{obsolete_helper}`"
+        !cli_helper.contains(obsolete_helper),
+        "{helper_policy}; remove obsolete mapper `{obsolete_helper}`"
+    );
+}
+for forbidden_prefix in [
+    r#".strip_prefix("lsq_operation_")"#,
+    r#".strip_prefix("lsq_ordering_")"#,
+] {
+    for (source_name, source) in [
+        ("shared CLI helper", cli_helper.as_str()),
+        ("CLI O3 LSQ tests", cli_lsq.as_str()),
+        ("CLI O3 LSQ runtime tests", cli_lsq_runtime.as_str()),
+    ] {
+        assert!(
+            !source.contains(forbidden_prefix),
+            "{helper_policy}; remove translation prefix `{forbidden_prefix}` from {source_name}"
+        );
+    }
+}
+for forbidden_literal in [
+    r#""load_reserved""#,
+    r#""store_conditional""#,
+    r#""acquire_release""#,
+    r#""loadReserved""#,
+    r#""storeConditional""#,
+    r#""acquireRelease""#,
+    r#""LoadReserved""#,
+    r#""StoreConditional""#,
+    r#""AcquireRelease""#,
+] {
+    assert!(
+        !cli_helper.contains(forbidden_literal),
+        "{helper_policy}; remove shared mapping literal `{forbidden_literal}`"
     );
 }
 ```
 
 Run the focused source-policy command from Task 1. Expected: FAIL naming
-`fn o3_lsq_operation_count_alias(`. Do not commit the failing state.
+`fn o3_lsq_operation_count_alias(`. The later call-site conversion cleanup also
+makes both LSQ test modules satisfy the prefix checks. Do not commit the failing
+state.
 
 - [ ] **Step 2: Make the assertion helper consume explicit names**
 
