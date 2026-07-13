@@ -4,12 +4,11 @@ use super::*;
 use crate::{
     BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchTargetBuffer,
     BranchTargetBufferConfig, BranchTargetProvider, CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId,
-    CpuResetState, CpuTranslationFrontend, InOrderPipelineError, InOrderPipelineInstruction,
-    InOrderPipelineSnapshot, InOrderPipelineStage, MultiperspectivePerceptron,
-    MultiperspectivePerceptronConfig, MultiperspectivePerceptronFeature, OutstandingFetch,
-    RiscvBranchPredictorKind, RiscvCore, RiscvCpuExecutionEvent, TournamentBranchPredictor,
-    TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    CpuResetState, CpuTranslationFrontend, InOrderPipelineInstruction, InOrderPipelineSnapshot,
+    InOrderPipelineStage, MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
+    MultiperspectivePerceptronFeature, OutstandingFetch, RiscvBranchPredictorKind, RiscvCore,
+    RiscvCpuExecutionEvent, TournamentBranchPredictor, TournamentBranchPredictorConfig,
+    DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 use rem6_isa_riscv::{

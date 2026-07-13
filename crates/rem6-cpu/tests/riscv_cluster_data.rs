@@ -2,10 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineError,
-    InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCluster,
-    RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
-    RiscvCpuError, RiscvDataAccessEventKind,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineInstruction,
+    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCluster, RiscvClusterDriveEvent,
+    RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_isa_riscv::Register;
@@ -359,7 +358,7 @@ fn parallel_driver_clears_prepared_scalar_marker_when_later_fetch_prepare_fails(
 }
 
 #[test]
-fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() {
+fn parallel_driver_registers_later_data_while_earlier_fetch_admission_is_deferred() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let cpu0_fetch = transport
@@ -480,7 +479,7 @@ fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() 
     ))
     .unwrap();
 
-    let error = cluster
+    let events = cluster
         .drive_ready_cores_parallel(
             &mut scheduler,
             &transport,
@@ -495,17 +494,23 @@ fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() 
                 move |delivery, _context| memory_response(&store, &delivery)
             },
         )
-        .unwrap_err();
+        .unwrap();
 
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].cpu(), CpuId::new(1));
     assert!(matches!(
-        error,
-        RiscvClusterError::Core {
-            cpu,
-            error: RiscvCpuError::InOrderPipeline(
-                InOrderPipelineError::CycleCursorOverflow { cycle: u64::MAX }
-            )
-        } if cpu == CpuId::new(0)
+        events[0].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
     ));
+    let cpu0_pipeline = cpu0.in_order_pipeline_snapshot();
+    assert_eq!(cpu0_pipeline.cycle(), u64::MAX);
+    assert_eq!(
+        cpu0_pipeline.in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
     assert!(cpu1.has_pending_data_access());
     assert_eq!(cpu1.o3_runtime_snapshot().load_store_queue().len(), 1);
     assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());

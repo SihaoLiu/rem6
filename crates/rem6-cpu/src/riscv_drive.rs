@@ -1,7 +1,7 @@
 use rem6_kernel::{PartitionedScheduler, SchedulerContext};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
-use crate::riscv_in_order_drive::RiscvInOrderDriveStatus;
+use crate::riscv_in_order_drive::{RiscvInOrderDriveStatus, RiscvInOrderFetchAdmission};
 use crate::{RiscvCore, RiscvCoreDriveAction, RiscvCpuError};
 
 impl RiscvCore {
@@ -49,11 +49,33 @@ impl RiscvCore {
             return Ok(None);
         }
 
+        let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
         let pending_o3_scalar_memory_retirement = self.has_pending_o3_scalar_memory_retirement();
-        if !self.detailed_o3_window_prefers_fetch_ahead() {
-            if pending_o3_scalar_memory_retirement {
-                return Ok(None);
+        if !detailed_o3_fetch && pending_o3_scalar_memory_retirement {
+            return Ok(None);
+        }
+        let fetch_admission = if detailed_o3_fetch {
+            RiscvInOrderFetchAdmission::Admitted
+        } else {
+            self.in_order_fetch_admission()
+        };
+
+        if fetch_admission.allows_fetch() {
+            if let Some(decision) = self.next_fetch_ahead_before_retire() {
+                let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
+                self.set_fetch_ahead_pc(decision.pc());
+                let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                    scheduler,
+                    transport,
+                    fetch_trace,
+                    fetch_responder,
+                    fetch_ahead,
+                )?;
+                return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
             }
+        }
+
+        if !detailed_o3_fetch {
             match self.schedule_next_completed_fetch_pipeline_cycle_serial(scheduler)? {
                 RiscvInOrderDriveStatus::Scheduled(event) => {
                     return Ok(Some(RiscvCoreDriveAction::PipelineCycleScheduled { event }));
@@ -72,23 +94,13 @@ impl RiscvCore {
             }
         }
 
-        if let Some(decision) = self.next_fetch_ahead_before_retire() {
-            let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
-            self.set_fetch_ahead_pc(decision.pc());
-            let event = self.issue_next_fetch_with_prepared_fetch_ahead(
-                scheduler,
-                transport,
-                fetch_trace,
-                fetch_responder,
-                fetch_ahead,
-            )?;
-            return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
-        }
-
         if let Some(action) = self.drive_next_completed_fetch_serial_action(scheduler)? {
             return Ok(Some(action));
         }
         if self.live_retire_gate_blocks_new_work() {
+            return Ok(None);
+        }
+        if !fetch_admission.allows_fetch() {
             return Ok(None);
         }
 

@@ -1825,7 +1825,7 @@ fn rem6_run_stats_emit_configured_in_order_pipeline_widths_from_execution() {
 }
 
 #[test]
-fn rem6_run_in_order_pipeline_scheduler_serializes_executed_stage_occupancy() {
+fn rem6_run_in_order_pipeline_width_changes_executed_stage_occupancy() {
     let program = riscv64_program(&[
         0x0010_0093, // addi x1, x0, 1
         0x0020_0113, // addi x2, x0, 2
@@ -1836,8 +1836,10 @@ fn rem6_run_in_order_pipeline_scheduler_serializes_executed_stage_occupancy() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("in-order-pipeline-width-timing", &elf);
 
-    let width_one = in_order_pipeline_stats_for_width(&path, 1);
-    let width_two = in_order_pipeline_stats_for_width(&path, 2);
+    let width_one = in_order_pipeline_stats_for_width_and_memory(&path, 1, "direct", 80);
+    let width_two = in_order_pipeline_stats_for_width_and_memory(&path, 2, "direct", 80);
+    let width_two_hierarchy =
+        in_order_pipeline_stats_for_width_and_memory(&path, 2, "cache-fabric-dram", 320);
 
     for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
         assert_stat(
@@ -1851,7 +1853,14 @@ fn rem6_run_in_order_pipeline_scheduler_serializes_executed_stage_occupancy() {
             &width_two,
             &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
             "Count",
-            1,
+            2,
+            "monotonic",
+        );
+        assert_stat(
+            &width_two_hierarchy,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
+            "Count",
+            2,
             "monotonic",
         );
     }
@@ -1862,6 +1871,14 @@ fn rem6_run_in_order_pipeline_scheduler_serializes_executed_stage_occupancy() {
         stat_value(&width_two, "sim.cpu0.instructions.committed"),
         "monotonic",
     );
+    for resource in [
+        "sim.memory.resources.cache.instruction.activity",
+        "sim.memory.resources.transport.fetch.activity",
+        "sim.memory.resources.fabric.activity",
+        "sim.memory.resources.dram.activity",
+    ] {
+        assert_stat_greater_than(&width_two_hierarchy, resource, "Count", 0, "monotonic");
+    }
 }
 
 #[test]
@@ -13604,8 +13621,14 @@ fn vector_float_masked_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) 
         | 0x57
 }
 
-fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {
+fn in_order_pipeline_stats_for_width_and_memory(
+    path: &std::path::Path,
+    width: u64,
+    memory_system: &str,
+    max_tick: u64,
+) -> String {
     let width = width.to_string();
+    let max_tick = max_tick.to_string();
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
             "run",
@@ -13614,12 +13637,12 @@ fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> Stri
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "80",
+            &max_tick,
             "--stats-format",
             "json",
             "--execute",
             "--memory-system",
-            "direct",
+            memory_system,
             "--riscv-branch-lookahead",
             "2",
             "--riscv-in-order-width",
@@ -14364,9 +14387,12 @@ fn rem6_run_text_stats_emit_in_order_stage_movement_aliases() {
     );
     assert!(stage_advanced_cycles.iter().any(|cycles| *cycles > 0));
     assert!(stage_retired_cycles.iter().any(|cycles| *cycles > 0));
-    assert_eq!(
-        stage_advanced, stage_advanced_cycles,
-        "serialized execution should attribute every stage advance to a distinct kernel tick"
+    assert!(
+        stage_advanced
+            .iter()
+            .zip(stage_advanced_cycles.iter())
+            .any(|(advanced, cycles)| advanced > cycles),
+        "widened pipeline should distinguish movement counts from cycle presence: advanced={stage_advanced:?} cycles={stage_advanced_cycles:?}"
     );
     assert!(
         stage_retired[4] > 0,

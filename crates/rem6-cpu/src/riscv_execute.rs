@@ -1327,6 +1327,23 @@ fn remove_branch_speculation_mappings(
     state.rollback_inactive_selected_branch_speculations(&active_sequences)
 }
 
+fn enqueue_in_order_fetch_if_available(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+) -> Result<bool, RiscvCpuError> {
+    if state.in_order_pipeline.contains_sequence(sequence) {
+        return Ok(true);
+    }
+    if !state.in_order_pipeline.fetch1_has_slot() {
+        return Ok(false);
+    }
+    state
+        .in_order_pipeline
+        .enqueue_fetch(sequence)
+        .map_err(RiscvCpuError::InOrderPipeline)?;
+    Ok(true)
+}
+
 pub(crate) fn sync_in_order_fetch_state(
     state: &mut RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -1370,12 +1387,8 @@ pub(crate) fn sync_in_order_fetch_state(
         .map(|prefix| prefix.fetch.request_id().sequence())
         .filter(|sequence| !state.in_order_pipeline.contains_sequence(*sequence))
     {
-        if let Some(record) = state
-            .in_order_pipeline
-            .enqueue_fetch_recorded(sequence)
-            .map_err(RiscvCpuError::InOrderPipeline)?
-        {
-            state.in_order_pipeline_cycle_records.push(record);
+        if !enqueue_in_order_fetch_if_available(state, sequence)? {
+            return Ok(());
         }
     }
     let mut fetches = fetch_events
@@ -1395,12 +1408,8 @@ pub(crate) fn sync_in_order_fetch_state(
     fetches.sort_by_key(|event| event.request_id().sequence());
 
     for fetch in fetches {
-        if let Some(record) = state
-            .in_order_pipeline
-            .enqueue_fetch_recorded(fetch.request_id().sequence())
-            .map_err(RiscvCpuError::InOrderPipeline)?
-        {
-            state.in_order_pipeline_cycle_records.push(record);
+        if !enqueue_in_order_fetch_if_available(state, fetch.request_id().sequence())? {
+            break;
         }
     }
     Ok(())

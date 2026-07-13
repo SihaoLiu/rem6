@@ -7,11 +7,11 @@ use rem6_mmio::MmioBus;
 use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 use crate::riscv_cluster_drive::{
-    completed_fetch_drive_event, finish_prepared_parallel_actions,
-    push_completed_fetch_drive_event, push_pipeline_cycle_drive_event,
-    push_prepared_completed_fetch_drive_event, push_prepared_data_action,
-    push_prepared_parallel_fetch_action, push_prepared_pipeline_cycle_drive_event,
-    PreparedParallelAction, PreparedParallelActions,
+    completed_fetch_drive_event, fetch_before_pipeline_is_admitted,
+    finish_prepared_parallel_actions, push_completed_fetch_drive_event,
+    push_pipeline_cycle_drive_event, push_prepared_completed_fetch_drive_event,
+    push_prepared_data_action, push_prepared_parallel_fetch_action,
+    push_prepared_pipeline_cycle_drive_event, PreparedParallelAction, PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -319,6 +319,27 @@ impl RiscvCluster {
                 continue;
             }
 
+            let fetch_admitted = fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
+                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
+                    core.set_fetch_ahead_pc(decision.pc());
+                    push_prepared_parallel_fetch_action(
+                        *cpu,
+                        core,
+                        scheduler.now(),
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                        fetch_ahead,
+                    )?;
+                    continue;
+                }
+            }
+
             if push_prepared_pipeline_cycle_drive_event(
                 *cpu,
                 core,
@@ -328,30 +349,16 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(decision) = core.next_fetch_ahead_before_retire() {
-                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                core.set_fetch_ahead_pc(decision.pc());
-                push_prepared_parallel_fetch_action(
-                    *cpu,
-                    core,
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                    fetch_ahead,
-                )?;
-                continue;
-            }
-
             if push_prepared_completed_fetch_drive_event(
                 *cpu,
                 core,
                 scheduler,
                 &mut prepared_actions,
             )? {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 
@@ -442,6 +449,27 @@ impl RiscvCluster {
                 continue;
             }
 
+            let fetch_admitted = fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
+                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
+                    core.set_fetch_ahead_pc(decision.pc());
+                    push_prepared_parallel_fetch_action(
+                        *cpu,
+                        core,
+                        scheduler.now(),
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                        fetch_ahead,
+                    )?;
+                    continue;
+                }
+            }
+
             if push_prepared_pipeline_cycle_drive_event(
                 *cpu,
                 core,
@@ -451,30 +479,16 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(decision) = core.next_fetch_ahead_before_retire() {
-                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                core.set_fetch_ahead_pc(decision.pc());
-                push_prepared_parallel_fetch_action(
-                    *cpu,
-                    core,
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                    fetch_ahead,
-                )?;
-                continue;
-            }
-
             if push_prepared_completed_fetch_drive_event(
                 *cpu,
                 core,
                 scheduler,
                 &mut prepared_actions,
             )? {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 
@@ -574,18 +588,9 @@ impl RiscvCluster {
                 continue;
             }
 
-            if !instruction_budget_exhausted
-                && push_prepared_pipeline_cycle_drive_event(
-                    *cpu,
-                    core,
-                    scheduler,
-                    &mut prepared_actions,
-                )?
-            {
-                continue;
-            }
-
-            if !instruction_budget_exhausted {
+            let fetch_admitted =
+                !instruction_budget_exhausted && fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
@@ -605,6 +610,17 @@ impl RiscvCluster {
                 }
             }
 
+            if !instruction_budget_exhausted
+                && push_prepared_pipeline_cycle_drive_event(
+                    *cpu,
+                    core,
+                    scheduler,
+                    &mut prepared_actions,
+                )?
+            {
+                continue;
+            }
+
             if !instruction_budget_exhausted {
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     committed_instructions += u64::from(matches!(
@@ -620,6 +636,10 @@ impl RiscvCluster {
             }
 
             if instruction_budget_exhausted {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 
@@ -737,6 +757,29 @@ impl RiscvCluster {
                 continue;
             }
 
+            let fetch_admitted = fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
+                if let Some(decision) =
+                    core.next_cached_translated_memory_fetch_ahead_before_retire()
+                {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
+                    core.set_fetch_ahead_pc(decision.pc());
+                    push_prepared_parallel_fetch_action(
+                        *cpu,
+                        core,
+                        scheduler.now(),
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                        fetch_ahead,
+                    )?;
+                    continue;
+                }
+            }
+
             if push_prepared_pipeline_cycle_drive_event(
                 *cpu,
                 core,
@@ -746,30 +789,16 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(decision) = core.next_cached_translated_memory_fetch_ahead_before_retire() {
-                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                core.set_fetch_ahead_pc(decision.pc());
-                push_prepared_parallel_fetch_action(
-                    *cpu,
-                    core,
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                    fetch_ahead,
-                )?;
-                continue;
-            }
-
             if push_prepared_completed_fetch_drive_event(
                 *cpu,
                 core,
                 scheduler,
                 &mut prepared_actions,
             )? {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 
@@ -910,6 +939,29 @@ impl RiscvCluster {
                 continue;
             }
 
+            let fetch_admitted = fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
+                if let Some(decision) =
+                    core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(bus)
+                {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
+                    core.set_fetch_ahead_pc(decision.pc());
+                    push_prepared_parallel_fetch_action(
+                        *cpu,
+                        core,
+                        scheduler.now(),
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                        fetch_ahead,
+                    )?;
+                    continue;
+                }
+            }
+
             if push_prepared_pipeline_cycle_drive_event(
                 *cpu,
                 core,
@@ -919,32 +971,16 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(decision) =
-                core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(bus)
-            {
-                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                core.set_fetch_ahead_pc(decision.pc());
-                push_prepared_parallel_fetch_action(
-                    *cpu,
-                    core,
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                    fetch_ahead,
-                )?;
-                continue;
-            }
-
             if push_prepared_completed_fetch_drive_event(
                 *cpu,
                 core,
                 scheduler,
                 &mut prepared_actions,
             )? {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 
@@ -1043,30 +1079,37 @@ impl RiscvCluster {
                 continue;
             }
 
+            let fetch_admitted = fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
+                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
+                    core.set_fetch_ahead_pc(decision.pc());
+                    let event = core
+                        .issue_next_fetch_parallel_with_prepared_fetch_ahead(
+                            scheduler,
+                            transport,
+                            fetch_trace.clone(),
+                            fetch_responder(*cpu),
+                            fetch_ahead,
+                        )
+                        .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+                    actions.push(RiscvClusterDriveEvent::new(
+                        *cpu,
+                        RiscvCoreDriveAction::FetchIssued { event },
+                    ));
+                    continue;
+                }
+            }
+
             if push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
 
-            if let Some(decision) = core.next_fetch_ahead_before_retire() {
-                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                core.set_fetch_ahead_pc(decision.pc());
-                let event = core
-                    .issue_next_fetch_parallel_with_prepared_fetch_ahead(
-                        scheduler,
-                        transport,
-                        fetch_trace.clone(),
-                        fetch_responder(*cpu),
-                        fetch_ahead,
-                    )
-                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-                actions.push(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::FetchIssued { event },
-                ));
+            if push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
 
-            if push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)? {
+            if !fetch_admitted {
                 continue;
             }
 
@@ -1172,13 +1215,9 @@ impl RiscvCluster {
                 continue;
             }
 
-            if !instruction_budget_exhausted
-                && push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)?
-            {
-                continue;
-            }
-
-            if !instruction_budget_exhausted {
+            let fetch_admitted =
+                !instruction_budget_exhausted && fetch_before_pipeline_is_admitted(core);
+            if fetch_admitted {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
@@ -1197,7 +1236,15 @@ impl RiscvCluster {
                     ));
                     continue;
                 }
+            }
 
+            if !instruction_budget_exhausted
+                && push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)?
+            {
+                continue;
+            }
+
+            if !instruction_budget_exhausted {
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     committed_instructions += u64::from(matches!(
                         event.action(),
@@ -1212,6 +1259,10 @@ impl RiscvCluster {
             }
 
             if instruction_budget_exhausted {
+                continue;
+            }
+
+            if !fetch_admitted {
                 continue;
             }
 

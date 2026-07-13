@@ -1,13 +1,22 @@
 use super::*;
 use crate::{
     AccessSize, AgentId, CacheLineLayout, CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord,
-    CpuId, CpuResetState, InOrderPipelineInstruction, InOrderPipelineSnapshot, MemoryRequestId,
-    MemoryRouteId, TransportEndpointId,
+    CpuId, CpuResetState, InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
+    InOrderPipelineSnapshot, InOrderPipelineStageWidth, MemoryRequestId, MemoryRouteId,
+    TransportEndpointId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn uniform_pipeline_config(width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new(
+        InOrderPipelineStage::ALL
+            .map(|stage| InOrderPipelineStageWidth::new(stage, width).unwrap()),
+    )
+    .unwrap()
 }
 
 fn core_with_completed_fetch() -> RiscvCore {
@@ -46,6 +55,87 @@ fn core_with_completed_fetch() -> RiscvCore {
             0x0000_0013u32.to_le_bytes().to_vec(),
         ));
     core
+}
+
+#[test]
+fn enqueue_fetch_never_advances_time_and_rejects_full_fetch1() {
+    let mut pipeline = crate::InOrderPipelineState::new(uniform_pipeline_config(1));
+
+    pipeline.enqueue_fetch(0).unwrap();
+    assert_eq!(pipeline.cycle(), 0);
+    assert_eq!(
+        pipeline.in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
+    assert_eq!(
+        pipeline.enqueue_fetch(1),
+        Err(InOrderPipelineError::StageAtCapacity {
+            stage: InOrderPipelineStage::Fetch1,
+            width: 1,
+        })
+    );
+    assert_eq!(pipeline.cycle(), 0);
+
+    pipeline.enqueue_fetch(0).unwrap();
+    assert_eq!(pipeline.in_flight().len(), 1);
+}
+
+#[test]
+fn fetch_admission_distinguishes_available_advance_and_retire_states() {
+    let core = core_with_completed_fetch();
+    core.reset_in_order_pipeline_config(uniform_pipeline_config(1));
+
+    assert_eq!(
+        core.in_order_fetch_admission(),
+        RiscvInOrderFetchAdmission::Admitted
+    );
+
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        uniform_pipeline_config(1),
+        0,
+        [InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1,
+        )],
+    ))
+    .unwrap();
+    assert_eq!(
+        core.in_order_fetch_admission(),
+        RiscvInOrderFetchAdmission::AdvanceBeforeFetch
+    );
+
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        uniform_pipeline_config(1),
+        0,
+        [
+            InOrderPipelineInstruction::new(0, InOrderPipelineStage::Commit),
+            InOrderPipelineInstruction::new(1, InOrderPipelineStage::Fetch1),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        core.in_order_fetch_admission(),
+        RiscvInOrderFetchAdmission::RetireBeforeFetch
+    );
+}
+
+#[test]
+fn pending_pipeline_wake_blocks_fetch_admission() {
+    let core = core_with_completed_fetch();
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    assert!(matches!(
+        core.schedule_next_completed_fetch_pipeline_cycle_serial(&mut scheduler)
+            .unwrap(),
+        RiscvInOrderDriveStatus::Scheduled(_)
+    ));
+
+    assert_eq!(
+        core.in_order_fetch_admission(),
+        RiscvInOrderFetchAdmission::PipelineCyclePending
+    );
 }
 
 #[test]

@@ -1265,38 +1265,37 @@ impl InOrderPipelineState {
             .any(|instruction| instruction.sequence() == sequence)
     }
 
-    pub fn enqueue_fetch(&mut self, sequence: u64) -> Result<(), InOrderPipelineError> {
-        self.enqueue_fetch_recorded(sequence).map(|_| ())
-    }
-
-    pub fn enqueue_fetch_recorded(
-        &mut self,
-        sequence: u64,
-    ) -> Result<Option<InOrderPipelineCycleRecord>, InOrderPipelineError> {
-        if self.contains_sequence(sequence) {
-            return Ok(None);
-        }
-        let fetch1_occupancy = self
+    pub(crate) fn fetch1_has_slot(&self) -> bool {
+        let occupancy = self
             .in_flight
             .iter()
             .filter(|instruction| instruction.stage() == InOrderPipelineStage::Fetch1)
             .count();
-        let fetch1_has_slot = fetch1_occupancy < self.config.width(InOrderPipelineStage::Fetch1);
-        let commit_busy = self
-            .in_flight
+        occupancy < self.config.width(InOrderPipelineStage::Fetch1)
+    }
+
+    pub(crate) fn commit_is_occupied(&self) -> bool {
+        self.in_flight
             .iter()
-            .any(|instruction| instruction.stage() == InOrderPipelineStage::Commit);
-        let record = if !self.in_flight.is_empty() && !fetch1_has_slot && !commit_busy {
-            Some(self.try_advance_cycle_recorded()?)
-        } else {
-            None
-        };
+            .any(|instruction| instruction.stage() == InOrderPipelineStage::Commit)
+    }
+
+    pub fn enqueue_fetch(&mut self, sequence: u64) -> Result<(), InOrderPipelineError> {
+        if self.contains_sequence(sequence) {
+            return Ok(());
+        }
+        if !self.fetch1_has_slot() {
+            return Err(InOrderPipelineError::StageAtCapacity {
+                stage: InOrderPipelineStage::Fetch1,
+                width: self.config.width(InOrderPipelineStage::Fetch1),
+            });
+        }
         self.in_flight.push(InOrderPipelineInstruction::new(
             sequence,
             InOrderPipelineStage::Fetch1,
         ));
         self.in_flight = canonical_in_flight(self.in_flight.iter().copied())?;
-        Ok(record)
+        Ok(())
     }
 
     pub fn plan_cycle(&self) -> InOrderPipelinePlan {

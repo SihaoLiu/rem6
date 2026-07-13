@@ -414,6 +414,12 @@ pub(crate) fn push_prepared_completed_fetch_drive_event(
     Ok(false)
 }
 
+pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {
+    core.detailed_o3_window_prefers_fetch_ahead()
+        || (!core.has_pending_o3_scalar_memory_retirement()
+            && core.in_order_fetch_admission().allows_fetch())
+}
+
 pub(crate) fn push_prepared_pipeline_cycle_drive_event(
     cpu: CpuId,
     core: &RiscvCore,

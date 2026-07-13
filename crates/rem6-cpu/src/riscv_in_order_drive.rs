@@ -23,6 +23,20 @@ pub(crate) enum RiscvInOrderDriveStatus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RiscvInOrderFetchAdmission {
+    Admitted,
+    PipelineCyclePending,
+    AdvanceBeforeFetch,
+    RetireBeforeFetch,
+}
+
+impl RiscvInOrderFetchAdmission {
+    pub(crate) const fn allows_fetch(self) -> bool {
+        matches!(self, Self::Admitted)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvInOrderPipelineWake {
     generation: u64,
     scheduler: SchedulerInstanceId,
@@ -68,6 +82,21 @@ enum RiscvPipelineCandidate {
 }
 
 impl RiscvCore {
+    pub(crate) fn in_order_fetch_admission(&self) -> RiscvInOrderFetchAdmission {
+        let state = self.state.lock().expect("riscv core lock");
+        if state.pending_in_order_pipeline_advance.is_some() {
+            return RiscvInOrderFetchAdmission::PipelineCyclePending;
+        }
+        if state.pending_fetch_prefix.is_some() || state.in_order_pipeline.fetch1_has_slot() {
+            return RiscvInOrderFetchAdmission::Admitted;
+        }
+        if state.in_order_pipeline.commit_is_occupied() {
+            RiscvInOrderFetchAdmission::RetireBeforeFetch
+        } else {
+            RiscvInOrderFetchAdmission::AdvanceBeforeFetch
+        }
+    }
+
     pub(crate) fn drive_next_completed_fetch_serial_action(
         &self,
         scheduler: &mut PartitionedScheduler,

@@ -17,6 +17,10 @@ pub enum InOrderPipelineError {
     DuplicateInFlightInstruction {
         sequence: u64,
     },
+    StageAtCapacity {
+        stage: InOrderPipelineStage,
+        width: usize,
+    },
     ExecuteWaitStageMismatch {
         sequence: u64,
         stage: InOrderPipelineStage,
@@ -92,6 +96,10 @@ impl fmt::Display for InOrderPipelineError {
             Self::DuplicateInFlightInstruction { sequence } => write!(
                 formatter,
                 "in-order pipeline has duplicate in-flight instruction sequence {sequence}"
+            ),
+            Self::StageAtCapacity { stage, width } => write!(
+                formatter,
+                "in-order {stage} stage is at its configured width {width}"
             ),
             Self::ExecuteWaitStageMismatch {
                 sequence,

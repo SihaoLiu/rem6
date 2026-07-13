@@ -257,7 +257,7 @@ fn selected_record_failure_does_not_leave_generic_branch_speculation() {
 }
 
 #[test]
-fn prepared_fetch_issue_records_fetch_ahead_speculation_before_sync_failure() {
+fn prepared_fetch_issue_records_speculation_when_pipeline_admission_is_deferred() {
     let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
     let decision = core.next_fetch_ahead_before_retire().unwrap();
     let prepared = core.prepare_fetch_ahead_speculation(&decision).unwrap();
@@ -284,19 +284,23 @@ fn prepared_fetch_issue_records_fetch_ahead_speculation_before_sync_failure() {
         line_layout: layout(),
     };
 
-    let error = core
-        .record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, prepared)
-        .unwrap_err();
+    core.record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, prepared)
+        .unwrap();
 
-    assert!(matches!(
-        error,
-        RiscvCpuError::InOrderPipeline(InOrderPipelineError::CycleCursorOverflow {
-            cycle: u64::MAX
-        })
-    ));
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.branch_speculations.contains_key(&0));
     assert!(state.branch_predictor.pending_speculation_count() > 0);
+    let snapshot = state.in_order_pipeline.snapshot();
+    assert_eq!(snapshot.cycle(), u64::MAX);
+    assert_eq!(
+        snapshot.in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
+    assert!(!state.in_order_pipeline.contains_sequence(1));
+    assert!(state.in_order_pipeline_cycle_records.is_empty());
 }
 
 #[test]

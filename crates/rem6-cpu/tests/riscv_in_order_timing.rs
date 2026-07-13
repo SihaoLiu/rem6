@@ -2,10 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineCycleRecord,
-    InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvCluster, RiscvCore, RiscvCoreDriveAction,
-    RiscvDataAccessEventKind,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
+    InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineStallCause, RiscvCluster,
+    RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
@@ -97,6 +97,14 @@ fn data_core(
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn uniform_in_order_pipeline_config(width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new(
+        InOrderPipelineStage::ALL
+            .map(|stage| InOrderPipelineStageWidth::new(stage, width).unwrap()),
+    )
+    .unwrap()
 }
 
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
@@ -1036,6 +1044,36 @@ fn riscv_pipeline_snapshot_restore_discards_later_cycle_history() {
 }
 
 #[test]
+fn riscv_direct_fetch_issue_defers_younger_row_without_advancing_time() {
+    let (mut scheduler, transport, fetch_route, _) = in_order_routes();
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(1));
+    let store = loaded_program(
+        0x8000,
+        &[i_type(5, 0, 0x0, 1, 0x13), i_type(7, 1, 0x0, 2, 0x13)],
+    );
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    fetch_one(&core, store, &mut scheduler, &transport);
+
+    let snapshot = core.in_order_pipeline_snapshot();
+    assert_eq!(snapshot.cycle(), 0);
+    assert_eq!(
+        snapshot.in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
+    assert!(core.in_order_pipeline_cycle_records().is_empty());
+
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(first.fetch_pc(), Address::new(0x8000));
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(second.fetch_pc(), Address::new(0x8004));
+}
+
+#[test]
 fn riscv_completed_fetches_overlap_in_order_pipeline_before_retire() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -1055,10 +1093,20 @@ fn riscv_completed_fetches_overlap_in_order_pipeline_before_retire() {
     let first_raw = i_type(5, 0, 0x0, 1, 0x13);
     let second_raw = i_type(7, 1, 0x0, 2, 0x13);
     let core = RiscvCore::new(core(route, 0x8000));
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(2));
     let store = loaded_program(0x8000, &[first_raw, second_raw]);
 
     fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
     fetch_one(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        core.in_order_pipeline_snapshot().in_flight(),
+        &[
+            InOrderPipelineInstruction::new(0, InOrderPipelineStage::Fetch1),
+            InOrderPipelineInstruction::new(1, InOrderPipelineStage::Fetch1),
+        ]
+    );
+    assert!(core.in_order_pipeline_cycle_records().is_empty());
 
     let first = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(
@@ -1097,7 +1145,7 @@ fn riscv_completed_fetches_overlap_in_order_pipeline_before_retire() {
 }
 
 #[test]
-fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event() {
+fn riscv_late_completed_fetch_does_not_advance_older_pipeline_work_without_cycle() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let route = transport
@@ -1121,6 +1169,15 @@ fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event(
 
     fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
     fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    assert_eq!(
+        core.in_order_pipeline_snapshot().in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
+    assert!(core.in_order_pipeline_cycle_records().is_empty());
+
     let first = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(first.in_order_pipeline_cycle().unwrap().cycle(), 4);
     assert_eq!(
@@ -1132,10 +1189,18 @@ fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event(
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(1, InOrderPipelineStage::Commit)]
+        Vec::<(u64, InOrderPipelineStage)>::new()
     );
 
     fetch_one(&core, store, &mut scheduler, &transport);
+    assert_eq!(
+        core.in_order_pipeline_snapshot().in_flight(),
+        &[InOrderPipelineInstruction::new(
+            1,
+            InOrderPipelineStage::Fetch1
+        )]
+    );
+    assert_eq!(core.in_order_pipeline_cycle_records().len(), 5);
 
     let second = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(
@@ -1143,7 +1208,7 @@ fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event(
         RiscvInstruction::decode(second_raw).unwrap()
     );
     let second_record = second.in_order_pipeline_cycle().unwrap();
-    assert_eq!(second_record.cycle(), 5);
+    assert_eq!(second_record.cycle(), 9);
     assert_eq!(
         second_record
             .before()
@@ -1151,20 +1216,9 @@ fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event(
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![
-            (1, InOrderPipelineStage::Commit),
-            (2, InOrderPipelineStage::Fetch1)
-        ]
+        vec![(1, InOrderPipelineStage::Commit)]
     );
-    assert_eq!(
-        second_record
-            .after()
-            .in_flight()
-            .iter()
-            .map(|instruction| (instruction.sequence(), instruction.stage()))
-            .collect::<Vec<_>>(),
-        vec![(2, InOrderPipelineStage::Fetch2)]
-    );
+    assert!(second_record.after().in_flight().is_empty());
 }
 
 #[test]

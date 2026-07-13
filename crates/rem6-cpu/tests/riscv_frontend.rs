@@ -1450,7 +1450,7 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(1, InOrderPipelineStage::Fetch2)]
+        vec![(1, InOrderPipelineStage::Commit)]
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
@@ -5677,12 +5677,12 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
     assert_eq!(
         in_order_in_flight(&core),
         vec![
-            (0, InOrderPipelineStage::Commit),
+            (0, InOrderPipelineStage::Fetch2),
             (1, InOrderPipelineStage::Fetch1)
         ]
     );
     let records = core.in_order_pipeline_cycle_records();
-    assert_eq!(records.len(), 4);
+    assert_eq!(records.len(), 1);
     assert_eq!(records[0].cycle(), 0);
     assert_eq!(records[0].summary().advanced_count(), 1);
     assert_eq!(records[0].summary().retired_count(), 0);
@@ -5713,7 +5713,7 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(1, InOrderPipelineStage::Fetch2)]
+        vec![(1, InOrderPipelineStage::Commit)]
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
@@ -5769,16 +5769,17 @@ fn riscv_core_driver_in_order_width_allows_frontend_overlap_without_false_retire
     scheduler.run_until_idle_conservative();
 
     assert!(matches!(
-        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        drive_raw_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     assert_eq!(
         in_order_in_flight(&core),
         vec![
-            (0, InOrderPipelineStage::Commit),
+            (0, InOrderPipelineStage::Fetch1),
             (1, InOrderPipelineStage::Fetch1)
         ]
     );
+    assert!(core.in_order_pipeline_cycle_records().is_empty());
 
     scheduler.run_until_idle_conservative();
 
@@ -5802,6 +5803,43 @@ fn riscv_core_driver_in_order_width_allows_frontend_overlap_without_false_retire
         RiscvInstruction::decode(i_type(9, 0, 0x0, 2, 0x13)).unwrap()
     );
     assert_eq!(core.read_register(reg(2)), 9);
+}
+
+#[test]
+fn riscv_core_driver_width_one_advances_before_second_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(1));
+    core.set_branch_lookahead(2);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(7, 0, 0x0, 1, 0x13), i_type(9, 0, 0x0, 2, 0x13)],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_raw_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_raw_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_raw_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![
+            (0, InOrderPipelineStage::Fetch2),
+            (1, InOrderPipelineStage::Fetch1),
+        ]
+    );
 }
 
 #[test]
@@ -5875,7 +5913,7 @@ fn riscv_core_driver_removes_retried_fetch_ahead_from_in_order_pipeline() {
     scheduler.run_until_idle_conservative();
     assert_eq!(
         in_order_in_flight(&core),
-        vec![(0, InOrderPipelineStage::Commit)]
+        vec![(0, InOrderPipelineStage::Fetch2)]
     );
 
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
@@ -5918,7 +5956,7 @@ fn riscv_core_driver_removes_failed_fetch_ahead_from_in_order_pipeline() {
     );
     assert_eq!(
         in_order_in_flight(&core),
-        vec![(0, InOrderPipelineStage::Commit)]
+        vec![(0, InOrderPipelineStage::Fetch2)]
     );
 
     drop(store);
@@ -6566,7 +6604,14 @@ fn riscv_core_driver_preserves_jalr_target_fetch_ahead_at_retire() {
     assert!(prediction.resolved_taken());
     assert_eq!(prediction.resolved_target_pc(), Some(0x800c));
     assert!(!prediction.mispredicted());
-    assert!(core.has_pending_fetch());
+    assert!(!core.has_pending_fetch());
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(1, InOrderPipelineStage::Commit)]
+    );
+    assert!(core.inner().fetch_events().iter().any(|event| {
+        event.kind() == CpuFetchEventKind::Completed && event.pc() == Address::new(0x800c)
+    }));
 
     scheduler.run_until_idle_conservative();
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();

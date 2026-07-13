@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
-    RiscvCluster, RiscvClusterDriveEvent, RiscvCore, RiscvCoreDriveAction,
+    InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster,
+    RiscvClusterDriveEvent, RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -28,6 +29,14 @@ fn layout() -> CacheLineLayout {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn uniform_in_order_pipeline_config(width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new(
+        InOrderPipelineStage::ALL
+            .map(|stage| InOrderPipelineStageWidth::new(stage, width).unwrap()),
+    )
+    .unwrap()
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -194,6 +203,116 @@ fn drive_translated_until_non_pipeline_action(
         scheduler.run_until_idle_parallel().unwrap();
     }
     panic!("expected a non-pipeline translated core action");
+}
+
+#[test]
+fn riscv_cluster_parallel_translation_admits_width_two_before_pipeline_cycle() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([translated_riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let core = cluster.core(CpuId::new(0)).unwrap();
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(2));
+    core.set_branch_lookahead(2);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(3, 0, 0x0, 5, 0x13)),
+            (0x8004, i_type(4, 0, 0x0, 6, 0x13)),
+        ],
+        &[],
+    );
+
+    let first = cluster
+        .drive_ready_cores_parallel_with_data_translation(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        first[0].action(),
+        RiscvCoreDriveAction::FetchIssued { .. }
+    ));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let second = cluster
+        .drive_ready_cores_parallel_with_data_translation(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        second[0].action(),
+        RiscvCoreDriveAction::FetchIssued { .. }
+    ));
+    assert_eq!(
+        core.in_order_pipeline_snapshot()
+            .in_flight()
+            .iter()
+            .map(|row| (row.sequence(), row.stage()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, InOrderPipelineStage::Fetch1),
+            (1, InOrderPipelineStage::Fetch1),
+        ]
+    );
 }
 
 #[test]

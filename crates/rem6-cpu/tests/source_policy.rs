@@ -96,12 +96,18 @@ fn normal_riscv_drivers_delegate_pipeline_time_to_focused_scheduler_authority() 
     let translated = fs::read_to_string(crate_dir.join("src/riscv_translation.rs")).unwrap();
     let cluster_drive = fs::read_to_string(crate_dir.join("src/riscv_cluster_drive.rs")).unwrap();
     let timing = fs::read_to_string(crate_dir.join("src/riscv_in_order_drive.rs")).unwrap();
+    let in_order = fs::read_to_string(crate_dir.join("src/in_order_pipeline.rs")).unwrap();
+    let enqueue = source_section(&in_order, "pub fn enqueue_fetch(", "pub fn plan_cycle(");
 
     assert!(timing.contains("fn schedule_reserved_pipeline_cycle("));
+    assert!(timing.contains("pub(crate) enum RiscvInOrderFetchAdmission"));
+    assert!(timing.contains("pub(crate) fn in_order_fetch_admission("));
     assert!(timing.contains("try_advance_cycle_recorded_without_retirement"));
     assert!(drive.contains("schedule_next_completed_fetch_pipeline_cycle_serial"));
     assert!(translated.contains("schedule_next_completed_fetch_pipeline_cycle_serial"));
     assert!(cluster_drive.contains("schedule_next_completed_fetch_pipeline_cycle_parallel"));
+    assert!(!in_order.contains("enqueue_fetch_recorded"));
+    assert!(!enqueue.contains("advance_cycle"));
     assert!(!drive.contains("execute_next_completed_fetch_serial("));
     assert!(!translated.contains("execute_next_completed_fetch_serial("));
     assert!(!cluster_drive.contains("execute_next_completed_fetch_parallel("));

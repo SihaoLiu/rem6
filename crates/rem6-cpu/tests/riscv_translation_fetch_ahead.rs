@@ -3,17 +3,19 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
+    InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
     InOrderPipelineStallCause, RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::Register;
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
     TranslationPageMap, TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
     TranslationTlbConfig,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -26,6 +28,30 @@ fn layout() -> CacheLineLayout {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn uniform_in_order_pipeline_config(width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new(
+        InOrderPipelineStage::ALL
+            .map(|stage| InOrderPipelineStageWidth::new(stage, width).unwrap()),
+    )
+    .unwrap()
+}
+
+fn translated_responder(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static {
+    move |delivery, _context| {
+        let response = store
+            .lock()
+            .unwrap()
+            .respond(delivery.request())
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+        TargetOutcome::Respond(response)
+    }
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -75,6 +101,52 @@ fn riscv_core_translated_driver_retires_completed_fetch_while_fetch_ahead_is_pen
     };
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
+}
+
+#[test]
+fn riscv_core_translated_driver_admits_width_two_before_pipeline_cycle() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(2));
+    core.set_branch_lookahead(2);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(7, 0, 0x0, 1, 0x13), i_type(9, 0, 0x0, 2, 0x13)],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = core
+        .drive_next_action_with_data_translation(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            translated_responder(store.clone()),
+            translated_responder(store),
+        )
+        .unwrap();
+    assert!(matches!(
+        action,
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.in_order_pipeline_snapshot()
+            .in_flight()
+            .iter()
+            .map(|row| (row.sequence(), row.stage()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, InOrderPipelineStage::Fetch1),
+            (1, InOrderPipelineStage::Fetch1),
+        ]
+    );
 }
 
 fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {

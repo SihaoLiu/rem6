@@ -300,9 +300,12 @@ impl RiscvCore {
 
     pub(crate) fn detailed_o3_window_prefers_fetch_ahead(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
-        state.live_retire_gate.detailed_policy_enabled()
-            && (state.live_retire_gate.blocks_new_work()
-                || state.o3_runtime.has_pending_scalar_memory_retirement())
+        let draining_normal_execute_wait = state
+            .in_order_pipeline
+            .in_flight()
+            .iter()
+            .any(|instruction| instruction.execute_wait_total_cycles().is_some());
+        state.live_retire_gate.detailed_policy_enabled() && !draining_normal_execute_wait
     }
 
     pub(crate) fn live_retire_gate_blocks_new_work(&self) -> bool {
