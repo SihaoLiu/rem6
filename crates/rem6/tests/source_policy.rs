@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/execution_mode_lanes.rs"]
+mod execution_mode_lanes;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
 

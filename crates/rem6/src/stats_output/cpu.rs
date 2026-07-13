@@ -7,9 +7,8 @@ use super::pipeline::{
     emit_in_order_stall_cause_stage_stats, emit_in_order_stall_cause_stat,
 };
 use super::{increment_stat, stat_path_segment};
+use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{Rem6CheckerSummary, Rem6CliError, Rem6CoreSummary};
-
-const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 pub(super) fn emit_cpu_run_stats(
     stats: &mut StatsRegistry,
@@ -1206,7 +1205,8 @@ fn emit_checker_execution_mode_stats(
     let Some(execution_mode) = checker.execution_mode else {
         return Ok(());
     };
-    for mode in EXECUTION_MODE_STAT_LANES {
+    for lane in EXECUTION_MODE_LANES {
+        let mode = lane.name();
         let (checked_instructions, mismatches) = if execution_mode == mode {
             (checker.checked_instructions, checker.mismatches)
         } else {
@@ -1227,7 +1227,7 @@ fn emit_checker_execution_mode_stats(
             mismatches,
         )?;
     }
-    if !EXECUTION_MODE_STAT_LANES.contains(&execution_mode) {
+    if execution_mode_lane_index(execution_mode).is_none() {
         let mode = stat_path_segment(execution_mode);
         increment_stat(
             stats,
@@ -1269,4 +1269,57 @@ fn emit_branch_predictor_counter_stats<const N: usize>(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_stats::StatsRegistry;
+
+    use super::emit_checker_execution_mode_stats;
+    use crate::stats_output::snapshot_sample_value;
+    use crate::Rem6CheckerSummary;
+
+    #[test]
+    fn checker_execution_mode_stats_preserve_unknown_dynamic_lane() {
+        let mut stats = StatsRegistry::new();
+        let checker = Rem6CheckerSummary {
+            checked_instructions: 7,
+            mismatches: 2,
+            execution_mode: Some("future-mode"),
+        };
+
+        emit_checker_execution_mode_stats(&mut stats, 3, &checker).unwrap();
+
+        let snapshot = stats.snapshot(0);
+        for mode in ["functional", "timing", "detailed"] {
+            assert_eq!(
+                snapshot_sample_value(
+                    &snapshot,
+                    &format!("sim.cpu3.checker.execution_mode.{mode}.checked_instructions")
+                ),
+                Some(0)
+            );
+            assert_eq!(
+                snapshot_sample_value(
+                    &snapshot,
+                    &format!("sim.cpu3.checker.execution_mode.{mode}.mismatches")
+                ),
+                Some(0)
+            );
+        }
+        assert_eq!(
+            snapshot_sample_value(
+                &snapshot,
+                "sim.cpu3.checker.execution_mode.future_mode.checked_instructions"
+            ),
+            Some(7)
+        );
+        assert_eq!(
+            snapshot_sample_value(
+                &snapshot,
+                "sim.cpu3.checker.execution_mode.future_mode.mismatches"
+            ),
+            Some(2)
+        );
+    }
 }

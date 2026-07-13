@@ -1,6 +1,6 @@
 use rem6_system::{ExecutionMode, ExecutionModeTarget};
 
-use super::riscv_timing::parse_execution_mode;
+use crate::execution_mode_lanes::execution_mode_from_name as parse_execution_mode;
 use crate::Rem6CliError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

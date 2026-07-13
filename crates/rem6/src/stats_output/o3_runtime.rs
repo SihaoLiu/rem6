@@ -17,6 +17,7 @@ mod o3_runtime_branch_mismatch;
 mod o3_runtime_gem5_lsq;
 
 use super::{increment_stat, stat_path_segment};
+use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{Rem6CliError, Rem6CoreSummary};
 use o3_runtime_branch_mismatch::{
     emit_o3_runtime_branch_mismatch_stats, emit_o3_runtime_event_summary_branch_mismatch_stats,
@@ -26,8 +27,6 @@ use o3_runtime_gem5_lsq::emit_gem5_o3_lsq_alias_stats;
 use o3_runtime_snapshot_restore::{
     emit_o3_runtime_checkpoint_restore_stats, emit_o3_runtime_snapshot_stats,
 };
-
-const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct O3EventSummaryFuLatencyStats {
@@ -889,6 +888,31 @@ fn o3_event_summary_fu_latency_stats(
     (summary, classes)
 }
 
+fn emit_o3_execution_mode_stats(
+    stats: &mut StatsRegistry,
+    cpu: u32,
+    execution_mode: Option<&str>,
+) -> Result<(), Rem6CliError> {
+    for lane in EXECUTION_MODE_LANES {
+        let mode = lane.name();
+        increment_count_stat(
+            stats,
+            format!("sim.cpu{cpu}.o3.execution_mode.{mode}"),
+            u64::from(execution_mode == Some(mode)),
+        )?;
+    }
+    if let Some(mode) = execution_mode {
+        if execution_mode_lane_index(mode).is_none() {
+            increment_count_stat(
+                stats,
+                format!("sim.cpu{cpu}.o3.execution_mode.{}", stat_path_segment(mode)),
+                1,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn emit_o3_runtime_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
@@ -911,30 +935,7 @@ pub(super) fn emit_o3_runtime_stats(
         StatResetPolicy::Monotonic,
         core.o3_runtime_stats_reset_tick,
     )?;
-    for mode in EXECUTION_MODE_STAT_LANES {
-        increment_count_stat(
-            stats,
-            format!("sim.cpu{}.o3.execution_mode.{mode}", core.cpu),
-            if core.o3_runtime_execution_mode == Some(mode) {
-                1
-            } else {
-                0
-            },
-        )?;
-    }
-    if let Some(mode) = core.o3_runtime_execution_mode {
-        if !EXECUTION_MODE_STAT_LANES.contains(&mode) {
-            increment_count_stat(
-                stats,
-                format!(
-                    "sim.cpu{}.o3.execution_mode.{}",
-                    core.cpu,
-                    stat_path_segment(mode)
-                ),
-                1,
-            )?;
-        }
-    }
+    emit_o3_execution_mode_stats(stats, core.cpu, core.o3_runtime_execution_mode)?;
 
     for (name, value) in [
         ("instructions", o3.instructions()),
@@ -1601,4 +1602,31 @@ fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
     }
     let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
     ppm.min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_stats::StatsRegistry;
+
+    use super::emit_o3_execution_mode_stats;
+    use crate::stats_output::snapshot_sample_value;
+
+    #[test]
+    fn o3_execution_mode_stats_preserve_unknown_dynamic_lane() {
+        let mut stats = StatsRegistry::new();
+
+        emit_o3_execution_mode_stats(&mut stats, 2, Some("future-mode")).unwrap();
+
+        let snapshot = stats.snapshot(0);
+        for mode in ["functional", "timing", "detailed"] {
+            assert_eq!(
+                snapshot_sample_value(&snapshot, &format!("sim.cpu2.o3.execution_mode.{mode}")),
+                Some(0)
+            );
+        }
+        assert_eq!(
+            snapshot_sample_value(&snapshot, "sim.cpu2.o3.execution_mode.future_mode"),
+            Some(1)
+        );
+    }
 }

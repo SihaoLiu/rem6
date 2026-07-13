@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{emit_histogram_stat, increment_stat, stat_path_segment, Rem6CliError};
+use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{
     host_actions::{
         transfer_stats::{
@@ -12,8 +13,6 @@ use crate::{
     },
     Rem6HostActionSummary,
 };
-
-const EXECUTION_MODE_STAT_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 pub(super) fn emit_run_host_action_stats(
     stats: &mut StatsRegistry,
@@ -527,7 +526,8 @@ pub(super) fn emit_run_host_action_stats(
                 value,
             )?;
         }
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_stat(
                 stats,
                 &format!("sim.host_actions.execution_mode_switch.latest_mode.{mode}"),
@@ -547,7 +547,7 @@ pub(super) fn emit_run_host_action_stats(
                 },
             )?;
         }
-        if !EXECUTION_MODE_STAT_LANES.contains(&switch.mode) {
+        if execution_mode_lane_index(switch.mode).is_none() {
             increment_stat(
                 stats,
                 &format!(
@@ -561,7 +561,7 @@ pub(super) fn emit_run_host_action_stats(
         }
         match switch.previous_mode {
             Some(previous_mode) => {
-                if !EXECUTION_MODE_STAT_LANES.contains(&previous_mode) {
+                if execution_mode_lane_index(previous_mode).is_none() {
                     increment_stat(
                         stats,
                         &format!(
@@ -749,7 +749,8 @@ pub(super) fn emit_run_host_action_stats(
             }
         }
     }
-    for mode in EXECUTION_MODE_STAT_LANES {
+    for lane in EXECUTION_MODE_LANES {
+        let mode = lane.name();
         increment_stat(
             stats,
             &format!("sim.host_actions.execution_mode_authority.mode.{mode}"),
@@ -786,7 +787,8 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for target in &execution_mode_authority_targets_seen {
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_stat(
                 stats,
                 &format!("sim.host_actions.execution_mode_authority.target.{target}.mode.{mode}"),
@@ -800,7 +802,7 @@ pub(super) fn emit_run_host_action_stats(
         }
     }
     for ((target, mode), count) in execution_mode_authority_target_modes {
-        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+        if execution_mode_lane_index(mode).is_some() {
             continue;
         }
         increment_stat(
@@ -812,7 +814,8 @@ pub(super) fn emit_run_host_action_stats(
         )?;
     }
     for target in checkpoint_restore_execution_mode_authority_targets_seen {
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_stat(
                 stats,
                 &format!(
@@ -828,7 +831,8 @@ pub(super) fn emit_run_host_action_stats(
         }
     }
     for target in &switch_targets_seen {
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_stat(
                 stats,
                 &format!("sim.host_actions.execution_mode_switch.target.{target}.mode.{mode}"),
@@ -852,7 +856,8 @@ pub(super) fn emit_run_host_action_stats(
                 .copied()
                 .unwrap_or_default(),
         )?;
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_stat(
                 stats,
                 &format!(
@@ -868,7 +873,7 @@ pub(super) fn emit_run_host_action_stats(
         }
     }
     for ((target, mode), count) in switch_previous_target_modes {
-        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+        if execution_mode_lane_index(mode).is_some() {
             continue;
         }
         increment_stat(

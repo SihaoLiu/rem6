@@ -5,13 +5,14 @@ pub(crate) mod transfer_stats;
 use rem6_cpu::{O3RuntimeCheckpointPayload, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation};
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
-    decode_execution_mode_authority_from_manifest, ExecutionMode, ExecutionModeSwitchCheckerGate,
+    decode_execution_mode_authority_from_manifest, ExecutionModeSwitchCheckerGate,
     ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
     ExecutionModeSwitchStateTransferComponent, SystemActionOutcome, SystemHostController,
     RISCV_O3_RUNTIME_STATE_CHUNK,
 };
 
 use self::o3_stats_dump_aliases::samples_with_gem5_aliases;
+use crate::execution_mode_lanes::execution_mode_name;
 use live_data_handoff::decode_o3_live_data_handoff_chunk;
 pub(crate) use live_data_handoff::Rem6HostO3LiveDataHandoffChunkSummary;
 
@@ -350,14 +351,6 @@ impl Rem6ExecutionModeSwitchCheckerSummary {
             checked_instructions: gate.checked_instructions(),
             mismatches: gate.mismatches(),
         }
-    }
-}
-
-const fn execution_mode_name(mode: ExecutionMode) -> &'static str {
-    match mode {
-        ExecutionMode::Functional => "functional",
-        ExecutionMode::Timing => "timing",
-        ExecutionMode::Detailed => "detailed",
     }
 }
 

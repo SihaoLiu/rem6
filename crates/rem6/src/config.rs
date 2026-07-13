@@ -7,6 +7,7 @@ use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
 
+use crate::execution_mode_lanes::execution_mode_from_name as parse_execution_mode;
 use crate::Rem6CliError;
 
 mod accessors;
@@ -70,7 +71,7 @@ use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub(crate) use riscv_timing::DEFAULT_RISCV_IN_ORDER_WIDTH;
 use riscv_timing::{
-    parse_execution_mode, parse_riscv_in_order_width, parse_riscv_o3_scalar_memory_depth,
+    parse_riscv_in_order_width, parse_riscv_o3_scalar_memory_depth,
     validate_optional_riscv_o3_scalar_memory_depth, validate_riscv_in_order_width,
 };
 pub use trace_replay::{TraceReplayExternalAdapterKind, TraceReplayFabricRouterStageConfig};

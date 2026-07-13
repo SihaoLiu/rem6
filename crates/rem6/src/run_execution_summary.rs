@@ -7,13 +7,14 @@ use rem6_cpu::{
 use rem6_isa_riscv::Register;
 use rem6_memory::CacheLineLayout;
 use rem6_system::{
-    riscv_execution_mode_target_for_cpu, RiscvSyscallTraceRecord, RiscvSystemRun,
+    riscv_execution_mode_target_for_cpu, ExecutionMode, RiscvSyscallTraceRecord, RiscvSystemRun,
     RiscvSystemRunStopReason,
 };
 use rem6_transport::MemoryTrace;
 
 use crate::data_access_counts::core_data_access_counts;
 use crate::data_cache_runtime::CliDataCacheSummary;
+use crate::execution_mode_lanes::execution_mode_name;
 use crate::parallel_stats::{
     parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
     parallel_worker_lane_summaries, parallel_worker_slot_summaries,
@@ -688,7 +689,8 @@ fn checker_execution_mode_for_cpu(
     {
         return None;
     }
-    execution_mode_for_cpu(host_actions, cpu).or(Some("functional"))
+    execution_mode_for_cpu(host_actions, cpu)
+        .or(Some(execution_mode_name(ExecutionMode::Functional)))
 }
 
 fn o3_runtime_stats_reset_for_run(host_actions: &Rem6HostActionSummary) -> (u64, u64) {
@@ -709,10 +711,10 @@ fn o3_runtime_checkpoint_restore_for_cpu(
         .iter()
         .rev()
         .find(|restore| {
-            restore
-                .execution_modes
-                .iter()
-                .any(|mode| mode.target.as_str() == target.as_str() && mode.mode == "detailed")
+            restore.execution_modes.iter().any(|mode| {
+                mode.target.as_str() == target.as_str()
+                    && mode.mode == execution_mode_name(ExecutionMode::Detailed)
+            })
         })
         .cloned()
 }

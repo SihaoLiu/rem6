@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use super::{increment_count_stat, increment_stat, stat_path_segment, EXECUTION_MODE_STAT_LANES};
+use super::{increment_count_stat, increment_stat, stat_path_segment};
+use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{
     Rem6CliError, Rem6CoreSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostO3RuntimeCheckpointStatValue,
@@ -242,7 +243,8 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
             .entry((target, authority.mode))
             .or_default() += 1;
     }
-    for mode in EXECUTION_MODE_STAT_LANES {
+    for lane in EXECUTION_MODE_LANES {
+        let mode = lane.name();
         increment_count_stat(
             stats,
             format!("{authority_prefix}.mode.{mode}"),
@@ -250,7 +252,8 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
         )?;
     }
     for target in authority_targets_seen {
-        for mode in EXECUTION_MODE_STAT_LANES {
+        for lane in EXECUTION_MODE_LANES {
+            let mode = lane.name();
             increment_count_stat(
                 stats,
                 format!("{authority_prefix}.target.{target}.mode.{mode}"),
@@ -262,7 +265,7 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
         }
     }
     for ((target, mode), count) in authority_target_modes {
-        if EXECUTION_MODE_STAT_LANES.contains(&mode) {
+        if execution_mode_lane_index(mode).is_some() {
             continue;
         }
         increment_count_stat(

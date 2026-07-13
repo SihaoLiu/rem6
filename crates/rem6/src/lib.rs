@@ -38,6 +38,7 @@ mod core_summary_json;
 mod data_access_counts;
 mod data_cache_runtime;
 mod debug_output;
+mod execution_mode_lanes;
 mod formatting;
 mod gpu_cli;
 mod guest_memory;

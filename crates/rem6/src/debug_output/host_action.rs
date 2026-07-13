@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use crate::execution_mode_lanes::{
+    execution_mode_lane_index, EXECUTION_MODE_LANES, EXECUTION_MODE_LANE_COUNT,
+};
 use crate::formatting::json_escape;
 use crate::host_actions::transfer_stats::{
     HostActionChunkStats, HostActionComponentStats, HostActionTargetStats, HostActionTransferStats,
@@ -14,8 +17,6 @@ use crate::{
 
 #[cfg(test)]
 use crate::{Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary};
-
-const EXECUTION_MODE_AUTHORITY_JSON_LANES: [&str; 3] = ["functional", "timing", "detailed"];
 
 use super::checkpoint_components_json::checkpoint_components_to_json;
 
@@ -343,9 +344,8 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     let mut cleared_manifests = 0;
     let mut decode_errors = 0;
     let mut targets = 0;
-    let mut modes = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
-    let mut target_modes =
-        BTreeMap::<String, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
+    let mut modes = [0_u64; EXECUTION_MODE_LANE_COUNT];
+    let mut target_modes = BTreeMap::<String, [u64; EXECUTION_MODE_LANE_COUNT]>::new();
     let component_stats = HostActionComponentStats::from_components(
         checkpoint_restores
             .iter()
@@ -366,7 +366,7 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
         }
         targets += restore.execution_modes.len() as u64;
         for authority in &restore.execution_modes {
-            let Some(index) = execution_mode_authority_lane_index(authority.mode) else {
+            let Some(index) = execution_mode_lane_index(authority.mode) else {
                 continue;
             };
             modes[index] = modes[index].saturating_add(1);
@@ -404,16 +404,22 @@ pub(crate) fn host_action_trace_checkpoint_restore_stats(
     ] {
         stats.push(Rem6HostActionTraceStat::count(path.to_string(), value));
     }
-    for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
+    for (index, lane) in EXECUTION_MODE_LANES.iter().enumerate() {
         stats.push(Rem6HostActionTraceStat::count(
-            format!("checkpoint_restore.execution_mode_authority.mode.{mode}"),
+            format!(
+                "checkpoint_restore.execution_mode_authority.mode.{}",
+                lane.name()
+            ),
             modes[index],
         ));
     }
     for (target, counts) in target_modes {
-        for (index, mode) in EXECUTION_MODE_AUTHORITY_JSON_LANES.iter().enumerate() {
+        for (index, lane) in EXECUTION_MODE_LANES.iter().enumerate() {
             stats.push(Rem6HostActionTraceStat::count(
-                format!("checkpoint_restore.execution_mode_authority.target.{target}.mode.{mode}"),
+                format!(
+                    "checkpoint_restore.execution_mode_authority.target.{target}.mode.{}",
+                    lane.name()
+                ),
                 counts[index],
             ));
         }
@@ -709,31 +715,29 @@ fn execution_mode_authority_to_json(
 }
 
 fn execution_mode_counts_to_json<'a>(modes: impl Iterator<Item = &'a str>) -> String {
-    let mut counts = [0_u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()];
+    let mut counts = [0_u64; EXECUTION_MODE_LANE_COUNT];
     for mode in modes {
-        if let Some(index) = execution_mode_authority_lane_index(mode) {
+        if let Some(index) = execution_mode_lane_index(mode) {
             counts[index] = counts[index].saturating_add(1);
         }
     }
     execution_mode_count_array_to_json(counts)
 }
 
-fn execution_mode_count_array_to_json(
-    counts: [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()],
-) -> String {
-    let fields = EXECUTION_MODE_AUTHORITY_JSON_LANES
+fn execution_mode_count_array_to_json(counts: [u64; EXECUTION_MODE_LANE_COUNT]) -> String {
+    let fields = EXECUTION_MODE_LANES
         .iter()
         .zip(counts)
-        .map(|(mode, count)| format!("\"{mode}\":{count}"))
+        .map(|(lane, count)| format!("\"{}\":{count}", lane.name()))
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{fields}}}")
 }
 
 fn execution_mode_targets_to_json(execution_modes: &[Rem6HostExecutionModeSummary]) -> String {
-    let mut targets = BTreeMap::<&str, [u64; EXECUTION_MODE_AUTHORITY_JSON_LANES.len()]>::new();
+    let mut targets = BTreeMap::<&str, [u64; EXECUTION_MODE_LANE_COUNT]>::new();
     for execution_mode in execution_modes {
-        let Some(index) = execution_mode_authority_lane_index(execution_mode.mode) else {
+        let Some(index) = execution_mode_lane_index(execution_mode.mode) else {
             continue;
         };
         let counts = targets.entry(execution_mode.target.as_str()).or_default();
@@ -751,12 +755,6 @@ fn execution_mode_targets_to_json(execution_modes: &[Rem6HostExecutionModeSummar
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{fields}}}")
-}
-
-fn execution_mode_authority_lane_index(mode: &str) -> Option<usize> {
-    EXECUTION_MODE_AUTHORITY_JSON_LANES
-        .iter()
-        .position(|lane| *lane == mode)
 }
 
 fn execution_mode_switch_record(

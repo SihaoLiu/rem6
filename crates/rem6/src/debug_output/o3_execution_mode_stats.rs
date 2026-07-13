@@ -2,24 +2,21 @@ use std::collections::BTreeMap;
 
 use super::{Rem6O3TraceRecord, Rem6O3TraceStat};
 
+use crate::execution_mode_lanes::{
+    execution_mode_lane_index, EXECUTION_MODE_LANES, EXECUTION_MODE_LANE_COUNT,
+};
 use crate::formatting::json_escape;
-
-const EXECUTION_MODE_STATS: [(&str, &'static str); 3] = [
-    ("functional", "execution_mode.functional"),
-    ("timing", "execution_mode.timing"),
-    ("detailed", "execution_mode.detailed"),
-];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct Rem6O3ExecutionModeTraceTotals {
-    counts: [u64; 3],
+    counts: [u64; EXECUTION_MODE_LANE_COUNT],
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Rem6O3ExecutionModeAuthorityTotals {
     targets: u64,
-    modes: [u64; 3],
-    target_modes: BTreeMap<String, [u64; 3]>,
+    modes: [u64; EXECUTION_MODE_LANE_COUNT],
+    target_modes: BTreeMap<String, [u64; EXECUTION_MODE_LANE_COUNT]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,16 +29,16 @@ pub(crate) struct Rem6O3ExecutionModeAuthorityStat {
 impl Rem6O3ExecutionModeTraceTotals {
     pub(super) fn add_record(&mut self, record: &Rem6O3TraceRecord) {
         if let Some(execution_mode) = record.execution_mode() {
-            if let Some(index) = execution_mode_index(execution_mode) {
+            if let Some(index) = execution_mode_lane_index(execution_mode) {
                 self.counts[index] = self.counts[index].saturating_add(1);
             }
         }
     }
 
     pub(super) fn push_stats(self, stats: &mut Vec<Rem6O3TraceStat>) {
-        for (index, (_mode, suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+        for (index, lane) in EXECUTION_MODE_LANES.iter().enumerate() {
             stats.push(Rem6O3TraceStat {
-                suffix: *suffix,
+                suffix: lane.o3_trace_stat_suffix(),
                 unit: "Count",
                 value: self.counts[index],
             });
@@ -58,7 +55,7 @@ impl Rem6O3ExecutionModeAuthorityTotals {
         let Some(mode) = record.execution_mode() else {
             return;
         };
-        let Some(index) = execution_mode_index(mode) else {
+        let Some(index) = execution_mode_lane_index(mode) else {
             return;
         };
         self.targets = self.targets.saturating_add(1);
@@ -70,22 +67,25 @@ impl Rem6O3ExecutionModeAuthorityTotals {
 
     fn stats(self) -> Vec<Rem6O3ExecutionModeAuthorityStat> {
         let mut stats = Vec::with_capacity(
-            1 + EXECUTION_MODE_STATS.len() + self.target_modes.len() * EXECUTION_MODE_STATS.len(),
+            1 + EXECUTION_MODE_LANES.len() + self.target_modes.len() * EXECUTION_MODE_LANES.len(),
         );
         stats.push(Rem6O3ExecutionModeAuthorityStat::new(
             "execution_mode_authority.targets".to_string(),
             self.targets,
         ));
-        for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+        for (index, lane) in EXECUTION_MODE_LANES.iter().enumerate() {
             stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-                format!("execution_mode_authority.mode.{mode}"),
+                format!("execution_mode_authority.mode.{}", lane.name()),
                 self.modes[index],
             ));
         }
         for (target, counts) in self.target_modes {
-            for (index, (mode, _suffix)) in EXECUTION_MODE_STATS.iter().enumerate() {
+            for (index, lane) in EXECUTION_MODE_LANES.iter().enumerate() {
                 stats.push(Rem6O3ExecutionModeAuthorityStat::new(
-                    format!("execution_mode_authority.target.{target}.mode.{mode}"),
+                    format!(
+                        "execution_mode_authority.target.{target}.mode.{}",
+                        lane.name()
+                    ),
                     counts[index],
                 ));
             }
@@ -169,27 +169,23 @@ pub(super) fn o3_trace_execution_mode_authority_to_json(
     )
 }
 
-fn execution_mode_counts<'a>(modes: impl Iterator<Item = &'a str>) -> [u64; 3] {
-    let mut counts = [0_u64; 3];
+fn execution_mode_counts<'a>(
+    modes: impl Iterator<Item = &'a str>,
+) -> [u64; EXECUTION_MODE_LANE_COUNT] {
+    let mut counts = [0_u64; EXECUTION_MODE_LANE_COUNT];
     for mode in modes {
-        if let Some(index) = execution_mode_index(mode) {
+        if let Some(index) = execution_mode_lane_index(mode) {
             counts[index] = counts[index].saturating_add(1);
         }
     }
     counts
 }
 
-fn execution_mode_index(mode: &str) -> Option<usize> {
-    EXECUTION_MODE_STATS
-        .iter()
-        .position(|(lane, _suffix)| *lane == mode)
-}
-
-fn execution_mode_count_array_to_json(counts: [u64; 3]) -> String {
-    let fields = EXECUTION_MODE_STATS
+fn execution_mode_count_array_to_json(counts: [u64; EXECUTION_MODE_LANE_COUNT]) -> String {
+    let fields = EXECUTION_MODE_LANES
         .iter()
         .zip(counts)
-        .map(|((mode, _suffix), count)| format!("\"{mode}\":{count}"))
+        .map(|(lane, count)| format!("\"{}\":{count}", lane.name()))
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{fields}}}")

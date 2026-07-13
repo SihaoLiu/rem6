@@ -1,5 +1,3 @@
-use rem6_system::ExecutionMode;
-
 use crate::Rem6CliError;
 
 pub(crate) const DEFAULT_RISCV_IN_ORDER_WIDTH: usize = 1;
@@ -47,13 +45,4 @@ fn validate_riscv_o3_scalar_memory_depth(depth: usize) -> Result<usize, Rem6CliE
         });
     }
     Ok(depth)
-}
-
-pub(crate) fn parse_execution_mode(value: &str) -> Option<ExecutionMode> {
-    match value {
-        "functional" => Some(ExecutionMode::Functional),
-        "timing" => Some(ExecutionMode::Timing),
-        "detailed" => Some(ExecutionMode::Detailed),
-        _ => None,
-    }
 }
