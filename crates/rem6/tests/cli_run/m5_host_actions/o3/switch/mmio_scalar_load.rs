@@ -87,6 +87,9 @@ fn rem6_run_host_switch_transfers_outstanding_o3_scalar_load_mmio() {
     for (pointer, expected) in [
         ("/outstanding_requests", 1),
         ("/resident_rows", 1),
+        ("/transport_owned_rows", 1),
+        ("/buffered_store_rows", 0),
+        ("/partial_overlay_source_rows", 0),
         ("/younger_rows", 0),
         ("/first_issue_tick", load_issue),
         ("/last_issue_tick", load_issue),
@@ -105,7 +108,7 @@ fn rem6_run_host_switch_transfers_outstanding_o3_scalar_load_mmio() {
     );
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(5)
+        Some(6)
     );
     assert_eq!(handoff.pointer("/first_route"), Some(&Value::Null));
     assert_eq!(

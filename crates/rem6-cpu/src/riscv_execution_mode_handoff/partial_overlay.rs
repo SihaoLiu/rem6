@@ -3,23 +3,15 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvO3LiveDataHandoffPartialOverlay {
-    pub(super) load_data_request: MemoryRequestId,
+pub struct RiscvO3LiveDataHandoffPartialOverlaySource {
     pub(super) source_data_request: MemoryRequestId,
     pub(super) source_address: Address,
     pub(super) source_bytes: u32,
-    pub(super) address: Address,
-    pub(super) bytes: u32,
-    pub(super) forwarded_mask: u8,
-    pub(super) data: [u8; 8],
+    pub(super) ownership_mask: u8,
     pub(super) source_data: [u8; 8],
 }
 
-impl RiscvO3LiveDataHandoffPartialOverlay {
-    pub const fn load_data_request(self) -> MemoryRequestId {
-        self.load_data_request
-    }
-
+impl RiscvO3LiveDataHandoffPartialOverlaySource {
     pub const fn source_data_request(self) -> MemoryRequestId {
         self.source_data_request
     }
@@ -32,32 +24,78 @@ impl RiscvO3LiveDataHandoffPartialOverlay {
         self.source_bytes
     }
 
+    pub const fn ownership_mask(self) -> u8 {
+        self.ownership_mask
+    }
+
     pub fn source_data(&self) -> &[u8] {
         &self.source_data[..self.source_bytes as usize]
     }
+}
 
-    pub const fn address(self) -> Address {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvO3LiveDataHandoffPartialOverlay {
+    pub(super) load_data_request: MemoryRequestId,
+    pub(super) address: Address,
+    pub(super) bytes: u32,
+    pub(super) forwarded_mask: u8,
+    pub(super) data: [u8; 8],
+    pub(super) sources: Vec<RiscvO3LiveDataHandoffPartialOverlaySource>,
+}
+
+impl RiscvO3LiveDataHandoffPartialOverlay {
+    pub const fn load_data_request(&self) -> MemoryRequestId {
+        self.load_data_request
+    }
+
+    pub fn sources(&self) -> &[RiscvO3LiveDataHandoffPartialOverlaySource] {
+        &self.sources
+    }
+
+    pub fn source_data_request(&self) -> MemoryRequestId {
+        self.first_source().source_data_request()
+    }
+
+    pub fn source_address(&self) -> Address {
+        self.first_source().source_address()
+    }
+
+    pub fn source_bytes(&self) -> u32 {
+        self.first_source().source_bytes()
+    }
+
+    pub fn source_data(&self) -> &[u8] {
+        self.first_source().source_data()
+    }
+
+    pub const fn address(&self) -> Address {
         self.address
     }
 
-    pub const fn bytes(self) -> u32 {
+    pub const fn bytes(&self) -> u32 {
         self.bytes
     }
 
-    pub const fn forwarded_mask(self) -> u8 {
+    pub const fn forwarded_mask(&self) -> u8 {
         self.forwarded_mask
     }
 
-    pub const fn response_owned_mask(self) -> u8 {
+    pub const fn response_owned_mask(&self) -> u8 {
         scalar_byte_mask(self.bytes) & !self.forwarded_mask
     }
 
-    pub const fn forwarded_bytes(self) -> u32 {
+    pub const fn forwarded_bytes(&self) -> u32 {
         self.forwarded_mask.count_ones()
     }
 
     pub fn data(&self) -> &[u8] {
         &self.data[..self.bytes as usize]
+    }
+
+    fn first_source(&self) -> &RiscvO3LiveDataHandoffPartialOverlaySource {
+        self.sources
+            .first()
+            .expect("validated partial overlay has a source")
     }
 }
 
@@ -69,34 +107,80 @@ pub(crate) struct RiscvPendingPartialScalarLoadHandoff {
     pub(crate) data: [u8; 8],
 }
 
-pub(super) fn partial_overlay_matches_source(
-    source: RiscvIssuedScalarMemoryHandoff,
+pub(super) fn compose_partial_overlay_sources(
+    sources: &[RiscvIssuedScalarMemoryHandoff],
     overlay: RiscvPendingPartialScalarLoadHandoff,
-) -> bool {
-    let Some(source_data) = source.store_data else {
-        return false;
-    };
-    if partial_overlay_mask(source.address, source.bytes, overlay.address, overlay.bytes)
-        != overlay.forwarded_mask
+) -> Option<Vec<RiscvO3LiveDataHandoffPartialOverlaySource>> {
+    if sources.is_empty()
+        || overlay.forwarded_mask == 0
+        || overlay.forwarded_mask == scalar_byte_mask(overlay.bytes)
+        || overlay.forwarded_mask & !scalar_byte_mask(overlay.bytes) != 0
+        || overlay
+            .data
+            .iter()
+            .copied()
+            .enumerate()
+            .any(|(index, value)| {
+                (index >= overlay.bytes as usize || overlay.forwarded_mask & (1 << index) == 0)
+                    && value != 0
+            })
     {
-        return false;
+        return None;
     }
+
+    let physical_masks = sources
+        .iter()
+        .map(|source| {
+            source.store_data.map(|_| {
+                partial_overlay_mask(source.address, source.bytes, overlay.address, overlay.bytes)
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if physical_masks.contains(&0)
+        || physical_masks.iter().fold(0_u8, |union, mask| union | mask) != overlay.forwarded_mask
+    {
+        return None;
+    }
+
+    let mut ownership_masks = vec![0_u8; sources.len()];
     for load_index in 0..overlay.bytes as usize {
-        if overlay.forwarded_mask & (1 << load_index) == 0 {
-            if overlay.data[load_index] != 0 {
-                return false;
-            }
+        let bit = 1_u8 << load_index;
+        if overlay.forwarded_mask & bit == 0 {
             continue;
         }
+        let source_index = physical_masks.iter().rposition(|mask| mask & bit != 0)?;
+        let source = sources[source_index];
+        let source_data = source.store_data?;
         let address = overlay.address.get() + load_index as u64;
-        let source_index = (address - source.address.get()) as usize;
-        if overlay.data[load_index] != source_data[source_index] {
-            return false;
+        let source_byte = (address - source.address.get()) as usize;
+        if overlay.data[load_index] != source_data[source_byte] {
+            return None;
         }
+        ownership_masks[source_index] |= bit;
     }
-    overlay.data[overlay.bytes as usize..]
-        .iter()
-        .all(|byte| *byte == 0)
+
+    Some(
+        sources
+            .iter()
+            .copied()
+            .zip(ownership_masks)
+            .map(
+                |(source, ownership_mask)| RiscvO3LiveDataHandoffPartialOverlaySource {
+                    source_data_request: source.data_request,
+                    source_address: source.address,
+                    source_bytes: source.bytes,
+                    ownership_mask,
+                    source_data: canonical_partial_overlay_source_data(
+                        source.address,
+                        overlay.address,
+                        overlay.bytes,
+                        ownership_mask,
+                        &overlay.data,
+                    ),
+                },
+            )
+            .collect(),
+    )
 }
 
 pub(super) const fn scalar_byte_mask(bytes: u32) -> u8 {
@@ -150,7 +234,7 @@ pub(super) fn validate_partial_overlay_data(
     source_bytes: u32,
     load_address: Address,
     load_bytes: u32,
-    forwarded_mask: u8,
+    ownership_mask: u8,
     data: &[u8; 8],
     source_data: &[u8; 8],
 ) -> Result<(), RiscvO3LiveDataHandoffError> {
@@ -165,25 +249,11 @@ pub(super) fn validate_partial_overlay_data(
             RiscvO3LiveDataHandoffError::NonZeroPartialOverlaySourceDataPadding { index, value },
         );
     }
-    for (index, value) in data.iter().copied().enumerate() {
-        let forwarded = index < load_bytes as usize && forwarded_mask & (1 << index) != 0;
-        if !forwarded {
-            if value != 0 {
-                return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayData { index });
-            }
-            continue;
-        }
-        let address = load_address.get() + index as u64;
-        let source_index = (address - source_address.get()) as usize;
-        if value != source_data[source_index] {
-            return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayData { index });
-        }
-    }
     let canonical_source_data = canonical_partial_overlay_source_data(
         source_address,
         load_address,
         load_bytes,
-        forwarded_mask,
+        ownership_mask,
         data,
     );
     if let Some(index) = source_data[..source_bytes as usize]
@@ -192,6 +262,20 @@ pub(super) fn validate_partial_overlay_data(
         .position(|(actual, expected)| actual != expected)
     {
         return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlaySourceData { index });
+    }
+    Ok(())
+}
+
+pub(super) fn validate_partial_overlay_payload(
+    bytes: u32,
+    forwarded_mask: u8,
+    data: &[u8; 8],
+) -> Result<(), RiscvO3LiveDataHandoffError> {
+    for (index, value) in data.iter().copied().enumerate() {
+        let forwarded = index < bytes as usize && forwarded_mask & (1 << index) != 0;
+        if !forwarded && value != 0 {
+            return Err(RiscvO3LiveDataHandoffError::InvalidPartialOverlayData { index });
+        }
     }
     Ok(())
 }

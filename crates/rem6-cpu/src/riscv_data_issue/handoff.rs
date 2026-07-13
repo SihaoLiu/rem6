@@ -1,6 +1,6 @@
 use rem6_isa_riscv::MemoryAccessKind;
 
-use super::IssuedDataAccess;
+use super::{IssuedDataAccess, OutstandingDataAccess};
 use crate::riscv_execution_mode_handoff::{
     RiscvIssuedScalarMemoryHandoff, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffTarget,
     RiscvPendingPartialScalarLoadHandoff,
@@ -51,5 +51,11 @@ impl IssuedDataAccess {
             store_data,
             partial_overlay,
         })
+    }
+}
+
+impl OutstandingDataAccess {
+    pub(crate) fn scalar_memory_handoff(&self) -> Option<RiscvIssuedScalarMemoryHandoff> {
+        self.clone_without_layout().scalar_memory_handoff()
     }
 }

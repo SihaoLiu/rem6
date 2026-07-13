@@ -556,7 +556,8 @@ mod tests {
             .expect("handoff chunk should expose a decode summary");
         assert!(handoff.decode_error);
         assert_eq!(handoff.schema_version, None);
-        assert_eq!(handoff.row_count, None);
+        assert_eq!(handoff.transport_owned_rows, None);
+        assert_eq!(handoff.buffered_store_rows, None);
         assert_eq!(handoff.first_data_request_sequence, None);
 
         let json: Value = serde_json::from_str(&summary.to_json()).unwrap();

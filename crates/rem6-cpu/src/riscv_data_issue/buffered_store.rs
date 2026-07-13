@@ -5,6 +5,7 @@ use rem6_transport::{
 };
 
 use super::{OutstandingDataAccess, PreparedDataParallelAccess};
+use crate::riscv_execution_mode_handoff::RiscvIssuedScalarMemoryHandoff;
 use crate::{RiscvCore, RiscvCoreState, RiscvCpuError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,6 +13,14 @@ pub(crate) struct BufferedO3Store {
     predecessor: MemoryRequestId,
     issue: OutstandingDataAccess,
     request: MemoryRequest,
+}
+
+impl BufferedO3Store {
+    pub(crate) fn scalar_memory_handoff(
+        &self,
+    ) -> Option<(RiscvIssuedScalarMemoryHandoff, MemoryRequestId)> {
+        Some((self.issue.scalar_memory_handoff()?, self.predecessor))
+    }
 }
 
 pub(super) enum PreparedDataAccess {

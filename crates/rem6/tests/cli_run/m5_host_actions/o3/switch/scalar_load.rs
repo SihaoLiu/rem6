@@ -138,7 +138,7 @@ fn assert_live_scalar_load_handoff(memory_system: &str) {
     );
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(5)
+        Some(6)
     );
     assert_eq!(
         handoff
@@ -149,6 +149,24 @@ fn assert_live_scalar_load_handoff(memory_system: &str) {
     assert_eq!(
         handoff.pointer("/resident_rows").and_then(Value::as_u64),
         Some(1)
+    );
+    assert_eq!(
+        handoff
+            .pointer("/transport_owned_rows")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        handoff
+            .pointer("/buffered_store_rows")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        handoff
+            .pointer("/partial_overlay_source_rows")
+            .and_then(Value::as_u64),
+        Some(0)
     );
     assert_eq!(
         handoff.pointer("/younger_rows").and_then(Value::as_u64),

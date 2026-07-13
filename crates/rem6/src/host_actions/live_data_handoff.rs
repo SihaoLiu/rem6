@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffTarget,
+    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffOwnership,
+    RiscvO3LiveDataHandoffTarget,
 };
 
 use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
@@ -8,10 +9,12 @@ use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) decode_error: bool,
     pub(crate) schema_version: Option<u64>,
-    pub(crate) row_count: Option<u64>,
+    pub(crate) transport_owned_rows: Option<u64>,
+    pub(crate) buffered_store_rows: Option<u64>,
     pub(crate) resident_rows: Option<u64>,
     pub(crate) forwarded_rows: Option<u64>,
     pub(crate) partial_overlay_rows: Option<u64>,
+    pub(crate) partial_overlay_source_rows: Option<u64>,
     pub(crate) younger_rows: Option<u64>,
     pub(crate) first_fetch_request_agent: Option<u64>,
     pub(crate) first_fetch_request_sequence: Option<u64>,
@@ -51,6 +54,27 @@ pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) first_partial_overlay_response_owned_mask: Option<u64>,
     pub(crate) first_partial_overlay_forwarded_bytes: Option<u64>,
     pub(crate) first_partial_overlay_data: Option<Vec<u8>>,
+    pub(crate) first_partial_overlay_sources:
+        Vec<Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary>,
+    pub(crate) buffered_stores: Vec<Rem6HostO3LiveDataHandoffBufferedStoreSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary {
+    source_data_request_agent: u64,
+    source_data_request_sequence: u64,
+    source_address: u64,
+    source_bytes: u64,
+    ownership_mask: u64,
+    source_data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostO3LiveDataHandoffBufferedStoreSummary {
+    data_request_agent: u64,
+    data_request_sequence: u64,
+    predecessor_data_request_agent: u64,
+    predecessor_data_request_sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,14 +103,64 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
     };
     let first = handoff.entries().first().copied();
     let first_forwarded = handoff.forwarded_rows().first().copied();
-    let first_partial_overlay = handoff.partial_overlays().first().copied();
+    let first_partial_overlay = handoff.partial_overlays().first();
+    let first_partial_overlay_sources = first_partial_overlay
+        .map(|overlay| {
+            overlay
+                .sources()
+                .iter()
+                .map(
+                    |source| Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary {
+                        source_data_request_agent: u64::from(
+                            source.source_data_request().agent().get(),
+                        ),
+                        source_data_request_sequence: source.source_data_request().sequence(),
+                        source_address: source.source_address().get(),
+                        source_bytes: u64::from(source.source_bytes()),
+                        ownership_mask: u64::from(source.ownership_mask()),
+                        source_data: source.source_data().to_vec(),
+                    },
+                )
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let buffered_stores = handoff
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            let RiscvO3LiveDataHandoffOwnership::BufferedStore { predecessor } = entry.ownership()
+            else {
+                return None;
+            };
+            Some(Rem6HostO3LiveDataHandoffBufferedStoreSummary {
+                data_request_agent: u64::from(entry.data_request().agent().get()),
+                data_request_sequence: entry.data_request().sequence(),
+                predecessor_data_request_agent: u64::from(predecessor.agent().get()),
+                predecessor_data_request_sequence: predecessor.sequence(),
+            })
+        })
+        .collect::<Vec<_>>();
     Some(Rem6HostO3LiveDataHandoffChunkSummary {
         decode_error: false,
         schema_version: Some(u64::from(schema_version)),
-        row_count: Some(handoff.entries().len() as u64),
+        transport_owned_rows: Some(
+            handoff
+                .entries()
+                .iter()
+                .filter(|entry| entry.ownership() == RiscvO3LiveDataHandoffOwnership::Transport)
+                .count() as u64,
+        ),
+        buffered_store_rows: Some(buffered_stores.len() as u64),
         resident_rows: Some(handoff.resident_rows() as u64),
         forwarded_rows: Some(handoff.forwarded_rows().len() as u64),
         partial_overlay_rows: Some(handoff.partial_overlays().len() as u64),
+        partial_overlay_source_rows: Some(
+            handoff
+                .partial_overlays()
+                .iter()
+                .map(|overlay| overlay.sources().len() as u64)
+                .sum(),
+        ),
         younger_rows: Some(u64::from(handoff.younger_rows())),
         first_fetch_request_agent: first
             .map(|entry| u64::from(entry.fetch_request().agent().get())),
@@ -164,6 +238,8 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
         first_partial_overlay_forwarded_bytes: first_partial_overlay
             .map(|overlay| u64::from(overlay.forwarded_bytes())),
         first_partial_overlay_data: first_partial_overlay.map(|overlay| overlay.data().to_vec()),
+        first_partial_overlay_sources,
+        buffered_stores,
     })
 }
 
@@ -172,10 +248,12 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
         Self {
             decode_error: true,
             schema_version: None,
-            row_count: None,
+            transport_owned_rows: None,
+            buffered_store_rows: None,
             resident_rows: None,
             forwarded_rows: None,
             partial_overlay_rows: None,
+            partial_overlay_source_rows: None,
             younger_rows: None,
             first_fetch_request_agent: None,
             first_fetch_request_sequence: None,
@@ -215,6 +293,8 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             first_partial_overlay_response_owned_mask: None,
             first_partial_overlay_forwarded_bytes: None,
             first_partial_overlay_data: None,
+            first_partial_overlay_sources: Vec::new(),
+            buffered_stores: Vec::new(),
         }
     }
 
@@ -290,6 +370,22 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
                 )
             })
             .unwrap_or_else(|| "null".to_string());
+        let first_partial_overlay_sources = format!(
+            "[{}]",
+            self.first_partial_overlay_sources
+                .iter()
+                .map(Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let buffered_stores = format!(
+            "[{}]",
+            self.buffered_stores
+                .iter()
+                .map(Rem6HostO3LiveDataHandoffBufferedStoreSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         let first_partition = self
             .first_target
             .map(Rem6HostO3LiveDataHandoffTargetSummary::source_partition);
@@ -297,14 +393,16 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             .first_target
             .and_then(Rem6HostO3LiveDataHandoffTargetSummary::memory_route);
         format!(
-            "{{\"decode_error\":{},\"schema_version\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{}}}",
+            "{{\"decode_error\":{},\"schema_version\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"buffered_store_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"partial_overlay_source_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{},\"first_partial_overlay_sources\":{},\"buffered_stores\":{}}}",
             self.decode_error,
             optional_u64_json(self.schema_version),
-            optional_u64_json(self.row_count),
+            optional_u64_json(self.transport_owned_rows),
             optional_u64_json(self.resident_rows),
-            optional_u64_json(self.row_count),
+            optional_u64_json(self.transport_owned_rows),
+            optional_u64_json(self.buffered_store_rows),
             optional_u64_json(self.forwarded_rows),
             optional_u64_json(self.partial_overlay_rows),
+            optional_u64_json(self.partial_overlay_source_rows),
             optional_u64_json(self.younger_rows),
             optional_u64_json(self.first_fetch_request_agent),
             optional_u64_json(self.first_fetch_request_sequence),
@@ -348,6 +446,39 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             optional_u64_json(self.first_partial_overlay_response_owned_mask),
             optional_u64_json(self.first_partial_overlay_forwarded_bytes),
             first_partial_overlay_data,
+            first_partial_overlay_sources,
+            buffered_stores,
+        )
+    }
+}
+
+impl Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary {
+    fn to_json(&self) -> String {
+        let source_data = self
+            .source_data
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        format!(
+            "{{\"source_data_request_agent\":{},\"source_data_request_sequence\":{},\"source_address\":\"0x{:x}\",\"source_bytes\":{},\"ownership_mask\":{},\"source_data_hex\":\"{}\"}}",
+            self.source_data_request_agent,
+            self.source_data_request_sequence,
+            self.source_address,
+            self.source_bytes,
+            self.ownership_mask,
+            source_data,
+        )
+    }
+}
+
+impl Rem6HostO3LiveDataHandoffBufferedStoreSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"data_request_agent\":{},\"data_request_sequence\":{},\"predecessor_data_request_agent\":{},\"predecessor_data_request_sequence\":{}}}",
+            self.data_request_agent,
+            self.data_request_sequence,
+            self.predecessor_data_request_agent,
+            self.predecessor_data_request_sequence,
         )
     }
 }
