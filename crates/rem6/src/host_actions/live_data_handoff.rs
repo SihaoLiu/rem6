@@ -1,6 +1,6 @@
 use rem6_cpu::{
     RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffOwnership,
-    RiscvO3LiveDataHandoffTarget,
+    RiscvO3LiveDataHandoffPartialOverlaySource, RiscvO3LiveDataHandoffTarget,
 };
 
 use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
@@ -15,6 +15,8 @@ pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) forwarded_rows: Option<u64>,
     pub(crate) partial_overlay_rows: Option<u64>,
     pub(crate) partial_overlay_source_rows: Option<u64>,
+    pub(crate) completed_partial_overlay_rows: Option<u64>,
+    pub(crate) completed_partial_overlay_source_rows: Option<u64>,
     pub(crate) younger_rows: Option<u64>,
     pub(crate) first_fetch_request_agent: Option<u64>,
     pub(crate) first_fetch_request_sequence: Option<u64>,
@@ -56,6 +58,27 @@ pub(crate) struct Rem6HostO3LiveDataHandoffChunkSummary {
     pub(crate) first_partial_overlay_data: Option<Vec<u8>>,
     pub(crate) first_partial_overlay_sources:
         Vec<Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary>,
+    pub(crate) first_completed_partial_overlay_operation: Option<RiscvO3LiveDataHandoffOperation>,
+    pub(crate) first_completed_partial_overlay_fetch_request_agent: Option<u64>,
+    pub(crate) first_completed_partial_overlay_fetch_request_sequence: Option<u64>,
+    pub(crate) first_completed_partial_overlay_load_data_request_agent: Option<u64>,
+    pub(crate) first_completed_partial_overlay_load_data_request_sequence: Option<u64>,
+    pub(crate) first_completed_partial_overlay_issue_tick: Option<u64>,
+    pub(crate) first_completed_partial_overlay_response_tick: Option<u64>,
+    pub(crate) first_completed_partial_overlay_address: Option<u64>,
+    pub(crate) first_completed_partial_overlay_bytes: Option<u64>,
+    pub(crate) first_completed_partial_overlay_original_forwarded_mask: Option<u64>,
+    pub(crate) first_completed_partial_overlay_original_response_mask: Option<u64>,
+    pub(crate) first_completed_partial_overlay_live_forwarded_mask: Option<u64>,
+    pub(crate) first_completed_partial_overlay_retired_forwarded_mask: Option<u64>,
+    pub(crate) first_completed_partial_overlay_original_forwarded_bytes: Option<u64>,
+    pub(crate) first_completed_partial_overlay_live_forwarded_bytes: Option<u64>,
+    pub(crate) first_completed_partial_overlay_retired_forwarded_bytes: Option<u64>,
+    pub(crate) first_completed_partial_overlay_data: Option<Vec<u8>>,
+    pub(crate) first_completed_partial_overlay_o3_sequence: Option<u64>,
+    pub(crate) first_completed_partial_overlay_trace_sequence: Option<u64>,
+    pub(crate) first_completed_partial_overlay_sources:
+        Vec<Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary>,
     pub(crate) buffered_stores: Vec<Rem6HostO3LiveDataHandoffBufferedStoreSummary>,
 }
 
@@ -75,6 +98,24 @@ pub(crate) struct Rem6HostO3LiveDataHandoffBufferedStoreSummary {
     data_request_sequence: u64,
     predecessor_data_request_agent: u64,
     predecessor_data_request_sequence: u64,
+}
+
+fn partial_overlay_source_summaries(
+    sources: &[RiscvO3LiveDataHandoffPartialOverlaySource],
+) -> Vec<Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary> {
+    sources
+        .iter()
+        .map(
+            |source| Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary {
+                source_data_request_agent: u64::from(source.source_data_request().agent().get()),
+                source_data_request_sequence: source.source_data_request().sequence(),
+                source_address: source.source_address().get(),
+                source_bytes: u64::from(source.source_bytes()),
+                ownership_mask: u64::from(source.ownership_mask()),
+                source_data: source.source_data().to_vec(),
+            },
+        )
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,25 +145,12 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
     let first = handoff.entries().first().copied();
     let first_forwarded = handoff.forwarded_rows().first().copied();
     let first_partial_overlay = handoff.partial_overlays().first();
+    let first_completed_partial_overlay = handoff.completed_partial_overlays().first();
     let first_partial_overlay_sources = first_partial_overlay
-        .map(|overlay| {
-            overlay
-                .sources()
-                .iter()
-                .map(
-                    |source| Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary {
-                        source_data_request_agent: u64::from(
-                            source.source_data_request().agent().get(),
-                        ),
-                        source_data_request_sequence: source.source_data_request().sequence(),
-                        source_address: source.source_address().get(),
-                        source_bytes: u64::from(source.source_bytes()),
-                        ownership_mask: u64::from(source.ownership_mask()),
-                        source_data: source.source_data().to_vec(),
-                    },
-                )
-                .collect::<Vec<_>>()
-        })
+        .map(|overlay| partial_overlay_source_summaries(overlay.sources()))
+        .unwrap_or_default();
+    let first_completed_partial_overlay_sources = first_completed_partial_overlay
+        .map(|overlay| partial_overlay_source_summaries(overlay.sources()))
         .unwrap_or_default();
     let buffered_stores = handoff
         .entries()
@@ -161,6 +189,14 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
                 .map(|overlay| overlay.sources().len() as u64)
                 .sum(),
         ),
+        completed_partial_overlay_rows: Some(handoff.completed_partial_overlays().len() as u64),
+        completed_partial_overlay_source_rows: Some(
+            handoff
+                .completed_partial_overlays()
+                .iter()
+                .map(|overlay| overlay.sources().len() as u64)
+                .sum(),
+        ),
         younger_rows: Some(u64::from(handoff.younger_rows())),
         first_fetch_request_agent: first
             .map(|entry| u64::from(entry.fetch_request().agent().get())),
@@ -173,6 +209,12 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
             .iter()
             .map(|entry| entry.issue_tick())
             .chain(handoff.forwarded_rows().iter().map(|row| row.issue_tick()))
+            .chain(
+                handoff
+                    .completed_partial_overlays()
+                    .iter()
+                    .map(|row| row.issue_tick()),
+            )
             .max(),
         first_operation: first.map(|entry| entry.operation()),
         first_target: first.map(|entry| match entry.target() {
@@ -239,6 +281,45 @@ pub(super) fn decode_o3_live_data_handoff_chunk(
             .map(|overlay| u64::from(overlay.forwarded_bytes())),
         first_partial_overlay_data: first_partial_overlay.map(|overlay| overlay.data().to_vec()),
         first_partial_overlay_sources,
+        first_completed_partial_overlay_operation: first_completed_partial_overlay
+            .map(|_| RiscvO3LiveDataHandoffOperation::Load),
+        first_completed_partial_overlay_fetch_request_agent: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.fetch_request().agent().get())),
+        first_completed_partial_overlay_fetch_request_sequence: first_completed_partial_overlay
+            .map(|overlay| overlay.fetch_request().sequence()),
+        first_completed_partial_overlay_load_data_request_agent: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.load_data_request().agent().get())),
+        first_completed_partial_overlay_load_data_request_sequence: first_completed_partial_overlay
+            .map(|overlay| overlay.load_data_request().sequence()),
+        first_completed_partial_overlay_issue_tick: first_completed_partial_overlay
+            .map(|overlay| overlay.issue_tick()),
+        first_completed_partial_overlay_response_tick: first_completed_partial_overlay
+            .map(|overlay| overlay.response_tick()),
+        first_completed_partial_overlay_address: first_completed_partial_overlay
+            .map(|overlay| overlay.address().get()),
+        first_completed_partial_overlay_bytes: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.bytes())),
+        first_completed_partial_overlay_original_forwarded_mask: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.original_forwarded_mask())),
+        first_completed_partial_overlay_original_response_mask: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.original_response_mask())),
+        first_completed_partial_overlay_live_forwarded_mask: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.live_forwarded_mask())),
+        first_completed_partial_overlay_retired_forwarded_mask: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.retired_forwarded_mask())),
+        first_completed_partial_overlay_original_forwarded_bytes: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.original_forwarded_bytes())),
+        first_completed_partial_overlay_live_forwarded_bytes: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.live_forwarded_bytes())),
+        first_completed_partial_overlay_retired_forwarded_bytes: first_completed_partial_overlay
+            .map(|overlay| u64::from(overlay.retired_forwarded_bytes())),
+        first_completed_partial_overlay_data: first_completed_partial_overlay
+            .map(|overlay| overlay.data().to_vec()),
+        first_completed_partial_overlay_o3_sequence: first_completed_partial_overlay
+            .map(|overlay| overlay.o3_sequence()),
+        first_completed_partial_overlay_trace_sequence: first_completed_partial_overlay
+            .and_then(|overlay| overlay.trace_sequence()),
+        first_completed_partial_overlay_sources,
         buffered_stores,
     })
 }
@@ -254,6 +335,8 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             forwarded_rows: None,
             partial_overlay_rows: None,
             partial_overlay_source_rows: None,
+            completed_partial_overlay_rows: None,
+            completed_partial_overlay_source_rows: None,
             younger_rows: None,
             first_fetch_request_agent: None,
             first_fetch_request_sequence: None,
@@ -294,6 +377,26 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             first_partial_overlay_forwarded_bytes: None,
             first_partial_overlay_data: None,
             first_partial_overlay_sources: Vec::new(),
+            first_completed_partial_overlay_operation: None,
+            first_completed_partial_overlay_fetch_request_agent: None,
+            first_completed_partial_overlay_fetch_request_sequence: None,
+            first_completed_partial_overlay_load_data_request_agent: None,
+            first_completed_partial_overlay_load_data_request_sequence: None,
+            first_completed_partial_overlay_issue_tick: None,
+            first_completed_partial_overlay_response_tick: None,
+            first_completed_partial_overlay_address: None,
+            first_completed_partial_overlay_bytes: None,
+            first_completed_partial_overlay_original_forwarded_mask: None,
+            first_completed_partial_overlay_original_response_mask: None,
+            first_completed_partial_overlay_live_forwarded_mask: None,
+            first_completed_partial_overlay_retired_forwarded_mask: None,
+            first_completed_partial_overlay_original_forwarded_bytes: None,
+            first_completed_partial_overlay_live_forwarded_bytes: None,
+            first_completed_partial_overlay_retired_forwarded_bytes: None,
+            first_completed_partial_overlay_data: None,
+            first_completed_partial_overlay_o3_sequence: None,
+            first_completed_partial_overlay_trace_sequence: None,
+            first_completed_partial_overlay_sources: Vec::new(),
             buffered_stores: Vec::new(),
         }
     }
@@ -378,6 +481,37 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
                 .collect::<Vec<_>>()
                 .join(",")
         );
+        let first_completed_partial_overlay_address = self
+            .first_completed_partial_overlay_address
+            .map(|address| format!("\"0x{address:x}\""))
+            .unwrap_or_else(|| "null".to_string());
+        let first_completed_partial_overlay_operation = self
+            .first_completed_partial_overlay_operation
+            .map(|operation| match operation {
+                RiscvO3LiveDataHandoffOperation::Load => "\"load\"",
+                RiscvO3LiveDataHandoffOperation::Store => "\"store\"",
+            })
+            .unwrap_or("null");
+        let first_completed_partial_overlay_data = self
+            .first_completed_partial_overlay_data
+            .as_deref()
+            .map(|data| {
+                format!(
+                    "\"{}\"",
+                    data.iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>()
+                )
+            })
+            .unwrap_or_else(|| "null".to_string());
+        let first_completed_partial_overlay_sources = format!(
+            "[{}]",
+            self.first_completed_partial_overlay_sources
+                .iter()
+                .map(Rem6HostO3LiveDataHandoffPartialOverlaySourceSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         let buffered_stores = format!(
             "[{}]",
             self.buffered_stores
@@ -393,7 +527,7 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             .first_target
             .and_then(Rem6HostO3LiveDataHandoffTargetSummary::memory_route);
         format!(
-            "{{\"decode_error\":{},\"schema_version\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"buffered_store_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"partial_overlay_source_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{},\"first_partial_overlay_sources\":{},\"buffered_stores\":{}}}",
+            "{{\"decode_error\":{},\"schema_version\":{},\"outstanding_requests\":{},\"resident_rows\":{},\"transport_owned_rows\":{},\"buffered_store_rows\":{},\"forwarded_rows\":{},\"partial_overlay_rows\":{},\"partial_overlay_source_rows\":{},\"completed_partial_overlay_rows\":{},\"completed_partial_overlay_source_rows\":{},\"younger_rows\":{},\"first_fetch_request_agent\":{},\"first_fetch_request_sequence\":{},\"first_data_request_agent\":{},\"first_data_request_sequence\":{},\"first_issue_tick\":{},\"last_issue_tick\":{},\"first_operation\":{},\"first_partition\":{},\"first_route\":{},\"first_target\":{},\"first_address\":{},\"first_bytes\":{},\"first_o3_sequence\":{},\"first_trace_sequence\":{},\"first_forwarded_operation\":{},\"first_forwarded_fetch_request_agent\":{},\"first_forwarded_fetch_request_sequence\":{},\"first_forwarded_data_request_agent\":{},\"first_forwarded_data_request_sequence\":{},\"first_forwarding_source_data_request_agent\":{},\"first_forwarding_source_data_request_sequence\":{},\"first_forwarded_issue_tick\":{},\"first_forwarded_response_tick\":{},\"first_forwarded_address\":{},\"first_forwarded_bytes\":{},\"first_forwarded_data_hex\":{},\"first_forwarded_o3_sequence\":{},\"first_forwarded_trace_sequence\":{},\"first_partial_overlay_operation\":{},\"first_partial_overlay_load_data_request_agent\":{},\"first_partial_overlay_load_data_request_sequence\":{},\"first_partial_overlay_source_data_request_agent\":{},\"first_partial_overlay_source_data_request_sequence\":{},\"first_partial_overlay_source_address\":{},\"first_partial_overlay_source_bytes\":{},\"first_partial_overlay_source_data_hex\":{},\"first_partial_overlay_address\":{},\"first_partial_overlay_bytes\":{},\"first_partial_overlay_forwarded_mask\":{},\"first_partial_overlay_response_owned_mask\":{},\"first_partial_overlay_forwarded_bytes\":{},\"first_partial_overlay_forwarded_data_hex\":{},\"first_partial_overlay_sources\":{},\"first_completed_partial_overlay_operation\":{},\"first_completed_partial_overlay_fetch_request_agent\":{},\"first_completed_partial_overlay_fetch_request_sequence\":{},\"first_completed_partial_overlay_load_data_request_agent\":{},\"first_completed_partial_overlay_load_data_request_sequence\":{},\"first_completed_partial_overlay_issue_tick\":{},\"first_completed_partial_overlay_response_tick\":{},\"first_completed_partial_overlay_address\":{},\"first_completed_partial_overlay_bytes\":{},\"first_completed_partial_overlay_original_forwarded_mask\":{},\"first_completed_partial_overlay_original_response_mask\":{},\"first_completed_partial_overlay_live_forwarded_mask\":{},\"first_completed_partial_overlay_retired_forwarded_mask\":{},\"first_completed_partial_overlay_original_forwarded_bytes\":{},\"first_completed_partial_overlay_live_forwarded_bytes\":{},\"first_completed_partial_overlay_retired_forwarded_bytes\":{},\"first_completed_partial_overlay_data_hex\":{},\"first_completed_partial_overlay_o3_sequence\":{},\"first_completed_partial_overlay_trace_sequence\":{},\"first_completed_partial_overlay_sources\":{},\"buffered_stores\":{}}}",
             self.decode_error,
             optional_u64_json(self.schema_version),
             optional_u64_json(self.transport_owned_rows),
@@ -403,6 +537,8 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             optional_u64_json(self.forwarded_rows),
             optional_u64_json(self.partial_overlay_rows),
             optional_u64_json(self.partial_overlay_source_rows),
+            optional_u64_json(self.completed_partial_overlay_rows),
+            optional_u64_json(self.completed_partial_overlay_source_rows),
             optional_u64_json(self.younger_rows),
             optional_u64_json(self.first_fetch_request_agent),
             optional_u64_json(self.first_fetch_request_sequence),
@@ -447,6 +583,26 @@ impl Rem6HostO3LiveDataHandoffChunkSummary {
             optional_u64_json(self.first_partial_overlay_forwarded_bytes),
             first_partial_overlay_data,
             first_partial_overlay_sources,
+            first_completed_partial_overlay_operation,
+            optional_u64_json(self.first_completed_partial_overlay_fetch_request_agent),
+            optional_u64_json(self.first_completed_partial_overlay_fetch_request_sequence),
+            optional_u64_json(self.first_completed_partial_overlay_load_data_request_agent),
+            optional_u64_json(self.first_completed_partial_overlay_load_data_request_sequence),
+            optional_u64_json(self.first_completed_partial_overlay_issue_tick),
+            optional_u64_json(self.first_completed_partial_overlay_response_tick),
+            first_completed_partial_overlay_address,
+            optional_u64_json(self.first_completed_partial_overlay_bytes),
+            optional_u64_json(self.first_completed_partial_overlay_original_forwarded_mask),
+            optional_u64_json(self.first_completed_partial_overlay_original_response_mask),
+            optional_u64_json(self.first_completed_partial_overlay_live_forwarded_mask),
+            optional_u64_json(self.first_completed_partial_overlay_retired_forwarded_mask),
+            optional_u64_json(self.first_completed_partial_overlay_original_forwarded_bytes),
+            optional_u64_json(self.first_completed_partial_overlay_live_forwarded_bytes),
+            optional_u64_json(self.first_completed_partial_overlay_retired_forwarded_bytes),
+            first_completed_partial_overlay_data,
+            optional_u64_json(self.first_completed_partial_overlay_o3_sequence),
+            optional_u64_json(self.first_completed_partial_overlay_trace_sequence),
+            first_completed_partial_overlay_sources,
             buffered_stores,
         )
     }
