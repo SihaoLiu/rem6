@@ -20,6 +20,8 @@ mod o3_runtime_authority;
 mod o3_runtime_checkpoint;
 #[path = "o3_runtime_checkpoint_branch_mismatch.rs"]
 mod o3_runtime_checkpoint_branch_mismatch;
+#[path = "o3_runtime_control_window.rs"]
+mod o3_runtime_control_window;
 #[path = "o3_runtime_handoff.rs"]
 mod o3_runtime_handoff;
 #[path = "o3_runtime_helpers.rs"]
@@ -48,9 +50,10 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
-use o3_runtime_live_window::{
-    staged_rename_entry, O3LiveRetiredInstruction, O3LiveSpeculativeExecution,
+use o3_runtime_control_window::{
+    execution_writes_rename_destination, O3LiveSpeculativeExecution,
 };
+use o3_runtime_live_window::{staged_rename_entry, O3LiveRetiredInstruction};
 use o3_runtime_memory::{
     is_deferred_o3_scalar_memory_access, is_deferred_o3_scalar_memory_instruction,
     is_terminal_o3_scalar_memory_event, O3LiveScalarMemory, O3LiveScalarMemoryOutcome,

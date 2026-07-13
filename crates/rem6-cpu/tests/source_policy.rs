@@ -299,6 +299,41 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
 }
 
 #[test]
+fn o3_runtime_control_window_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
+    let live = fs::read_to_string(crate_dir.join("src/o3_runtime_live_window.rs")).unwrap();
+    let module_path = crate_dir.join("src/o3_runtime_control_window.rs");
+
+    assert!(
+        root.contains("mod o3_runtime_control_window;"),
+        "src/o3_runtime.rs must delegate transient issue state to src/o3_runtime_control_window.rs"
+    );
+    assert!(
+        module_path.exists(),
+        "transient O3 issue state belongs in src/o3_runtime_control_window.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    for anchor in [
+        "struct O3LiveSpeculativeExecution",
+        "struct O3LiveSpeculativeIssueCandidate",
+        "fn live_speculative_issue_candidate",
+        "fn record_live_speculative_execution",
+        "fn live_speculative_source_forwarding",
+        "fn invalidate_live_speculative_execution_chain",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_control_window.rs is missing control-window owner `{anchor}`"
+        );
+        assert!(
+            !live.contains(anchor),
+            "src/o3_runtime_live_window.rs still owns transient control-window state `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn o3_store_forwarding_policy_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
