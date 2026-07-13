@@ -4358,19 +4358,13 @@ fn assert_json_stat_absent(json: &Value, path: &str) {
     );
 }
 
-fn assert_o3_lsq_count_alias(json: &Value, field: &str, value: u64) {
-    let Some((family, alias)) = field
-        .strip_prefix("lsq_operation_")
-        .map(|operation| ("operation", o3_lsq_operation_count_alias(operation)))
-        .or_else(|| {
-            field
-                .strip_prefix("lsq_ordering_")
-                .map(|ordering| ("ordering", o3_lsq_ordering_count_alias(ordering)))
-        })
-    else {
-        return;
-    };
-
+fn assert_o3_lsq_count_alias(
+    json: &Value,
+    family: &str,
+    alias: &str,
+    bucket_alias: &str,
+    value: u64,
+) {
     assert_json_stat(
         json,
         &format!("system.cpu.lsq0.{family}.{alias}"),
@@ -4378,11 +4372,6 @@ fn assert_o3_lsq_count_alias(json: &Value, field: &str, value: u64) {
         value,
         "monotonic",
     );
-    let bucket_alias = match family {
-        "operation" => o3_lsq_operation_bucket_alias(alias),
-        "ordering" => o3_lsq_ordering_bucket_alias(alias),
-        _ => unreachable!("unexpected O3 LSQ alias family {family}"),
-    };
     assert_json_stat(
         json,
         &format!("system.cpu.lsq0.{family}_0::{bucket_alias}"),
@@ -4408,54 +4397,6 @@ fn assert_o3_lsq_count_alias_totals(json: &Value, operation_total: u64, ordering
             value,
             "monotonic",
         );
-    }
-}
-
-fn o3_lsq_operation_count_alias(operation: &str) -> &'static str {
-    match operation {
-        "load" => "load",
-        "store" => "store",
-        "load_reserved" => "loadReserved",
-        "store_conditional" => "storeConditional",
-        "atomic" => "atomic",
-        "float_load" => "floatLoad",
-        "float_store" => "floatStore",
-        "vector_load" => "vectorLoad",
-        "vector_store" => "vectorStore",
-        _ => panic!("unexpected O3 LSQ operation field {operation}"),
-    }
-}
-
-fn o3_lsq_ordering_count_alias(ordering: &str) -> &'static str {
-    match ordering {
-        "acquire" => "acquire",
-        "release" => "release",
-        "acquire_release" => "acquireRelease",
-        _ => panic!("unexpected O3 LSQ ordering field {ordering}"),
-    }
-}
-
-fn o3_lsq_operation_bucket_alias(alias: &str) -> &'static str {
-    match alias {
-        "load" => "Load",
-        "store" => "Store",
-        "loadReserved" => "LoadReserved",
-        "storeConditional" => "StoreConditional",
-        "atomic" => "Atomic",
-        "floatLoad" => "FloatLoad",
-        "floatStore" => "FloatStore",
-        "vectorLoad" => "VectorLoad",
-        "vectorStore" => "VectorStore",
-        _ => panic!("unexpected O3 LSQ operation alias {alias}"),
-    }
-}
-
-fn o3_lsq_ordering_bucket_alias(alias: &str) -> &'static str {
-    match alias {
-        "acquire" => "Acquire",
-        "release" => "Release",
-        "acquireRelease" => "AcquireRelease",
-        _ => panic!("unexpected O3 LSQ ordering alias {alias}"),
     }
 }
 

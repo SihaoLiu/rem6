@@ -1380,20 +1380,44 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
         .pointer("/cores/0/o3_runtime")
         .unwrap_or_else(|| panic!("run JSON should include core O3 runtime state: {json}"));
 
-    for (field, value) in [
-        ("lsq_operation_load", 1),
-        ("lsq_operation_store", 3),
-        ("lsq_operation_load_reserved", 1),
-        ("lsq_operation_store_conditional", 1),
-        ("lsq_operation_atomic", 1),
-        ("lsq_operation_float_load", 0),
-        ("lsq_operation_float_store", 0),
-        ("lsq_operation_vector_load", 0),
-        ("lsq_operation_vector_store", 0),
-        ("lsq_ordering_acquire", 1),
-        ("lsq_ordering_release", 1),
-        ("lsq_ordering_acquire_release", 1),
-        ("lsq_store_conditional_failures", 0),
+    for (field, stat_path, value) in [
+        ("lsq_operation_load", "sim.cpu0.o3.lsq_operation.load", 1),
+        ("lsq_operation_store", "sim.cpu0.o3.lsq_operation.store", 3),
+        (
+            "lsq_operation_load_reserved",
+            "sim.cpu0.o3.lsq_operation.load_reserved",
+            1,
+        ),
+        (
+            "lsq_operation_store_conditional",
+            "sim.cpu0.o3.lsq_operation.store_conditional",
+            1,
+        ),
+        (
+            "lsq_operation_atomic",
+            "sim.cpu0.o3.lsq_operation.atomic",
+            1,
+        ),
+        (
+            "lsq_operation_float_load",
+            "sim.cpu0.o3.lsq_operation.float_load",
+            0,
+        ),
+        (
+            "lsq_operation_float_store",
+            "sim.cpu0.o3.lsq_operation.float_store",
+            0,
+        ),
+        (
+            "lsq_operation_vector_load",
+            "sim.cpu0.o3.lsq_operation.vector_load",
+            0,
+        ),
+        (
+            "lsq_operation_vector_store",
+            "sim.cpu0.o3.lsq_operation.vector_store",
+            0,
+        ),
     ] {
         assert_eq!(
             o3_runtime
@@ -1402,22 +1426,70 @@ fn assert_ordered_atomic_lsq_runtime_json(json: &Value) -> u64 {
             Some(value),
             "structured O3 runtime JSON should expose {field}: {o3_runtime}"
         );
-        let stat_path = field
-            .strip_prefix("lsq_operation_")
-            .map(|operation| format!("sim.cpu0.o3.lsq_operation.{operation}"))
-            .or_else(|| {
-                field
-                    .strip_prefix("lsq_ordering_")
-                    .map(|ordering| format!("sim.cpu0.o3.lsq_ordering.{ordering}"))
-            })
-            .unwrap_or_else(|| format!("sim.cpu0.o3.{field}"));
         assert_eq!(
-            json_stat_value(&json, &stat_path),
+            json_stat_value(&json, stat_path),
             value,
             "stat registry should match structured runtime {field}"
         );
-        assert_o3_lsq_count_alias(json, field, value);
     }
+    for (field, stat_path, value) in [
+        (
+            "lsq_ordering_acquire",
+            "sim.cpu0.o3.lsq_ordering.acquire",
+            1,
+        ),
+        (
+            "lsq_ordering_release",
+            "sim.cpu0.o3.lsq_ordering.release",
+            1,
+        ),
+        (
+            "lsq_ordering_acquire_release",
+            "sim.cpu0.o3.lsq_ordering.acquire_release",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            o3_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "structured O3 runtime JSON should expose {field}: {o3_runtime}"
+        );
+        assert_eq!(
+            json_stat_value(&json, stat_path),
+            value,
+            "stat registry should match structured runtime {field}"
+        );
+    }
+    for (family, alias, bucket_alias, value) in [
+        ("operation", "load", "Load", 1),
+        ("operation", "store", "Store", 3),
+        ("operation", "loadReserved", "LoadReserved", 1),
+        ("operation", "storeConditional", "StoreConditional", 1),
+        ("operation", "atomic", "Atomic", 1),
+        ("operation", "floatLoad", "FloatLoad", 0),
+        ("operation", "floatStore", "FloatStore", 0),
+        ("operation", "vectorLoad", "VectorLoad", 0),
+        ("operation", "vectorStore", "VectorStore", 0),
+        ("ordering", "acquire", "Acquire", 1),
+        ("ordering", "release", "Release", 1),
+        ("ordering", "acquireRelease", "AcquireRelease", 1),
+    ] {
+        assert_o3_lsq_count_alias(json, family, alias, bucket_alias, value);
+    }
+    assert_eq!(
+        o3_runtime
+            .pointer("/lsq_store_conditional_failures")
+            .and_then(Value::as_u64),
+        Some(0),
+        "structured O3 runtime JSON should expose lsq_store_conditional_failures: {o3_runtime}"
+    );
+    assert_eq!(
+        json_stat_value(&json, "sim.cpu0.o3.lsq_store_conditional_failures"),
+        0,
+        "stat registry should match structured runtime lsq_store_conditional_failures"
+    );
     assert_o3_lsq_count_alias_totals(json, 7, 3);
 
     let mut aggregate_latency_samples = 0;

@@ -261,6 +261,46 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
     let text_o3 = fs::read_to_string(crate_dir.join("src/stats_output/text_o3.rs")).unwrap();
     let stats_dump =
         fs::read_to_string(crate_dir.join("src/host_actions/o3_stats_dump_aliases.rs")).unwrap();
+    let cli_helper = fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions.rs"))
+        .expect("shared CLI test helper should be readable");
+    let helper_policy = "shared CLI LSQ alias helper must remain literal-only; \
+        call-site tables are the allowed independent oracle";
+    for obsolete_helper in [
+        "fn o3_lsq_operation_count_alias(",
+        "fn o3_lsq_ordering_count_alias(",
+        "fn o3_lsq_operation_bucket_alias(",
+        "fn o3_lsq_ordering_bucket_alias(",
+    ] {
+        assert!(
+            !cli_helper.contains(obsolete_helper),
+            "{helper_policy}; remove obsolete mapper `{obsolete_helper}`"
+        );
+    }
+    for forbidden_prefix in [
+        r#".strip_prefix("lsq_operation_")"#,
+        r#".strip_prefix("lsq_ordering_")"#,
+    ] {
+        assert!(
+            !cli_helper.contains(forbidden_prefix),
+            "{helper_policy}; remove translation prefix `{forbidden_prefix}`"
+        );
+    }
+    for forbidden_literal in [
+        r#""load_reserved""#,
+        r#""store_conditional""#,
+        r#""acquire_release""#,
+        r#""loadReserved""#,
+        r#""storeConditional""#,
+        r#""acquireRelease""#,
+        r#""LoadReserved""#,
+        r#""StoreConditional""#,
+        r#""AcquireRelease""#,
+    ] {
+        assert!(
+            !cli_helper.contains(forbidden_literal),
+            "{helper_policy}; remove shared mapping literal `{forbidden_literal}`"
+        );
+    }
     let (stats_dump_impl, _) = stats_dump
         .split_once("#[cfg(test)]\nmod tests {")
         .expect("host-action stats-dump aliases must keep tests behind the expected cfg(test) module boundary");
