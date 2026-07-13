@@ -38,6 +38,8 @@ mod lsq_store_load_load;
 mod lsq_store_load_partial;
 #[path = "o3/lsq_store_store_load.rs"]
 mod lsq_store_store_load;
+#[path = "o3/predicted_control.rs"]
+mod predicted_control;
 #[path = "o3/rename_live.rs"]
 mod rename_live;
 #[path = "o3/restore.rs"]

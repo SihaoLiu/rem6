@@ -30,6 +30,7 @@ enum O3LiveSpeculativeIssueKind {
 }
 
 impl O3LiveSpeculativeIssueCandidate {
+    #[cfg(test)]
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
