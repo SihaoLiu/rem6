@@ -98,7 +98,7 @@ increase abstraction cost and blast radius beyond the duplicated LSQ names.
 Add `crates/rem6/src/o3_lsq_aliases.rs` and declare it from `src/lib.rs` beside
 the existing O3 alias modules.
 
-The module owns three descriptor families.
+The module owns three descriptor families plus the shared `total` alias token.
 
 ### Operation aliases
 
@@ -126,6 +126,13 @@ Each ordering descriptor contains:
 
 The descriptor list follows `O3RuntimeLsqOrdering::TRACKED` order exactly:
 acquire, release, and acquire-release. It contains no `None` descriptor.
+
+### Total alias
+
+`O3_LSQ_TOTAL_ALIAS` owns the shared `total` spelling used by operation totals,
+ordering totals, count buckets, and aggregate operation data-response paths.
+Consumers retain their own surrounding path structure, but they must not repeat
+the total token inside LSQ-specific path literals or mapper matches.
 
 ### Data-response metrics
 
@@ -217,11 +224,12 @@ The policy test requires:
 1. The source-policy root delegates O3 alias authority checks to the focused
    policy module and remains below its line limit.
 2. `src/lib.rs` declares `mod o3_lsq_aliases;`.
-3. The focused production module exists and exposes operation, ordering, and metric
-   descriptor constants.
+3. The focused production module exists and exposes operation, ordering, metric,
+   and total alias constants.
 4. Runtime, JSON, text, and host-action consumers import the module.
-5. Distinctive LSQ mapping tokens do not remain in the production portions of
-   those consumers.
+5. Distinctive LSQ mapping tokens, full count-bucket paths, LSQ total path
+   fragments, and obsolete local mapper helpers do not remain in the production
+   portions of those consumers.
 6. The old test-side conversion functions are absent.
 
 Descriptor unit tests then prove:

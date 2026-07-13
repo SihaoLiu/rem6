@@ -100,6 +100,7 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
         "pub(crate) const O3_LSQ_OPERATION_GEM5_ALIASES",
         "pub(crate) const O3_LSQ_ORDERING_GEM5_ALIASES",
         "pub(crate) const O3_LSQ_DATA_RESPONSE_GEM5_ALIASES",
+        "pub(crate) const O3_LSQ_TOTAL_ALIAS",
     ] {
         assert!(
             authority.contains(anchor),
@@ -107,32 +108,123 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
         );
     }
 
-    let mapping_tokens = [
+    let authority_mapping_tokens = [
+        r#""load""#,
+        r#""store""#,
         r#""loadReserved""#,
         r#""storeConditional""#,
+        r#""atomic""#,
         r#""floatLoad""#,
         r#""floatStore""#,
         r#""vectorLoad""#,
         r#""vectorStore""#,
+        r#""acquire""#,
+        r#""release""#,
         r#""acquireRelease""#,
+        r#""Load""#,
+        r#""Store""#,
         r#""LoadReserved""#,
         r#""StoreConditional""#,
+        r#""Atomic""#,
         r#""FloatLoad""#,
         r#""FloatStore""#,
         r#""VectorLoad""#,
         r#""VectorStore""#,
+        r#""Acquire""#,
+        r#""Release""#,
         r#""AcquireRelease""#,
+        r#""total""#,
+        r#""samples""#,
         r#""totalLatency""#,
         r#""maxLatency""#,
         r#""minLatency""#,
         r#""avgLatency""#,
     ];
-    for mapping in mapping_tokens {
+    for mapping in authority_mapping_tokens {
         assert!(
             authority.contains(mapping),
             "shared O3 LSQ alias authority is missing `{mapping}`"
         );
     }
+    for forbidden in [
+        "O3LsqOperationGem5Alias::new(O3RuntimeLsqOperation::None",
+        "O3LsqOrderingGem5Alias::new(O3RuntimeLsqOrdering::None",
+    ] {
+        assert!(
+            !authority.contains(forbidden),
+            "shared O3 LSQ alias authority must not describe None with `{forbidden}`"
+        );
+    }
+    let local_mapping_tokens = [
+        r#""load""#,
+        r#""store""#,
+        r#""loadReserved""#,
+        r#""storeConditional""#,
+        r#""atomic""#,
+        r#""floatLoad""#,
+        r#""floatStore""#,
+        r#""vectorLoad""#,
+        r#""vectorStore""#,
+        r#""acquire""#,
+        r#""release""#,
+        r#""acquireRelease""#,
+        r#""Load""#,
+        r#""Store""#,
+        r#""LoadReserved""#,
+        r#""StoreConditional""#,
+        r#""Atomic""#,
+        r#""FloatLoad""#,
+        r#""FloatStore""#,
+        r#""VectorLoad""#,
+        r#""VectorStore""#,
+        r#""Acquire""#,
+        r#""Release""#,
+        r#""AcquireRelease""#,
+        r#""samples""#,
+        r#""totalLatency""#,
+        r#""maxLatency""#,
+        r#""minLatency""#,
+        r#""avgLatency""#,
+        r#""lsq0.operation.load""#,
+        r#""lsq0.operation.store""#,
+        r#""lsq0.operation.loadReserved""#,
+        r#""lsq0.operation.storeConditional""#,
+        r#""lsq0.operation.atomic""#,
+        r#""lsq0.operation.floatLoad""#,
+        r#""lsq0.operation.floatStore""#,
+        r#""lsq0.operation.vectorLoad""#,
+        r#""lsq0.operation.vectorStore""#,
+        r#""lsq0.operation_0::Load""#,
+        r#""lsq0.operation_0::Store""#,
+        r#""lsq0.operation_0::LoadReserved""#,
+        r#""lsq0.operation_0::StoreConditional""#,
+        r#""lsq0.operation_0::Atomic""#,
+        r#""lsq0.operation_0::FloatLoad""#,
+        r#""lsq0.operation_0::FloatStore""#,
+        r#""lsq0.operation_0::VectorLoad""#,
+        r#""lsq0.operation_0::VectorStore""#,
+        r#""lsq0.ordering.acquire""#,
+        r#""lsq0.ordering.release""#,
+        r#""lsq0.ordering.acquireRelease""#,
+        r#""lsq0.ordering_0::Acquire""#,
+        r#""lsq0.ordering_0::Release""#,
+        r#""lsq0.ordering_0::AcquireRelease""#,
+    ];
+    let local_mapping_fragments = [
+        "lsq0.operation.total",
+        "lsq0.operation_0::total",
+        "lsq0.ordering.total",
+        "lsq0.ordering_0::total",
+        "lsq0.operation.total.dataResponse",
+    ];
+    let obsolete_mapper_helpers = [
+        "fn o3_lsq_operation_alias(",
+        "fn o3_lsq_ordering_alias(",
+        "fn o3_stats_dump_lsq_operation_bucket_alias(",
+        "fn o3_stats_dump_lsq_ordering_bucket_alias(",
+        "fn o3_stats_dump_lsq_data_response_metric_alias(",
+        "fn o3_stats_dump_lsq_operation_alias(",
+    ];
 
     let runtime = fs::read_to_string(
         crate_dir.join("src/stats_output/o3_runtime_gem5_lsq.rs"),
@@ -142,7 +234,9 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
     let text = fs::read_to_string(crate_dir.join("src/stats_output/text_o3.rs")).unwrap();
     let stats_dump =
         fs::read_to_string(crate_dir.join("src/host_actions/o3_stats_dump_aliases.rs")).unwrap();
-    let stats_dump_impl = stats_dump.split("#[cfg(test)]").next().unwrap();
+    let (stats_dump_impl, _) = stats_dump
+        .split_once("#[cfg(test)]\nmod tests {")
+        .expect("host-action stats-dump aliases must keep the expected test module boundary");
     for (name, consumer) in [
         ("runtime O3 LSQ stats", runtime.as_str()),
         ("JSON aliases", json.as_str()),
@@ -153,10 +247,22 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
             consumer.contains("crate::o3_lsq_aliases"),
             "{name} must consume the shared O3 LSQ alias authority"
         );
-        for local_mapping in mapping_tokens {
+        for local_mapping in local_mapping_tokens {
             assert!(
                 !consumer.contains(local_mapping),
                 "{name} must not retain local O3 LSQ mapping `{local_mapping}`"
+            );
+        }
+        for local_mapping in local_mapping_fragments {
+            assert!(
+                !consumer.contains(local_mapping),
+                "{name} must not retain local O3 LSQ mapping fragment `{local_mapping}`"
+            );
+        }
+        for obsolete_helper in obsolete_mapper_helpers {
+            assert!(
+                !consumer.contains(obsolete_helper),
+                "{name} must not retain obsolete O3 LSQ mapper `{obsolete_helper}`"
             );
         }
     }
@@ -192,6 +298,8 @@ Create `crates/rem6/src/o3_lsq_aliases.rs` with this API and descriptor data:
 
 ```rust
 use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering};
+
+pub(crate) const O3_LSQ_TOTAL_ALIAS: &str = "total";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3LsqOperationGem5Alias {
@@ -508,6 +616,7 @@ mod tests {
 
     #[test]
     fn data_response_aliases_preserve_metric_order_units_and_spellings() {
+        assert_eq!(O3_LSQ_TOTAL_ALIAS, "total");
         assert_eq!(
             O3_LSQ_DATA_RESPONSE_GEM5_ALIASES
                 .iter()
@@ -600,6 +709,7 @@ use rem6_cpu::{O3RuntimeLsqOperation, O3RuntimeStats};
 use crate::o3_lsq_aliases::{
     O3LsqDataResponseMetric, O3_LSQ_DATA_RESPONSE_GEM5_ALIASES,
     O3_LSQ_OPERATION_GEM5_ALIASES, O3_LSQ_ORDERING_GEM5_ALIASES,
+    O3_LSQ_TOTAL_ALIAS,
 };
 ```
 
@@ -637,13 +747,14 @@ fn lsq_operation_data_response_value(
 }
 ```
 
-Each descriptor supplies `alias()` and `unit()`; the existing registry paths,
-`StatResetPolicy::Monotonic`, total placement, and error propagation remain
-unchanged.
+Each descriptor supplies `alias()` and `unit()`. Build operation totals,
+ordering totals, and `operation.total.dataResponse` paths with
+`O3_LSQ_TOTAL_ALIAS`; keep `StatResetPolicy::Monotonic`, placement, and error
+propagation unchanged.
 
 - [ ] **Step 4: Migrate JSON and text count bucket aliases**
 
-Import the operation and ordering descriptor constants into both
+Import the operation, ordering, and total alias constants into both
 `json_aliases.rs` and `text_o3.rs`.
 
 In `json_aliases.rs`, replace the complete LSQ bucket function with:
@@ -670,14 +781,20 @@ fn append_gem5_o3_lsq_count_bucket_json_alias_stats(
             &format!("lsq0.operation_0::{}", alias.bucket_alias()),
         );
     }
-    append_count_bucket("lsq0.operation.total", "lsq0.operation_0::total");
+    append_count_bucket(
+        &format!("lsq0.operation.{O3_LSQ_TOTAL_ALIAS}"),
+        &format!("lsq0.operation_0::{O3_LSQ_TOTAL_ALIAS}"),
+    );
     for alias in O3_LSQ_ORDERING_GEM5_ALIASES {
         append_count_bucket(
             &format!("lsq0.ordering.{}", alias.alias()),
             &format!("lsq0.ordering_0::{}", alias.bucket_alias()),
         );
     }
-    append_count_bucket("lsq0.ordering.total", "lsq0.ordering_0::total");
+    append_count_bucket(
+        &format!("lsq0.ordering.{O3_LSQ_TOTAL_ALIAS}"),
+        &format!("lsq0.ordering_0::{O3_LSQ_TOTAL_ALIAS}"),
+    );
 }
 ```
 
@@ -704,14 +821,20 @@ fn append_gem5_o3_lsq_count_bucket_alias_stats(
             &format!("lsq0.operation_0::{}", alias.bucket_alias()),
         );
     }
-    append_count_bucket("lsq0.operation.total", "lsq0.operation_0::total");
+    append_count_bucket(
+        &format!("lsq0.operation.{O3_LSQ_TOTAL_ALIAS}"),
+        &format!("lsq0.operation_0::{O3_LSQ_TOTAL_ALIAS}"),
+    );
     for alias in O3_LSQ_ORDERING_GEM5_ALIASES {
         append_count_bucket(
             &format!("lsq0.ordering.{}", alias.alias()),
             &format!("lsq0.ordering_0::{}", alias.bucket_alias()),
         );
     }
-    append_count_bucket("lsq0.ordering.total", "lsq0.ordering_0::total");
+    append_count_bucket(
+        &format!("lsq0.ordering.{O3_LSQ_TOTAL_ALIAS}"),
+        &format!("lsq0.ordering_0::{O3_LSQ_TOTAL_ALIAS}"),
+    );
 }
 ```
 
@@ -728,6 +851,7 @@ use crate::o3_lsq_aliases::{
     o3_lsq_operation_gem5_alias_from_alias,
     o3_lsq_operation_gem5_alias_from_source,
     o3_lsq_ordering_gem5_alias_from_alias,
+    O3_LSQ_TOTAL_ALIAS,
 };
 ```
 
@@ -735,8 +859,8 @@ Replace the two local bucket match functions with descriptor lookup while
 retaining explicit total handling:
 
 ```rust
-let bucket = if suffix == "total" {
-    "total"
+let bucket = if suffix == O3_LSQ_TOTAL_ALIAS {
+    O3_LSQ_TOTAL_ALIAS
 } else {
     o3_lsq_operation_gem5_alias_from_alias(suffix)?.bucket_alias()
 };
