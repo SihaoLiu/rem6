@@ -1259,8 +1259,8 @@ fn gem5_migration_sections_are_auditable() {
             );
             for required in ["**Migrated:**", "**Not migrated:**", "**Next evidence:**"] {
                 assert!(
-                    body.contains(required),
-                    "`{heading}` is missing required field `{required}`"
+                    body.lines().any(|line| line.starts_with(required)),
+                    "`{heading}` is missing standalone field `{required}`"
                 );
             }
         }
