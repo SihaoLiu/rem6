@@ -374,7 +374,7 @@ pub(crate) const O3_LSQ_OPERATION_GEM5_ALIASES: &[O3LsqOperationGem5Alias] = &[
     ),
 ];
 
-pub(crate) fn o3_lsq_operation_gem5_alias_from_source(
+pub(crate) fn o3_lsq_operation_gem5_alias_by_source_name(
     source: &str,
 ) -> Option<&'static O3LsqOperationGem5Alias> {
     O3_LSQ_OPERATION_GEM5_ALIASES
@@ -382,7 +382,7 @@ pub(crate) fn o3_lsq_operation_gem5_alias_from_source(
         .find(|alias| alias.source_name() == source)
 }
 
-pub(crate) fn o3_lsq_operation_gem5_alias_from_alias(
+pub(crate) fn o3_lsq_operation_gem5_alias_by_alias(
     name: &str,
 ) -> Option<&'static O3LsqOperationGem5Alias> {
     O3_LSQ_OPERATION_GEM5_ALIASES
@@ -437,7 +437,7 @@ pub(crate) const O3_LSQ_ORDERING_GEM5_ALIASES: &[O3LsqOrderingGem5Alias] = &[
     ),
 ];
 
-pub(crate) fn o3_lsq_ordering_gem5_alias_from_alias(
+pub(crate) fn o3_lsq_ordering_gem5_alias_by_alias(
     name: &str,
 ) -> Option<&'static O3LsqOrderingGem5Alias> {
     O3_LSQ_ORDERING_GEM5_ALIASES
@@ -448,10 +448,10 @@ pub(crate) fn o3_lsq_ordering_gem5_alias_from_alias(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum O3LsqDataResponseMetric {
     Samples,
-    TotalLatency,
-    MaxLatency,
-    MinLatency,
-    AverageLatency,
+    Ticks,
+    MaxTicks,
+    MinTicks,
+    AvgTicks,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -502,32 +502,32 @@ pub(crate) const O3_LSQ_DATA_RESPONSE_GEM5_ALIASES: &[O3LsqDataResponseGem5Alias
         "Count",
     ),
     O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::TotalLatency,
+        O3LsqDataResponseMetric::Ticks,
         "ticks",
         "totalLatency",
         "Tick",
     ),
     O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::MaxLatency,
+        O3LsqDataResponseMetric::MaxTicks,
         "max_ticks",
         "maxLatency",
         "Tick",
     ),
     O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::MinLatency,
+        O3LsqDataResponseMetric::MinTicks,
         "min_ticks",
         "minLatency",
         "Tick",
     ),
     O3LsqDataResponseGem5Alias::new(
-        O3LsqDataResponseMetric::AverageLatency,
+        O3LsqDataResponseMetric::AvgTicks,
         "avg_ticks",
         "avgLatency",
         "Tick",
     ),
 ];
 
-pub(crate) fn o3_lsq_data_response_gem5_alias_from_source(
+pub(crate) fn o3_lsq_data_response_gem5_alias_by_source_suffix(
     source_suffix: &str,
 ) -> Option<&'static O3LsqDataResponseGem5Alias> {
     O3_LSQ_DATA_RESPONSE_GEM5_ALIASES
@@ -633,25 +633,25 @@ mod tests {
             &[
                 (O3LsqDataResponseMetric::Samples, "samples", "samples", "Count"),
                 (
-                    O3LsqDataResponseMetric::TotalLatency,
+                    O3LsqDataResponseMetric::Ticks,
                     "ticks",
                     "totalLatency",
                     "Tick",
                 ),
                 (
-                    O3LsqDataResponseMetric::MaxLatency,
+                    O3LsqDataResponseMetric::MaxTicks,
                     "max_ticks",
                     "maxLatency",
                     "Tick",
                 ),
                 (
-                    O3LsqDataResponseMetric::MinLatency,
+                    O3LsqDataResponseMetric::MinTicks,
                     "min_ticks",
                     "minLatency",
                     "Tick",
                 ),
                 (
-                    O3LsqDataResponseMetric::AverageLatency,
+                    O3LsqDataResponseMetric::AvgTicks,
                     "avg_ticks",
                     "avgLatency",
                     "Tick",
@@ -725,10 +725,10 @@ iteration and these local value selectors:
 fn lsq_data_response_value(o3: O3RuntimeStats, metric: O3LsqDataResponseMetric) -> u64 {
     match metric {
         O3LsqDataResponseMetric::Samples => o3.lsq_data_latency_samples(),
-        O3LsqDataResponseMetric::TotalLatency => o3.lsq_data_latency_ticks(),
-        O3LsqDataResponseMetric::MaxLatency => o3.lsq_data_latency_max_ticks(),
-        O3LsqDataResponseMetric::MinLatency => o3.lsq_data_latency_min_ticks(),
-        O3LsqDataResponseMetric::AverageLatency => o3.lsq_data_latency_avg_ticks(),
+        O3LsqDataResponseMetric::Ticks => o3.lsq_data_latency_ticks(),
+        O3LsqDataResponseMetric::MaxTicks => o3.lsq_data_latency_max_ticks(),
+        O3LsqDataResponseMetric::MinTicks => o3.lsq_data_latency_min_ticks(),
+        O3LsqDataResponseMetric::AvgTicks => o3.lsq_data_latency_avg_ticks(),
     }
 }
 
@@ -739,10 +739,10 @@ fn lsq_operation_data_response_value(
 ) -> u64 {
     match metric {
         O3LsqDataResponseMetric::Samples => o3.lsq_operation_latency_samples(operation),
-        O3LsqDataResponseMetric::TotalLatency => o3.lsq_operation_latency_ticks(operation),
-        O3LsqDataResponseMetric::MaxLatency => o3.lsq_operation_latency_max_ticks(operation),
-        O3LsqDataResponseMetric::MinLatency => o3.lsq_operation_latency_min_ticks(operation),
-        O3LsqDataResponseMetric::AverageLatency => o3.lsq_operation_latency_avg_ticks(operation),
+        O3LsqDataResponseMetric::Ticks => o3.lsq_operation_latency_ticks(operation),
+        O3LsqDataResponseMetric::MaxTicks => o3.lsq_operation_latency_max_ticks(operation),
+        O3LsqDataResponseMetric::MinTicks => o3.lsq_operation_latency_min_ticks(operation),
+        O3LsqDataResponseMetric::AvgTicks => o3.lsq_operation_latency_avg_ticks(operation),
     }
 }
 ```
@@ -847,10 +847,10 @@ Import these helpers and constants in `o3_stats_dump_aliases.rs`:
 
 ```rust
 use crate::o3_lsq_aliases::{
-    o3_lsq_data_response_gem5_alias_from_source,
-    o3_lsq_operation_gem5_alias_from_alias,
-    o3_lsq_operation_gem5_alias_from_source,
-    o3_lsq_ordering_gem5_alias_from_alias,
+    o3_lsq_data_response_gem5_alias_by_source_suffix,
+    o3_lsq_operation_gem5_alias_by_alias,
+    o3_lsq_operation_gem5_alias_by_source_name,
+    o3_lsq_ordering_gem5_alias_by_alias,
     O3_LSQ_TOTAL_ALIAS,
 };
 ```
@@ -862,7 +862,7 @@ retaining explicit total handling:
 let bucket = if suffix == O3_LSQ_TOTAL_ALIAS {
     O3_LSQ_TOTAL_ALIAS
 } else {
-    o3_lsq_operation_gem5_alias_from_alias(suffix)?.bucket_alias()
+    o3_lsq_operation_gem5_alias_by_alias(suffix)?.bucket_alias()
 };
 ```
 
@@ -871,8 +871,8 @@ Use the equivalent ordering lookup for ordering paths. In
 matches with:
 
 ```rust
-let operation_alias = o3_lsq_operation_gem5_alias_from_source(operation)?.alias();
-let metric = o3_lsq_data_response_gem5_alias_from_source(metric_suffix)?.alias();
+let operation_alias = o3_lsq_operation_gem5_alias_by_source_name(operation)?.alias();
+let metric = o3_lsq_data_response_gem5_alias_by_source_suffix(metric_suffix)?.alias();
 ```
 
 Delete `o3_stats_dump_lsq_operation_bucket_alias`,
