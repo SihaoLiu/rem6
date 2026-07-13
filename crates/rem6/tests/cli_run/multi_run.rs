@@ -225,14 +225,14 @@ config = "packet.toml"
     assert!(stdout.contains("\"schema\":\"rem6.cli.multi-run.v1\""));
     assert!(stdout.contains("\"suite_id\":\"mixed-smoke\""));
     assert!(stdout.contains("\"runs\":3"));
-    assert!(stdout.contains("\"total_final_tick\":28"));
+    assert!(stdout.contains("\"total_final_tick\":23"));
     assert!(stdout.contains("\"total_committed_instructions\":2"));
     assert!(stdout.contains("\"total_scheduled_requests\":5"));
     assert!(stdout.contains("\"id\":\"cpu\""));
     assert!(stdout.contains("\"command\":\"run\""));
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.run.v1\""));
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"final_tick\":12"));
+    assert!(stdout.contains("\"final_tick\":7"));
     assert!(stdout.contains("\"id\":\"traffic\""));
     assert!(stdout.contains("\"command\":\"gups\""));
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.gups.v1\""));
@@ -276,8 +276,8 @@ stats_format = "json"
 execute = true
 memory_system = "direct"
 output = "artifacts/checkpoint-run.json"
-host_checkpoints = ["1:run-cp"]
-host_checkpoint_restores = ["2:run-cp"]
+host_checkpoints = ["3:run-cp"]
+host_checkpoint_restores = ["4:run-cp"]
 "#,
     )
     .unwrap();

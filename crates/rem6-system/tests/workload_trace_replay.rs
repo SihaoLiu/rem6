@@ -3373,7 +3373,7 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
         replay_manifest_with_data_translation("riscv-replay-trace-tlbi-data-translation");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packet_records(&[PacketRecord {
-        tick: 40,
+        tick: 30,
         command: GEM5_TLBI_EXT_SYNC,
         address: Some(0),
         size: Some(64),
@@ -3405,8 +3405,8 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     let tlb_sync_records = traffic_replay.trace_tlb_sync_records();
     assert_eq!(tlb_sync_records.len(), 1);
     let tlb_sync = &tlb_sync_records[0];
-    assert_eq!(tlb_sync.tick(), 40);
-    assert_eq!(tlb_sync.trace_tick(), 40);
+    assert_eq!(tlb_sync.tick(), 30);
+    assert_eq!(tlb_sync.trace_tick(), 30);
     assert_eq!(tlb_sync.sequence(), 0);
     assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
     assert_eq!(tlb_sync.flushed_entry_count(), 1);

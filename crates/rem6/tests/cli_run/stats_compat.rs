@@ -1701,7 +1701,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"committed_instructions\":2"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":13,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":10,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
@@ -1718,7 +1718,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        13,
+        10,
         "monotonic",
     );
     assert_stat(
@@ -14833,6 +14833,7 @@ fn rem6_run_text_stats_emit_in_order_flush_redirect_cause_stage_aliases() {
         ),
         (branch_flushed, branch_flushed_cycles)
     );
+    let branch_trap_flushed = ([0, 0, 1, 0, 0], [0, 0, 1, 0, 0]);
     assert_eq!(
         assert_in_order_cause_stage_aliases(
             &branch_stdout,
@@ -14841,7 +14842,7 @@ fn rem6_run_text_stats_emit_in_order_flush_redirect_cause_stage_aliases() {
             "trap_redirect",
             "trapRedirect",
         ),
-        ([0; 5], [0; 5])
+        branch_trap_flushed
     );
     assert_eq!(
         assert_in_order_cause_stage_aliases(
@@ -14851,7 +14852,7 @@ fn rem6_run_text_stats_emit_in_order_flush_redirect_cause_stage_aliases() {
             "trap_redirect",
             "trapRedirect",
         ),
-        ([0; 5], [0; 5])
+        branch_trap_flushed
     );
 
     let trap_program = riscv64_program(&[

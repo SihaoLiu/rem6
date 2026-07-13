@@ -1101,8 +1101,8 @@ fn rem6_run_accepts_scheduler_min_remote_delay_runtime_option() {
     assert!(stdout.contains("\"stop_code\":0"));
     assert!(stdout.contains("\"min_remote_delay\":4"));
     assert!(stdout.contains("\"host_event_delay\":4"));
-    assert!(stdout.contains("\"executed_ticks\":48"));
-    assert!(stdout.contains("\"final_tick\":48"));
+    assert!(stdout.contains("\"executed_ticks\":28"));
+    assert!(stdout.contains("\"final_tick\":28"));
     assert_stat(
         &stdout,
         "sim.parallel.scheduler.min_remote_delay",
@@ -1111,7 +1111,7 @@ fn rem6_run_accepts_scheduler_min_remote_delay_runtime_option() {
         "constant",
     );
     assert_stat(&stdout, "sim.host.event_delay", "Tick", 4, "constant");
-    assert_stat(&stdout, "sim.final_tick", "Tick", 48, "monotonic");
+    assert_stat(&stdout, "sim.final_tick", "Tick", 28, "monotonic");
     assert_transport_stats(&stdout, "sim.memory.fetch", 2, 16, 8);
     assert_transport_stats(
         &stdout,
@@ -1167,11 +1167,11 @@ fn rem6_run_accepts_memory_route_delay_runtime_option() {
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"memory_route_delay\":5"));
     assert!(stdout.contains("\"min_remote_delay\":2"));
-    assert!(stdout.contains("\"executed_ticks\":80"));
-    assert!(stdout.contains("\"final_tick\":80"));
+    assert!(stdout.contains("\"executed_ticks\":68"));
+    assert!(stdout.contains("\"final_tick\":68"));
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert_stat(&stdout, "sim.memory.route_delay", "Tick", 5, "constant");
-    assert_stat(&stdout, "sim.final_tick", "Tick", 80, "monotonic");
+    assert_stat(&stdout, "sim.final_tick", "Tick", 68, "monotonic");
     assert_transport_stats(&stdout, "sim.memory.fetch", 4, 40, 10);
     assert_transport_stats(
         &stdout,
@@ -3626,11 +3626,11 @@ fn rem6_run_accepts_host_event_delay_runtime_option() {
     assert!(stdout.contains("\"host_event_delay\":7"));
     assert!(stdout.contains("\"memory_route_delay\":5"));
     assert!(stdout.contains("\"min_remote_delay\":2"));
-    assert!(stdout.contains("\"executed_ticks\":41"));
-    assert!(stdout.contains("\"final_tick\":41"));
+    assert!(stdout.contains("\"executed_ticks\":29"));
+    assert!(stdout.contains("\"final_tick\":29"));
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert_stat(&stdout, "sim.host.event_delay", "Tick", 7, "constant");
-    assert_stat(&stdout, "sim.final_tick", "Tick", 41, "monotonic");
+    assert_stat(&stdout, "sim.final_tick", "Tick", 29, "monotonic");
     assert_transport_stats(&stdout, "sim.memory.fetch", 2, 20, 10);
     assert_transport_stats(
         &stdout,
@@ -3997,8 +3997,8 @@ fn rem6_run_accepts_start_address_runtime_option() {
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"start_address\":\"0x80000004\""));
-    assert!(stdout.contains("\"executed_ticks\":12"));
-    assert!(stdout.contains("\"final_tick\":12"));
+    assert!(stdout.contains("\"executed_ticks\":7"));
+    assert!(stdout.contains("\"final_tick\":7"));
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert_stat(
         &stdout,
@@ -4007,7 +4007,7 @@ fn rem6_run_accepts_start_address_runtime_option() {
         0x8000_0004,
         "constant",
     );
-    assert_stat(&stdout, "sim.final_tick", "Tick", 12, "monotonic");
+    assert_stat(&stdout, "sim.final_tick", "Tick", 7, "monotonic");
     assert_transport_stats(&stdout, "sim.memory.fetch", 2, 4, 2);
     assert_transport_stats(
         &stdout,

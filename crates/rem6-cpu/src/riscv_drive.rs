@@ -50,6 +50,8 @@ impl RiscvCore {
         }
 
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
+        let inherited_o3_retirement =
+            !detailed_o3_fetch && self.o3_retirement_suppresses_normal_pipeline();
         let pending_o3_scalar_memory_retirement = self.has_pending_o3_scalar_memory_retirement();
         if !detailed_o3_fetch && pending_o3_scalar_memory_retirement {
             return Ok(None);
@@ -75,7 +77,7 @@ impl RiscvCore {
             }
         }
 
-        if !detailed_o3_fetch {
+        if !detailed_o3_fetch && !inherited_o3_retirement {
             match self.schedule_next_completed_fetch_pipeline_cycle_serial(scheduler)? {
                 RiscvInOrderDriveStatus::Scheduled(event) => {
                     return Ok(Some(RiscvCoreDriveAction::PipelineCycleScheduled { event }));
@@ -98,6 +100,9 @@ impl RiscvCore {
             return Ok(Some(action));
         }
         if self.live_retire_gate_blocks_new_work() {
+            return Ok(None);
+        }
+        if inherited_o3_retirement {
             return Ok(None);
         }
         if !fetch_admission.allows_fetch() {

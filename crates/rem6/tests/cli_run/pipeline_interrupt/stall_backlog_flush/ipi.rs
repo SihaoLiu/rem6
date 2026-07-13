@@ -5,10 +5,12 @@ const SBI_IPI_SEND_IPI: i32 = 0;
 const RISCV_SUPERVISOR_SOFTWARE_INTERRUPT: u64 = 1;
 
 const CPU1_FETCH_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(1, "fetch_wait", "ordering_blocked", "fetch2", "commit");
+    InterruptBacklogPair::new(1, "fetch_wait", "ordering_blocked", "fetch2", "execute");
 const CPU1_FETCH_WAIT_COMMIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(1, "fetch_wait", "ordering_blocked", "fetch1", "commit");
+    InterruptBacklogPair::new(1, "fetch_wait", "ordering_blocked", "fetch2", "commit");
 const CPU1_FETCH_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
+    InterruptBacklogPair::new(1, "fetch_wait", "resource_blocked", "decode", "commit");
+const CPU1_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(1, "fetch_wait", "resource_blocked", "fetch2", "commit");
 
 fn secondary_interrupt_ipi_fetch_wait_program_path(name: &str) -> InterruptProgram {
@@ -140,7 +142,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_ipi_fetch_wait_backlog_with_interrupt
     assert_eq!(flushed.len(), 1, "{interrupt:?}");
     assert_eq!(
         flushed[0].get("stage").and_then(Value::as_str),
-        Some("commit")
+        Some("execute")
     );
     let flushed_sequence = json_record_u64(&flushed[0], "sequence");
     assert_ne!(terminal_sequence, flushed_sequence);
@@ -162,25 +164,25 @@ fn rem6_run_pipeline_debug_correlates_cpu1_ipi_fetch_wait_backlog_with_interrupt
                     })
         })
         .collect::<Vec<_>>();
-    assert_eq!(waits.len(), 12, "{waits:?}");
+    assert_eq!(waits.len(), 10, "{waits:?}");
     assert!(waits
         .iter()
         .all(|record| json_record_u64(record, "stall_cycles") == 1));
     let ordering_expected = BacklogFlushTotals {
         sequences: 1,
-        stall_records: 12,
-        stall_cycles: 12,
+        stall_records: 10,
+        stall_cycles: 10,
     };
     let commit_ordering_expected = BacklogFlushTotals {
         sequences: 1,
-        stall_records: 8,
-        stall_cycles: 8,
+        stall_records: 9,
+        stall_cycles: 9,
     };
     let resource_expected = ordering_expected;
     let aggregate_expected = BacklogFlushTotals {
         sequences: 2,
-        stall_records: 32,
-        stall_cycles: 32,
+        stall_records: 29,
+        stall_cycles: 29,
     };
     assert_eq!(
         raw_interrupt_backlog_flush_totals(trace, CPU1_FETCH_WAIT_INTERRUPT),
@@ -267,10 +269,11 @@ fn rem6_run_pipeline_debug_correlates_cpu1_ipi_fetch_wait_backlog_with_interrupt
     assert_interrupt_terminal_advance(&suppressed_json, suppressed_interrupt, 1, program.loop_pc);
     let ordering_expected = BacklogFlushTotals::default();
     let commit_ordering_expected = BacklogFlushTotals::default();
-    let resource_expected = BacklogFlushTotals {
+    let resource_expected = BacklogFlushTotals::default();
+    let suppressed_resource_expected = BacklogFlushTotals {
         sequences: 1,
-        stall_records: 12,
-        stall_cycles: 12,
+        stall_records: 10,
+        stall_cycles: 10,
     };
     assert_eq!(
         raw_interrupt_backlog_flush_totals(suppressed_trace, CPU1_FETCH_WAIT_INTERRUPT),
@@ -287,13 +290,25 @@ fn rem6_run_pipeline_debug_correlates_cpu1_ipi_fetch_wait_backlog_with_interrupt
         resource_expected,
         "{suppressed_trace:?}"
     );
+    assert_eq!(
+        raw_interrupt_backlog_flush_totals(
+            suppressed_trace,
+            CPU1_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT
+        ),
+        suppressed_resource_expected,
+        "{suppressed_trace:?}"
+    );
     assert_interrupt_backlog_flush_outputs(
         &suppressed_json,
         &suppressed_stdout,
         CPU1_FETCH_WAIT_INTERRUPT,
-        resource_expected,
+        suppressed_resource_expected,
         &[
             (CPU1_FETCH_WAIT_RESOURCE_INTERRUPT, resource_expected),
+            (
+                CPU1_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT,
+                suppressed_resource_expected,
+            ),
             (CPU1_FETCH_WAIT_COMMIT_INTERRUPT, commit_ordering_expected),
             (CPU1_FETCH_WAIT_INTERRUPT, ordering_expected),
         ],

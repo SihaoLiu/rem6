@@ -742,8 +742,8 @@ fn rem6_run_stats_emit_in_order_execute_wait_resource_stage_matrix_without_debug
                 ),
             )
         }),
-        [0; 5],
-        "the serial CLI drive should not invent younger execute-wait rows: {debug_stdout}"
+        [0, 0, 19, 0, 0],
+        "in-order overlap should preserve the younger decode row blocked behind DIV: {debug_stdout}"
     );
 
     let execute_wait_cycles =
@@ -807,8 +807,8 @@ fn rem6_run_stats_emit_in_order_execute_wait_resource_stage_matrix_without_debug
         execute_wait_resource_cycles.iter().any(|cycles| *cycles > 0),
         "execute-wait run should attribute resource-blocked stage cycles: {execute_wait_resource_cycles:?}"
     );
-    assert_eq!(execute_wait_ordering, [0; 5]);
-    assert_eq!(execute_wait_ordering_cycles, [0; 5]);
+    assert_eq!(execute_wait_ordering, [0, 0, 19, 0, 0]);
+    assert_eq!(execute_wait_ordering_cycles, [0, 0, 19, 0, 0]);
     assert!(
         execute_wait_records.iter().any(|records| *records > 0),
         "execute-wait run should attribute active stage records: {execute_wait_records:?}"
@@ -827,11 +827,11 @@ fn rem6_run_stats_emit_in_order_execute_wait_resource_stage_matrix_without_debug
     );
     assert_eq!(
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "ordering_blocked"),
-        [0; 5]
+        [3, 3, 0, 0, 0]
     );
     assert_eq!(
         in_order_stall_cause_stage_metric_values(&json, "fetch_wait", "ordering_blocked_cycles"),
-        [0; 5]
+        [3, 3, 0, 0, 0]
     );
 
     let text_stdout = run_execute_wait_ordering_program(&path, "text");
@@ -990,10 +990,10 @@ fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
         stage_retired_cycles.iter().any(|cycles| *cycles > 0),
         "stage retired cycles should be visible in normal stats: {stage_retired_cycles:?}"
     );
-    assert_eq!(
-        stage_advanced, stage_advanced_cycles,
-        "the execution scheduler should emit at most one stage advance per kernel tick"
-    );
+    assert_eq!(stage_advanced, [6, 6, 6, 5, 5]);
+    assert_eq!(stage_advanced_cycles, [5, 5, 5, 4, 5]);
+    assert_eq!(stage_retired, [0, 0, 0, 0, 5]);
+    assert_eq!(stage_retired_cycles, [0, 0, 0, 0, 5]);
     assert!(
         stage_retired[4] > 0,
         "retirement movement should be attributed to commit stage: {stage_retired:?}"
@@ -1160,9 +1160,10 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
         "branch run record lanes should not exceed flushed cycle lanes: records={flush_cause_branch_prediction_records:?} cycles={flush_cause_branch_prediction_flushed_cycles:?}"
     );
 
+    let expected_trap_redirect_stage = [0, 0, 1, 0, 0];
     assert_eq!(
         in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "flushed"),
-        [0; 5]
+        expected_trap_redirect_stage
     );
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
@@ -1171,11 +1172,11 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             "trap_redirect",
             "flushed"
         ),
-        [0; 5]
+        expected_trap_redirect_stage
     );
     assert_eq!(
         in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "flushed_cycles"),
-        [0; 5]
+        expected_trap_redirect_stage
     );
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
@@ -1184,19 +1185,19 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             "trap_redirect",
             "flushed_cycles"
         ),
-        [0; 5]
+        expected_trap_redirect_stage
     );
     assert_eq!(
         in_order_flush_cause_stage_metric_values(&json, "trap_redirect", "records"),
-        [0; 5]
+        expected_trap_redirect_stage
     );
     assert_eq!(
         in_order_cause_metric_value(&json, "flush_cause", "trap_redirect", "records"),
-        0
+        1
     );
     assert_eq!(
         in_order_artifact_cause_metric_value(&json, "flush_cause", "trap_redirect", "records"),
-        0
+        1
     );
     assert_in_order_cause_alias(
         &json,
@@ -1214,7 +1215,7 @@ fn rem6_run_stats_emit_in_order_flush_cause_stage_matrix_without_debug_flag() {
             "trap_redirect",
             "records"
         ),
-        [0; 5]
+        expected_trap_redirect_stage
     );
 }
 
@@ -1356,9 +1357,10 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
         branch_redirect_cause_record_count <= branch_redirect_cause_records.iter().sum::<u64>(),
         "branch aggregate redirect-cause records should not exceed stage records: records={branch_redirect_cause_record_count} stage_records={branch_redirect_cause_records:?}"
     );
+    let expected_branch_trap_redirect_stage = [0, 0, 1, 0, 0];
     assert_eq!(
         in_order_redirect_cause_stage_metric_values(&branch_json, "trap_redirect", "flushed"),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
@@ -1367,14 +1369,15 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "trap_redirect",
             "flushed"
         ),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
     assert_eq!(
         in_order_redirect_cause_stage_metric_values(&branch_json, "trap_redirect", "records"),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
     let branch_trap_redirect_record_count =
         in_order_cause_metric_value(&branch_json, "redirect_cause", "trap_redirect", "records");
+    assert_eq!(branch_trap_redirect_record_count, 1);
     assert_eq!(
         branch_trap_redirect_record_count,
         json_stat_value(&branch_json, "sim.cpu0.pipeline.in_order.trap_redirects")
@@ -1404,7 +1407,7 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "trap_redirect",
             "records"
         ),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
     assert_eq!(
         in_order_redirect_cause_stage_metric_values(
@@ -1412,7 +1415,7 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "trap_redirect",
             "flushed_cycles"
         ),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
     assert_eq!(
         in_order_artifact_cause_stage_metric_values(
@@ -1421,7 +1424,7 @@ fn rem6_run_stats_emit_in_order_redirect_cause_stage_matrix_without_debug_flag()
             "trap_redirect",
             "flushed_cycles"
         ),
-        [0; 5]
+        expected_branch_trap_redirect_stage
     );
 
     let trap_program = riscv64_program(&[
@@ -1774,8 +1777,8 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
         pipeline_summary
             .pointer("/stall_cause/fetch_wait/stage/execute/resource_blocked_cycles")
             .and_then(Value::as_u64),
-        Some(0),
-        "pipeline summary should include explicit zero lanes for absent cause-stage combinations"
+        Some(2),
+        "pipeline summary should preserve fetch-wait cycles while the younger row overlaps execute"
     );
 
     assert_stat(
@@ -1825,9 +1828,13 @@ fn rem6_run_pipeline_debug_flag_attributes_data_wait_stage_cycles() {
             "monotonic",
         );
     }
-    assert!(!stdout.contains(
-        "sim.debug.pipeline_trace.stall_cause.fetch_wait.stage.execute.resource_blocked_cycles"
-    ));
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.stall_cause.fetch_wait.stage.execute.resource_blocked_cycles",
+        "Cycle",
+        2,
+        "monotonic",
+    );
     assert!(!stdout.contains(
         "sim.debug.pipeline_trace.stall_cause.execute_wait.stage.execute.resource_blocked_cycles"
     ));
@@ -2079,12 +2086,22 @@ fn rem6_run_pipeline_debug_flag_attributes_in_flight_stage_cycles() {
         after.values().any(|summary| summary.cycles > 0),
         "widened pipeline run should emit after-in-flight stage cycles: {trace:?}"
     );
-    assert!(
-        before
-            .values()
-            .chain(after.values())
-            .all(|summary| summary.count == summary.cycles),
-        "serialized execution should observe each in-flight stage row on a distinct kernel tick: before={before:?} after={after:?}"
+    let stage_names = ["fetch1", "fetch2", "decode", "execute", "commit"];
+    assert_eq!(before.len(), stage_names.len());
+    assert_eq!(
+        stage_names.map(|stage| {
+            let summary = before.get(stage).expect("before-in-flight stage summary");
+            (summary.count, summary.cycles)
+        }),
+        [(12, 10), (16, 14), (8, 7), (6, 5), (6, 5)]
+    );
+    assert_eq!(after.len(), stage_names.len());
+    assert_eq!(
+        stage_names.map(|stage| {
+            let summary = after.get(stage).expect("after-in-flight stage summary");
+            (summary.count, summary.cycles)
+        }),
+        [(6, 5), (16, 14), (8, 7), (6, 5), (6, 5)]
     );
 
     for (stage, summary) in before {
@@ -2185,11 +2202,25 @@ fn rem6_run_pipeline_debug_flag_attributes_advance_retire_stage_cycles() {
         movement.values().any(|summary| summary.retired_cycles > 0),
         "widened pipeline run should emit retired stage cycles: {trace:?}"
     );
-    assert!(
-        movement
-            .values()
-            .all(|summary| summary.advanced == summary.advanced_cycles),
-        "serialized execution should attribute every stage advance to a distinct kernel tick: {movement:?}"
+    let stage_names = ["fetch1", "fetch2", "decode", "execute", "commit"];
+    assert_eq!(movement.len(), stage_names.len());
+    assert_eq!(
+        stage_names.map(|stage| {
+            let summary = movement.get(stage).expect("stage movement summary");
+            (
+                summary.advanced,
+                summary.advanced_cycles,
+                summary.retired,
+                summary.retired_cycles,
+            )
+        }),
+        [
+            (6, 5, 0, 0),
+            (6, 5, 0, 0),
+            (6, 5, 0, 0),
+            (5, 4, 0, 0),
+            (5, 5, 5, 5),
+        ]
     );
 
     for (stage, summary) in movement {
@@ -2340,13 +2371,6 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
             *cycles,
             "monotonic",
         );
-        assert_stat(
-            &stdout,
-            &format!("sim.debug.pipeline_trace.stage.{stage}.flushed_cycles"),
-            "Cycle",
-            *cycles,
-            "monotonic",
-        );
     }
     let pipeline_summary = json
         .pointer("/debug/pipeline_summary")
@@ -2356,6 +2380,46 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
         .unwrap_or_else(|| {
             panic!("missing branch_prediction pipeline summary: {pipeline_summary}")
         });
+    let stage_names = ["fetch1", "fetch2", "decode", "execute", "commit"];
+    let all_flushed_cycles = stage_names.map(|stage| {
+        pipeline_summary_path_u64(
+            &json,
+            &format!("/debug/pipeline_summary/stage/{stage}/flushed_cycles"),
+        )
+    });
+    let branch_flushed_cycles = stage_names.map(|stage| {
+        pipeline_summary_path_u64(
+            &json,
+            &format!(
+                "/debug/pipeline_summary/flush_cause/branch_prediction/stage/{stage}/flushed_cycles"
+            ),
+        )
+    });
+    let trap_flushed_cycles = stage_names.map(|stage| {
+        pipeline_summary_path_u64(
+            &json,
+            &format!(
+                "/debug/pipeline_summary/flush_cause/trap_redirect/stage/{stage}/flushed_cycles"
+            ),
+        )
+    });
+    assert_eq!(all_flushed_cycles, [0, 0, 2, 0, 0]);
+    assert_eq!(branch_flushed_cycles, [0, 0, 1, 0, 0]);
+    assert_eq!(trap_flushed_cycles, [0, 0, 1, 0, 0]);
+    assert_eq!(
+        all_flushed_cycles,
+        std::array::from_fn(|index| branch_flushed_cycles[index] + trap_flushed_cycles[index]),
+        "generic flushed-cycle lanes must equal the per-cause lanes"
+    );
+    for (stage, cycles) in stage_names.into_iter().zip(all_flushed_cycles) {
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.pipeline_trace.stage.{stage}.flushed_cycles"),
+            "Cycle",
+            cycles,
+            "monotonic",
+        );
+    }
     assert_eq!(
         json_record_u64(pipeline_summary, "records"),
         trace.len() as u64,
@@ -2408,9 +2472,17 @@ fn rem6_run_pipeline_debug_flag_attributes_branch_flush_stage_cycles() {
                 && path.ends_with(".flushed_cycles")
         })
         .collect::<Vec<_>>();
-    assert!(
-        trap_redirect_stage_flushed_cycles.is_empty(),
-        "branch-only run should not emit trap_redirect stage flushed-cycle stats: {trap_redirect_stage_flushed_cycles:?}"
+    assert_eq!(
+        trap_redirect_stage_flushed_cycles,
+        vec!["sim.debug.pipeline_trace.flush_cause.trap_redirect.stage.decode.flushed_cycles"],
+        "the final ecall should expose exactly one younger trap-flush stage lane"
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.pipeline_trace.flush_cause.trap_redirect.stage.decode.flushed_cycles",
+        "Cycle",
+        1,
+        "monotonic",
     );
     assert_stat(
         &stdout,

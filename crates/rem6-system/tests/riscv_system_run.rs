@@ -1219,7 +1219,7 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
         .collect::<Vec<_>>();
     assert_eq!(
         stats_actions,
-        vec![("reset", 30), ("dump", 57), ("dump", 84), ("reset", 84),]
+        vec![("reset", 18), ("dump", 33), ("dump", 48), ("reset", 48),]
     );
 }
 
@@ -1385,20 +1385,12 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
         .collect::<Vec<_>>();
     assert_eq!(
         checkpoints,
-        vec![
-            (
-                42,
-                GuestEventId::new(140),
-                source,
-                "gem5-m5-checkpoint".to_string(),
-            ),
-            (
-                90,
-                GuestEventId::new(140),
-                source,
-                "gem5-m5-checkpoint".to_string(),
-            ),
-        ]
+        vec![(
+            30,
+            GuestEventId::new(140),
+            source,
+            "gem5-m5-checkpoint".to_string(),
+        )]
     );
 }
 
@@ -1477,7 +1469,7 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
         controller.run().action_outcomes(),
         &[
             SystemActionOutcome::GuestHostCall {
-                tick: 88,
+                tick: 52,
                 event: GuestEventId::new(150),
                 source,
                 selector: 0x321,

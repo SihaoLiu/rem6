@@ -415,9 +415,17 @@ pub(crate) fn push_prepared_completed_fetch_drive_event(
 }
 
 pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {
+    if inherited_o3_retirement_suppresses_pipeline(core) {
+        return false;
+    }
     core.detailed_o3_window_prefers_fetch_ahead()
         || (!core.has_pending_o3_scalar_memory_retirement()
             && core.in_order_fetch_admission().allows_fetch())
+}
+
+fn inherited_o3_retirement_suppresses_pipeline(core: &RiscvCore) -> bool {
+    !core.detailed_o3_window_prefers_fetch_ahead()
+        && core.o3_retirement_suppresses_normal_pipeline()
 }
 
 pub(crate) fn push_prepared_pipeline_cycle_drive_event(
@@ -426,6 +434,9 @@ pub(crate) fn push_prepared_pipeline_cycle_drive_event(
     scheduler: &mut PartitionedScheduler,
     prepared_actions: &mut PreparedParallelActions,
 ) -> Result<bool, RiscvClusterError> {
+    if inherited_o3_retirement_suppresses_pipeline(core) {
+        return Ok(false);
+    }
     if core.detailed_o3_window_prefers_fetch_ahead() {
         return Ok(false);
     }
@@ -465,6 +476,9 @@ pub(crate) fn push_pipeline_cycle_drive_event(
     scheduler: &mut PartitionedScheduler,
     actions: &mut Vec<RiscvClusterDriveEvent>,
 ) -> Result<bool, RiscvClusterError> {
+    if inherited_o3_retirement_suppresses_pipeline(core) {
+        return Ok(false);
+    }
     if core.detailed_o3_window_prefers_fetch_ahead() {
         return Ok(false);
     }

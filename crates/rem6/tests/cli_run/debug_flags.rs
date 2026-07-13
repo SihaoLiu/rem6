@@ -74,12 +74,12 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
                 bytes: "93027000",
             },
             ExpectedExecTraceRecord {
-                tick: 8,
+                tick: 5,
                 pc: "0x80000004",
                 bytes: "13831200",
             },
             ExpectedExecTraceRecord {
-                tick: 13,
+                tick: 8,
                 pc: "0x80000008",
                 bytes: "73000000",
             },
@@ -184,13 +184,13 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
                 size: 4,
             },
             ExpectedFetchTraceRecord {
-                tick: 6,
+                tick: 3,
                 pc: "0x80000004",
                 sequence: 1,
                 size: 4,
             },
             ExpectedFetchTraceRecord {
-                tick: 11,
+                tick: 6,
                 pc: "0x80000008",
                 sequence: 2,
                 size: 4,
@@ -2912,8 +2912,8 @@ fn detailed_o3_ordered_atomic_lsq_debug_binary(name: &str) -> std::path::PathBuf
         atomic_type(0x02, true, false, 0, 5, 0x3, 7),
         i_type(3, 0, 0x0, 8, 0x13),
         atomic_type(0x03, false, true, 8, 5, 0x3, 9),
-        i_type(4, 0, 0x0, 10, 0x13),
-        atomic_type(0x01, true, true, 10, 5, 0x3, 11),
+        i_type(4, 0, 0x0, 12, 0x13), // Preserve a0=0 for the immediate exit sentinel.
+        atomic_type(0x01, true, true, 12, 5, 0x3, 11),
         s_type(16, 9, 5, 0b011),
         s_type(24, 11, 5, 0b011),
         m5op(M5_EXIT),
@@ -4419,16 +4419,14 @@ fn assert_pipeline_trace_stage_activity(stdout: &str) {
             "pipeline trace should expose {stage}-stage advancement: {trace:?}"
         );
     }
-    assert!(
-        stage_resource_blocked.contains_key("fetch1")
-            && stage_resource_blocked.contains_key("fetch2"),
-        "pipeline trace should expose fetch-stage resource blocking: {trace:?}"
-    );
-    assert!(
-        stage_resource_blocked
-            .keys()
-            .all(|stage| matches!(stage.as_str(), "fetch1" | "fetch2")),
-        "explicit stage ticks should not classify ready decode/execute/commit stages as resource-blocked: {trace:?}"
+    let resource_blocked_stages = stage_resource_blocked
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        resource_blocked_stages,
+        BTreeSet::from(["commit", "decode", "fetch1", "fetch2"]),
+        "overlapped pipeline rows should expose exact resource-blocked stages: {trace:?}"
     );
     for (stage, advanced) in stage_advanced {
         assert_stat(
@@ -6002,13 +6000,13 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
     );
     assert_eq!(host_action_trace_kind_count(trace, "injected_command"), 0);
     assert_eq!(host_action_trace_kind_count(trace, "guest_host_call"), 1);
-    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 2);
+    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 1);
     assert_eq!(
         host_action_trace_kind_count(trace, "execution_mode_switch"),
         1
     );
     assert_eq!(host_action_trace_kind_count(trace, "stop"), 1);
-    assert_eq!(trace.len(), 5);
+    assert_eq!(trace.len(), 4);
 
     let call = host_action_trace_record(trace, "guest_host_call");
     assert_eq!(
@@ -6113,7 +6111,7 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
         &stdout,
         "sim.debug.host_action_trace.checkpoints",
         "Count",
-        2,
+        1,
         "monotonic",
     );
     assert_stat(
@@ -8532,6 +8530,20 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        json.pointer("/cores/0/committed_instructions")
+            .and_then(Value::as_u64),
+        Some(13)
+    );
+    assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("04000000000000000900000000000000")
     );
@@ -8566,6 +8578,9 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         .and_then(Value::as_array)
         .expect("O3 trace events array");
     assert_eq!(events.len(), 12);
+    assert!(events
+        .iter()
+        .all(|event| event.pointer("/pc").and_then(Value::as_str) != Some("0x80000034")));
     let by_pc = |pc: &str| {
         events
             .iter()
@@ -15905,7 +15920,7 @@ fn rem6_run_loads_debug_flags_from_toml_config() {
                 bytes: "93027000",
             },
             ExpectedExecTraceRecord {
-                tick: 8,
+                tick: 5,
                 pc: "0x80000004",
                 bytes: "73000000",
             },

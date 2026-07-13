@@ -511,7 +511,7 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
         "in-order-selected-branch-predictor-family-rollback",
         &nested_elf,
     );
-    let tage_program = tage_sc_l_repeated_not_taken_training_program();
+    let tage_program = tage_sc_l_repeated_not_taken_training_program(2);
     let tage_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &tage_program);
     let tage_path = temp_binary("in-order-selected-tage-sc-l-rollback", &tage_elf);
     let direct_perceptron_program = direct_wrong_path_branch_speculation_program();
@@ -602,6 +602,8 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
     ] {
         let stdout = selected_branch_predictor_stdout_with_boot_a0(path, predictor, boot_a0);
         let aggregate_repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
+        let removed_youngers =
+            json_u64_field(&stdout, "\"branch_speculation_removed_youngers\":");
         let rollback_count = json_object_u64_field(
             &stdout,
             &format!("\"{family}\":{{"),
@@ -618,9 +620,9 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
             "{predictor} {family}.{rollback_field} should match the stats registry path\n{stdout}"
         );
         if rollback_field == "selected_rollbacks" {
-            assert!(
-                rollback_count > 0,
-                "{predictor} should expose selected younger cleanup\n{stdout}"
+            assert_eq!(
+                rollback_count, removed_youngers,
+                "{predictor} selected rollback accounting should match removed younger speculation\n{stdout}"
             );
         } else {
             assert!(
@@ -696,19 +698,39 @@ fn rem6_run_stats_use_selected_tage_sc_l_branch_predictor_for_fetch_steering() {
 
 #[test]
 fn rem6_run_stats_use_retired_tage_sc_l_training_for_later_fetch_steering() {
-    let program = tage_sc_l_repeated_not_taken_training_program();
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("in-order-tage-sc-l-training-feedback", &elf);
+    let overlap_program = tage_sc_l_repeated_not_taken_training_program(2);
+    let overlap_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &overlap_program);
+    let overlap_path = temp_binary("in-order-tage-sc-l-training-feedback-overlap", &overlap_elf);
+    let trained_program = tage_sc_l_repeated_not_taken_training_program(3);
+    let trained_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &trained_program);
+    let trained_path = temp_binary("in-order-tage-sc-l-training-feedback", &trained_elf);
 
-    let tage_sc_l = selected_branch_predictor_stdout(&path, "tage-sc-l");
+    let overlap = selected_branch_predictor_stdout(&overlap_path, "tage-sc-l");
+    let trained = selected_branch_predictor_stdout(&trained_path, "tage-sc-l");
 
-    let predictions = json_u64_field(&tage_sc_l, "\"branch_speculation_predictions\":");
-    let repairs = json_u64_field(&tage_sc_l, "\"branch_speculation_repairs\":");
+    let overlap_predictions = json_u64_field(&overlap, "\"branch_speculation_predictions\":");
+    let overlap_repairs = json_u64_field(&overlap, "\"branch_speculation_repairs\":");
+    let overlap_conditional_branches =
+        json_u64_field(&overlap, "\"conditional_branch_predictions\":");
+    let overlap_retired_updates =
+        json_object_u64_field(&overlap, "\"tage_sc_l\":{", "\"updates\":");
+    let trained_predictions = json_u64_field(&trained, "\"branch_speculation_predictions\":");
+    let trained_repairs = json_u64_field(&trained, "\"branch_speculation_repairs\":");
+    let trained_conditional_branches =
+        json_u64_field(&trained, "\"conditional_branch_predictions\":");
+    let trained_retired_updates =
+        json_object_u64_field(&trained, "\"tage_sc_l\":{", "\"updates\":");
 
-    assert_eq!(predictions, 4, "{tage_sc_l}");
-    assert_eq!(repairs, 2, "{tage_sc_l}");
-    assert!(tage_sc_l.contains("\"x5\":\"0x7\""));
-    assert!(!tage_sc_l.contains("\"x6\":\"0x1\""));
+    assert_eq!(overlap_predictions, 4, "{overlap}");
+    assert_eq!(overlap_repairs, 3, "{overlap}");
+    assert_eq!(overlap_retired_updates, overlap_conditional_branches, "{overlap}");
+    assert_eq!(trained_predictions, 5, "{trained}");
+    assert_eq!(trained_repairs, 2, "{trained}");
+    assert_eq!(trained_retired_updates, trained_conditional_branches, "{trained}");
+    assert!(trained_predictions > overlap_predictions, "{trained}");
+    assert!(trained_repairs < overlap_repairs, "{trained}");
+    assert!(trained.contains("\"x5\":\"0x7\""));
+    assert!(!trained.contains("\"x6\":\"0x1\""));
 }
 
 fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
@@ -837,11 +859,11 @@ fn tage_sc_l_initial_bias_program() -> Vec<u8> {
     ])
 }
 
-fn tage_sc_l_repeated_not_taken_training_program() -> Vec<u8> {
+fn tage_sc_l_repeated_not_taken_training_program(iterations: i32) -> Vec<u8> {
     riscv64_program(&[
         i_type(0, 0, 0x0, 8, 0x13),    // addi x8, x0, 0
         i_type(0, 0, 0x0, 9, 0x13),    // addi x9, x0, 0
-        i_type(2, 0, 0x0, 10, 0x13),   // addi x10, x0, 2
+        i_type(iterations, 0, 0x0, 10, 0x13), // addi x10, x0, iterations
         b_type(20, 9, 8, 0x1),         // bne x8, x9, wrong_path
         i_type(-1, 10, 0x0, 10, 0x13), // addi x10, x10, -1
         b_type(-8, 0, 10, 0x1),        // bne x10, x0, loop

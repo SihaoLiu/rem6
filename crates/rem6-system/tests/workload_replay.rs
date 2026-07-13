@@ -1299,7 +1299,7 @@ fn replay_manifest_with_sinic_pci_checkpoint_restore() -> WorkloadManifest {
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        480,
+        300,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-state".to_string(),
         },
@@ -1330,7 +1330,7 @@ fn replay_manifest_with_sinic_pci_fifo_checkpoint_restore() -> WorkloadManifest 
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        480,
+        300,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-fifo".to_string(),
         },
@@ -1361,7 +1361,7 @@ fn replay_manifest_with_sinic_pci_interrupt_checkpoint_restore() -> WorkloadMani
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        480,
+        300,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-interrupt".to_string(),
         },

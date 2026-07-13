@@ -532,7 +532,7 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "--host-restore-checkpoint",
             "170:o3-baseline",
             "--host-checkpoint",
-            "323:o3-replayed",
+            "321:o3-replayed",
             "--debug-flags",
             "HostAction",
         ])
@@ -686,7 +686,7 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
     );
     assert_checkpoint(host_actions, 0, "o3-baseline", 9, 9);
     assert_checkpoint(host_actions, 1, "o3-mutated", 159, 159);
-    assert_checkpoint(host_actions, 2, "o3-replayed", 324, 324);
+    assert_checkpoint(host_actions, 2, "o3-replayed", 322, 322);
     let restored_components = host_actions
         .pointer("/checkpoint_restored_component_count")
         .and_then(Value::as_u64)

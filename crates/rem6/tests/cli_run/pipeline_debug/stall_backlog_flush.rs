@@ -18,7 +18,7 @@ const FETCH_WAIT_BRANCH: BacklogFlushPair = BacklogFlushPair {
         "sim.debug.pipeline_trace.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction",
     cpu_stat_path:
         "sim.debug.pipeline_trace.cpu.cpu0.stall_backlog_flush.stall_cause.fetch_wait.flush_cause.branch_prediction",
-    stage_cell: ("ordering_blocked", "fetch1", "fetch1"),
+    stage_cell: ("ordering_blocked", "fetch1", "decode"),
 };
 const DATA_WAIT_BRANCH: BacklogFlushPair = BacklogFlushPair {
     summary_path:
@@ -59,9 +59,9 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_branch_flush() {
         (
             "2",
             RawBacklogFlushTotals {
-                sequences: 2,
-                stall_records: 6,
-                stall_cycles: 6,
+                sequences: 1,
+                stall_records: 1,
+                stall_cycles: 1,
             },
         ),
         ("1", RawBacklogFlushTotals::default()),
@@ -140,16 +140,9 @@ fn rem6_run_pipeline_debug_correlates_younger_data_wait_backlog_with_branch_flus
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("pipeline-stall-backlog-data-wait-flush", &elf);
 
-    for (mode, expected) in [
-        (
-            "detailed",
-            RawBacklogFlushTotals {
-                sequences: 1,
-                stall_records: 2,
-                stall_cycles: 2,
-            },
-        ),
-        ("timing", RawBacklogFlushTotals::default()),
+    for (mode, expected, expected_branch_flush_records) in [
+        ("detailed", RawBacklogFlushTotals::default(), 0),
+        ("timing", RawBacklogFlushTotals::default(), 1),
     ] {
         let (stdout, json) = pipeline_data_wait_branch_json(&path, mode);
         assert_eq!(
@@ -177,12 +170,25 @@ fn rem6_run_pipeline_debug_correlates_younger_data_wait_backlog_with_branch_flus
             }),
             "both rows must preserve a real data wait: {trace:?}"
         );
-        assert!(
-            trace.iter().any(|record| {
+        let branch_redirect_records = trace
+            .iter()
+            .filter(|record| {
+                record.get("redirect_cause").and_then(Value::as_str) == Some("branch_prediction")
+            })
+            .count() as u64;
+        assert_eq!(
+            branch_redirect_records, 1,
+            "both modes must preserve the branch redirect: {trace:?}"
+        );
+        let branch_flush_records = trace
+            .iter()
+            .filter(|record| {
                 record.get("flush_cause").and_then(Value::as_str) == Some("branch_prediction")
-                    && !record_array(record, "flushed").is_empty()
-            }),
-            "both rows must preserve a real branch flush: {trace:?}"
+            })
+            .count() as u64;
+        assert_eq!(
+            branch_flush_records, expected_branch_flush_records,
+            "mode {mode} must preserve its exact younger branch-flush evidence: {trace:?}"
         );
 
         let observed =
@@ -203,8 +209,18 @@ fn rem6_run_pipeline_debug_does_not_correlate_completed_execute_wait_with_later_
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("pipeline-stall-backlog-execute-wait-flush", &elf);
 
-    for (lookahead, expected_trap_flush_records) in [("2", Some(1)), ("1", None)] {
-        let expected = RawBacklogFlushTotals::default();
+    for (lookahead, expected, expected_trap_flush_records) in [
+        (
+            "2",
+            RawBacklogFlushTotals {
+                sequences: 1,
+                stall_records: 19,
+                stall_cycles: 19,
+            },
+            Some(1),
+        ),
+        ("1", RawBacklogFlushTotals::default(), None),
+    ] {
         let (stdout, json) = pipeline_execute_wait_trap_json(&path, lookahead);
         assert_eq!(
             json.pointer("/simulation/status").and_then(Value::as_str),
@@ -250,7 +266,7 @@ fn rem6_run_pipeline_debug_does_not_correlate_completed_execute_wait_with_later_
         );
         assert_eq!(
             trap_flush_records, expected_trap_flush_records,
-            "lookahead two must retain the later younger trap flush without attributing the completed DIV wait to it: {json}"
+            "lookahead two must retain the later younger trap flush while lookahead one has no row to flush: {json}"
         );
         assert_backlog_flush_pair(&json, &stdout, EXECUTE_WAIT_TRAP, expected);
     }

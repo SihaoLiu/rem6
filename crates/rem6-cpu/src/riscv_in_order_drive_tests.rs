@@ -5,6 +5,7 @@ use crate::{
     InOrderPipelineSnapshot, InOrderPipelineStageWidth, MemoryRequestId, MemoryRouteId,
     TransportEndpointId,
 };
+use rem6_isa_riscv::RiscvInstruction;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -683,4 +684,24 @@ fn live_detailed_gate_bypasses_normal_pipeline_scheduler() {
     assert_eq!(action, None);
     assert!(core.checkpoint_owned_in_order_pipeline_wakes().is_empty());
     assert_eq!(core.checkpoint_owned_live_retire_gate_wakes().len(), 1);
+}
+
+#[test]
+fn inherited_o3_window_suppresses_normal_pipeline_after_mode_disable() {
+    let core = core_with_completed_fetch();
+    let instruction = RiscvInstruction::decode(0x0000_0013).unwrap();
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .stage_live_retire_window(Address::new(0x8000), instruction, 0, []);
+
+    assert!(core.o3_retirement_suppresses_normal_pipeline());
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    assert!(matches!(
+        core.drive_next_completed_fetch_serial_action(&mut scheduler)
+            .unwrap(),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(core.checkpoint_owned_in_order_pipeline_wakes().is_empty());
 }

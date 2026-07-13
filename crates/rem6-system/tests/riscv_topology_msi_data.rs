@@ -305,17 +305,17 @@ fn lr_sc_snoop_image() -> BootImage {
         .add_segment(Address::new(0x800c), word(0x0010_0073))
         .unwrap();
 
-    for index in 0..2 {
+    for index in 0..3 {
         image = image
             .add_segment(Address::new(0x9000 + index * 4), word(nop()))
             .unwrap();
     }
     image = image
-        .add_segment(Address::new(0x9008), word(s_type(0, 6, 2, 0x3, 0x23)))
+        .add_segment(Address::new(0x900c), word(s_type(0, 6, 2, 0x3, 0x23)))
         .unwrap();
     for index in 0..40 {
         image = image
-            .add_segment(Address::new(0x900c + index * 4), word(nop()))
+            .add_segment(Address::new(0x9010 + index * 4), word(nop()))
             .unwrap();
     }
     image

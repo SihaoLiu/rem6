@@ -810,7 +810,7 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         .unwrap();
 
     let source = GuestSourceId::new(42);
-    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(141), source, 1);
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(140), source, 0);
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
     assert_eq!(
         system

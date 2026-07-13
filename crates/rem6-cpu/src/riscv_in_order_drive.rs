@@ -116,7 +116,9 @@ impl RiscvCore {
         scheduler: &mut PartitionedScheduler,
         wake_kind: RiscvInOrderWakeKind,
     ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError> {
-        if self.detailed_o3_window_prefers_fetch_ahead() {
+        if self.detailed_o3_window_prefers_fetch_ahead()
+            || self.o3_retirement_suppresses_normal_pipeline()
+        {
             let execution = match wake_kind {
                 RiscvInOrderWakeKind::Serial => {
                     self.execute_next_completed_fetch_serial(scheduler)?

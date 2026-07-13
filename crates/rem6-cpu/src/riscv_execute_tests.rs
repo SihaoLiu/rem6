@@ -1,5 +1,6 @@
 use super::*;
-use crate::CpuFetchRecord;
+use crate::{CpuFetchRecord, RiscvHartRunState};
+use rem6_isa_riscv::RiscvSystemEvent;
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -117,6 +118,22 @@ fn refetched_stream_discards_orphaned_restored_pipeline_rows() {
 }
 
 #[test]
+fn empty_refetch_stream_discards_orphaned_non_wait_pipeline_rows() {
+    let mut state = RiscvCoreState::new(0x8000, 0);
+    state
+        .in_order_pipeline
+        .replace_in_flight([InOrderPipelineInstruction::new(
+            1,
+            InOrderPipelineStage::Fetch1,
+        )])
+        .unwrap();
+
+    sync_in_order_fetch_state(&mut state, &[]).unwrap();
+
+    assert!(state.in_order_pipeline.in_flight().is_empty());
+}
+
+#[test]
 fn split_fetch_suffix_keeps_pending_prefix_pipeline_row() {
     let mut state = RiscvCoreState::new(0x800e, 0);
     let prefix = completed(1, 0x800e);
@@ -162,6 +179,42 @@ fn stale_fetches_after_retire_keep_same_pc_redirect_target_request() {
     );
 
     assert!(stale.is_empty());
+}
+
+#[test]
+fn immediate_terminal_events_quiesce_the_hart_until_host_delivery() {
+    for event in [
+        RiscvSystemEvent::Gem5Exit {
+            pc: 0x8000,
+            delay: 0,
+        },
+        RiscvSystemEvent::Gem5Fail {
+            pc: 0x8000,
+            delay: 0,
+            code: 3,
+        },
+    ] {
+        let mut state = RiscvCoreState::new(0x8000, 0);
+
+        state.quiesce_for_immediate_terminal_event(Some(&event));
+
+        assert_eq!(state.run_state, RiscvHartRunState::StopPending);
+        assert!(state.run_state_explicit);
+    }
+}
+
+#[test]
+fn delayed_terminal_events_leave_the_hart_running() {
+    let mut state = RiscvCoreState::new(0x8000, 0);
+    let event = RiscvSystemEvent::Gem5Exit {
+        pc: 0x8000,
+        delay: 1,
+    };
+
+    state.quiesce_for_immediate_terminal_event(Some(&event));
+
+    assert_eq!(state.run_state, RiscvHartRunState::Started);
+    assert!(!state.run_state_explicit);
 }
 
 #[test]

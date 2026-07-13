@@ -308,6 +308,16 @@ impl RiscvCore {
         state.live_retire_gate.detailed_policy_enabled() && !draining_normal_execute_wait
     }
 
+    pub(crate) fn o3_retirement_suppresses_normal_pipeline(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        let draining_normal_execute_wait = state
+            .in_order_pipeline
+            .in_flight()
+            .iter()
+            .any(|instruction| instruction.execute_wait_total_cycles().is_some());
+        state.o3_runtime.has_pending_retirement_authority() && !draining_normal_execute_wait
+    }
+
     pub(crate) fn live_retire_gate_blocks_new_work(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.blocks_new_work()

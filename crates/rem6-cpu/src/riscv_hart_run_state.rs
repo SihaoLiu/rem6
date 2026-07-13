@@ -1,7 +1,7 @@
-use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvStatusWord};
+use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvStatusWord, RiscvSystemEvent};
 use rem6_memory::Address;
 
-use crate::{riscv_checker, RiscvCore};
+use crate::{riscv_checker, RiscvCore, RiscvCoreState};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvHartRunState {
@@ -12,6 +12,24 @@ pub enum RiscvHartRunState {
     ResumePending,
     Stopped,
     Suspended,
+}
+
+impl RiscvCoreState {
+    pub(super) fn quiesce_for_immediate_terminal_event(
+        &mut self,
+        system_event: Option<&RiscvSystemEvent>,
+    ) {
+        if matches!(
+            system_event,
+            Some(
+                RiscvSystemEvent::Gem5Exit { delay: 0, .. }
+                    | RiscvSystemEvent::Gem5Fail { delay: 0, .. }
+            )
+        ) {
+            self.run_state = RiscvHartRunState::StopPending;
+            self.run_state_explicit = true;
+        }
+    }
 }
 
 impl RiscvCore {

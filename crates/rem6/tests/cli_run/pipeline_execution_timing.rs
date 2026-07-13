@@ -13,10 +13,10 @@ fn rem6_run_delays_architectural_visibility_until_scheduled_commit_stage() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("pipeline-scheduled-commit", &elf);
 
-    for (memory_system, cores, completed_tick_limit) in [
-        ("direct", 1, 120),
-        ("direct", 2, 120),
-        ("cache-fabric-dram", 1, 600),
+    for (memory_system, cores, completed_tick_limit, expected_after_commit_retirements) in [
+        ("direct", 1, 120, 2),
+        ("direct", 2, 120, 2),
+        ("cache-fabric-dram", 1, 600, 1),
     ] {
         let completed = run_pipeline_timing(&path, cores, completed_tick_limit, memory_system);
         let first_fetch_response_tick = completed
@@ -65,7 +65,10 @@ fn rem6_run_delays_architectural_visibility_until_scheduled_commit_stage() {
         let after_commit = run_pipeline_timing(&path, cores, commit_ready_tick + 1, memory_system);
         for cpu in 0..cores {
             let core = &after_commit["cores"][cpu];
-            assert_eq!(core["committed_instructions"].as_u64(), Some(1));
+            assert_eq!(
+                core["committed_instructions"].as_u64(),
+                Some(expected_after_commit_retirements)
+            );
             assert_eq!(
                 core.pointer("/registers/x5").and_then(Value::as_str),
                 Some("0x7")
@@ -73,7 +76,7 @@ fn rem6_run_delays_architectural_visibility_until_scheduled_commit_stage() {
             assert_eq!(
                 core.pointer("/in_order_pipeline/stage_retired/commit")
                     .and_then(Value::as_u64),
-                Some(1)
+                Some(expected_after_commit_retirements)
             );
         }
     }
@@ -88,6 +91,8 @@ fn rem6_run_keeps_direct_single_core_mul_invisible_through_execute_wait() {
         cores: 1,
         completed_tick_limit: 180,
         expected_execute_wait_cycles: 2,
+        expected_last_execute_wait_cycle: 17,
+        expected_last_execute_wait_tick: 12,
     });
 }
 
@@ -100,6 +105,8 @@ fn rem6_run_keeps_direct_two_core_div_invisible_through_execute_wait() {
         cores: 2,
         completed_tick_limit: 260,
         expected_execute_wait_cycles: 19,
+        expected_last_execute_wait_cycle: 34,
+        expected_last_execute_wait_tick: 29,
     });
 }
 
@@ -112,6 +119,8 @@ fn rem6_run_keeps_cache_fabric_dram_mul_invisible_through_execute_wait() {
         cores: 1,
         completed_tick_limit: 700,
         expected_execute_wait_cycles: 2,
+        expected_last_execute_wait_cycle: 25,
+        expected_last_execute_wait_tick: 17,
     });
 }
 
@@ -179,6 +188,8 @@ fn rem6_run_direct_single_core_alu_has_no_execute_wait_visibility_gate() {
         cores: 1,
         completed_tick_limit: 180,
         expected_execute_wait_cycles: 0,
+        expected_last_execute_wait_cycle: 0,
+        expected_last_execute_wait_tick: 0,
     };
     let path = pipeline_visibility_program_path(case.name, case.operation);
     let completed = run_pipeline_timing_with_debug_flags(
@@ -213,6 +224,8 @@ struct ExecuteWaitVisibilityCase {
     cores: usize,
     completed_tick_limit: u64,
     expected_execute_wait_cycles: u64,
+    expected_last_execute_wait_cycle: u64,
+    expected_last_execute_wait_tick: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -273,7 +286,9 @@ fn assert_execute_wait_visibility(case: ExecuteWaitVisibilityCase) {
     );
     assert_completed_visibility_case(&completed, case);
 
-    let wait_probe_tick = last_shared_execute_wait_cycle(&completed, case);
+    assert_execute_wait_trace(&completed, case);
+
+    let wait_probe_tick = case.expected_last_execute_wait_tick;
     let during_wait = run_pipeline_timing_with_debug_flags(
         &path,
         case.cores,
@@ -301,12 +316,11 @@ fn assert_execute_wait_visibility(case: ExecuteWaitVisibilityCase) {
             "{} cpu{cpu} must not architecturally commit the producer during execute wait; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
             case.name
         );
-        assert!(
+        assert_eq!(
             core.pointer("/in_order_pipeline/execute_wait_cycles")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                > 0,
-            "{} cpu{cpu} should expose that the stopped run is inside execute wait; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
+                .and_then(Value::as_u64),
+            Some(case.expected_execute_wait_cycles),
+            "{} cpu{cpu} should expose exact scheduler-owned execute-wait evidence at the last wait tick; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
             case.name
         );
     }
@@ -371,8 +385,7 @@ fn pipeline_visibility_program_path(
     temp_binary(name, &elf)
 }
 
-fn last_shared_execute_wait_cycle(completed: &Value, case: ExecuteWaitVisibilityCase) -> u64 {
-    let mut shared_last_wait_cycle = u64::MAX;
+fn assert_execute_wait_trace(completed: &Value, case: ExecuteWaitVisibilityCase) {
     for cpu in 0..case.cores {
         let cycles = execute_wait_cycles_by_cpu(completed, cpu);
         assert_eq!(
@@ -381,13 +394,13 @@ fn last_shared_execute_wait_cycle(completed: &Value, case: ExecuteWaitVisibility
             "{} cpu{cpu} should expose exact execute-wait trace rows",
             case.name
         );
-        let last = cycles
-            .last()
-            .copied()
-            .expect("positive execute-wait rows should have a probe cycle");
-        shared_last_wait_cycle = shared_last_wait_cycle.min(last);
+        assert_eq!(
+            cycles.last().copied(),
+            Some(case.expected_last_execute_wait_cycle),
+            "{} cpu{cpu} should end execute wait on the exact pipeline cycle",
+            case.name
+        );
     }
-    shared_last_wait_cycle
 }
 
 fn execute_wait_cycles_by_cpu(completed: &Value, cpu: usize) -> Vec<u64> {

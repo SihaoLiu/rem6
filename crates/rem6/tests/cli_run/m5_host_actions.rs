@@ -1741,13 +1741,13 @@ fn rem6_run_repeats_m5_stats_host_actions_when_period_is_set_from_real_riscv_exe
         host_actions
             .pointer("/stats_reset_count")
             .and_then(Value::as_u64),
-        Some(8)
+        Some(7)
     );
     assert_eq!(
         host_actions
             .pointer("/stats_dump_count")
             .and_then(Value::as_u64),
-        Some(8)
+        Some(7)
     );
     assert_eq!(
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
@@ -1756,7 +1756,7 @@ fn rem6_run_repeats_m5_stats_host_actions_when_period_is_set_from_real_riscv_exe
 
     let reset_ticks = action_ticks(host_actions, "stats_resets");
     let dump_ticks = action_ticks(host_actions, "stats_dumps");
-    assert_eq!(reset_ticks, vec![17, 21, 25, 29, 33, 37, 41, 45]);
+    assert_eq!(reset_ticks, vec![12, 16, 20, 24, 28, 32, 36]);
     assert_eq!(dump_ticks, reset_ticks);
 }
 

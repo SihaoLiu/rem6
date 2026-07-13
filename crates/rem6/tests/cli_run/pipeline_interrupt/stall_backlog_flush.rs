@@ -9,25 +9,23 @@ const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
 const SBI_HSM_HART_START: i32 = 0;
 
 const CPU0_FETCH_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(0, "fetch_wait", "ordering_blocked", "fetch1", "fetch1");
+    InterruptBacklogPair::new(0, "fetch_wait", "ordering_blocked", "execute", "execute");
 const CPU0_FETCH_WAIT_COMMIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(0, "fetch_wait", "resource_blocked", "fetch1", "commit");
+    InterruptBacklogPair::new(0, "fetch_wait", "ordering_blocked", "fetch2", "commit");
 const CPU0_FETCH_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "fetch_wait", "resource_blocked", "commit", "commit");
-const CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(0, "fetch_wait", "resource_blocked", "fetch2", "commit");
 const CPU0_EXECUTE_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(0, "execute_wait", "ordering_blocked", "fetch1", "fetch1");
+    InterruptBacklogPair::new(0, "execute_wait", "ordering_blocked", "decode", "execute");
 const CPU0_EXECUTE_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "execute_wait", "resource_blocked", "commit", "commit");
 const CPU0_EXECUTE_WAIT_EXECUTE_RESOURCE_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(0, "execute_wait", "resource_blocked", "execute", "commit");
 const CPU0_DATA_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(0, "data_wait", "ordering_blocked", "fetch1", "commit");
+    InterruptBacklogPair::new(0, "data_wait", "ordering_blocked", "decode", "commit");
 const CPU1_DATA_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(1, "data_wait", "ordering_blocked", "fetch1", "commit");
+    InterruptBacklogPair::new(1, "data_wait", "ordering_blocked", "decode", "commit");
 const CPU1_EXECUTE_WAIT_INTERRUPT: InterruptBacklogPair =
-    InterruptBacklogPair::new(1, "execute_wait", "ordering_blocked", "fetch1", "fetch1");
+    InterruptBacklogPair::new(1, "execute_wait", "ordering_blocked", "decode", "execute");
 const CPU1_EXECUTE_WAIT_COMMIT_INTERRUPT: InterruptBacklogPair =
     InterruptBacklogPair::new(1, "execute_wait", "ordering_blocked", "fetch1", "commit");
 const CPU1_EXECUTE_WAIT_RESOURCE_INTERRUPT: InterruptBacklogPair =
@@ -402,7 +400,7 @@ fn rem6_run_pipeline_debug_correlates_detailed_fetch_wait_backlog_with_interrupt
     );
     assert_eq!(
         flushed[0].get("stage").and_then(Value::as_str),
-        Some("fetch1")
+        Some("execute")
     );
     let flushed_sequence = json_record_u64(&flushed[0], "sequence");
     assert_ne!(terminal_sequence, flushed_sequence);
@@ -421,7 +419,7 @@ fn rem6_run_pipeline_debug_correlates_detailed_fetch_wait_backlog_with_interrupt
                     .iter()
                     .any(|blocked| {
                         json_record_u64(blocked, "sequence") == flushed_sequence
-                            && blocked.get("stage").and_then(Value::as_str) == Some("fetch1")
+                            && blocked.get("stage").and_then(Value::as_str) == Some("execute")
                     })
         })
         .collect::<Vec<_>>();
@@ -549,8 +547,7 @@ fn rem6_run_pipeline_debug_correlates_detailed_fetch_wait_backlog_with_interrupt
     );
     let ordering_expected = BacklogFlushTotals::default();
     let commit_ordering_expected = BacklogFlushTotals::default();
-    let resource_expected = BacklogFlushTotals::default();
-    let suppressed_resource_expected = BacklogFlushTotals {
+    let resource_expected = BacklogFlushTotals {
         sequences: 1,
         stall_records: 6,
         stall_cycles: 6,
@@ -570,25 +567,13 @@ fn rem6_run_pipeline_debug_correlates_detailed_fetch_wait_backlog_with_interrupt
         resource_expected,
         "{suppressed_trace:?}"
     );
-    assert_eq!(
-        raw_interrupt_backlog_flush_totals(
-            suppressed_trace,
-            CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT
-        ),
-        suppressed_resource_expected,
-        "{suppressed_trace:?}"
-    );
     assert_interrupt_backlog_flush_outputs(
         &suppressed_json,
         &suppressed_stdout,
         CPU0_FETCH_WAIT_INTERRUPT,
-        suppressed_resource_expected,
+        resource_expected,
         &[
             (CPU0_FETCH_WAIT_RESOURCE_INTERRUPT, resource_expected),
-            (
-                CPU0_FETCH_WAIT_SUPPRESSED_RESOURCE_INTERRUPT,
-                suppressed_resource_expected,
-            ),
             (CPU0_FETCH_WAIT_COMMIT_INTERRUPT, commit_ordering_expected),
             (CPU0_FETCH_WAIT_INTERRUPT, ordering_expected),
         ],
@@ -597,10 +582,9 @@ fn rem6_run_pipeline_debug_correlates_detailed_fetch_wait_backlog_with_interrupt
 
 #[test]
 fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush() {
-    let program =
-        interrupt_timer_flush_program_path("pipeline-interrupt-execute-wait-backlog-flush", 153);
     for (
         mode,
+        deadline,
         aggregate_expected,
         resource_expected,
         execute_resource_expected,
@@ -608,17 +592,18 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
     ) in [
         (
             "detailed",
+            103,
             BacklogFlushTotals {
                 sequences: 4,
                 stall_records: 76,
                 stall_cycles: 76,
             },
+            BacklogFlushTotals::default(),
             BacklogFlushTotals {
                 sequences: 1,
                 stall_records: 19,
                 stall_cycles: 19,
             },
-            BacklogFlushTotals::default(),
             BacklogFlushTotals {
                 sequences: 3,
                 stall_records: 57,
@@ -627,6 +612,7 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
         ),
         (
             "timing",
+            91,
             BacklogFlushTotals {
                 sequences: 1,
                 stall_records: 19,
@@ -641,6 +627,10 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
             BacklogFlushTotals::default(),
         ),
     ] {
+        let program = interrupt_timer_flush_program_path(
+            &format!("pipeline-interrupt-execute-wait-backlog-flush-{mode}"),
+            deadline,
+        );
         let stdout = run_interrupt_timer_program_in_mode(
             &program.path,
             "json",
@@ -654,7 +644,7 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed(&json);
-        assert_primary_timer_fixture_evidence(&json, 153);
+        assert_primary_timer_fixture_evidence(&json, deadline as u64);
 
         let interrupts = trace
             .iter()
@@ -683,7 +673,7 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
             );
             assert_eq!(flushed.len(), 3, "{interrupt:?}");
             assert!(flushed.iter().all(|instruction| {
-                instruction.get("stage").and_then(Value::as_str) == Some("fetch1")
+                instruction.get("stage").and_then(Value::as_str) == Some("execute")
             }));
             let flushed_sequences = flushed
                 .iter()
@@ -703,7 +693,7 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
                         && record_array(record, "ordering_blocked")
                             .iter()
                             .any(|blocked| {
-                                blocked.get("stage").and_then(Value::as_str) == Some("fetch1")
+                                blocked.get("stage").and_then(Value::as_str) == Some("decode")
                                     && flushed_sequences
                                         .contains(&json_record_u64(blocked, "sequence"))
                             })
@@ -780,19 +770,22 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_interrupt_flush(
 
 #[test]
 fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
-    let program =
-        interrupt_timer_data_wait_program_path("pipeline-interrupt-data-wait-backlog-flush", 166);
-    for (mode, expected) in [
+    for (mode, deadline, expected) in [
         (
             "detailed",
+            109,
             BacklogFlushTotals {
                 sequences: 3,
                 stall_records: 18,
                 stall_cycles: 18,
             },
         ),
-        ("timing", BacklogFlushTotals::default()),
+        ("timing", 118, BacklogFlushTotals::default()),
     ] {
+        let program = interrupt_timer_data_wait_program_path(
+            &format!("pipeline-interrupt-data-wait-backlog-flush-{mode}"),
+            deadline,
+        );
         let stdout = run_interrupt_program_with_args(
             &program.path,
             "json",
@@ -813,7 +806,7 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed(&json);
-        assert_primary_timer_fixture_evidence(&json, 166);
+        assert_primary_timer_fixture_evidence(&json, deadline as u64);
         assert_eq!(
             json.pointer("/cores/0/registers/x10")
                 .and_then(Value::as_str),
@@ -873,7 +866,7 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
                         record_array(record, "ordering_blocked")
                             .iter()
                             .any(|blocked| {
-                                blocked.get("stage").and_then(Value::as_str) == Some("fetch1")
+                                blocked.get("stage").and_then(Value::as_str) == Some("decode")
                                     && json_record_u64(blocked, "sequence") == *sequence
                             })
                     })
@@ -929,21 +922,22 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
 
 #[test]
 fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flush() {
-    let program = secondary_interrupt_timer_data_wait_program_path(
-        "pipeline-cpu1-interrupt-data-wait-backlog-flush",
-        240,
-    );
-    for (mode, expected) in [
+    for (mode, deadline, expected) in [
         (
             "detailed",
+            160,
             BacklogFlushTotals {
                 sequences: 3,
                 stall_records: 18,
                 stall_cycles: 18,
             },
         ),
-        ("timing", BacklogFlushTotals::default()),
+        ("timing", 167, BacklogFlushTotals::default()),
     ] {
+        let program = secondary_interrupt_timer_data_wait_program_path(
+            &format!("pipeline-cpu1-interrupt-data-wait-backlog-flush-{mode}"),
+            deadline,
+        );
         let stdout = run_interrupt_program_with_args(
             &program.path,
             "json",
@@ -968,7 +962,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flus
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed_for_cpu(&json, 1);
-        assert_secondary_timer_fixture_evidence(&json, "0x67", 240);
+        assert_secondary_timer_fixture_evidence(&json, "0x67", deadline as u64);
         assert_eq!(
             json_path_u64(&json, "/cores/0/in_order_pipeline/interrupt_redirects"),
             0
@@ -1035,7 +1029,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flus
                         record_array(record, "ordering_blocked")
                             .iter()
                             .any(|blocked| {
-                                blocked.get("stage").and_then(Value::as_str) == Some("fetch1")
+                                blocked.get("stage").and_then(Value::as_str) == Some("decode")
                                     && json_record_u64(blocked, "sequence") == *sequence
                             })
                     })
@@ -1079,7 +1073,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flus
 fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_flush() {
     let program = secondary_interrupt_timer_flush_program_path(
         "pipeline-cpu1-interrupt-execute-wait-backlog-flush",
-        215,
+        140,
     );
     for (
         mode,
@@ -1096,12 +1090,12 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
                 stall_records: 38,
                 stall_cycles: 38,
             },
+            BacklogFlushTotals::default(),
             BacklogFlushTotals {
                 sequences: 1,
                 stall_records: 19,
                 stall_cycles: 19,
             },
-            BacklogFlushTotals::default(),
             BacklogFlushTotals {
                 sequences: 1,
                 stall_records: 19,
@@ -1148,7 +1142,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
             .expect("debug pipeline trace array");
         assert_pipeline_summary_matches_trace(&json);
         assert_timer_handler_completed_for_cpu(&json, 1);
-        assert_secondary_timer_fixture_evidence(&json, "0x66", 215);
+        assert_secondary_timer_fixture_evidence(&json, "0x66", 140);
         assert_eq!(
             json_path_u64(&json, "/cores/0/in_order_pipeline/interrupt_redirects"),
             0
@@ -1183,7 +1177,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
             assert_eq!(flushed.len(), 1, "{interrupt:?}");
             assert_eq!(
                 flushed[0].get("stage").and_then(Value::as_str),
-                Some("fetch1")
+                Some("execute")
             );
             let sequence = json_record_u64(&flushed[0], "sequence");
             assert_ne!(sequence, terminal_sequence);
@@ -1196,7 +1190,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_execute_wait_backlog_with_interrupt_f
                         && record_array(record, "ordering_blocked")
                             .iter()
                             .any(|blocked| {
-                                blocked.get("stage").and_then(Value::as_str) == Some("fetch1")
+                                blocked.get("stage").and_then(Value::as_str) == Some("decode")
                                     && json_record_u64(blocked, "sequence") == sequence
                             })
                 })
@@ -1396,10 +1390,10 @@ fn assert_detailed_interrupt_discards_younger_load_window(json: &Value) {
         .iter()
         .find(|event| event.get("pc").and_then(Value::as_str) == Some("0x80000038"))
         .expect("completed detailed load O3 event");
-    assert_eq!(load.get("issue_tick").and_then(Value::as_u64), Some(158));
+    assert_eq!(load.get("issue_tick").and_then(Value::as_u64), Some(108));
     assert_eq!(
         load.get("lsq_data_response_tick").and_then(Value::as_u64),
-        Some(164)
+        Some(114)
     );
     for pc in ["0x8000003c", "0x80000040", "0x80000044"] {
         assert!(

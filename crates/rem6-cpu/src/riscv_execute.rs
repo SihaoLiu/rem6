@@ -246,6 +246,7 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
+        state.quiesce_for_immediate_terminal_event(execution.system_event());
         let fetch_events = self.core.fetch_events();
         let direct_jump_fetch_ahead_target = direct_jump_fetch_ahead_prediction_target(
             state,
@@ -1348,24 +1349,27 @@ pub(crate) fn sync_in_order_fetch_state(
     state: &mut RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> Result<(), RiscvCpuError> {
-    if !fetch_events.is_empty() {
-        let mut current_sequences = fetch_events
-            .iter()
-            .map(|event| event.request_id().sequence())
-            .collect::<BTreeSet<_>>();
-        if let Some(prefix) = state.pending_fetch_prefix.as_ref() {
-            current_sequences.insert(prefix.fetch.request_id().sequence());
-        }
-        rebind_orphaned_execute_wait_fetch(state, fetch_events, &current_sequences);
-        let orphaned_sequences = state
-            .in_order_pipeline
-            .in_flight()
-            .iter()
-            .map(|instruction| instruction.sequence())
-            .filter(|sequence| !current_sequences.contains(sequence))
-            .collect::<BTreeSet<_>>();
-        remove_fetch_sequences_from_pipeline(state, &orphaned_sequences)?;
+    let mut current_sequences = fetch_events
+        .iter()
+        .map(|event| event.request_id().sequence())
+        .collect::<BTreeSet<_>>();
+    if let Some(prefix) = state.pending_fetch_prefix.as_ref() {
+        current_sequences.insert(prefix.fetch.request_id().sequence());
     }
+    if !fetch_events.is_empty() {
+        rebind_orphaned_execute_wait_fetch(state, fetch_events, &current_sequences);
+    }
+    let orphaned_sequences = state
+        .in_order_pipeline
+        .in_flight()
+        .iter()
+        .filter(|instruction| {
+            !current_sequences.contains(&instruction.sequence())
+                && (!fetch_events.is_empty() || instruction.execute_wait_total_cycles().is_none())
+        })
+        .map(|instruction| instruction.sequence())
+        .collect::<BTreeSet<_>>();
+    remove_fetch_sequences_from_pipeline(state, &orphaned_sequences)?;
     let failed_or_retried = fetch_events
         .iter()
         .filter(|event| {
