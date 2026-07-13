@@ -400,7 +400,7 @@ pub(crate) fn drive_one_action(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> Option<RiscvCoreDriveAction> {
-    for _ in 0..8 {
+    for _ in 0..32 {
         let fetch_store = store.clone();
         let data_store = store.clone();
         let action = core

@@ -155,7 +155,7 @@ fn drive_until_execution(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> RiscvInstruction {
-    for _ in 0..8 {
+    for _ in 0..32 {
         let fetch_store = store.clone();
         let data_store = store.clone();
         match core

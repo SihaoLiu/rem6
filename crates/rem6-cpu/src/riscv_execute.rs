@@ -1,14 +1,12 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::{
-    RiscvInstruction, RiscvTrapKind, RiscvVectorFloatInstruction, RiscvVectorMemoryInstruction,
-    RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
-};
+use rem6_isa_riscv::{RiscvInstruction, RiscvTrapKind};
 use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
+    riscv_fu_latency::riscv_execute_wait_cycles,
     riscv_live_retire_window::RiscvLiveRetireWindowRequest, BranchTargetKind, CpuFetchEvent,
     CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
     InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
@@ -19,42 +17,6 @@ use crate::{
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
-
-const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
-const RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
-const RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_INTEGER_SHIFT_EXTRA_EXECUTE_CYCLES: u64 = 1;
-const RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES: u64 = 2;
-const RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES: u64 = 1;
-const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
-const RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
-const RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
-const RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES: u64 = 2;
-const RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 = 3;
-const RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 = 4;
-const RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 = 11;
-const RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 = 23;
-const RISCV_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES;
-const RISCV_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 =
-    RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvPendingFetchPrefix {
@@ -315,7 +277,7 @@ impl RiscvCore {
                 ),
             }
         });
-        let execute_wait_cycles = in_order_execute_wait_cycles(instruction);
+        let execute_wait_cycles = riscv_execute_wait_cycles(instruction);
         let pipeline_cycle = if execution.memory_access().is_none() {
             Some(
                 record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
@@ -660,231 +622,6 @@ fn record_in_order_resource_waits(
         record_in_order_resource_wait_cycles(state, *wait_cycles, *stall_cause)?;
     }
     Ok(())
-}
-
-pub(crate) fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
-    match instruction {
-        RiscvInstruction::Mul { .. }
-        | RiscvInstruction::Mulh { .. }
-        | RiscvInstruction::Mulhsu { .. }
-        | RiscvInstruction::Mulhu { .. }
-        | RiscvInstruction::Mulw { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::Div { .. }
-        | RiscvInstruction::Divu { .. }
-        | RiscvInstruction::Rem { .. }
-        | RiscvInstruction::Remu { .. }
-        | RiscvInstruction::Divw { .. }
-        | RiscvInstruction::Divuw { .. }
-        | RiscvInstruction::Remw { .. }
-        | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::VectorMultiplyLowVv { .. }
-        | RiscvInstruction::VectorMultiplyLowVx { .. }
-        | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighUnsignedVx { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
-        | RiscvInstruction::VectorMultiplyHighSignedVx { .. } => {
-            RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorIntegerMultiplyAdd(_) => {
-            RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorSaturating(
-            RiscvVectorSaturatingInstruction::MulSignedFractionalVv { .. }
-            | RiscvVectorSaturatingInstruction::MulSignedFractionalVx { .. },
-        ) => RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::VectorWideningInteger(
-            RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplySignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplySignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedSignedVx { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVx { .. },
-        ) => RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::VectorDivideUnsignedVv { .. }
-        | RiscvInstruction::VectorDivideUnsignedVx { .. }
-        | RiscvInstruction::VectorDivideSignedVv { .. }
-        | RiscvInstruction::VectorDivideSignedVx { .. }
-        | RiscvInstruction::VectorRemainderUnsignedVv { .. }
-        | RiscvInstruction::VectorRemainderUnsignedVx { .. }
-        | RiscvInstruction::VectorRemainderSignedVv { .. }
-        | RiscvInstruction::VectorRemainderSignedVx { .. } => {
-            RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorFixedPointShift(..) | RiscvInstruction::VectorNarrow(..) => {
-            RISCV_VECTOR_INTEGER_SHIFT_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorReduction(..) => {
-            RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorMemory(
-            RiscvVectorMemoryInstruction::LoadUnitStride { .. }
-            | RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly { .. }
-            | RiscvVectorMemoryInstruction::LoadSegmentUnitStride { .. }
-            | RiscvVectorMemoryInstruction::LoadStrided { .. }
-            | RiscvVectorMemoryInstruction::LoadIndexedUnordered { .. },
-        ) => RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::VectorMemory(
-            RiscvVectorMemoryInstruction::StoreUnitStride { .. }
-            | RiscvVectorMemoryInstruction::StoreSegmentUnitStride { .. }
-            | RiscvVectorMemoryInstruction::StoreStrided { .. }
-            | RiscvVectorMemoryInstruction::StoreIndexedUnordered { .. },
-        ) => RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::FloatAddS { .. }
-        | RiscvInstruction::FloatAddD { .. }
-        | RiscvInstruction::FloatSubS { .. }
-        | RiscvInstruction::FloatSubD { .. } => RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::FloatMinS { .. }
-        | RiscvInstruction::FloatMinD { .. }
-        | RiscvInstruction::FloatMaxS { .. }
-        | RiscvInstruction::FloatMaxD { .. }
-        | RiscvInstruction::FloatLessOrEqualS { .. }
-        | RiscvInstruction::FloatLessOrEqualD { .. }
-        | RiscvInstruction::FloatLessThanS { .. }
-        | RiscvInstruction::FloatLessThanD { .. }
-        | RiscvInstruction::FloatEqualS { .. }
-        | RiscvInstruction::FloatEqualD { .. } => RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::FloatMoveXFromS { .. }
-        | RiscvInstruction::FloatMoveXFromD { .. }
-        | RiscvInstruction::FloatMoveSFromX { .. }
-        | RiscvInstruction::FloatMoveDFromX { .. }
-        | RiscvInstruction::FloatConvertSFromW { .. }
-        | RiscvInstruction::FloatConvertSFromWu { .. }
-        | RiscvInstruction::FloatConvertSFromL { .. }
-        | RiscvInstruction::FloatConvertSFromLu { .. }
-        | RiscvInstruction::FloatConvertWFromS { .. }
-        | RiscvInstruction::FloatConvertWuFromS { .. }
-        | RiscvInstruction::FloatConvertLFromS { .. }
-        | RiscvInstruction::FloatConvertLuFromS { .. }
-        | RiscvInstruction::FloatConvertSFromD { .. }
-        | RiscvInstruction::FloatConvertDFromS { .. }
-        | RiscvInstruction::FloatConvertDFromW { .. }
-        | RiscvInstruction::FloatConvertDFromWu { .. }
-        | RiscvInstruction::FloatConvertDFromL { .. }
-        | RiscvInstruction::FloatConvertDFromLu { .. }
-        | RiscvInstruction::FloatConvertWFromD { .. }
-        | RiscvInstruction::FloatConvertWuFromD { .. }
-        | RiscvInstruction::FloatConvertLFromD { .. }
-        | RiscvInstruction::FloatConvertLuFromD { .. } => {
-            RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::FloatSignInjectS { .. }
-        | RiscvInstruction::FloatSignInjectD { .. }
-        | RiscvInstruction::FloatSignInjectNegS { .. }
-        | RiscvInstruction::FloatSignInjectNegD { .. }
-        | RiscvInstruction::FloatSignInjectXorS { .. }
-        | RiscvInstruction::FloatSignInjectXorD { .. }
-        | RiscvInstruction::FloatClassS { .. }
-        | RiscvInstruction::FloatClassD { .. } => RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
-            RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::FloatMultiplyAddS { .. }
-        | RiscvInstruction::FloatMultiplyAddD { .. }
-        | RiscvInstruction::FloatMultiplySubtractS { .. }
-        | RiscvInstruction::FloatMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
-        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplyAddS { .. }
-        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
-            RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::FloatDivS { .. } | RiscvInstruction::FloatDivD { .. } => {
-            RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::FloatSqrtS { .. } | RiscvInstruction::FloatSqrtD { .. } => {
-            RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvInstruction::VectorFloat(vector_instruction) => {
-            vector_float_execute_wait_cycles(vector_instruction)
-        }
-        _ => 0,
-    }
-}
-
-pub(crate) const fn scheduled_in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
-    match instruction {
-        RiscvInstruction::Mul { .. }
-        | RiscvInstruction::Mulh { .. }
-        | RiscvInstruction::Mulhsu { .. }
-        | RiscvInstruction::Mulhu { .. }
-        | RiscvInstruction::Mulw { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
-        RiscvInstruction::Div { .. }
-        | RiscvInstruction::Divu { .. }
-        | RiscvInstruction::Rem { .. }
-        | RiscvInstruction::Remu { .. }
-        | RiscvInstruction::Divw { .. }
-        | RiscvInstruction::Divuw { .. }
-        | RiscvInstruction::Remw { .. }
-        | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
-        _ => 0,
-    }
-}
-
-fn vector_float_execute_wait_cycles(instruction: RiscvVectorFloatInstruction) -> u64 {
-    match instruction {
-        RiscvVectorFloatInstruction::AddVv { .. }
-        | RiscvVectorFloatInstruction::AddVf { .. }
-        | RiscvVectorFloatInstruction::SubVv { .. }
-        | RiscvVectorFloatInstruction::SubVf { .. }
-        | RiscvVectorFloatInstruction::ReverseSubVf { .. } => {
-            RISCV_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::MinVv { .. }
-        | RiscvVectorFloatInstruction::MinVf { .. }
-        | RiscvVectorFloatInstruction::MaxVv { .. }
-        | RiscvVectorFloatInstruction::MaxVf { .. }
-        | RiscvVectorFloatInstruction::MaskEqualVv { .. }
-        | RiscvVectorFloatInstruction::MaskEqualVf { .. }
-        | RiscvVectorFloatInstruction::MaskNotEqualVv { .. }
-        | RiscvVectorFloatInstruction::MaskNotEqualVf { .. }
-        | RiscvVectorFloatInstruction::MaskLessThanVv { .. }
-        | RiscvVectorFloatInstruction::MaskLessThanVf { .. }
-        | RiscvVectorFloatInstruction::MaskLessEqualVv { .. }
-        | RiscvVectorFloatInstruction::MaskLessEqualVf { .. } => {
-            RISCV_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV { .. }
-        | RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV { .. }
-        | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatV { .. }
-        | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV { .. }
-        | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV { .. }
-        | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV { .. }
-        | RiscvVectorFloatInstruction::MergeVf { .. }
-        | RiscvVectorFloatInstruction::MoveVf { .. }
-        | RiscvVectorFloatInstruction::MoveFv { .. }
-        | RiscvVectorFloatInstruction::MoveSv { .. } => RISCV_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
-        RiscvVectorFloatInstruction::SignInjectVv { .. }
-        | RiscvVectorFloatInstruction::SignInjectVf { .. }
-        | RiscvVectorFloatInstruction::SignInjectNegVv { .. }
-        | RiscvVectorFloatInstruction::SignInjectNegVf { .. }
-        | RiscvVectorFloatInstruction::SignInjectXorVv { .. }
-        | RiscvVectorFloatInstruction::SignInjectXorVf { .. }
-        | RiscvVectorFloatInstruction::ClassV { .. } => {
-            RISCV_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. } => {
-            RISCV_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::MulAddVv { .. }
-        | RiscvVectorFloatInstruction::MulAddVf { .. } => {
-            RISCV_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::DivVv { .. }
-        | RiscvVectorFloatInstruction::DivVf { .. }
-        | RiscvVectorFloatInstruction::ReverseDivVf { .. } => {
-            RISCV_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES
-        }
-        RiscvVectorFloatInstruction::SqrtV { .. } => RISCV_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES,
-    }
 }
 
 fn squashed_fetch_requests(
@@ -1674,10 +1411,9 @@ fn rebind_orphaned_execute_wait_fetch(
     fetch_events: &[CpuFetchEvent],
     current_sequences: &BTreeSet<u64>,
 ) {
-    if state.in_order_pipeline.in_flight().len() != 1 {
+    let Some(instruction) = state.in_order_pipeline.in_flight().first().copied() else {
         return;
-    }
-    let instruction = state.in_order_pipeline.in_flight()[0];
+    };
     if current_sequences.contains(&instruction.sequence())
         || instruction.execute_wait_remaining_cycles().is_none()
     {
@@ -1690,9 +1426,6 @@ fn rebind_orphaned_execute_wait_fetch(
             CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
         ) && event.pc() == architectural
             && !state.executed_fetches.contains(&event.request_id())
-            && !state
-                .in_order_pipeline
-                .contains_sequence(event.request_id().sequence())
     });
     let Some(replacement_sequence) = replacements
         .next()
@@ -1706,6 +1439,9 @@ fn rebind_orphaned_execute_wait_fetch(
     state
         .in_order_pipeline
         .rebind_execute_wait_sequence(instruction.sequence(), replacement_sequence);
+    state
+        .rebound_in_order_execute_waits
+        .insert(replacement_sequence);
 }
 
 pub(crate) fn remove_fetch_sequences_from_pipeline(
@@ -1723,6 +1459,9 @@ pub(crate) fn remove_fetch_sequences_from_pipeline(
         .copied()
         .filter(|instruction| !sequences.contains(&instruction.sequence()))
         .collect::<Vec<_>>();
+    state
+        .rebound_in_order_execute_waits
+        .retain(|sequence| !sequences.contains(sequence));
     state
         .in_order_pipeline
         .replace_in_flight(retained)

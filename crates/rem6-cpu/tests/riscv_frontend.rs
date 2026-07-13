@@ -1210,7 +1210,7 @@ fn drive_one_action(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> Option<RiscvCoreDriveAction> {
-    for _ in 0..8 {
+    for _ in 0..32 {
         let action = drive_raw_action(core, store.clone(), scheduler, transport);
         if matches!(
             action,

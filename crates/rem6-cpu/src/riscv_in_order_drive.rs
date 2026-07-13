@@ -5,12 +5,10 @@ use rem6_kernel::{
 };
 use rem6_memory::Address;
 
-use crate::riscv_execute::{
-    oldest_completed_fetch_at, scheduled_in_order_execute_wait_cycles, RiscvPendingFetchPrefix,
-};
+use crate::riscv_execute::{oldest_completed_fetch_at, RiscvPendingFetchPrefix};
 use crate::{
-    CpuFetchEvent, CpuFetchEventKind, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction,
-    RiscvCpuError,
+    riscv_fu_latency::riscv_pipeline_execute_wait_cycles, CpuFetchEvent, CpuFetchEventKind,
+    InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
 };
 
 const PIPELINE_CYCLE_TICKS: u64 = 1;
@@ -172,28 +170,50 @@ impl RiscvCore {
         let RiscvPipelineCandidate::Sequence(sequence) = candidate else {
             return Ok(RiscvInOrderDriveStatus::Ready);
         };
-        let Some((stage, execute_wait_total_cycles)) = state
+        let Some((stage, execute_wait_total_cycles, execute_wait_key)) = state
             .in_order_pipeline
             .in_flight()
             .iter()
             .find(|instruction| instruction.sequence() == sequence)
-            .map(|instruction| (instruction.stage(), instruction.execute_wait_total_cycles()))
+            .map(|instruction| {
+                (
+                    instruction.stage(),
+                    instruction.execute_wait_total_cycles(),
+                    instruction.execute_wait_key(),
+                )
+            })
         else {
             return Err(RiscvCpuError::MissingInOrderPipelineInstruction { sequence });
         };
         let detailed = state.live_retire_gate.detailed_policy_enabled();
+        let execute_wait_rebound = state.rebound_in_order_execute_waits.contains(&sequence);
         if execute_wait_total_cycles.is_some()
             || (stage == InOrderPipelineStage::Execute && !detailed)
         {
             let raw = completed_fetch_raw(&state, &fetch_events, sequence)?;
             let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
-            let wait_cycles = scheduled_in_order_execute_wait_cycles(decoded.instruction());
-            if execute_wait_total_cycles != (wait_cycles > 0).then_some(wait_cycles) {
+            let wait_cycles = riscv_pipeline_execute_wait_cycles(decoded.instruction());
+            let expected_wait_cycles = (wait_cycles > 0).then_some(wait_cycles);
+            let wait_key = u64::from(raw) + 1;
+            let instruction_identity_matches = match execute_wait_key {
+                Some(execute_wait_key) => execute_wait_key == wait_key,
+                None => !execute_wait_rebound || !detailed,
+            };
+            let wait_configuration_matches =
+                execute_wait_total_cycles == expected_wait_cycles && instruction_identity_matches;
+            if !wait_configuration_matches {
                 let configured_wait_cycles = if detailed { 0 } else { wait_cycles };
+                state.in_order_pipeline.configure_execute_wait(
+                    sequence,
+                    configured_wait_cycles,
+                    wait_key,
+                );
+            } else if wait_cycles > 0 && execute_wait_key.is_none() {
                 state
                     .in_order_pipeline
-                    .configure_execute_wait(sequence, configured_wait_cycles);
+                    .bind_execute_wait_key(sequence, wait_key);
             }
+            state.rebound_in_order_execute_waits.remove(&sequence);
         }
         let stage = state
             .in_order_pipeline

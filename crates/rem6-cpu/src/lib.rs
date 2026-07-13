@@ -35,7 +35,6 @@ mod multiperspective_perceptron;
 mod multiperspective_perceptron_checkpoint;
 mod multiperspective_perceptron_snapshot;
 mod o3_dependency;
-mod o3_fu_latency;
 mod o3_pipeline;
 mod o3_runtime;
 mod o3_runtime_trace;
@@ -68,6 +67,7 @@ mod riscv_fetch;
 mod riscv_fetch_ahead;
 #[cfg(test)]
 mod riscv_fetch_ahead_tage_sc_l_tests;
+mod riscv_fu_latency;
 mod riscv_gshare_checkpoint;
 mod riscv_hart_run_state;
 mod riscv_htm;
@@ -316,6 +316,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.in_order_pipeline = InOrderPipelineState::new(config);
         state.in_order_pipeline_cycle_records.clear();
+        state.rebound_in_order_execute_waits.clear();
         state.detach_pending_in_order_pipeline_advance();
     }
 
@@ -327,6 +328,7 @@ impl RiscvCore {
         let restored_cycle = restored.snapshot().cycle();
         let mut state = self.state.lock().expect("riscv core lock");
         state.in_order_pipeline = restored;
+        state.rebound_in_order_execute_waits.clear();
         state.detach_pending_in_order_pipeline_advance();
         state
             .in_order_pipeline_cycle_records
@@ -839,6 +841,7 @@ struct RiscvCoreState {
     live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
+    rebound_in_order_execute_waits: BTreeSet<u64>,
     pending_in_order_pipeline_advance: Option<(u64, u64)>,
     pending_in_order_pipeline_wake: Option<riscv_in_order_drive::RiscvInOrderPipelineWake>,
     detached_in_order_pipeline_wakes: Vec<riscv_in_order_drive::RiscvInOrderPipelineWake>,
@@ -927,6 +930,7 @@ impl RiscvCoreState {
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),
             in_order_pipeline_cycle_records: Vec::new(),
+            rebound_in_order_execute_waits: BTreeSet::new(),
             pending_in_order_pipeline_advance: None,
             pending_in_order_pipeline_wake: None,
             detached_in_order_pipeline_wakes: Vec::new(),
@@ -956,6 +960,7 @@ impl RiscvCoreState {
         self.in_order_pipeline
             .replace_in_flight([])
             .expect("empty in-order pipeline state is valid");
+        self.rebound_in_order_execute_waits.clear();
         let stale_data_fetches = self
             .events
             .iter()

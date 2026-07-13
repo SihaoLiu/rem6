@@ -2,11 +2,11 @@ use rem6_isa_riscv::{MemoryAccessKind, RegisterWrite};
 use rem6_memory::MemoryRequestId;
 
 use crate::branch_predictor::BranchTargetKind;
-use crate::o3_fu_latency::o3_fu_latency_class;
 use crate::o3_runtime_trace::{
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
+use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
 
 use super::o3_store_forwarding::{
     o3_load_forwarding_access, o3_load_register_value, o3_store_load_composition,
@@ -1054,7 +1054,7 @@ impl O3RuntimeStats {
 
         let record = execution.execution();
         let fu_latency_cycles =
-            crate::riscv_execute::in_order_execute_wait_cycles(record.instruction());
+            crate::riscv_fu_latency::riscv_execute_wait_cycles(record.instruction());
         if fu_latency_cycles > 0 {
             self.fu_latency_instructions = self.fu_latency_instructions.saturating_add(1);
             self.fu_latency_cycles = self.fu_latency_cycles.saturating_add(fu_latency_cycles);

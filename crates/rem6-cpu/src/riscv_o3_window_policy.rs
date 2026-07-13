@@ -1,9 +1,19 @@
 use rem6_isa_riscv::{Register, RiscvInstruction};
 
 use crate::{
-    o3_fu_latency::{o3_scalar_integer_fu_live_window_head, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS},
     o3_runtime::{o3_scalar_integer_destination, o3_speculative_scalar_alu_operands},
+    o3_runtime_trace::O3RuntimeFuLatencyClass,
+    riscv_fu_latency::riscv_o3_fu_latency_class,
 };
+
+pub(crate) const O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS: usize = 4;
+
+const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bool {
+    matches!(
+        riscv_o3_fu_latency_class(instruction),
+        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
+    )
+}
 
 pub(crate) struct RiscvScalarIntegerLiveWindow {
     unresolved_destinations: Vec<Register>,
@@ -20,7 +30,7 @@ pub(crate) enum RiscvScalarIntegerYoungerDecision {
 
 impl RiscvScalarIntegerLiveWindow {
     pub(crate) fn from_fu_head(head: RiscvInstruction) -> Option<Self> {
-        o3_scalar_integer_fu_live_window_head(head).then(|| {
+        scalar_integer_fu_live_window_head(head).then(|| {
             Self::new(
                 o3_scalar_integer_destination(head)
                     .filter(|destination| !destination.is_zero())

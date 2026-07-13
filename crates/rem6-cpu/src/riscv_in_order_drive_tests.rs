@@ -244,6 +244,121 @@ fn restored_completed_execute_wait_rebind_resets_changed_latency_before_commit()
 }
 
 #[test]
+fn keyed_execute_wait_restarts_equal_latency_changed_instruction() {
+    let scalar_div: u32 = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let vector_div: u32 =
+        (0b100000 << 26) | (1 << 25) | (2 << 20) | (1 << 15) | (0b010 << 12) | (3 << 7) | 0x57;
+
+    for replacement_sequence in [0, 1] {
+        let core = core_with_completed_fetch();
+        let config = RiscvCore::default_in_order_pipeline_snapshot()
+            .config()
+            .clone();
+        core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+            config,
+            4,
+            [
+                InOrderPipelineInstruction::new(0, InOrderPipelineStage::Execute)
+                    .with_execute_wait_key(19, 1, u64::from(scalar_div) + 1),
+            ],
+        ))
+        .unwrap();
+        let replacement = CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                5,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                MemoryRequestId::new(AgentId::new(7), replacement_sequence),
+                Address::new(0x8000),
+                AccessSize::new(4).unwrap(),
+            ),
+            vector_div.to_le_bytes().to_vec(),
+        );
+        core.core.state.lock().expect("cpu core lock").events = vec![replacement];
+        core.sync_in_order_fetch_state().unwrap();
+
+        let mut scheduler = PartitionedScheduler::new(1).unwrap();
+        assert!(matches!(
+            core.schedule_next_completed_fetch_pipeline_cycle_serial(&mut scheduler)
+                .unwrap(),
+            RiscvInOrderDriveStatus::Scheduled(_)
+        ));
+        scheduler.run_until_idle();
+
+        let rebound = core.in_order_pipeline_snapshot();
+        assert_eq!(rebound.in_flight()[0].execute_wait_total_cycles(), Some(19));
+        assert_eq!(
+            rebound.in_flight()[0].execute_wait_remaining_cycles(),
+            Some(18)
+        );
+        assert_eq!(
+            rebound.in_flight()[0].execute_wait_key(),
+            Some(u64::from(vector_div) + 1)
+        );
+    }
+}
+
+#[test]
+fn keyed_head_execute_wait_rebind_preserves_progress_with_orphaned_younger_row() {
+    let core = core_with_completed_fetch();
+    let scalar_div: u32 = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
+    let config = RiscvCore::default_in_order_pipeline_snapshot()
+        .config()
+        .clone();
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        config,
+        4,
+        [
+            InOrderPipelineInstruction::new(0, InOrderPipelineStage::Execute)
+                .with_execute_wait_key(19, 5, u64::from(scalar_div) + 1),
+            InOrderPipelineInstruction::new(1, InOrderPipelineStage::Decode),
+        ],
+    ))
+    .unwrap();
+    let replacement = CpuFetchEvent::completed(
+        CpuFetchRecord::new(
+            5,
+            PartitionId::new(0),
+            MemoryRouteId::new(0),
+            endpoint("cpu0.ifetch"),
+            MemoryRequestId::new(AgentId::new(7), 1),
+            Address::new(0x8000),
+            AccessSize::new(4).unwrap(),
+        ),
+        scalar_div.to_le_bytes().to_vec(),
+    );
+    core.core.state.lock().expect("cpu core lock").events = vec![replacement];
+    core.sync_in_order_fetch_state().unwrap();
+
+    let rebound = core.in_order_pipeline_snapshot();
+    assert_eq!(
+        rebound
+            .in_flight()
+            .iter()
+            .map(|instruction| instruction.sequence())
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(
+        rebound.in_flight()[0].execute_wait_remaining_cycles(),
+        Some(5)
+    );
+
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    assert!(matches!(
+        core.schedule_next_completed_fetch_pipeline_cycle_serial(&mut scheduler)
+            .unwrap(),
+        RiscvInOrderDriveStatus::Scheduled(_)
+    ));
+    scheduler.run_until_idle();
+    assert_eq!(
+        core.in_order_pipeline_snapshot().in_flight()[0].execute_wait_remaining_cycles(),
+        Some(4)
+    );
+}
+
+#[test]
 fn detailed_rebound_completed_scalar_wait_defers_vector_and_float_latency_to_live_gate() {
     let float_div: u32 = (0x0c << 25) | (2 << 20) | (1 << 15) | (3 << 7) | 0x53;
     let vector_div: u32 =
@@ -296,6 +411,94 @@ fn detailed_rebound_completed_scalar_wait_defers_vector_and_float_latency_to_liv
         );
         assert!(core.checkpoint_owned_in_order_pipeline_wakes().is_empty());
         assert_eq!(core.checkpoint_owned_live_retire_gate_wakes().len(), 1);
+    }
+}
+
+#[test]
+fn normal_pipeline_scheduler_owns_float_and_vector_execute_waits() {
+    let float_div: u32 = (0x0c << 25) | (2 << 20) | (1 << 15) | (3 << 7) | 0x53;
+    let vector_div: u32 =
+        (0b100000 << 26) | (1 << 25) | (2 << 20) | (1 << 15) | (0b010 << 12) | (3 << 7) | 0x57;
+
+    for (replacement_raw, expected_wait_cycles) in [(float_div, 11), (vector_div, 19)] {
+        let core = core_with_completed_fetch();
+        let replacement = CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                0,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                MemoryRequestId::new(AgentId::new(7), 0),
+                Address::new(0x8000),
+                AccessSize::new(4).unwrap(),
+            ),
+            replacement_raw.to_le_bytes().to_vec(),
+        );
+        core.core.state.lock().expect("cpu core lock").events = vec![replacement];
+        let config = RiscvCore::default_in_order_pipeline_snapshot()
+            .config()
+            .clone();
+        core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+            config,
+            4,
+            [InOrderPipelineInstruction::new(
+                0,
+                InOrderPipelineStage::Execute,
+            )],
+        ))
+        .unwrap();
+
+        let mut scheduler = PartitionedScheduler::new(1).unwrap();
+        assert!(matches!(
+            core.schedule_next_completed_fetch_pipeline_cycle_serial(&mut scheduler)
+                .unwrap(),
+            RiscvInOrderDriveStatus::Scheduled(_)
+        ));
+        scheduler.run_until_idle();
+
+        let waiting = core.in_order_pipeline_snapshot();
+        assert_eq!(
+            waiting.in_flight()[0].stage(),
+            InOrderPipelineStage::Execute
+        );
+        assert_eq!(
+            waiting.in_flight()[0].execute_wait_total_cycles(),
+            Some(expected_wait_cycles)
+        );
+        assert_eq!(
+            waiting.in_flight()[0].execute_wait_remaining_cycles(),
+            Some(expected_wait_cycles - 1)
+        );
+        assert_eq!(
+            core.in_order_pipeline_cycle_records()
+                .last()
+                .unwrap()
+                .stall_cause(),
+            Some(crate::InOrderPipelineStallCause::ExecuteWait)
+        );
+        let checkpoint = crate::InOrderPipelineCheckpointPayload::from_snapshot(waiting.clone())
+            .unwrap()
+            .encode();
+        assert_eq!(checkpoint[4], 3);
+        let restored = crate::InOrderPipelineCheckpointPayload::decode(&checkpoint)
+            .unwrap()
+            .into_snapshot();
+        assert_eq!(
+            restored.in_flight()[0].execute_wait_key(),
+            waiting.in_flight()[0].execute_wait_key()
+        );
+        let mut malformed = checkpoint;
+        let wait_offset = malformed.len() - (1 + 8 + 8 + 8);
+        malformed[wait_offset] = 0;
+        malformed[wait_offset + 1..wait_offset + 17].fill(0);
+        assert!(matches!(
+            crate::InOrderPipelineCheckpointPayload::decode(&malformed),
+            Err(crate::InOrderPipelineError::InvalidCheckpointExecuteWait {
+                code: 0,
+                total_cycles: 0,
+                remaining_cycles: 0,
+            })
+        ));
     }
 }
 

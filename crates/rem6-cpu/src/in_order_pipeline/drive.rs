@@ -18,7 +18,7 @@ impl InOrderPipelineRetirement {
 }
 
 impl InOrderPipelineState {
-    pub(crate) fn configure_execute_wait(&mut self, sequence: u64, cycles: u64) {
+    pub(crate) fn configure_execute_wait(&mut self, sequence: u64, cycles: u64, key: u64) {
         let instruction = self
             .in_flight
             .iter_mut()
@@ -31,8 +31,10 @@ impl InOrderPipelineState {
         if cycles > 0 {
             instruction.stage = InOrderPipelineStage::Execute;
             instruction.execute_wait_cycles = Some((cycles, cycles));
+            instruction.execute_wait_key = Some(key);
         } else {
             instruction.execute_wait_cycles = None;
+            instruction.execute_wait_key = None;
         }
     }
 
@@ -41,6 +43,16 @@ impl InOrderPipelineState {
             instruction.sequence() == sequence
                 && instruction.execute_wait_remaining_cycles() == Some(0)
         })
+    }
+
+    pub(crate) fn bind_execute_wait_key(&mut self, sequence: u64, key: u64) {
+        let instruction = self
+            .in_flight
+            .iter_mut()
+            .find(|instruction| instruction.sequence() == sequence)
+            .expect("keyed execute-wait instruction is in flight");
+        debug_assert!(instruction.execute_wait_cycles.is_some());
+        instruction.execute_wait_key = Some(key);
     }
 
     pub(crate) fn try_record_execute_wait_cycle(
@@ -82,6 +94,10 @@ impl InOrderPipelineState {
     }
 
     pub(crate) fn rebind_execute_wait_sequence(&mut self, old_sequence: u64, new_sequence: u64) {
+        if old_sequence != new_sequence {
+            self.in_flight
+                .retain(|instruction| instruction.sequence() != new_sequence);
+        }
         let instruction = self
             .in_flight
             .iter_mut()

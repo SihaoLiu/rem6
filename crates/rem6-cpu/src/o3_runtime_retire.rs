@@ -69,7 +69,7 @@ impl O3RuntimeState {
                 entry.mark_ready();
             }
             let fu_latency_cycles =
-                crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
+                crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());
             let writeback_tick = execution.fetch().tick().saturating_add(fu_latency_cycles);
             self.snapshot.reorder_buffer.push(
                 O3ReorderBufferEntry::new(sequence, Address::new(record.pc()), destination)
@@ -136,7 +136,7 @@ impl O3RuntimeState {
             o3_branch_squashed_target(branch_kind, update, branch_fallthrough_target)
         });
         let fu_latency_cycles =
-            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
+            crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());
 
         if live_scalar_memory.is_none() {
             for entry in &mut self.snapshot.load_store_queue {

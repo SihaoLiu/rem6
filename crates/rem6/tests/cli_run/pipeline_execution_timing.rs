@@ -116,6 +116,61 @@ fn rem6_run_keeps_cache_fabric_dram_mul_invisible_through_execute_wait() {
 }
 
 #[test]
+fn rem6_run_keeps_scalar_float_result_invisible_through_execute_wait() {
+    let program = riscv64_program(&[
+        fp_r_type(0x70, 0, 0, 0x1, 5), // fclass.s x5, f0
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("pipeline-fclass-direct-execute-wait-visibility", &elf);
+    let completed = run_pipeline_timing_with_debug_flags(&path, 1, 180, "direct", "Pipeline");
+
+    assert_eq!(
+        completed
+            .pointer("/simulation/status")
+            .and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert_eq!(
+        completed
+            .pointer("/cores/0/registers/x5")
+            .and_then(Value::as_str),
+        Some("0x200")
+    );
+    assert_eq!(
+        completed
+            .pointer("/cores/0/in_order_pipeline/execute_wait_cycles")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let wait_cycles = execute_wait_cycles_by_cpu(&completed, 0);
+    assert_eq!(wait_cycles.len(), 2);
+
+    let probe_tick = *wait_cycles.last().unwrap();
+    let during_wait =
+        run_pipeline_timing_with_debug_flags(&path, 1, probe_tick, "direct", "Pipeline");
+    assert_eq!(
+        during_wait
+            .pointer("/simulation/status")
+            .and_then(Value::as_str),
+        Some("stopped_at_tick_limit")
+    );
+    assert_eq!(
+        during_wait
+            .pointer("/simulation/final_tick")
+            .and_then(Value::as_u64),
+        Some(probe_tick)
+    );
+    assert_eq!(during_wait.pointer("/cores/0/registers/x5"), None);
+    assert_eq!(
+        during_wait
+            .pointer("/cores/0/committed_instructions")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+}
+
+#[test]
 fn rem6_run_direct_single_core_alu_has_no_execute_wait_visibility_gate() {
     let case = ExecuteWaitVisibilityCase {
         name: "pipeline-alu-direct-single-core-no-execute-wait",
@@ -356,6 +411,10 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    r_type(funct7, rs2, rs1, funct3, rd, 0x53)
 }
 
 fn run_pipeline_timing(

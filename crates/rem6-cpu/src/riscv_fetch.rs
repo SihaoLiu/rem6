@@ -165,6 +165,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         let pc = Address::new(state.hart.pc());
         state.pending_fetch_prefix = None;
+        state.rebound_in_order_execute_waits.clear();
         state.detach_pending_in_order_pipeline_advance();
         state.discard_branch_speculations();
         state.live_retire_gate.rebind_pending_to_next_request();

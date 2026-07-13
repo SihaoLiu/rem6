@@ -5,10 +5,12 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
-    o3_fu_latency::O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
-    riscv_o3_window_policy::{RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision},
+    riscv_o3_window_policy::{
+        RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
+        O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
+    },
     CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
 };
 

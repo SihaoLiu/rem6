@@ -7,11 +7,11 @@ use rem6_memory::{Address, MemoryRequestId};
 
 use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
-use crate::o3_fu_latency::o3_fu_latency_class;
 use crate::o3_pipeline::{O3PendingStateSnapshot, O3PipelineError};
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
+use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
 use crate::{RiscvCoreState, RiscvDataAccessEventKind};
 
 #[path = "o3_runtime_authority.rs"]

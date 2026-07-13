@@ -5,7 +5,7 @@ use rem6_memory::MemoryRequestId;
 use crate::o3_runtime::{
     O3LiveRetireGateCheckpointPayload, O3RuntimeCheckpointPayload, O3RuntimeError,
 };
-use crate::{riscv_execute::in_order_execute_wait_cycles, RiscvCore, RiscvCpuError};
+use crate::{riscv_fu_latency::riscv_execute_wait_cycles, RiscvCore, RiscvCpuError};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RiscvLiveRetireGatePolicy {
@@ -221,7 +221,7 @@ impl RiscvLiveRetireGateState {
             return Ok(RiscvLiveRetireGateDecision::Ready);
         }
         let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
-        let wait_ticks = in_order_execute_wait_cycles(decoded.instruction());
+        let wait_ticks = riscv_execute_wait_cycles(decoded.instruction());
         if wait_ticks == 0 {
             return Ok(RiscvLiveRetireGateDecision::Ready);
         }

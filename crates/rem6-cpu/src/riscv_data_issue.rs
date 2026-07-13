@@ -20,6 +20,7 @@ use crate::{
     riscv_checker,
     riscv_cross_line::supports_cross_line_data_access,
     riscv_data_access, riscv_execute,
+    riscv_fu_latency::riscv_data_completion_execute_wait_cycles,
     riscv_live_retire_window::{
         stage_o3_scalar_memory_younger_window, wake_o3_scalar_memory_younger_window,
     },
@@ -968,7 +969,7 @@ fn record_data_retire_cycle_for_fetch(
         retag_existing_fetch_wait_cycles_for_data_access(state, fetch_request, data_wait_cycles);
     let remaining_data_wait_cycles = data_wait_cycles.saturating_sub(attributed_data_wait_cycles);
     let execute_wait_cycles =
-        riscv_execute::in_order_execute_wait_cycles(state.events[index].instruction());
+        riscv_data_completion_execute_wait_cycles(state.events[index].instruction());
     let mut waits = Vec::with_capacity(2);
     if execute_wait_cycles > 0 {
         waits.push((execute_wait_cycles, InOrderPipelineStallCause::ExecuteWait));

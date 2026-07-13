@@ -31,6 +31,7 @@ impl InOrderPipelineCheckpointPayload {
         let instruction_bytes = match version {
             CHECKPOINT_VERSION_V1 => CHECKPOINT_V1_INSTRUCTION_BYTES,
             CHECKPOINT_VERSION_V2 => CHECKPOINT_V2_INSTRUCTION_BYTES,
+            CHECKPOINT_VERSION_V3 => CHECKPOINT_V3_INSTRUCTION_BYTES,
             _ => return Err(InOrderPipelineError::UnsupportedCheckpointVersion { version }),
         };
 
@@ -67,11 +68,17 @@ impl InOrderPipelineCheckpointPayload {
             let stage = decode_checkpoint_stage(payload[offset])?;
             offset += 1;
             let instruction = InOrderPipelineInstruction::new(sequence, stage);
-            let instruction = if version == CHECKPOINT_VERSION_V2 {
-                decode_execute_wait(instruction, payload, &mut offset)?
-            } else {
-                instruction
-            };
+            let instruction =
+                if version == CHECKPOINT_VERSION_V2 || version == CHECKPOINT_VERSION_V3 {
+                    decode_execute_wait(
+                        instruction,
+                        payload,
+                        &mut offset,
+                        version == CHECKPOINT_VERSION_V3,
+                    )?
+                } else {
+                    instruction
+                };
             in_flight.push(instruction);
         }
 
@@ -89,16 +96,22 @@ impl InOrderPipelineCheckpointPayload {
         let in_flight = self.snapshot.in_flight();
         let version = if in_flight
             .iter()
+            .any(|instruction| instruction.execute_wait_key().is_some())
+        {
+            CHECKPOINT_VERSION_V3
+        } else if in_flight
+            .iter()
             .any(|instruction| instruction.execute_wait_remaining_cycles().is_some())
         {
             CHECKPOINT_VERSION_V2
         } else {
             CHECKPOINT_VERSION_V1
         };
-        let instruction_bytes = if version == CHECKPOINT_VERSION_V2 {
-            CHECKPOINT_V2_INSTRUCTION_BYTES
-        } else {
-            CHECKPOINT_V1_INSTRUCTION_BYTES
+        let instruction_bytes = match version {
+            CHECKPOINT_VERSION_V1 => CHECKPOINT_V1_INSTRUCTION_BYTES,
+            CHECKPOINT_VERSION_V2 => CHECKPOINT_V2_INSTRUCTION_BYTES,
+            CHECKPOINT_VERSION_V3 => CHECKPOINT_V3_INSTRUCTION_BYTES,
+            _ => unreachable!("selected checkpoint version is supported"),
         };
         let mut payload =
             Vec::with_capacity(CHECKPOINT_HEADER_BYTES + in_flight.len() * instruction_bytes);
@@ -115,8 +128,8 @@ impl InOrderPipelineCheckpointPayload {
         for instruction in in_flight {
             payload.extend_from_slice(&instruction.sequence().to_le_bytes());
             payload.push(encode_checkpoint_stage(instruction.stage()));
-            if version == CHECKPOINT_VERSION_V2 {
-                encode_execute_wait(*instruction, &mut payload);
+            if version == CHECKPOINT_VERSION_V2 || version == CHECKPOINT_VERSION_V3 {
+                encode_execute_wait(*instruction, &mut payload, version == CHECKPOINT_VERSION_V3);
             }
         }
         Ok(payload)
@@ -131,7 +144,11 @@ impl InOrderPipelineCheckpointPayload {
     }
 }
 
-fn encode_execute_wait(instruction: InOrderPipelineInstruction, payload: &mut Vec<u8>) {
+fn encode_execute_wait(
+    instruction: InOrderPipelineInstruction,
+    payload: &mut Vec<u8>,
+    include_key: bool,
+) {
     match instruction.execute_wait_cycles {
         Some((total_cycles, remaining_cycles)) => {
             payload.push(1);
@@ -144,22 +161,37 @@ fn encode_execute_wait(instruction: InOrderPipelineInstruction, payload: &mut Ve
             payload.extend_from_slice(&0_u64.to_le_bytes());
         }
     }
+    if include_key {
+        payload.extend_from_slice(&instruction.execute_wait_key().unwrap_or(0).to_le_bytes());
+    }
 }
 
 fn decode_execute_wait(
     instruction: InOrderPipelineInstruction,
     payload: &[u8],
     offset: &mut usize,
+    includes_key: bool,
 ) -> Result<InOrderPipelineInstruction, InOrderPipelineError> {
     let code = payload[*offset];
     *offset += 1;
     let total_cycles = read_u64(payload, offset);
     let remaining_cycles = read_u64(payload, offset);
+    let key = includes_key.then(|| read_u64(payload, offset));
+    if code == 0 && total_cycles == 0 && remaining_cycles == 0 && key.is_some_and(|key| key != 0) {
+        return Err(InOrderPipelineError::InvalidCheckpointExecuteWait {
+            code,
+            total_cycles,
+            remaining_cycles,
+        });
+    }
     match (code, total_cycles, remaining_cycles) {
         (0, 0, 0) => Ok(instruction),
-        (1, total_cycles, remaining_cycles) => {
-            Ok(instruction.with_execute_wait(total_cycles, remaining_cycles))
-        }
+        (1, total_cycles, remaining_cycles) => Ok(match key {
+            Some(key) if key > 0 => {
+                instruction.with_execute_wait_key(total_cycles, remaining_cycles, key)
+            }
+            _ => instruction.with_execute_wait(total_cycles, remaining_cycles),
+        }),
         _ => Err(InOrderPipelineError::InvalidCheckpointExecuteWait {
             code,
             total_cycles,

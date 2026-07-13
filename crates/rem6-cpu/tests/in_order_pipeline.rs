@@ -1219,10 +1219,10 @@ fn in_order_pipeline_checkpoint_payload_rejects_malformed_payloads() {
     );
 
     let mut unsupported_version_payload = payload.clone();
-    unsupported_version_payload[4] = 3;
+    unsupported_version_payload[4] = 4;
     assert_eq!(
         InOrderPipelineCheckpointPayload::decode(&unsupported_version_payload).unwrap_err(),
-        InOrderPipelineError::UnsupportedCheckpointVersion { version: 3 }
+        InOrderPipelineError::UnsupportedCheckpointVersion { version: 4 }
     );
 
     let mut invalid_width_payload = payload;

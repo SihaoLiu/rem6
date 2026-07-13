@@ -168,7 +168,7 @@ impl O3RuntimeState {
         self.stats.set_rename_map_entries(rename_map_entries);
 
         let fu_latency_cycles =
-            crate::riscv_execute::in_order_execute_wait_cycles(execution.instruction());
+            crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());
         self.live_retired_instructions
             .push(O3LiveRetiredInstruction {
                 request: execution.fetch().request_id(),

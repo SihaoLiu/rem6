@@ -4,6 +4,7 @@ use std::fmt;
 const CHECKPOINT_MAGIC: [u8; 4] = *b"RIOP";
 const CHECKPOINT_VERSION_V1: u8 = 1;
 const CHECKPOINT_VERSION_V2: u8 = 2;
+const CHECKPOINT_VERSION_V3: u8 = 3;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
@@ -14,6 +15,7 @@ const CHECKPOINT_HEADER_BYTES: usize = CHECKPOINT_MAGIC.len()
     + U32_BYTES;
 const CHECKPOINT_V1_INSTRUCTION_BYTES: usize = U64_BYTES + 1;
 const CHECKPOINT_V2_INSTRUCTION_BYTES: usize = U64_BYTES + 1 + 1 + U64_BYTES + U64_BYTES;
+const CHECKPOINT_V3_INSTRUCTION_BYTES: usize = CHECKPOINT_V2_INSTRUCTION_BYTES + U64_BYTES;
 
 mod checkpoint;
 mod drive;
@@ -125,6 +127,7 @@ pub struct InOrderPipelineInstruction {
     sequence: u64,
     stage: InOrderPipelineStage,
     execute_wait_cycles: Option<(u64, u64)>,
+    execute_wait_key: Option<u64>,
 }
 
 impl InOrderPipelineInstruction {
@@ -133,11 +136,24 @@ impl InOrderPipelineInstruction {
             sequence,
             stage,
             execute_wait_cycles: None,
+            execute_wait_key: None,
         }
     }
 
     pub const fn with_execute_wait(mut self, total_cycles: u64, remaining_cycles: u64) -> Self {
         self.execute_wait_cycles = Some((total_cycles, remaining_cycles));
+        self.execute_wait_key = None;
+        self
+    }
+
+    pub(crate) const fn with_execute_wait_key(
+        mut self,
+        total_cycles: u64,
+        remaining_cycles: u64,
+        key: u64,
+    ) -> Self {
+        self.execute_wait_cycles = Some((total_cycles, remaining_cycles));
+        self.execute_wait_key = Some(key);
         self
     }
 
@@ -161,6 +177,10 @@ impl InOrderPipelineInstruction {
             Some((_, remaining_cycles)) => Some(remaining_cycles),
             None => None,
         }
+    }
+
+    pub(crate) const fn execute_wait_key(self) -> Option<u64> {
+        self.execute_wait_key
     }
 }
 

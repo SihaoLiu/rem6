@@ -108,6 +108,32 @@ fn normal_riscv_drivers_delegate_pipeline_time_to_focused_scheduler_authority() 
 }
 
 #[test]
+fn riscv_fu_latency_has_one_typed_owner_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let latency_path = crate_dir.join("src/riscv_fu_latency.rs");
+    let latency = fs::read_to_string(&latency_path).unwrap();
+    let execute = fs::read_to_string(crate_dir.join("src/riscv_execute.rs")).unwrap();
+    let drive = fs::read_to_string(crate_dir.join("src/riscv_in_order_drive.rs")).unwrap();
+    let data_issue = fs::read_to_string(crate_dir.join("src/riscv_data_issue.rs")).unwrap();
+    let o3_runtime = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
+    let o3_stats = fs::read_to_string(crate_dir.join("src/o3_runtime_stats.rs")).unwrap();
+
+    assert!(latency_path.exists());
+    assert!(latency.contains("pub(crate) enum RiscvFuLatencyOwner"));
+    assert!(latency.contains("pub(crate) const fn riscv_fu_latency("));
+    assert!(latency.contains("riscv_pipeline_execute_wait_cycles"));
+    assert!(latency.contains("riscv_data_completion_execute_wait_cycles"));
+    assert!(latency.contains("riscv_o3_fu_latency_class"));
+    assert!(drive.contains("riscv_pipeline_execute_wait_cycles"));
+    assert!(data_issue.contains("riscv_data_completion_execute_wait_cycles"));
+    assert!(o3_runtime.contains("riscv_o3_fu_latency_class as o3_fu_latency_class"));
+    assert!(o3_stats.contains("riscv_o3_fu_latency_class as o3_fu_latency_class"));
+    assert!(!execute.contains("scheduled_in_order_execute_wait_cycles"));
+    assert!(!execute.contains("SCALAR_INTEGER_MUL_CYCLES"));
+    assert!(!crate_dir.join("src/o3_fu_latency.rs").exists());
+}
+
+#[test]
 fn in_order_redirect_flush_authority_stays_in_pipeline_plan() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(crate_dir.join("src/in_order_pipeline.rs")).unwrap();
