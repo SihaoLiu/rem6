@@ -107,7 +107,10 @@ fn predicted_mul_wakes_dependent_add_candidate() {
     let dependent_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), dependent)
         .expect("MUL result should wake the dependent scalar descendant");
-    assert_eq!(dependent_candidate.issue_tick(12), 13);
+    assert_eq!(
+        dependent_candidate.issue_tick(12),
+        12 + crate::riscv_fu_latency::riscv_execute_wait_cycles(multiply)
+    );
     assert_eq!(
         dependent_candidate.forwarded_register_writes(),
         &[RegisterWrite::new(reg(7), 42)]

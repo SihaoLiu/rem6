@@ -184,7 +184,14 @@ impl O3RuntimeState {
                         .iter()
                         .find(|write| write.register() == source)
                         .cloned()
-                        .map(|write| (write, issued.issue_tick.saturating_add(1)))
+                        .map(|write| {
+                            let ready_cycles =
+                                crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                                    issued.execution.instruction(),
+                                )
+                                .max(1);
+                            (write, issued.issue_tick.saturating_add(ready_cycles))
+                        })
                 });
             let (write, producer_ready_tick) = speculative
                 .or_else(|| self.completed_live_scalar_load_source(producer.sequence(), source))?;
