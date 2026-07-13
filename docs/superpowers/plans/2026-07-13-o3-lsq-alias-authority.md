@@ -976,79 +976,101 @@ translation.
 
 - [ ] **Step 3: Add explicit expectations to the store-conditional matrix**
 
-In `o3/lsq.rs`, replace the first `(field, value)` array with:
+In `o3/lsq.rs`, replace the first `(field, value)` array with an explicit
+runtime-field/stat-path oracle:
 
 ```rust
-for (field, value, alias) in [
-    ("lsq_operation_store", 1, Some(("operation", "store", "Store"))),
+for (field, stat_path, value) in [
+    ("lsq_operation_store", "sim.cpu0.o3.lsq_operation.store", 1),
     (
         "lsq_operation_store_conditional",
+        "sim.cpu0.o3.lsq_operation.store_conditional",
         1,
-        Some(("operation", "storeConditional", "StoreConditional")),
     ),
-    ("lsq_ordering_acquire", 0, Some(("ordering", "acquire", "Acquire"))),
-    ("lsq_ordering_release", 0, Some(("ordering", "release", "Release"))),
+    (
+        "lsq_ordering_acquire",
+        "sim.cpu0.o3.lsq_ordering.acquire",
+        0,
+    ),
+    (
+        "lsq_ordering_release",
+        "sim.cpu0.o3.lsq_ordering.release",
+        0,
+    ),
     (
         "lsq_ordering_acquire_release",
+        "sim.cpu0.o3.lsq_ordering.acquire_release",
         0,
-        Some(("ordering", "acquireRelease", "AcquireRelease")),
     ),
-    ("lsq_store_conditional_failures", 1, None),
+    (
+        "lsq_store_conditional_failures",
+        "sim.cpu0.o3.lsq_store_conditional_failures",
+        1,
+    ),
 ] {
 ```
 
-After the canonical stat assertion, replace the old helper call with:
+Pass `stat_path` directly to the canonical stat assertion. Then add a separate,
+explicit gem5-alias oracle table:
 
 ```rust
-if let Some((family, alias, bucket_alias)) = alias {
+for (family, alias, bucket_alias, value) in [
+    ("operation", "store", "Store", 1),
+    ("operation", "storeConditional", "StoreConditional", 1),
+    ("ordering", "acquire", "Acquire", 0),
+    ("ordering", "release", "Release", 0),
+    ("ordering", "acquireRelease", "AcquireRelease", 0),
+] {
     assert_o3_lsq_count_alias(&json, family, alias, bucket_alias, value);
 }
 ```
 
 - [ ] **Step 4: Add explicit expectations to float/vector and atomic matrices**
 
-In the float/vector matrix in `o3/lsq.rs`, replace the mixed field loop with:
+In the float/vector matrix in `o3/lsq.rs`, replace the mixed field loop with an
+explicit runtime-field/stat-path table followed by an independent alias table:
 
 ```rust
-for (field, value, alias, bucket_alias) in [
-    ("lsq_operation_load", 0, "load", "Load"),
-    ("lsq_operation_store", 0, "store", "Store"),
-    ("lsq_operation_load_reserved", 0, "loadReserved", "LoadReserved"),
+for (field, stat_path, value) in [
+    ("lsq_operation_load", "sim.cpu0.o3.lsq_operation.load", 0),
+    ("lsq_operation_store", "sim.cpu0.o3.lsq_operation.store", 0),
+    (
+        "lsq_operation_load_reserved",
+        "sim.cpu0.o3.lsq_operation.load_reserved",
+        0,
+    ),
     (
         "lsq_operation_store_conditional",
+        "sim.cpu0.o3.lsq_operation.store_conditional",
         0,
-        "storeConditional",
-        "StoreConditional",
     ),
-    ("lsq_operation_atomic", 0, "atomic", "Atomic"),
-    ("lsq_operation_float_load", 1, "floatLoad", "FloatLoad"),
-    ("lsq_operation_float_store", 1, "floatStore", "FloatStore"),
-    ("lsq_operation_vector_load", 1, "vectorLoad", "VectorLoad"),
-    ("lsq_operation_vector_store", 1, "vectorStore", "VectorStore"),
-] {
-    assert_eq!(
-        o3_runtime
-            .pointer(&format!("/{field}"))
-            .and_then(Value::as_u64),
-        Some(value),
-        "structured O3 runtime JSON should expose {field}: {o3_runtime}"
-    );
-    let operation = field.strip_prefix("lsq_operation_").unwrap();
-    assert_eq!(
-        json_stat_value(json, &format!("sim.cpu0.o3.lsq_operation.{operation}")),
-        value,
-        "stat registry should match structured runtime {field}"
-    );
-    assert_o3_lsq_count_alias(json, "operation", alias, bucket_alias, value);
-}
-for (field, value, alias, bucket_alias) in [
-    ("lsq_ordering_acquire", 0, "acquire", "Acquire"),
-    ("lsq_ordering_release", 0, "release", "Release"),
+    ("lsq_operation_atomic", "sim.cpu0.o3.lsq_operation.atomic", 0),
+    (
+        "lsq_operation_float_load",
+        "sim.cpu0.o3.lsq_operation.float_load",
+        1,
+    ),
+    (
+        "lsq_operation_float_store",
+        "sim.cpu0.o3.lsq_operation.float_store",
+        1,
+    ),
+    (
+        "lsq_operation_vector_load",
+        "sim.cpu0.o3.lsq_operation.vector_load",
+        1,
+    ),
+    (
+        "lsq_operation_vector_store",
+        "sim.cpu0.o3.lsq_operation.vector_store",
+        1,
+    ),
+    ("lsq_ordering_acquire", "sim.cpu0.o3.lsq_ordering.acquire", 0),
+    ("lsq_ordering_release", "sim.cpu0.o3.lsq_ordering.release", 0),
     (
         "lsq_ordering_acquire_release",
+        "sim.cpu0.o3.lsq_ordering.acquire_release",
         0,
-        "acquireRelease",
-        "AcquireRelease",
     ),
 ] {
     assert_eq!(
@@ -1058,13 +1080,27 @@ for (field, value, alias, bucket_alias) in [
         Some(value),
         "structured O3 runtime JSON should expose {field}: {o3_runtime}"
     );
-    let ordering = field.strip_prefix("lsq_ordering_").unwrap();
     assert_eq!(
-        json_stat_value(json, &format!("sim.cpu0.o3.lsq_ordering.{ordering}")),
+        json_stat_value(json, stat_path),
         value,
         "stat registry should match structured runtime {field}"
     );
-    assert_o3_lsq_count_alias(json, "ordering", alias, bucket_alias, value);
+}
+for (family, alias, bucket_alias, value) in [
+    ("operation", "load", "Load", 0),
+    ("operation", "store", "Store", 0),
+    ("operation", "loadReserved", "LoadReserved", 0),
+    ("operation", "storeConditional", "StoreConditional", 0),
+    ("operation", "atomic", "Atomic", 0),
+    ("operation", "floatLoad", "FloatLoad", 1),
+    ("operation", "floatStore", "FloatStore", 1),
+    ("operation", "vectorLoad", "VectorLoad", 1),
+    ("operation", "vectorStore", "VectorStore", 1),
+    ("ordering", "acquire", "Acquire", 0),
+    ("ordering", "release", "Release", 0),
+    ("ordering", "acquireRelease", "AcquireRelease", 0),
+] {
+    assert_o3_lsq_count_alias(json, family, alias, bucket_alias, value);
 }
 ```
 
@@ -1072,21 +1108,40 @@ In `o3/lsq/runtime.rs`, replace the mixed field loop with these exact operation
 and ordering tables:
 
 ```rust
-for (field, value, alias, bucket_alias) in [
-    ("lsq_operation_load", 1, "load", "Load"),
-    ("lsq_operation_store", 3, "store", "Store"),
-    ("lsq_operation_load_reserved", 1, "loadReserved", "LoadReserved"),
+for (field, stat_path, value) in [
+    ("lsq_operation_load", "sim.cpu0.o3.lsq_operation.load", 1),
+    ("lsq_operation_store", "sim.cpu0.o3.lsq_operation.store", 3),
+    (
+        "lsq_operation_load_reserved",
+        "sim.cpu0.o3.lsq_operation.load_reserved",
+        1,
+    ),
     (
         "lsq_operation_store_conditional",
+        "sim.cpu0.o3.lsq_operation.store_conditional",
         1,
-        "storeConditional",
-        "StoreConditional",
     ),
-    ("lsq_operation_atomic", 1, "atomic", "Atomic"),
-    ("lsq_operation_float_load", 0, "floatLoad", "FloatLoad"),
-    ("lsq_operation_float_store", 0, "floatStore", "FloatStore"),
-    ("lsq_operation_vector_load", 0, "vectorLoad", "VectorLoad"),
-    ("lsq_operation_vector_store", 0, "vectorStore", "VectorStore"),
+    ("lsq_operation_atomic", "sim.cpu0.o3.lsq_operation.atomic", 1),
+    (
+        "lsq_operation_float_load",
+        "sim.cpu0.o3.lsq_operation.float_load",
+        0,
+    ),
+    (
+        "lsq_operation_float_store",
+        "sim.cpu0.o3.lsq_operation.float_store",
+        0,
+    ),
+    (
+        "lsq_operation_vector_load",
+        "sim.cpu0.o3.lsq_operation.vector_load",
+        0,
+    ),
+    (
+        "lsq_operation_vector_store",
+        "sim.cpu0.o3.lsq_operation.vector_store",
+        0,
+    ),
 ] {
     assert_eq!(
         o3_runtime
@@ -1095,22 +1150,23 @@ for (field, value, alias, bucket_alias) in [
         Some(value),
         "structured O3 runtime JSON should expose {field}: {o3_runtime}"
     );
-    let operation = field.strip_prefix("lsq_operation_").unwrap();
     assert_eq!(
-        json_stat_value(json, &format!("sim.cpu0.o3.lsq_operation.{operation}")),
+        json_stat_value(json, stat_path),
         value,
         "stat registry should match structured runtime {field}"
     );
-    assert_o3_lsq_count_alias(json, "operation", alias, bucket_alias, value);
 }
-for (field, value, alias, bucket_alias) in [
-    ("lsq_ordering_acquire", 1, "acquire", "Acquire"),
-    ("lsq_ordering_release", 1, "release", "Release"),
+for (field, stat_path, value) in [
+    (
+        "lsq_ordering_acquire",
+        "sim.cpu0.o3.lsq_ordering.acquire",
+        1,
+    ),
+    ("lsq_ordering_release", "sim.cpu0.o3.lsq_ordering.release", 1),
     (
         "lsq_ordering_acquire_release",
+        "sim.cpu0.o3.lsq_ordering.acquire_release",
         1,
-        "acquireRelease",
-        "AcquireRelease",
     ),
 ] {
     assert_eq!(
@@ -1120,13 +1176,27 @@ for (field, value, alias, bucket_alias) in [
         Some(value),
         "structured O3 runtime JSON should expose {field}: {o3_runtime}"
     );
-    let ordering = field.strip_prefix("lsq_ordering_").unwrap();
     assert_eq!(
-        json_stat_value(json, &format!("sim.cpu0.o3.lsq_ordering.{ordering}")),
+        json_stat_value(json, stat_path),
         value,
         "stat registry should match structured runtime {field}"
     );
-    assert_o3_lsq_count_alias(json, "ordering", alias, bucket_alias, value);
+}
+for (family, alias, bucket_alias, value) in [
+    ("operation", "load", "Load", 1),
+    ("operation", "store", "Store", 3),
+    ("operation", "loadReserved", "LoadReserved", 1),
+    ("operation", "storeConditional", "StoreConditional", 1),
+    ("operation", "atomic", "Atomic", 1),
+    ("operation", "floatLoad", "FloatLoad", 0),
+    ("operation", "floatStore", "FloatStore", 0),
+    ("operation", "vectorLoad", "VectorLoad", 0),
+    ("operation", "vectorStore", "VectorStore", 0),
+    ("ordering", "acquire", "Acquire", 1),
+    ("ordering", "release", "Release", 1),
+    ("ordering", "acquireRelease", "AcquireRelease", 1),
+] {
+    assert_o3_lsq_count_alias(json, family, alias, bucket_alias, value);
 }
 assert_eq!(
     o3_runtime

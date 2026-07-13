@@ -263,6 +263,11 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
         fs::read_to_string(crate_dir.join("src/host_actions/o3_stats_dump_aliases.rs")).unwrap();
     let cli_helper = fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions.rs"))
         .expect("shared CLI test helper should be readable");
+    let cli_lsq = fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions/o3/lsq.rs"))
+        .expect("CLI O3 LSQ tests should be readable");
+    let cli_lsq_runtime =
+        fs::read_to_string(crate_dir.join("tests/cli_run/m5_host_actions/o3/lsq/runtime.rs"))
+            .expect("CLI O3 LSQ runtime tests should be readable");
     let helper_policy = "shared CLI LSQ alias helper must remain literal-only; \
         call-site tables are the allowed independent oracle";
     for obsolete_helper in [
@@ -280,10 +285,16 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
         r#".strip_prefix("lsq_operation_")"#,
         r#".strip_prefix("lsq_ordering_")"#,
     ] {
-        assert!(
-            !cli_helper.contains(forbidden_prefix),
-            "{helper_policy}; remove translation prefix `{forbidden_prefix}`"
-        );
+        for (source_name, source) in [
+            ("shared CLI helper", cli_helper.as_str()),
+            ("CLI O3 LSQ tests", cli_lsq.as_str()),
+            ("CLI O3 LSQ runtime tests", cli_lsq_runtime.as_str()),
+        ] {
+            assert!(
+                !source.contains(forbidden_prefix),
+                "{helper_policy}; remove translation prefix `{forbidden_prefix}` from {source_name}"
+            );
+        }
     }
     for forbidden_literal in [
         r#""load_reserved""#,
