@@ -8,6 +8,7 @@ use rem6_cpu::{
 const IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET: usize = 33;
 const IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET: usize = 37;
 const IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES: usize = 9;
+const IN_ORDER_CHECKPOINT_V2_INSTRUCTION_RECORD_BYTES: usize = 26;
 const SINGLE_IN_ORDER_CHECKPOINT_BYTES: &[u8] = &[
     b'R', b'I', b'O', b'P', 1, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0,
     0, 1, 0, 0, 0, 1, 0, 0, 0, 0x5b, 0, 0, 0, 0, 0, 0, 0, 3,
@@ -1067,6 +1068,58 @@ fn in_order_pipeline_checkpoint_payload_has_stable_single_instruction_bytes() {
 }
 
 #[test]
+fn in_order_pipeline_checkpoint_payload_preserves_execute_wait_progress() {
+    for (stage, remaining_cycles) in [
+        (InOrderPipelineStage::Execute, 2),
+        (InOrderPipelineStage::Commit, 0),
+    ] {
+        let snapshot = InOrderPipelineSnapshot::with_cycle(
+            config_with_decode_width(1),
+            4,
+            [instruction(91, stage).with_execute_wait(2, remaining_cycles)],
+        );
+        let payload = InOrderPipelineCheckpointPayload::from_snapshot(snapshot.clone())
+            .unwrap()
+            .encode();
+
+        assert_eq!(payload[4], 2);
+        assert_eq!(
+            payload.len(),
+            IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET
+                + IN_ORDER_CHECKPOINT_V2_INSTRUCTION_RECORD_BYTES
+        );
+        let decoded = InOrderPipelineCheckpointPayload::decode(&payload)
+            .unwrap()
+            .into_snapshot();
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(
+            decoded.in_flight()[0].execute_wait_remaining_cycles(),
+            Some(remaining_cycles)
+        );
+    }
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_execute_wait_outside_execute_or_commit() {
+    let snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        4,
+        [instruction(91, InOrderPipelineStage::Decode).with_execute_wait(2, 2)],
+    );
+
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::from_snapshot(snapshot).unwrap_err(),
+        InOrderPipelineError::ExecuteWaitStageMismatch {
+            sequence: 91,
+            stage: InOrderPipelineStage::Decode,
+            total_cycles: 2,
+            remaining_cycles: 2,
+        }
+    );
+}
+
+#[test]
 fn in_order_pipeline_checkpoint_payload_rejects_duplicate_sequences() {
     let snapshot = InOrderPipelineSnapshot::with_cycle(
         config_with_decode_width(1),
@@ -1166,10 +1219,10 @@ fn in_order_pipeline_checkpoint_payload_rejects_malformed_payloads() {
     );
 
     let mut unsupported_version_payload = payload.clone();
-    unsupported_version_payload[4] = 2;
+    unsupported_version_payload[4] = 3;
     assert_eq!(
         InOrderPipelineCheckpointPayload::decode(&unsupported_version_payload).unwrap_err(),
-        InOrderPipelineError::UnsupportedCheckpointVersion { version: 2 }
+        InOrderPipelineError::UnsupportedCheckpointVersion { version: 3 }
     );
 
     let mut invalid_width_payload = payload;

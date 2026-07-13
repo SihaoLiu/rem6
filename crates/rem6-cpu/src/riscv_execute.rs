@@ -544,10 +544,14 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
     } else {
         discard_stale_in_order_pipeline_before_retire(state, sequence)?;
     }
+    let execute_wait_completed = state.in_order_pipeline.execute_wait_completed(sequence);
     let waits = waits
         .iter()
         .copied()
-        .filter(|(cycles, _)| *cycles > 0)
+        .filter(|(cycles, cause)| {
+            *cycles > 0
+                && !(execute_wait_completed && *cause == InOrderPipelineStallCause::ExecuteWait)
+        })
         .collect::<Vec<_>>();
     let mut wait_recorded = waits.is_empty();
     let max_retire_cycles =
@@ -802,6 +806,25 @@ pub(crate) fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64
         RiscvInstruction::VectorFloat(vector_instruction) => {
             vector_float_execute_wait_cycles(vector_instruction)
         }
+        _ => 0,
+    }
+}
+
+pub(crate) const fn scheduled_in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
+    match instruction {
+        RiscvInstruction::Mul { .. }
+        | RiscvInstruction::Mulh { .. }
+        | RiscvInstruction::Mulhsu { .. }
+        | RiscvInstruction::Mulhu { .. }
+        | RiscvInstruction::Mulw { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::Div { .. }
+        | RiscvInstruction::Divu { .. }
+        | RiscvInstruction::Rem { .. }
+        | RiscvInstruction::Remu { .. }
+        | RiscvInstruction::Divw { .. }
+        | RiscvInstruction::Divuw { .. }
+        | RiscvInstruction::Remw { .. }
+        | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
         _ => 0,
     }
 }
@@ -1579,6 +1602,7 @@ pub(crate) fn sync_in_order_fetch_state(
         if let Some(prefix) = state.pending_fetch_prefix.as_ref() {
             current_sequences.insert(prefix.fetch.request_id().sequence());
         }
+        rebind_orphaned_execute_wait_fetch(state, fetch_events, &current_sequences);
         let orphaned_sequences = state
             .in_order_pipeline
             .in_flight()
@@ -1643,6 +1667,45 @@ pub(crate) fn sync_in_order_fetch_state(
         }
     }
     Ok(())
+}
+
+fn rebind_orphaned_execute_wait_fetch(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    current_sequences: &BTreeSet<u64>,
+) {
+    if state.in_order_pipeline.in_flight().len() != 1 {
+        return;
+    }
+    let instruction = state.in_order_pipeline.in_flight()[0];
+    if current_sequences.contains(&instruction.sequence())
+        || instruction.execute_wait_remaining_cycles().is_none()
+    {
+        return;
+    }
+    let architectural = Address::new(state.hart.pc());
+    let mut replacements = fetch_events.iter().filter(|event| {
+        matches!(
+            event.kind(),
+            CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
+        ) && event.pc() == architectural
+            && !state.executed_fetches.contains(&event.request_id())
+            && !state
+                .in_order_pipeline
+                .contains_sequence(event.request_id().sequence())
+    });
+    let Some(replacement_sequence) = replacements
+        .next()
+        .map(|event| event.request_id().sequence())
+    else {
+        return;
+    };
+    if replacements.next().is_some() {
+        return;
+    }
+    state
+        .in_order_pipeline
+        .rebind_execute_wait_sequence(instruction.sequence(), replacement_sequence);
 }
 
 pub(crate) fn remove_fetch_sequences_from_pipeline(

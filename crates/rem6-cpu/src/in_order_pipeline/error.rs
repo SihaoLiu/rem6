@@ -17,6 +17,12 @@ pub enum InOrderPipelineError {
     DuplicateInFlightInstruction {
         sequence: u64,
     },
+    ExecuteWaitStageMismatch {
+        sequence: u64,
+        stage: InOrderPipelineStage,
+        total_cycles: u64,
+        remaining_cycles: u64,
+    },
     MissingBranchRedirectInstruction {
         sequence: u64,
     },
@@ -56,6 +62,11 @@ pub enum InOrderPipelineError {
     InvalidCheckpointStageCode {
         code: u8,
     },
+    InvalidCheckpointExecuteWait {
+        code: u8,
+        total_cycles: u64,
+        remaining_cycles: u64,
+    },
     CheckpointValueTooLarge {
         field: &'static str,
         value: usize,
@@ -81,6 +92,15 @@ impl fmt::Display for InOrderPipelineError {
             Self::DuplicateInFlightInstruction { sequence } => write!(
                 formatter,
                 "in-order pipeline has duplicate in-flight instruction sequence {sequence}"
+            ),
+            Self::ExecuteWaitStageMismatch {
+                sequence,
+                stage,
+                total_cycles,
+                remaining_cycles,
+            } => write!(
+                formatter,
+                "in-order instruction sequence {sequence} has invalid execute-wait progress {remaining_cycles}/{total_cycles} at stage {stage}"
             ),
             Self::MissingBranchRedirectInstruction { sequence } => write!(
                 formatter,
@@ -142,6 +162,14 @@ impl fmt::Display for InOrderPipelineError {
                     "in-order checkpoint payload has invalid stage code {code}"
                 )
             }
+            Self::InvalidCheckpointExecuteWait {
+                code,
+                total_cycles,
+                remaining_cycles,
+            } => write!(
+                formatter,
+                "in-order checkpoint payload has invalid execute-wait code {code} with progress {remaining_cycles}/{total_cycles}"
+            ),
             Self::CheckpointValueTooLarge {
                 field,
                 value,

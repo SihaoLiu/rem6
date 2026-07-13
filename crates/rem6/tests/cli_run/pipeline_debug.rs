@@ -686,7 +686,7 @@ fn rem6_run_pipeline_debug_stats_emit_multicore_cpu_scoped_flush_redirect_matric
 }
 
 #[test]
-fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug_flag() {
+fn rem6_run_stats_emit_in_order_execute_wait_resource_stage_matrix_without_debug_flag() {
     let program = riscv64_program(&[
         i_type(97, 0, 0x0, 11, 0x13),        // addi x11, x0, 97
         i_type(3, 0, 0x0, 12, 0x13),         // addi x12, x0, 3
@@ -718,20 +718,32 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
         run_execute_wait_ordering_program_with_debug(&path, "json", Some("Pipeline"));
     let debug_json: Value = serde_json::from_str(&debug_stdout).unwrap();
     assert_pipeline_summary_matches_trace(&debug_json);
-    let execute_wait_summary_ordering_cycles = ["fetch1", "fetch2", "decode", "execute", "commit"]
+    let execute_wait_summary_resource_cycles = ["fetch1", "fetch2", "decode", "execute", "commit"]
         .map(|stage| {
+            pipeline_summary_path_u64(
+                &debug_json,
+                &format!(
+                    "/debug/pipeline_summary/stall_cause/execute_wait/stage/{stage}/resource_blocked_cycles"
+                ),
+            )
+        });
+    assert!(
+        execute_wait_summary_resource_cycles
+            .iter()
+            .any(|cycles| *cycles > 0),
+        "Pipeline debug summary should preserve execute_wait resource-blocked stage cycles: {debug_stdout}"
+    );
+    assert_eq!(
+        ["fetch1", "fetch2", "decode", "execute", "commit"].map(|stage| {
             pipeline_summary_path_u64(
                 &debug_json,
                 &format!(
                     "/debug/pipeline_summary/stall_cause/execute_wait/stage/{stage}/ordering_blocked_cycles"
                 ),
             )
-        });
-    assert!(
-        execute_wait_summary_ordering_cycles
-            .iter()
-            .any(|cycles| *cycles > 0),
-        "Pipeline debug summary should preserve execute_wait ordering-blocked stage cycles: {debug_stdout}"
+        }),
+        [0; 5],
+        "the serial CLI drive should not invent younger execute-wait rows: {debug_stdout}"
     );
 
     let execute_wait_cycles =
@@ -795,14 +807,8 @@ fn rem6_run_stats_emit_in_order_execute_wait_ordering_stage_matrix_without_debug
         execute_wait_resource_cycles.iter().any(|cycles| *cycles > 0),
         "execute-wait run should attribute resource-blocked stage cycles: {execute_wait_resource_cycles:?}"
     );
-    assert!(
-        execute_wait_ordering.iter().any(|blocked| *blocked > 0),
-        "execute-wait run should attribute younger ordering-blocked instructions: {execute_wait_ordering:?}"
-    );
-    assert!(
-        execute_wait_ordering_cycles.iter().any(|cycles| *cycles > 0),
-        "execute-wait run should attribute younger ordering-blocked stage cycles: {execute_wait_ordering_cycles:?}"
-    );
+    assert_eq!(execute_wait_ordering, [0; 5]);
+    assert_eq!(execute_wait_ordering_cycles, [0; 5]);
     assert!(
         execute_wait_records.iter().any(|records| *records > 0),
         "execute-wait run should attribute active stage records: {execute_wait_records:?}"

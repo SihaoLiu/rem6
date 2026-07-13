@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineInstruction,
-    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineCycleRecord,
+    InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage,
+    InOrderPipelineStallCause, RiscvCluster, RiscvCore, RiscvCoreDriveAction,
     RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
@@ -14,7 +15,7 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
-    MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+    MemoryRoute, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -27,6 +28,15 @@ fn layout() -> CacheLineLayout {
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
+fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
         | (u32::from(rs1) << 15)
         | (funct3 << 12)
         | (u32::from(rd) << 7)
@@ -155,6 +165,21 @@ fn loaded_program_with_data(
     Arc::new(Mutex::new(store))
 }
 
+fn memory_response(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    delivery: &RequestDelivery,
+) -> TargetOutcome {
+    let response = store
+        .lock()
+        .unwrap()
+        .respond(delivery.request())
+        .unwrap()
+        .response()
+        .cloned()
+        .unwrap();
+    TargetOutcome::Respond(response)
+}
+
 fn in_order_routes() -> (
     PartitionedScheduler,
     MemoryTransport,
@@ -217,6 +242,25 @@ fn fetch_one(
     )
     .unwrap();
     scheduler.run_until_idle_conservative();
+}
+
+fn fetch_one_parallel(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) {
+    core.issue_next_fetch_parallel(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        move |delivery, context| {
+            assert_eq!(context.partition(), PartitionId::new(1));
+            memory_response(&store, &delivery)
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
 }
 
 fn issue_one_data_access(
@@ -325,6 +369,465 @@ fn mmio_bus_with_u64(address: u64, bytes: [u8; 8]) -> MmioBus {
     )
     .unwrap();
     bus
+}
+
+fn drive_next_serial_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> RiscvCoreDriveAction {
+    let fetch_store = Arc::clone(&store);
+    core.drive_next_action(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&fetch_store, &delivery),
+        |_delivery, _context| panic!("scalar ALU instruction must not issue data traffic"),
+    )
+    .unwrap()
+    .expect("normal driver should make fetch or pipeline progress")
+}
+
+fn drive_next_parallel_cluster_action(
+    cluster: &RiscvCluster,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> RiscvCoreDriveAction {
+    let actions = cluster
+        .drive_ready_cores_parallel(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                move |_delivery, _context| {
+                    panic!("scalar ALU instruction must not issue data traffic")
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].cpu(), CpuId::new(0));
+    actions[0].action().clone()
+}
+
+fn sequence_stage(core: &RiscvCore, sequence: u64) -> Option<InOrderPipelineStage> {
+    core.in_order_pipeline_snapshot()
+        .in_flight()
+        .iter()
+        .find_map(|instruction| (instruction.sequence() == sequence).then_some(instruction.stage()))
+}
+
+fn in_flight_without_sequence(core: &RiscvCore, sequence: u64) -> Vec<InOrderPipelineInstruction> {
+    core.in_order_pipeline_snapshot()
+        .in_flight()
+        .iter()
+        .copied()
+        .filter(|instruction| instruction.sequence() != sequence)
+        .collect()
+}
+
+fn pipeline_rows(instructions: &[InOrderPipelineInstruction]) -> Vec<(u64, InOrderPipelineStage)> {
+    instructions
+        .iter()
+        .map(|instruction| (instruction.sequence(), instruction.stage()))
+        .collect()
+}
+
+fn last_pipeline_record(core: &RiscvCore) -> InOrderPipelineCycleRecord {
+    core.in_order_pipeline_cycle_records()
+        .last()
+        .cloned()
+        .expect("pipeline cycle record should have been recorded")
+}
+
+fn assert_execute_wait_record(
+    record: &InOrderPipelineCycleRecord,
+    sequence: u64,
+    expected_ordering_blocked: &[InOrderPipelineInstruction],
+) {
+    assert_eq!(
+        record.stall_cause(),
+        Some(InOrderPipelineStallCause::ExecuteWait)
+    );
+    assert_eq!(record.stall_cycle_count(), 1);
+    assert_eq!(record.summary().stall_cycle_count(), 1);
+    assert_eq!(record.summary().retired_count(), 0);
+    assert_eq!(record.summary().advanced_count(), 0);
+    assert_eq!(
+        pipeline_rows(record.plan().resource_blocked()),
+        vec![(sequence, InOrderPipelineStage::Execute)]
+    );
+    assert_eq!(
+        pipeline_rows(record.plan().ordering_blocked()),
+        pipeline_rows(expected_ordering_blocked)
+    );
+    assert_eq!(
+        pipeline_rows(record.before().in_flight()),
+        pipeline_rows(record.after().in_flight())
+    );
+}
+
+fn drive_serial_until_stage(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    sequence: u64,
+    stage: InOrderPipelineStage,
+    suppressed_register: Register,
+) {
+    for _ in 0..16 {
+        if sequence_stage(core, sequence) == Some(stage) {
+            return;
+        }
+        match drive_next_serial_action(core, Arc::clone(&store), scheduler, transport) {
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            | RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_conservative();
+                assert_eq!(core.read_register(suppressed_register), 0);
+                assert!(core.execution_events().is_empty());
+            }
+            RiscvCoreDriveAction::InstructionExecuted(event) => {
+                panic!("instruction executed before reaching {stage:?}: {event:?}");
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("scalar ALU instruction unexpectedly issued data traffic");
+            }
+        }
+    }
+    panic!("sequence {sequence} did not reach {stage:?}");
+}
+
+fn drive_parallel_until_stage(
+    cluster: &RiscvCluster,
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    sequence: u64,
+    stage: InOrderPipelineStage,
+    suppressed_register: Register,
+) {
+    for _ in 0..16 {
+        if sequence_stage(core, sequence) == Some(stage) {
+            return;
+        }
+        match drive_next_parallel_cluster_action(cluster, Arc::clone(&store), scheduler, transport)
+        {
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            | RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_parallel().unwrap();
+                assert_eq!(core.read_register(suppressed_register), 0);
+                assert!(core.execution_events().is_empty());
+            }
+            RiscvCoreDriveAction::InstructionExecuted(event) => {
+                panic!("instruction executed before reaching {stage:?}: {event:?}");
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("scalar ALU instruction unexpectedly issued data traffic");
+            }
+        }
+    }
+    panic!("sequence {sequence} did not reach {stage:?}");
+}
+
+fn assert_serial_execute_wait_ticks_before_commit(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    sequence: u64,
+    wait_cycles: u64,
+    suppressed_register: Register,
+) {
+    let expected_ordering_blocked = in_flight_without_sequence(core, sequence);
+    for offset in 0..wait_cycles {
+        match drive_next_serial_action(core, Arc::clone(&store), scheduler, transport) {
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {}
+            other => panic!("execute wait tick {offset} produced unexpected action: {other:?}"),
+        }
+        scheduler.run_until_idle_conservative();
+        assert_eq!(
+            sequence_stage(core, sequence),
+            Some(InOrderPipelineStage::Execute)
+        );
+        assert_eq!(core.read_register(suppressed_register), 0);
+        assert!(core.execution_events().is_empty());
+        assert_execute_wait_record(
+            &last_pipeline_record(core),
+            sequence,
+            &expected_ordering_blocked,
+        );
+    }
+}
+
+fn assert_parallel_execute_wait_ticks_before_commit(
+    cluster: &RiscvCluster,
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    sequence: u64,
+    wait_cycles: u64,
+    suppressed_register: Register,
+) {
+    let expected_ordering_blocked = in_flight_without_sequence(core, sequence);
+    assert!(
+        !expected_ordering_blocked.is_empty(),
+        "parallel setup should keep a younger row visible behind the stalled Execute instruction"
+    );
+    for offset in 0..wait_cycles {
+        match drive_next_parallel_cluster_action(cluster, Arc::clone(&store), scheduler, transport)
+        {
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {}
+            other => panic!("execute wait tick {offset} produced unexpected action: {other:?}"),
+        }
+        scheduler.run_until_idle_parallel().unwrap();
+        assert_eq!(
+            sequence_stage(core, sequence),
+            Some(InOrderPipelineStage::Execute)
+        );
+        assert_eq!(core.read_register(suppressed_register), 0);
+        assert!(core.execution_events().is_empty());
+        assert_execute_wait_record(
+            &last_pipeline_record(core),
+            sequence,
+            &expected_ordering_blocked,
+        );
+    }
+}
+
+fn drive_next_serial_pipeline_tick(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> InOrderPipelineCycleRecord {
+    match drive_next_serial_action(core, store, scheduler, transport) {
+        RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {}
+        other => panic!("expected scheduled pipeline tick, got {other:?}"),
+    }
+    scheduler.run_until_idle_conservative();
+    last_pipeline_record(core)
+}
+
+fn drive_next_parallel_pipeline_tick(
+    cluster: &RiscvCluster,
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> InOrderPipelineCycleRecord {
+    match drive_next_parallel_cluster_action(cluster, store, scheduler, transport) {
+        RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {}
+        other => panic!("expected scheduled pipeline tick, got {other:?}"),
+    }
+    scheduler.run_until_idle_parallel().unwrap();
+    last_pipeline_record(core)
+}
+
+fn drive_until_serial_instruction_executed(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> rem6_cpu::RiscvCpuExecutionEvent {
+    for _ in 0..16 {
+        match drive_next_serial_action(core, Arc::clone(&store), scheduler, transport) {
+            RiscvCoreDriveAction::InstructionExecuted(event) => return *event,
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            | RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_conservative();
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("scalar ALU instruction unexpectedly issued data traffic")
+            }
+        }
+    }
+    panic!("instruction did not execute");
+}
+
+fn drive_until_parallel_instruction_executed(
+    cluster: &RiscvCluster,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> rem6_cpu::RiscvCpuExecutionEvent {
+    for _ in 0..16 {
+        match drive_next_parallel_cluster_action(cluster, Arc::clone(&store), scheduler, transport)
+        {
+            RiscvCoreDriveAction::InstructionExecuted(event) => return *event,
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            | RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_parallel().unwrap();
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("scalar ALU instruction unexpectedly issued data traffic")
+            }
+        }
+    }
+    panic!("instruction did not execute");
+}
+
+#[test]
+fn normal_driver_zero_wait_integer_add_has_no_execute_wait_before_commit() {
+    let (mut scheduler, transport, fetch_route, _) = in_order_routes();
+    let add = r_type(0x00, 2, 1, 0x0, 3, 0x33);
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.write_register(reg(1), 2);
+    core.write_register(reg(2), 3);
+    let store = loaded_program(0x8000, &[add, 0x0010_0073]);
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    drive_serial_until_stage(
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+        0,
+        InOrderPipelineStage::Execute,
+        reg(3),
+    );
+
+    let execute_to_commit =
+        drive_next_serial_pipeline_tick(&core, Arc::clone(&store), &mut scheduler, &transport);
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(sequence_stage(&core, 0), Some(InOrderPipelineStage::Commit));
+    assert_eq!(execute_to_commit.stall_cause(), None);
+    assert_eq!(execute_to_commit.summary().stall_cycle_count(), 0);
+    assert!(execute_to_commit.plan().advanced().iter().any(|advance| {
+        advance.sequence() == 0
+            && advance.source_stage() == InOrderPipelineStage::Execute
+            && advance.destination_stage() == Some(InOrderPipelineStage::Commit)
+    }));
+    assert!(core
+        .in_order_pipeline_cycle_records()
+        .iter()
+        .all(|record| record.stall_cause() != Some(InOrderPipelineStallCause::ExecuteWait)));
+
+    let event = drive_until_serial_instruction_executed(&core, store, &mut scheduler, &transport);
+    assert_eq!(event.instruction(), RiscvInstruction::decode(add).unwrap());
+    assert_eq!(core.read_register(reg(3)), 5);
+    assert_eq!(
+        event
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .summary()
+            .retired_count(),
+        1
+    );
+}
+
+#[test]
+fn normal_driver_serial_mul_execute_wait_stalls_before_commit() {
+    let (mut scheduler, transport, fetch_route, _) = in_order_routes();
+    let mul = r_type(0x01, 2, 1, 0x0, 3, 0x33);
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.write_register(reg(1), 6);
+    core.write_register(reg(2), 7);
+    let store = loaded_program(0x8000, &[mul, 0x0010_0073]);
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    drive_serial_until_stage(
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+        0,
+        InOrderPipelineStage::Execute,
+        reg(3),
+    );
+
+    assert_serial_execute_wait_ticks_before_commit(
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+        0,
+        2,
+        reg(3),
+    );
+
+    let execute_to_commit =
+        drive_next_serial_pipeline_tick(&core, Arc::clone(&store), &mut scheduler, &transport);
+    assert_eq!(execute_to_commit.stall_cause(), None);
+    assert_eq!(sequence_stage(&core, 0), Some(InOrderPipelineStage::Commit));
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert!(core.execution_events().is_empty());
+
+    let event = drive_until_serial_instruction_executed(&core, store, &mut scheduler, &transport);
+    assert_eq!(event.instruction(), RiscvInstruction::decode(mul).unwrap());
+    assert_eq!(core.read_register(reg(3)), 42);
+    let retire_record = event.in_order_pipeline_cycle().unwrap();
+    assert_eq!(retire_record.stall_cause(), None);
+    assert_eq!(retire_record.summary().retired_count(), 1);
+}
+
+#[test]
+fn normal_cluster_parallel_div_execute_wait_stalls_oldest_and_orders_younger() {
+    let (mut scheduler, transport, fetch_route, _) = in_order_routes();
+    let div = r_type(0x01, 2, 1, 0x4, 3, 0x33);
+    let younger_addi = i_type(9, 0, 0x0, 4, 0x13);
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    core.write_register(reg(1), 84);
+    core.write_register(reg(2), 7);
+    let store = loaded_program(0x8000, &[div, younger_addi, 0x0010_0073]);
+
+    fetch_one_parallel(&core, Arc::clone(&store), &mut scheduler, &transport);
+    fetch_one_parallel(&core, Arc::clone(&store), &mut scheduler, &transport);
+    drive_parallel_until_stage(
+        &cluster,
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+        0,
+        InOrderPipelineStage::Execute,
+        reg(3),
+    );
+    assert!(!in_flight_without_sequence(&core, 0).is_empty());
+
+    assert_parallel_execute_wait_ticks_before_commit(
+        &cluster,
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+        0,
+        19,
+        reg(3),
+    );
+
+    let execute_to_commit = drive_next_parallel_pipeline_tick(
+        &cluster,
+        &core,
+        Arc::clone(&store),
+        &mut scheduler,
+        &transport,
+    );
+    assert_eq!(execute_to_commit.stall_cause(), None);
+    assert_eq!(sequence_stage(&core, 0), Some(InOrderPipelineStage::Commit));
+    assert_eq!(core.read_register(reg(3)), 0);
+    assert_eq!(core.read_register(reg(4)), 0);
+    assert!(core.execution_events().is_empty());
+
+    let event =
+        drive_until_parallel_instruction_executed(&cluster, store, &mut scheduler, &transport);
+    assert_eq!(event.instruction(), RiscvInstruction::decode(div).unwrap());
+    assert_eq!(core.read_register(reg(3)), 12);
+    assert_eq!(core.read_register(reg(4)), 0);
+    let retire_record = event.in_order_pipeline_cycle().unwrap();
+    assert_eq!(retire_record.stall_cause(), None);
+    assert_eq!(retire_record.summary().retired_count(), 1);
 }
 
 #[test]

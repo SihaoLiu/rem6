@@ -64,15 +64,6 @@ fn rem6_run_o3_detailed_div_live_retire_gate_delays_architectural_commit() {
         timing.json,
         detailed_before_commit.json
     );
-    assert!(
-        detailed.final_tick > timing.final_tick,
-        "detailed final_tick={} should exceed timing final_tick={} after the cycle-visible DIV gate\ntiming={}\ndetailed={}",
-        detailed.final_tick,
-        timing.final_tick,
-        timing.json,
-        detailed.json
-    );
-
     assert_live_retire_window(&detailed_before_commit.json);
     assert_live_retire_gate_stats(&detailed_before_commit.json, 1, 19, 19);
     assert_live_retire_gate_stats(&detailed.json, 1, 19, 19);
@@ -102,7 +93,6 @@ fn rem6_run_o3_detailed_add_only_does_not_schedule_live_retire_gate() {
 #[derive(Debug)]
 struct LiveRetireGateRun {
     json: Value,
-    final_tick: u64,
     stop_code: Option<u64>,
     memory_hex: String,
     committed_instructions: u64,
@@ -151,7 +141,6 @@ fn run_live_retire_gate_case(
         Some(expected_status),
         "run should report the expected stop status: {json}"
     );
-    let final_tick = live_retire_gate_json_u64_field(&json, "/simulation/final_tick");
     let stop_code = json
         .pointer("/simulation/stop_code")
         .and_then(Value::as_u64);
@@ -165,7 +154,6 @@ fn run_live_retire_gate_case(
 
     LiveRetireGateRun {
         json,
-        final_tick,
         stop_code,
         memory_hex,
         committed_instructions,

@@ -193,7 +193,7 @@ fn rem6_run_pipeline_debug_correlates_younger_data_wait_backlog_with_branch_flus
 }
 
 #[test]
-fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_trap_flush() {
+fn rem6_run_pipeline_debug_does_not_correlate_completed_execute_wait_with_later_trap_flush() {
     let program = riscv64_program(&[
         b_type(8, 0, 0, 0x1),             // bne x0, x0, +8
         r_type(0x01, 0, 0, 0x4, 3, 0x33), // div x3, x0, x0
@@ -203,17 +203,8 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_trap_flush() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("pipeline-stall-backlog-execute-wait-flush", &elf);
 
-    for (lookahead, expected) in [
-        (
-            "2",
-            RawBacklogFlushTotals {
-                sequences: 1,
-                stall_records: 19,
-                stall_cycles: 19,
-            },
-        ),
-        ("1", RawBacklogFlushTotals::default()),
-    ] {
+    for (lookahead, expected_trap_flush_records) in [("2", Some(1)), ("1", None)] {
+        let expected = RawBacklogFlushTotals::default();
         let (stdout, json) = pipeline_execute_wait_trap_json(&path, lookahead);
         assert_eq!(
             json.pointer("/simulation/status").and_then(Value::as_str),
@@ -257,18 +248,10 @@ fn rem6_run_pipeline_debug_correlates_execute_wait_backlog_with_trap_flush() {
             &json,
             "sim.debug.pipeline_trace.flush_cause.trap_redirect.records",
         );
-        if expected.sequences == 0 {
-            assert_eq!(
-                trap_flush_records, None,
-                "sparse stats must omit an empty trap-flush family: {json}"
-            );
-        } else {
-            assert_eq!(
-                trap_flush_records,
-                Some(expected.sequences),
-                "lookahead two must retain one younger trap-flushed row: {json}"
-            );
-        }
+        assert_eq!(
+            trap_flush_records, expected_trap_flush_records,
+            "lookahead two must retain the later younger trap flush without attributing the completed DIV wait to it: {json}"
+        );
         assert_backlog_flush_pair(&json, &stdout, EXECUTE_WAIT_TRAP, expected);
     }
 }

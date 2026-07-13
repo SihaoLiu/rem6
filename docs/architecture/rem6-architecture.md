@@ -121,6 +121,11 @@ authority, and runtime evidence in rem6-owned types.
     Any transition between execution modes must transfer architectural and
     timing authority through typed snapshots or handoff records.
 
+13. Pipeline latency precedes architectural visibility.
+    Representative scalar integer MUL/DIV/REM waits are scheduler-owned stage
+    progress; checkpoints retain total and remaining cycles, replacement fetches
+    revalidate latency class, and active waits drain once across mode handoff.
+
 ## Workspace Responsibilities
 
 | Area | Primary owners | Responsibility |

@@ -19,7 +19,7 @@ const SBI_TIME_SET_TIMER: i32 = 0;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
 const RISCV_INTERRUPT_BIT: u64 = 1 << 63;
 const RISCV_SUPERVISOR_TIMER_INTERRUPT: u64 = 5;
-const INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE: i32 = 184;
+const INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE: i32 = 178;
 
 #[test]
 fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_cause() {
@@ -253,12 +253,17 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_cause() {
 }
 
 #[test]
-fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger_fetch() {
+fn rem6_run_pipeline_debug_flag_attributes_detailed_interrupt_redirect_flush_with_younger_fetch() {
     let program = interrupt_timer_flush_program_path(
         "pipeline-interrupt-redirect-flush-with-youngers",
         INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE,
     );
-    let stdout = run_interrupt_timer_program(&program.path, "json", Some("Pipeline,Fetch"));
+    let stdout = run_interrupt_timer_program_in_mode(
+        &program.path,
+        "json",
+        Some("Pipeline,Fetch"),
+        "detailed",
+    );
     let json: Value = serde_json::from_str(&stdout).unwrap();
     let trace = json
         .pointer("/debug/pipeline_trace")
@@ -450,7 +455,7 @@ fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_flush_with_younger
         assert_stat(&stdout, path, unit, value, "monotonic");
     }
 
-    let text_stdout = run_interrupt_timer_program(&program.path, "text", None);
+    let text_stdout = run_interrupt_timer_program_in_mode(&program.path, "text", None, "detailed");
     assert_eq!(
         text_stat_value(
             &text_stdout,
@@ -596,33 +601,6 @@ fn patch_interrupt_handler_pc(words: &mut [u32], stvec_auipc_index: usize, handl
         5,
         0x13,
     );
-}
-
-fn run_interrupt_timer_program(
-    path: &Path,
-    stats_format: &str,
-    debug_flag: Option<&str>,
-) -> String {
-    run_interrupt_program_with_args(
-        path,
-        stats_format,
-        debug_flag,
-        &["--riscv-branch-lookahead", "2"],
-    )
-}
-
-fn run_interrupt_timer_program_with_lookahead(
-    path: &Path,
-    stats_format: &str,
-    debug_flag: Option<&str>,
-    branch_lookahead: &str,
-) -> String {
-    run_interrupt_program_with_args(
-        path,
-        stats_format,
-        debug_flag,
-        &["--riscv-branch-lookahead", branch_lookahead],
-    )
 }
 
 fn run_interrupt_timer_program_in_mode(

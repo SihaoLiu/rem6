@@ -71,14 +71,21 @@ impl RiscvCore {
         if detailed_scalar_memory_blocks_execution(state, window.raw)? {
             return Ok(None);
         }
+        let completed_normal_execute_wait = state
+            .in_order_pipeline
+            .execute_wait_completed(window.request.sequence())
+            && state.live_retire_gate.pending_ready_tick().is_none();
         let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
-            return Ok(
-                (!state.live_retire_gate.blocks_without_scheduler()).then_some(window.fetch_tick)
-            );
+            return Ok((completed_normal_execute_wait
+                || !state.live_retire_gate.blocks_without_scheduler())
+            .then_some(window.fetch_tick));
         };
         let now = scheduler
             .partition_now(self.partition())
             .map_err(RiscvCpuError::Scheduler)?;
+        if completed_normal_execute_wait {
+            return Ok(Some(now));
+        }
         let ready_base_tick = now.max(window.fetch_tick);
         match state.live_retire_gate.before_retire(
             window.request,

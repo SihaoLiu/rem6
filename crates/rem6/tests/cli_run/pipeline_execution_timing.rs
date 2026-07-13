@@ -79,11 +79,300 @@ fn rem6_run_delays_architectural_visibility_until_scheduled_commit_stage() {
     }
 }
 
+#[test]
+fn rem6_run_keeps_direct_single_core_mul_invisible_through_execute_wait() {
+    assert_execute_wait_visibility(ExecuteWaitVisibilityCase {
+        name: "pipeline-mul-direct-single-core-execute-wait-visibility",
+        operation: ScheduledIntegerOperation::Mul,
+        memory_system: "direct",
+        cores: 1,
+        completed_tick_limit: 180,
+        expected_execute_wait_cycles: 2,
+    });
+}
+
+#[test]
+fn rem6_run_keeps_direct_two_core_div_invisible_through_execute_wait() {
+    assert_execute_wait_visibility(ExecuteWaitVisibilityCase {
+        name: "pipeline-div-direct-two-core-execute-wait-visibility",
+        operation: ScheduledIntegerOperation::Div,
+        memory_system: "direct",
+        cores: 2,
+        completed_tick_limit: 260,
+        expected_execute_wait_cycles: 19,
+    });
+}
+
+#[test]
+fn rem6_run_keeps_cache_fabric_dram_mul_invisible_through_execute_wait() {
+    assert_execute_wait_visibility(ExecuteWaitVisibilityCase {
+        name: "pipeline-mul-cache-fabric-dram-execute-wait-visibility",
+        operation: ScheduledIntegerOperation::Mul,
+        memory_system: "cache-fabric-dram",
+        cores: 1,
+        completed_tick_limit: 700,
+        expected_execute_wait_cycles: 2,
+    });
+}
+
+#[test]
+fn rem6_run_direct_single_core_alu_has_no_execute_wait_visibility_gate() {
+    let case = ExecuteWaitVisibilityCase {
+        name: "pipeline-alu-direct-single-core-no-execute-wait",
+        operation: ScheduledIntegerOperation::Add,
+        memory_system: "direct",
+        cores: 1,
+        completed_tick_limit: 180,
+        expected_execute_wait_cycles: 0,
+    };
+    let path = pipeline_visibility_program_path(case.name, case.operation);
+    let completed = run_pipeline_timing_with_debug_flags(
+        &path,
+        case.cores,
+        case.completed_tick_limit,
+        case.memory_system,
+        "Pipeline",
+    );
+
+    assert_completed_visibility_case(&completed, case);
+    assert_eq!(
+        completed
+            .pointer("/cores/0/in_order_pipeline/execute_wait_cycles")
+            .and_then(Value::as_u64),
+        Some(0),
+        "{} should not manufacture execute-wait cycles for a zero-extra-wait ALU op",
+        case.name
+    );
+    assert!(
+        execute_wait_cycles_by_cpu(&completed, 0).is_empty(),
+        "{} should not have Pipeline execute-wait trace rows",
+        case.name
+    );
+}
+
+#[derive(Clone, Copy)]
+struct ExecuteWaitVisibilityCase {
+    name: &'static str,
+    operation: ScheduledIntegerOperation,
+    memory_system: &'static str,
+    cores: usize,
+    completed_tick_limit: u64,
+    expected_execute_wait_cycles: u64,
+}
+
+#[derive(Clone, Copy)]
+enum ScheduledIntegerOperation {
+    Add,
+    Mul,
+    Div,
+}
+
+impl ScheduledIntegerOperation {
+    fn program_words(self) -> Vec<u32> {
+        match self {
+            Self::Add => vec![
+                i_type(3, 0, 0x0, 5, 0x13),       // addi x5, x0, 3
+                i_type(7, 0, 0x0, 6, 0x13),       // addi x6, x0, 7
+                r_type(0x00, 6, 5, 0x0, 5, 0x33), // add x5, x5, x6
+                0x0000_0073,                      // ecall
+            ],
+            Self::Mul => vec![
+                i_type(3, 0, 0x0, 5, 0x13),       // addi x5, x0, 3
+                i_type(7, 0, 0x0, 6, 0x13),       // addi x6, x0, 7
+                r_type(0x01, 6, 5, 0x0, 5, 0x33), // mul x5, x5, x6
+                0x0000_0073,                      // ecall
+            ],
+            Self::Div => vec![
+                i_type(99, 0, 0x0, 5, 0x13),      // addi x5, x0, 99
+                i_type(3, 0, 0x0, 6, 0x13),       // addi x6, x0, 3
+                r_type(0x01, 6, 5, 0x4, 5, 0x33), // div x5, x5, x6
+                0x0000_0073,                      // ecall
+            ],
+        }
+    }
+
+    const fn old_x5(self) -> &'static str {
+        match self {
+            Self::Add | Self::Mul => "0x3",
+            Self::Div => "0x63",
+        }
+    }
+
+    const fn final_x5(self) -> &'static str {
+        match self {
+            Self::Add => "0xa",
+            Self::Mul => "0x15",
+            Self::Div => "0x21",
+        }
+    }
+}
+
+fn assert_execute_wait_visibility(case: ExecuteWaitVisibilityCase) {
+    let path = pipeline_visibility_program_path(case.name, case.operation);
+    let completed = run_pipeline_timing_with_debug_flags(
+        &path,
+        case.cores,
+        case.completed_tick_limit,
+        case.memory_system,
+        "Pipeline",
+    );
+    assert_completed_visibility_case(&completed, case);
+
+    let wait_probe_tick = last_shared_execute_wait_cycle(&completed, case);
+    let during_wait = run_pipeline_timing_with_debug_flags(
+        &path,
+        case.cores,
+        wait_probe_tick,
+        case.memory_system,
+        "Pipeline",
+    );
+    let status = during_wait
+        .pointer("/simulation/status")
+        .and_then(Value::as_str);
+    let final_tick = during_wait
+        .pointer("/simulation/final_tick")
+        .and_then(Value::as_u64);
+    for cpu in 0..case.cores {
+        let core = &during_wait["cores"][cpu];
+        assert_eq!(
+            core.pointer("/registers/x5").and_then(Value::as_str),
+            Some(case.operation.old_x5()),
+            "{} cpu{cpu} must keep the MUL/DIV destination at the old architectural value through execute wait; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
+            case.name
+        );
+        assert_eq!(
+            core["committed_instructions"].as_u64(),
+            Some(2),
+            "{} cpu{cpu} must not architecturally commit the producer during execute wait; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
+            case.name
+        );
+        assert!(
+            core.pointer("/in_order_pipeline/execute_wait_cycles")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0,
+            "{} cpu{cpu} should expose that the stopped run is inside execute wait; probe_tick={wait_probe_tick} status={status:?} final_tick={final_tick:?}",
+            case.name
+        );
+    }
+    assert_eq!(
+        status,
+        Some("stopped_at_tick_limit"),
+        "{} should stop inside the scheduled execute-wait window; probe_tick={wait_probe_tick} final_tick={final_tick:?}",
+        case.name
+    );
+    assert_eq!(
+        final_tick,
+        Some(wait_probe_tick),
+        "{} should stop at the selected execute-wait cycle; status={status:?}",
+        case.name
+    );
+}
+
+fn assert_completed_visibility_case(completed: &Value, case: ExecuteWaitVisibilityCase) {
+    let status = completed
+        .pointer("/simulation/status")
+        .and_then(Value::as_str);
+    assert_eq!(
+        status,
+        Some("executed_until_trap"),
+        "{} should complete the representative program before probing",
+        case.name
+    );
+    let memory_system = completed
+        .pointer("/simulation/memory_system")
+        .and_then(Value::as_str);
+    assert_eq!(
+        memory_system,
+        Some(case.memory_system),
+        "{} should exercise the requested memory-system row",
+        case.name
+    );
+    for cpu in 0..case.cores {
+        let core = &completed["cores"][cpu];
+        assert_eq!(
+            core.pointer("/registers/x5").and_then(Value::as_str),
+            Some(case.operation.final_x5()),
+            "{} cpu{cpu} should eventually publish the final x5 value",
+            case.name
+        );
+        assert_eq!(
+            core.pointer("/in_order_pipeline/execute_wait_cycles")
+                .and_then(Value::as_u64),
+            Some(case.expected_execute_wait_cycles),
+            "{} cpu{cpu} should have exact execute-wait evidence for the row",
+            case.name
+        );
+    }
+}
+
+fn pipeline_visibility_program_path(
+    name: &str,
+    operation: ScheduledIntegerOperation,
+) -> std::path::PathBuf {
+    let words = operation.program_words();
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn last_shared_execute_wait_cycle(completed: &Value, case: ExecuteWaitVisibilityCase) -> u64 {
+    let mut shared_last_wait_cycle = u64::MAX;
+    for cpu in 0..case.cores {
+        let cycles = execute_wait_cycles_by_cpu(completed, cpu);
+        assert_eq!(
+            cycles.len() as u64,
+            case.expected_execute_wait_cycles,
+            "{} cpu{cpu} should expose exact execute-wait trace rows",
+            case.name
+        );
+        let last = cycles
+            .last()
+            .copied()
+            .expect("positive execute-wait rows should have a probe cycle");
+        shared_last_wait_cycle = shared_last_wait_cycle.min(last);
+    }
+    shared_last_wait_cycle
+}
+
+fn execute_wait_cycles_by_cpu(completed: &Value, cpu: usize) -> Vec<u64> {
+    completed
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("completed run should expose Pipeline debug trace")
+        .iter()
+        .filter(|record| record.pointer("/cpu").and_then(Value::as_u64) == Some(cpu as u64))
+        .filter(|record| {
+            record.pointer("/stall_cause").and_then(Value::as_str) == Some("execute_wait")
+        })
+        .filter_map(|record| record.pointer("/cycle").and_then(Value::as_u64))
+        .collect()
+}
+
+fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
 fn run_pipeline_timing(
     path: &std::path::Path,
     cores: usize,
     max_tick: u64,
     memory_system: &str,
+) -> Value {
+    run_pipeline_timing_with_debug_flags(path, cores, max_tick, memory_system, "Memory")
+}
+
+fn run_pipeline_timing_with_debug_flags(
+    path: &std::path::Path,
+    cores: usize,
+    max_tick: u64,
+    memory_system: &str,
+    debug_flags: &str,
 ) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -102,7 +391,7 @@ fn run_pipeline_timing(
             "--cores",
             &cores.to_string(),
             "--debug-flags",
-            "Memory",
+            debug_flags,
         ])
         .output()
         .unwrap();

@@ -1,10 +1,13 @@
+use rem6_isa_riscv::RiscvInstruction;
 use rem6_kernel::{
     PartitionEventId, PartitionedScheduler, PendingEventSnapshot, SchedulerError,
     SchedulerInstanceId,
 };
 use rem6_memory::Address;
 
-use crate::riscv_execute::{oldest_completed_fetch_at, RiscvPendingFetchPrefix};
+use crate::riscv_execute::{
+    oldest_completed_fetch_at, scheduled_in_order_execute_wait_cycles, RiscvPendingFetchPrefix,
+};
 use crate::{
     CpuFetchEvent, CpuFetchEventKind, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction,
     RiscvCpuError,
@@ -169,15 +172,37 @@ impl RiscvCore {
         let RiscvPipelineCandidate::Sequence(sequence) = candidate else {
             return Ok(RiscvInOrderDriveStatus::Ready);
         };
-        let Some(instruction) = state
+        let Some((stage, execute_wait_total_cycles)) = state
             .in_order_pipeline
             .in_flight()
             .iter()
             .find(|instruction| instruction.sequence() == sequence)
+            .map(|instruction| (instruction.stage(), instruction.execute_wait_total_cycles()))
         else {
             return Err(RiscvCpuError::MissingInOrderPipelineInstruction { sequence });
         };
-        if instruction.stage() == InOrderPipelineStage::Commit {
+        let detailed = state.live_retire_gate.detailed_policy_enabled();
+        if execute_wait_total_cycles.is_some()
+            || (stage == InOrderPipelineStage::Execute && !detailed)
+        {
+            let raw = completed_fetch_raw(&state, &fetch_events, sequence)?;
+            let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
+            let wait_cycles = scheduled_in_order_execute_wait_cycles(decoded.instruction());
+            if execute_wait_total_cycles != (wait_cycles > 0).then_some(wait_cycles) {
+                let configured_wait_cycles = if detailed { 0 } else { wait_cycles };
+                state
+                    .in_order_pipeline
+                    .configure_execute_wait(sequence, configured_wait_cycles);
+            }
+        }
+        let stage = state
+            .in_order_pipeline
+            .in_flight()
+            .iter()
+            .find(|instruction| instruction.sequence() == sequence)
+            .expect("pipeline candidate remains in flight")
+            .stage();
+        if stage == InOrderPipelineStage::Commit {
             return Ok(RiscvInOrderDriveStatus::Ready);
         }
         let generation = state.reserve_in_order_pipeline_advance(sequence);
@@ -250,10 +275,28 @@ impl RiscvCore {
         if stage.is_none() || stage == Some(InOrderPipelineStage::Commit) {
             return;
         }
-        let record = state
-            .in_order_pipeline
-            .try_advance_cycle_recorded_without_retirement()
-            .expect("scheduled in-order pipeline cycle advance remains valid");
+        let execute_wait_pending = stage == Some(InOrderPipelineStage::Execute)
+            && state
+                .in_order_pipeline
+                .in_flight()
+                .iter()
+                .any(|instruction| {
+                    instruction.sequence() == sequence
+                        && instruction
+                            .execute_wait_remaining_cycles()
+                            .is_some_and(|remaining| remaining > 0)
+                });
+        let record = if execute_wait_pending {
+            state
+                .in_order_pipeline
+                .try_record_execute_wait_cycle(sequence)
+                .expect("scheduled execute-wait cycle remains valid")
+        } else {
+            state
+                .in_order_pipeline
+                .try_advance_cycle_recorded_without_retirement()
+                .expect("scheduled in-order pipeline cycle advance remains valid")
+        };
         state.in_order_pipeline_cycle_records.push(record);
     }
 
@@ -415,6 +458,55 @@ fn next_prefix_suffix<'a>(
         prefix.fetch.request_id(),
         Address::new(prefix.fetch.pc().get() + 2),
     )
+}
+
+fn completed_fetch_raw(
+    state: &crate::RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+) -> Result<u32, RiscvCpuError> {
+    if let Some(prefix) = state
+        .pending_fetch_prefix
+        .as_ref()
+        .filter(|prefix| prefix.fetch.request_id().sequence() == sequence)
+    {
+        let suffix = next_prefix_suffix(state, fetch_events, prefix)
+            .expect("pipeline candidate has a completed fetch suffix");
+        let data = suffix.data().ok_or(RiscvCpuError::MissingFetchData {
+            request: suffix.request_id(),
+        })?;
+        let [low, high] = data else {
+            return Err(RiscvCpuError::InvalidFetchWidth {
+                request: suffix.request_id(),
+                bytes: data.len() as u64,
+            });
+        };
+        return Ok(u32::from_le_bytes([
+            prefix.bytes[0],
+            prefix.bytes[1],
+            *low,
+            *high,
+        ]));
+    }
+
+    let fetch = fetch_events
+        .iter()
+        .find(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.request_id().sequence() == sequence
+        })
+        .expect("pipeline candidate has a completed fetch event");
+    let data = fetch.data().ok_or(RiscvCpuError::MissingFetchData {
+        request: fetch.request_id(),
+    })?;
+    match data {
+        [low, high] if low & 0x3 != 0x3 => Ok(u32::from(u16::from_le_bytes([*low, *high]))),
+        [a, b, c, d] => Ok(u32::from_le_bytes([*a, *b, *c, *d])),
+        _ => Err(RiscvCpuError::InvalidFetchWidth {
+            request: fetch.request_id(),
+            bytes: data.len() as u64,
+        }),
+    }
 }
 
 #[cfg(test)]
