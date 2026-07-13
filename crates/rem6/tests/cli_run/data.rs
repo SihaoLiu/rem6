@@ -1511,11 +1511,16 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     let json: Value = serde_json::from_str(&stdout).unwrap();
     let fabric = json.pointer("/fabric").expect("run fabric summary");
 
-    assert_eq!(fabric.get("link").and_then(Value::as_str), Some("cpu_mem"));
+    let hops = fabric
+        .get("hops")
+        .and_then(Value::as_array)
+        .expect("configured fabric hops");
+    assert_eq!(hops.len(), 1);
+    let hop = &hops[0];
+    assert_eq!(hop.get("hop_index").and_then(Value::as_u64), Some(0));
+    assert_eq!(hop.get("link").and_then(Value::as_str), Some("cpu_mem"));
     assert_eq!(
-        fabric
-            .get("bandwidth_bytes_per_tick")
-            .and_then(Value::as_u64),
+        hop.get("bandwidth_bytes_per_tick").and_then(Value::as_u64),
         Some(8)
     );
     assert_eq!(
@@ -1531,9 +1536,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         Some(4)
     );
     assert_eq!(fabric.get("credit_depth").and_then(Value::as_u64), Some(2));
-    let router_stage = fabric
-        .get("router_stage")
-        .expect("fabric router stage config");
+    let router_stage = hop.get("router_stage").expect("fabric router stage config");
     assert_eq!(
         router_stage.get("router").and_then(Value::as_str),
         Some("router0")
@@ -1566,6 +1569,9 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         router_stage.get("latency_ticks").and_then(Value::as_u64),
         Some(5)
     );
+    assert!(fabric.get("link").is_none());
+    assert!(fabric.get("bandwidth_bytes_per_tick").is_none());
+    assert!(fabric.get("router_stage").is_none());
     assert!(
         fabric
             .get("active_lanes")
@@ -2360,7 +2366,7 @@ fn rem6_run_sanitizes_configured_fabric_link_stat_paths() {
     let json: Value = serde_json::from_str(&stdout).unwrap();
     let fabric = json.pointer("/fabric").expect("run fabric summary");
     assert_eq!(
-        fabric.get("link").and_then(Value::as_str),
+        fabric.pointer("/hops/0/link").and_then(Value::as_str),
         Some("cpu-mem.link 0")
     );
     assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
@@ -3014,17 +3020,17 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
     assert!(json_u64(&json, "/dram/accesses") > 0);
     assert!(json_u64(&json, "/fabric/transfers") > 0);
     assert_eq!(
-        json.pointer("/fabric/router_stage/router")
+        json.pointer("/fabric/hops/0/router_stage/router")
             .and_then(Value::as_str),
         Some("router0")
     );
     assert_eq!(
-        json.pointer("/fabric/router_stage/request_virtual_channel")
+        json.pointer("/fabric/hops/0/router_stage/request_virtual_channel")
             .and_then(Value::as_u64),
         Some(21)
     );
     assert_eq!(
-        json.pointer("/fabric/router_stage/response_virtual_channel")
+        json.pointer("/fabric/hops/0/router_stage/response_virtual_channel")
             .and_then(Value::as_u64),
         Some(23)
     );

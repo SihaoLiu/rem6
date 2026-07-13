@@ -63,7 +63,7 @@ fn rem6_run_routes_three_cores_through_shared_chi_data_cache() {
 }
 
 #[test]
-fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
+fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
     const DATA_OFFSET: usize = 88;
 
     let mut program = riscv64_program(&[
@@ -125,8 +125,10 @@ fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
             "cache-fabric-dram",
             "--data-cache-protocol",
             "msi",
+            "--fabric-link",
+            "cpu_r0,r0_mem",
             "--fabric-bandwidth-bytes-per-tick",
-            "4",
+            "4,4",
             "--fabric-credit-depth",
             "2",
             "--fabric-request-virtual-network",
@@ -134,19 +136,19 @@ fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
             "--fabric-response-virtual-network",
             "8",
             "--fabric-router",
-            "router0",
+            "router0,router1",
             "--fabric-router-input-port",
-            "1",
+            "1,2",
             "--fabric-router-output-port",
-            "2",
+            "2,3",
             "--fabric-router-virtual-channel",
-            "3",
+            "3,4",
             "--fabric-request-router-virtual-channel",
-            "11",
+            "11,12",
             "--fabric-response-router-virtual-channel",
-            "13",
+            "13,14",
             "--fabric-router-latency",
-            "1",
+            "1,2",
         ];
         if let Some(policy) = policy {
             args.extend(["--fabric-qos-queue-policy", policy]);
@@ -174,6 +176,50 @@ fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
         assert_eq!(run_core_register(&json, 1, "x7"), Some(core1_x7));
         assert_eq!(run_core_register(&json, 2, "x7"), Some(core2_x7));
 
+        let configured_hops = json
+            .pointer("/fabric/hops")
+            .and_then(serde_json::Value::as_array)
+            .expect("configured fabric hops");
+        assert_eq!(configured_hops.len(), 2);
+        for (
+            hop,
+            (
+                hop_index,
+                link,
+                bandwidth,
+                router,
+                input,
+                output,
+                vc,
+                request_vc,
+                response_vc,
+                latency,
+            ),
+        ) in configured_hops.iter().zip([
+            (0, "cpu_r0", 4, "router0", 1, 2, 3, 11, 13, 1),
+            (1, "r0_mem", 4, "router1", 2, 3, 4, 12, 14, 2),
+        ]) {
+            assert_eq!(hop["hop_index"].as_u64(), Some(hop_index));
+            assert_eq!(hop["link"].as_str(), Some(link));
+            assert_eq!(hop["bandwidth_bytes_per_tick"].as_u64(), Some(bandwidth));
+            assert_eq!(hop["router_stage"]["router"].as_str(), Some(router));
+            assert_eq!(hop["router_stage"]["input_port"].as_u64(), Some(input));
+            assert_eq!(hop["router_stage"]["output_port"].as_u64(), Some(output));
+            assert_eq!(hop["router_stage"]["virtual_channel"].as_u64(), Some(vc));
+            assert_eq!(
+                hop["router_stage"]["request_virtual_channel"].as_u64(),
+                Some(request_vc)
+            );
+            assert_eq!(
+                hop["router_stage"]["response_virtual_channel"].as_u64(),
+                Some(response_vc)
+            );
+            assert_eq!(hop["router_stage"]["latency_ticks"].as_u64(), Some(latency));
+        }
+        assert!(json.pointer("/fabric/link").is_none());
+        assert!(json.pointer("/fabric/bandwidth_bytes_per_tick").is_none());
+        assert!(json.pointer("/fabric/router_stage").is_none());
+
         let qos_activities = json
             .pointer("/fabric/qos_grant_activities")
             .and_then(serde_json::Value::as_array)
@@ -182,22 +228,34 @@ fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|activity| activity["virtual_network"].as_u64() == Some(7))
-            .and_then(|activity| activity["transfer_count"].as_u64())
-            .expect("request virtual-network transfer count");
+            .filter(|activity| activity["virtual_network"].as_u64() == Some(7))
+            .map(|activity| activity["transfer_count"].as_u64().unwrap())
+            .sum::<u64>();
         assert!(request_transfers > 0);
         if let Some(policy) = policy {
-            assert_eq!(qos_activities.len() as u64, request_transfers);
+            assert_eq!(qos_activities.len() as u64 * 2, request_transfers);
             for activity in qos_activities {
                 let packet = activity["grant"]["packet"].as_u64().unwrap();
-                let hop = json["fabric"]["hop_activities"]
+                let packet_hops = json["fabric"]["hop_activities"]
                     .as_array()
                     .unwrap()
                     .iter()
-                    .find(|hop| hop["packet"].as_u64() == Some(packet))
-                    .expect("QoS grant packet should have fabric hop activity");
-                assert_eq!(hop["virtual_network"].as_u64(), Some(7));
-                assert_eq!(hop["router"]["virtual_channel"].as_u64(), Some(11));
+                    .filter(|hop| hop["packet"].as_u64() == Some(packet))
+                    .collect::<Vec<_>>();
+                assert_eq!(packet_hops.len(), 2);
+                for (hop, (hop_index, link, router, virtual_channel)) in packet_hops
+                    .iter()
+                    .zip([(0, "cpu_r0", "router0", 11), (1, "r0_mem", "router1", 12)])
+                {
+                    assert_eq!(hop["hop_index"].as_u64(), Some(hop_index));
+                    assert_eq!(hop["link"].as_str(), Some(link));
+                    assert_eq!(hop["virtual_network"].as_u64(), Some(7));
+                    assert_eq!(hop["router"]["router"].as_str(), Some(router));
+                    assert_eq!(
+                        hop["router"]["virtual_channel"].as_u64(),
+                        Some(virtual_channel)
+                    );
+                }
             }
             let first_batch = qos_activities
                 .iter()
@@ -336,12 +394,24 @@ fn rem6_run_routes_multicore_fabric_with_qos_queue_policy_matrix() {
                 .iter()
                 .any(|activity| activity["virtual_network"].as_u64() == Some(virtual_network)));
         }
-        for virtual_channel in [11, 13] {
+        for virtual_channel in [11, 12, 13, 14] {
             assert!(json["fabric"]["router_activities"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|activity| activity["virtual_channel"].as_u64() == Some(virtual_channel)));
+        }
+        for path in [
+            "sim.memory.fabric.link.cpu_r0.vn7.hop0.transfers",
+            "sim.memory.fabric.link.r0_mem.vn7.hop1.transfers",
+            "sim.memory.fabric.link.cpu_r0.vn8.hop0.transfers",
+            "sim.memory.fabric.link.r0_mem.vn8.hop1.transfers",
+            "sim.memory.fabric.router.router0.in1.out2.vc11.transfers",
+            "sim.memory.fabric.router.router1.in2.out3.vc12.transfers",
+            "sim.memory.fabric.router.router0.in1.out2.vc13.transfers",
+            "sim.memory.fabric.router.router1.in2.out3.vc14.transfers",
+        ] {
+            assert_stat_greater_than(&stdout, path, "Count", 0, "monotonic");
         }
         let fabric_wait_edges = json
             .pointer("/fabric/wait_for_edge_count")

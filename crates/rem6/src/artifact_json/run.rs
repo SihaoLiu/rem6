@@ -754,33 +754,16 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .credit_depth()
         .map(|depth| depth.to_string())
         .unwrap_or_else(|| "null".to_string());
-    let router_stage = config
-        .router_stage()
-        .map(|stage| {
-            format!(
-                "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"request_virtual_channel\":{},\"response_virtual_channel\":{},\"latency_ticks\":{}}}",
-                json_escape(stage.router()),
-                stage.input_port(),
-                stage.output_port(),
-                stage.virtual_channel(),
-                stage.request_virtual_channel(),
-                stage.response_virtual_channel(),
-                stage.latency(),
-            )
-        })
-        .unwrap_or_else(|| "null".to_string());
     let qos_queue_policy = config
         .qos_queue_policy()
         .map(|policy| format!("\"{}\"", policy.as_str()))
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"qos_grant_activities\":[{}],\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"wait_for_edge_count\":{},\"wait_for_edge_kind_windows\":[{}],\"wait_for_blocked_node_windows\":[{}],\"wait_for_target_node_windows\":[{}],\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
-        json_escape(config.link()),
-        config.bandwidth_bytes_per_tick(),
+        "{{\"hops\":[{}],\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"qos_queue_policy\":{},\"qos_grant_activities\":[{}],\"active_lanes\":{},\"active_virtual_networks\":{},\"active_routers\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"wait_for_edge_count\":{},\"wait_for_edge_kind_windows\":[{}],\"wait_for_blocked_node_windows\":[{}],\"wait_for_target_node_windows\":[{}],\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}],\"router_activities\":[{}]}}",
+        run_fabric_config_hops_json(config),
         config.request_virtual_network(),
         config.response_virtual_network(),
         credit_depth,
-        router_stage,
         qos_queue_policy,
         run_fabric_qos_grant_activities_json(summary),
         summary.active_lanes(),
@@ -804,6 +787,37 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         run_fabric_hop_activities_json(summary),
         run_fabric_router_activities_json(summary),
     )
+}
+
+fn run_fabric_config_hops_json(config: &RunFabricConfig) -> String {
+    config
+        .hops()
+        .iter()
+        .enumerate()
+        .map(|(hop_index, hop)| {
+            let router_stage = hop
+                .router_stage()
+                .map(|stage| {
+                    format!(
+                        "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"request_virtual_channel\":{},\"response_virtual_channel\":{},\"latency_ticks\":{}}}",
+                        json_escape(stage.router()),
+                        stage.input_port(),
+                        stage.output_port(),
+                        stage.virtual_channel(),
+                        stage.request_virtual_channel(),
+                        stage.response_virtual_channel(),
+                        stage.latency(),
+                    )
+                })
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "{{\"hop_index\":{hop_index},\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"router_stage\":{router_stage}}}",
+                json_escape(hop.link()),
+                hop.bandwidth_bytes_per_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn run_fabric_qos_grant_activities_json(summary: &Rem6RunFabricSummary) -> String {
