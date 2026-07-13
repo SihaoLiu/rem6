@@ -18,6 +18,12 @@ pub(super) enum DetailedFetchAheadCandidate {
     NotApplicable,
     Blocked,
     Ready(Address),
+    ReadyPredictedControl {
+        request: MemoryRequestId,
+        pc: Address,
+        sequential_pc: Address,
+        instruction: RiscvInstruction,
+    },
     ReadyCachedTranslatedLoad {
         pc: Address,
         fetch_request: MemoryRequestId,
@@ -266,9 +272,29 @@ fn scalar_integer_window_candidate_from(
         };
         match window.classify_younger(younger.decoded().instruction()) {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+                previous_request = younger.last_consumed_request();
+                let sequential_pc = Address::new(
+                    younger
+                        .pc()
+                        .get()
+                        .wrapping_add(u64::from(younger.decoded().bytes())),
+                );
+                next_pc = match recorded_predicted_pc(state, previous_request, sequential_pc) {
+                    Some(predicted_pc) => predicted_pc,
+                    None => {
+                        return DetailedFetchAheadCandidate::ReadyPredictedControl {
+                            request: previous_request,
+                            pc: younger.pc(),
+                            sequential_pc,
+                            instruction: younger.decoded().instruction(),
+                        };
+                    }
+                };
+                continue;
+            }
             RiscvScalarIntegerYoungerDecision::AdmitStop
             | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }
@@ -373,9 +399,32 @@ fn scalar_memory_window_candidate(
                     alu_window,
                 );
             }
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+                let previous_request = next.last_consumed_request();
+                let sequential_pc = Address::new(
+                    next.pc()
+                        .get()
+                        .wrapping_add(u64::from(next.decoded().bytes())),
+                );
+                let Some(next_pc) = recorded_predicted_pc(state, previous_request, sequential_pc)
+                else {
+                    return DetailedFetchAheadCandidate::ReadyPredictedControl {
+                        request: previous_request,
+                        pc: next.pc(),
+                        sequential_pc,
+                        instruction: next.decoded().instruction(),
+                    };
+                };
+                return scalar_integer_window_candidate_from(
+                    state,
+                    fetch_events,
+                    previous_request,
+                    next_pc,
+                    alu_window,
+                );
+            }
             RiscvScalarIntegerYoungerDecision::AdmitStop
             | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }
@@ -411,6 +460,20 @@ fn admit_scalar_memory_prefix_instruction(
             true
         }
         _ => false,
+    }
+}
+
+pub(super) fn recorded_predicted_pc(
+    state: &RiscvCoreState,
+    request: MemoryRequestId,
+    sequential_pc: Address,
+) -> Option<Address> {
+    let speculation = state.branch_speculations.get(&request.sequence())?;
+    let pending = state.branch_predictor.pending_speculation(*speculation)?;
+    if pending.predicted_taken() {
+        pending.target()
+    } else {
+        Some(sequential_pc)
     }
 }
 

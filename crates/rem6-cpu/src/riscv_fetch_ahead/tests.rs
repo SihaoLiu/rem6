@@ -25,6 +25,7 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 mod btb;
 mod checkpoint;
+mod detailed_o3_control;
 mod selected;
 mod speculative_history;
 
@@ -1277,9 +1278,9 @@ fn detailed_scalar_load_window_does_not_refetch_incomplete_split_third() {
 }
 
 #[test]
-fn detailed_scalar_load_window_does_not_fetch_beyond_completed_branch() {
+fn detailed_scalar_load_window_does_not_fetch_beyond_load_dependent_completed_branch() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
-    let branch = b_type(8, 1, 2, 0x0);
+    let branch = b_type(8, 5, 2, 0x0);
     let core = core_with_completed_fetches([
         (0, 0x8000, load.to_le_bytes().to_vec()),
         (1, 0x8004, branch.to_le_bytes().to_vec()),

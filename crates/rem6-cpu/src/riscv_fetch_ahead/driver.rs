@@ -74,6 +74,22 @@ impl RiscvCore {
             detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
             }
+            detailed_o3::DetailedFetchAheadCandidate::ReadyPredictedControl {
+                request,
+                pc,
+                sequential_pc,
+                instruction,
+            } => {
+                return fetch_ahead_decision(
+                    &mut state,
+                    &completed,
+                    request,
+                    pc,
+                    sequential_pc,
+                    instruction,
+                    translated,
+                );
+            }
             detailed_o3::DetailedFetchAheadCandidate::ReadyCachedTranslatedLoad {
                 pc,
                 fetch_request,
