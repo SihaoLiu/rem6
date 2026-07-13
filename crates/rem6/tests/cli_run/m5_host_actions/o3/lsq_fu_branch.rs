@@ -10,6 +10,7 @@ const DATA_ADDRESS: &str = "0x80000080";
 const WRONG_STORE_ADDRESS: &str = "0x80000088";
 const TARGET_STORE_ADDRESS: &str = "0x80000084";
 const FINAL_MEMORY: &str = "2a0000001000000088776655";
+const O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 
 #[test]
 fn rem6_run_o3_mixed_load_alu_branch_exposes_terminal_resident_row_direct() {
@@ -26,13 +27,118 @@ fn rem6_run_o3_mixed_load_alu_branch_exposes_terminal_resident_row_direct() {
         Some(FINAL_MEMORY)
     );
     let load = event_at_pc(&completed, LOAD_PC);
-    let issue_tick = event_u64(load, "issue_tick");
-    let response_tick = event_u64(load, "lsq_data_response_tick");
-    let stop_tick = issue_tick.saturating_add(response_tick.saturating_sub(issue_tick) / 2);
-    assert!(issue_tick < stop_tick && stop_tick < response_tick);
+    let stop_tick = mixed_branch_live_midpoint(load);
 
     let json = run_mixed_branch_json(&path, "direct", stop_tick, "detailed", &[]);
 
+    assert_mixed_branch_resident_window(&json, stop_tick);
+}
+
+#[test]
+fn rem6_run_o3_mixed_branch_checkpoint_rejects_live_resident_window() {
+    let path = mixed_load_alu_branch_binary("o3-mixed-load-alu-branch-checkpoint-live");
+    let completed = run_mixed_branch_json(&path, "direct", 1_500, "detailed", &[]);
+    assert_completed_mixed_branch_window(&completed);
+
+    let load = event_at_pc(&completed, LOAD_PC);
+    let checkpoint_tick = mixed_branch_live_midpoint(load);
+    let resident = run_mixed_branch_json(&path, "direct", checkpoint_tick, "detailed", &[]);
+    assert_mixed_branch_resident_window(&resident, checkpoint_tick);
+
+    let checkpoint_arg = format!("{checkpoint_tick}:mixed-branch-live");
+    let mut command = mixed_branch_command(&path, "direct", 1_500, "detailed");
+    command.args(["--host-checkpoint", &checkpoint_arg]);
+    let output = command.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "live mixed-branch checkpoint should fail before success JSON: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "live mixed-branch checkpoint should not emit partial success JSON: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("checkpoint component is not quiescent: cpu0"),
+        "live mixed-branch checkpoint should report cpu0 quiescence rejection: {stderr}"
+    );
+}
+
+#[test]
+fn rem6_run_o3_mixed_branch_checkpoint_captures_drained_runtime_state() {
+    let path = mixed_load_alu_branch_binary("o3-mixed-load-alu-branch-checkpoint-drained");
+    let baseline = run_mixed_branch_json(&path, "direct", 1_500, "detailed", &[]);
+    assert_completed_mixed_branch_window(&baseline);
+
+    let branch = event_at_pc(&baseline, BRANCH_PC);
+    let checkpoint_tick = event_u64(branch, "commit_tick") + 1;
+    let checkpoint_arg = format!("{checkpoint_tick}:mixed-branch-drained");
+    let json = run_mixed_branch_json(
+        &path,
+        "direct",
+        1_500,
+        "detailed",
+        &["--host-checkpoint", &checkpoint_arg],
+    );
+
+    assert_completed_mixed_branch_window(&json);
+    let host_actions = json
+        .pointer("/host_actions")
+        .unwrap_or_else(|| panic!("missing drained checkpoint host actions: {json}"));
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let checkpoints = host_actions
+        .pointer("/checkpoints")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing drained checkpoints: {host_actions}"));
+    assert_eq!(
+        checkpoints.len(),
+        1,
+        "drained run should capture exactly one checkpoint: {checkpoints:?}"
+    );
+    let checkpoint = &checkpoints[0];
+    assert_eq!(
+        checkpoint.pointer("/label").and_then(Value::as_str),
+        Some("mixed-branch-drained")
+    );
+    let cpu0 = checkpoint_component(checkpoint, "cpu0");
+    assert!(!checkpoint_component_has_chunk(
+        cpu0,
+        O3_LIVE_DATA_HANDOFF_CHUNK
+    ));
+    assert!(
+        checkpoint_component_chunks(cpu0)
+            .iter()
+            .all(|chunk| chunk.pointer("/o3_live_data_handoff").is_none()),
+        "drained checkpoint must not retain mixed-window live-data authority: {cpu0}"
+    );
+    let runtime_chunk = checkpoint_component_chunk(cpu0, "o3-runtime-state");
+    let runtime = runtime_chunk.pointer("/o3_runtime").unwrap_or_else(|| {
+        panic!("missing drained O3 runtime checkpoint payload: {runtime_chunk}")
+    });
+    assert_eq!(
+        runtime.pointer("/decode_error").and_then(Value::as_bool),
+        Some(false),
+        "drained O3 runtime checkpoint must decode cleanly: {runtime}"
+    );
+    for field in ["snapshot_rob_entries", "snapshot_lsq_entries"] {
+        assert_eq!(
+            runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(0),
+            "drained O3 runtime checkpoint should expose zero {field}: {runtime}"
+        );
+    }
+}
+
+fn assert_mixed_branch_resident_window(json: &Value, stop_tick: u64) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_at_tick_limit")
@@ -452,4 +558,52 @@ pub(super) fn event_u64(event: &Value, field: &str) -> u64 {
         .get(field)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing {field}: {event}"))
+}
+
+fn mixed_branch_live_midpoint(load: &Value) -> u64 {
+    let issue_tick = event_u64(load, "issue_tick");
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    assert!(
+        response_tick > issue_tick,
+        "load data response tick must be after issue tick before deriving midpoint: issue_tick={issue_tick} response_tick={response_tick} load={load}"
+    );
+    let midpoint = issue_tick + (response_tick - issue_tick) / 2;
+    assert!(
+        issue_tick < midpoint && midpoint < response_tick,
+        "checkpoint tick must be strictly between load issue and data response: {load}"
+    );
+    midpoint
+}
+
+fn checkpoint_component<'a>(checkpoint: &'a Value, component: &str) -> &'a Value {
+    checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|entry| {
+                entry.pointer("/component").and_then(Value::as_str) == Some(component)
+            })
+        })
+        .unwrap_or_else(|| panic!("missing checkpoint component {component}: {checkpoint}"))
+}
+
+fn checkpoint_component_chunks(component: &Value) -> &[Value] {
+    component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| panic!("missing checkpoint component chunks: {component}"))
+}
+
+fn checkpoint_component_has_chunk(component: &Value, chunk: &str) -> bool {
+    checkpoint_component_chunks(component)
+        .iter()
+        .any(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+}
+
+fn checkpoint_component_chunk<'a>(component: &'a Value, chunk: &str) -> &'a Value {
+    checkpoint_component_chunks(component)
+        .iter()
+        .find(|entry| entry.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        .unwrap_or_else(|| panic!("missing checkpoint chunk {chunk}: {component}"))
 }
