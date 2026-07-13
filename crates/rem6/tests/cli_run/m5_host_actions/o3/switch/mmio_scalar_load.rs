@@ -108,7 +108,7 @@ fn rem6_run_host_switch_transfers_outstanding_o3_scalar_load_mmio() {
     );
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(6)
+        Some(7)
     );
     assert_eq!(handoff.pointer("/first_route"), Some(&Value::Null));
     assert_eq!(

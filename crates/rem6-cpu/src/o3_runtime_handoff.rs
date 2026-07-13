@@ -2,8 +2,8 @@ use super::{O3LiveScalarMemoryOutcome, O3RuntimeState};
 use rem6_isa_riscv::MemoryAccessKind;
 
 use crate::riscv_execution_mode_handoff::{
-    RiscvForwardedScalarLoadHandoff, RiscvO3LiveDataHandoffOperation,
-    RiscvResidentScalarMemoryHandoff,
+    RiscvCompletedPartialScalarLoadHandoff, RiscvForwardedScalarLoadHandoff,
+    RiscvO3LiveDataHandoffOperation, RiscvResidentScalarMemoryHandoff,
 };
 
 impl O3RuntimeState {
@@ -12,6 +12,7 @@ impl O3RuntimeState {
     ) -> Option<(
         Vec<RiscvResidentScalarMemoryHandoff>,
         Vec<RiscvForwardedScalarLoadHandoff>,
+        Vec<RiscvCompletedPartialScalarLoadHandoff>,
         usize,
     )> {
         if self.deferred_scalar_memory_execution.is_some() || self.live_scalar_memories.is_empty() {
@@ -19,6 +20,7 @@ impl O3RuntimeState {
         }
         let mut resident_rows = Vec::new();
         let mut forwarded_rows = Vec::new();
+        let mut completed_partial_rows = Vec::new();
         for live in &self.live_scalar_memories {
             let trace_sequence = self
                 .pending_data_accesses
@@ -51,7 +53,6 @@ impl O3RuntimeState {
             if live.outcome != O3LiveScalarMemoryOutcome::Completed
                 || live.event_taken
                 || live.commit_tick.is_some()
-                || forwarding_plan.is_partial()
                 || !matches!(
                     live.execution.execution().memory_access(),
                     Some(MemoryAccessKind::Load { .. })
@@ -66,8 +67,23 @@ impl O3RuntimeState {
             if data.len() != bytes as usize || !forwarding_plan.matches_data(data) {
                 return None;
             }
-            let mut forwarded_data = [0; 8];
-            forwarded_data[..data.len()].copy_from_slice(data);
+            let mut fixed_data = [0; 8];
+            fixed_data[..data.len()].copy_from_slice(data);
+            if forwarding_plan.is_partial() {
+                completed_partial_rows.push(RiscvCompletedPartialScalarLoadHandoff {
+                    fetch_request: live.fetch_request,
+                    data_request: live.data_request,
+                    issue_tick: live.issue_tick,
+                    response_tick,
+                    address: forwarding_plan.load_range().start(),
+                    bytes,
+                    original_forwarded_mask: forwarding_plan.forwarded_mask(),
+                    data: fixed_data,
+                    o3_sequence: live.sequence,
+                    trace_sequence,
+                });
+                continue;
+            }
             forwarded_rows.push(RiscvForwardedScalarLoadHandoff {
                 fetch_request: live.fetch_request,
                 data_request: live.data_request,
@@ -75,7 +91,7 @@ impl O3RuntimeState {
                 response_tick,
                 address: forwarding_plan.load_range().start(),
                 bytes,
-                data: forwarded_data,
+                data: fixed_data,
                 o3_sequence: live.sequence,
                 trace_sequence,
             });
@@ -83,6 +99,7 @@ impl O3RuntimeState {
         Some((
             resident_rows,
             forwarded_rows,
+            completed_partial_rows,
             self.live_scalar_memory_younger_sequences.len(),
         ))
     }
@@ -101,7 +118,7 @@ mod tests {
     use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent, RiscvDataAccessEventKind};
 
     #[test]
-    fn completed_partial_overlay_is_not_live_handoff_authority() {
+    fn completed_partial_overlay_becomes_live_handoff_authority() {
         let mut runtime = O3RuntimeState::default();
         let store = scalar_store_event(0x8000, 10, 0x9001);
         let load = scalar_load_event(0x8004, 11, 0x9000);
@@ -125,7 +142,25 @@ mod tests {
             plan,
         ));
 
-        assert!(runtime.live_scalar_memory_handoff().is_none());
+        let (resident, forwarded, completed_partial, younger) = runtime
+            .live_scalar_memory_handoff()
+            .expect("completed partial row should be transferable");
+        assert_eq!(resident.len(), 1);
+        assert!(forwarded.is_empty());
+        assert_eq!(completed_partial.len(), 1);
+        assert_eq!(younger, 0);
+        assert_eq!(
+            completed_partial[0].fetch_request,
+            load.fetch().request_id()
+        );
+        assert_eq!(completed_partial[0].data_request, memory_request(21));
+        assert_eq!(completed_partial[0].issue_tick, 32);
+        assert_eq!(completed_partial[0].response_tick, 40);
+        assert_eq!(completed_partial[0].address, Address::new(0x9000));
+        assert_eq!(completed_partial[0].bytes, 4);
+        assert_eq!(completed_partial[0].original_forwarded_mask, 0b0010);
+        assert_eq!(&completed_partial[0].data[..4], &[0x11, 0x5a, 0x33, 0x80]);
+        assert_eq!(completed_partial[0].o3_sequence, 1);
     }
 
     fn scalar_load_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {

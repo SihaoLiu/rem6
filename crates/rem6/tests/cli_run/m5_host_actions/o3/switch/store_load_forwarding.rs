@@ -150,7 +150,7 @@ fn assert_multi_source_partial_forwarded_store_load_handoff(memory_system: &str)
 
     let handoff = transfer_handoff_chunk(transfer, "cpu0");
     for (field, expected) in [
-        ("schema_version", 6),
+        ("schema_version", 7),
         ("outstanding_requests", 2),
         ("resident_rows", 4),
         ("transport_owned_rows", 2),
@@ -504,7 +504,7 @@ fn assert_partial_forwarded_store_load_handoff(memory_system: &str) {
     let handoff = transfer_handoff_chunk(transfer, "cpu0");
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(6)
+        Some(7)
     );
     for (field, expected) in [
         ("outstanding_requests", 2),
@@ -734,7 +734,7 @@ fn assert_full_forwarded_store_load_handoff(memory_system: &str) {
     );
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(6)
+        Some(7)
     );
     for (field, expected) in [
         ("outstanding_requests", 1),

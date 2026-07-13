@@ -10,22 +10,28 @@ use rem6_transport::MemoryRouteId;
 use crate::RiscvCore;
 
 mod codec;
+#[cfg(test)]
+#[path = "riscv_execution_mode_handoff/completed_partial_overlay_tests.rs"]
+mod completed_partial_overlay_tests;
 #[path = "riscv_execution_mode_handoff/partial_overlay.rs"]
 mod partial_overlay;
 
 #[cfg(test)]
 use codec::{
     HEADER_BYTES, MAGIC, V1_ENTRY_BYTES, VERSION_CURRENT, VERSION_FORWARDING,
-    VERSION_PARTIAL_OVERLAY, VERSION_SINGLE_SOURCE_CURRENT, VERSION_TYPED_TARGET,
+    VERSION_MULTI_SOURCE_CURRENT, VERSION_PARTIAL_OVERLAY, VERSION_SINGLE_SOURCE_CURRENT,
+    VERSION_TYPED_TARGET,
 };
 
 pub(crate) use partial_overlay::RiscvPendingPartialScalarLoadHandoff;
 use partial_overlay::{
+    completed_partial_overlay_is_valid, compose_completed_partial_overlay_sources,
     compose_partial_overlay_sources, partial_overlay_mask, scalar_byte_mask,
     validate_partial_overlay_data, validate_partial_overlay_payload,
 };
 pub use partial_overlay::{
-    RiscvO3LiveDataHandoffPartialOverlay, RiscvO3LiveDataHandoffPartialOverlaySource,
+    RiscvO3LiveDataHandoffCompletedPartialOverlay, RiscvO3LiveDataHandoffPartialOverlay,
+    RiscvO3LiveDataHandoffPartialOverlaySource,
 };
 
 pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
@@ -186,6 +192,7 @@ pub struct RiscvO3LiveDataHandoff {
     entries: Vec<RiscvO3LiveDataHandoffEntry>,
     forwarded_rows: Vec<RiscvO3LiveDataHandoffForwardedRow>,
     partial_overlays: Vec<RiscvO3LiveDataHandoffPartialOverlay>,
+    completed_partial_overlays: Vec<RiscvO3LiveDataHandoffCompletedPartialOverlay>,
     younger_rows: u32,
 }
 
@@ -201,6 +208,7 @@ impl RiscvO3LiveDataHandoff {
                 entries,
                 forwarded_rows: Vec::new(),
                 partial_overlays: Vec::new(),
+                completed_partial_overlays: Vec::new(),
                 younger_rows: u32::try_from(younger_rows).ok()?,
             })
     }
@@ -221,6 +229,7 @@ impl RiscvO3LiveDataHandoff {
             entries,
             forwarded_rows,
             partial_overlays: Vec::new(),
+            completed_partial_overlays: Vec::new(),
             younger_rows: u32::try_from(younger_rows).ok()?,
         })
     }
@@ -258,6 +267,24 @@ impl RiscvO3LiveDataHandoff {
             entries,
             forwarded_rows: Vec::new(),
             partial_overlays: vec![overlay],
+            completed_partial_overlays: Vec::new(),
+            younger_rows: 0,
+        })
+    }
+
+    fn with_completed_partial_overlay(
+        entries: Vec<RiscvO3LiveDataHandoffEntry>,
+        overlay: RiscvO3LiveDataHandoffCompletedPartialOverlay,
+        younger_rows: usize,
+    ) -> Option<Self> {
+        if younger_rows != 0 || !completed_partial_overlay_is_valid(&entries, &overlay) {
+            return None;
+        }
+        Some(Self {
+            entries,
+            forwarded_rows: Vec::new(),
+            partial_overlays: Vec::new(),
+            completed_partial_overlays: vec![overlay],
             younger_rows: 0,
         })
     }
@@ -274,8 +301,12 @@ impl RiscvO3LiveDataHandoff {
         &self.partial_overlays
     }
 
+    pub fn completed_partial_overlays(&self) -> &[RiscvO3LiveDataHandoffCompletedPartialOverlay] {
+        &self.completed_partial_overlays
+    }
+
     pub fn resident_rows(&self) -> usize {
-        self.entries.len() + self.forwarded_rows.len()
+        self.entries.len() + self.forwarded_rows.len() + self.completed_partial_overlays.len()
     }
 
     pub const fn younger_rows(&self) -> u32 {
@@ -311,6 +342,7 @@ pub enum RiscvO3LiveDataHandoffError {
         entries: usize,
         forwarded_rows: usize,
         partial_overlays: usize,
+        completed_partial_overlays: usize,
         younger_rows: u32,
     },
     InvalidForwardingShape {
@@ -387,6 +419,14 @@ pub enum RiscvO3LiveDataHandoffError {
         mask: u8,
         bytes: u32,
     },
+    InvalidCompletedPartialOverlayLiveMask {
+        original: u8,
+        live: u8,
+    },
+    InvalidCompletedPartialOverlaySequence {
+        source: u64,
+        load: u64,
+    },
     PartialOverlayMaskMismatch {
         expected: u8,
         actual: u8,
@@ -456,10 +496,11 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
                 entries,
                 forwarded_rows,
                 partial_overlays,
+                completed_partial_overlays,
                 younger_rows,
             } => write!(
                 formatter,
-                "current live-data handoff shape has {entries} transport entries, {forwarded_rows} forwarded rows, {partial_overlays} overlay rows, and {younger_rows} younger rows"
+                "current live-data handoff shape has {entries} transport entries, {forwarded_rows} forwarded rows, {partial_overlays} pending overlay rows, {completed_partial_overlays} completed overlay rows, and {younger_rows} younger rows"
             ),
             Self::InvalidForwardingShape {
                 entries,
@@ -571,6 +612,14 @@ impl fmt::Display for RiscvO3LiveDataHandoffError {
                 formatter,
                 "live-data handoff partial-overlay mask {mask:#04x} is invalid for {bytes} bytes"
             ),
+            Self::InvalidCompletedPartialOverlayLiveMask { original, live } => write!(
+                formatter,
+                "live-data handoff completed partial-overlay live mask {live:#04x} is not a nonzero partial subset of original mask {original:#04x}"
+            ),
+            Self::InvalidCompletedPartialOverlaySequence { source, load } => write!(
+                formatter,
+                "live-data handoff completed partial-overlay load sequence {load} does not follow source sequence {source}"
+            ),
             Self::PartialOverlayMaskMismatch { expected, actual } => write!(
                 formatter,
                 "live-data handoff partial-overlay mask {actual:#04x} does not match source overlap {expected:#04x}"
@@ -646,6 +695,85 @@ pub(crate) struct RiscvForwardedScalarLoadHandoff {
     pub(crate) trace_sequence: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvCompletedPartialScalarLoadHandoff {
+    pub(crate) fetch_request: MemoryRequestId,
+    pub(crate) data_request: MemoryRequestId,
+    pub(crate) issue_tick: Tick,
+    pub(crate) response_tick: Tick,
+    pub(crate) address: Address,
+    pub(crate) bytes: u32,
+    pub(crate) original_forwarded_mask: u8,
+    pub(crate) data: [u8; 8],
+    pub(crate) o3_sequence: u64,
+    pub(crate) trace_sequence: Option<u64>,
+}
+
+fn build_completed_partial_overlay_handoff(
+    entries: Vec<RiscvO3LiveDataHandoffEntry>,
+    issued_rows: &[RiscvIssuedScalarMemoryHandoff],
+    forwarded_rows: &[RiscvForwardedScalarLoadHandoff],
+    completed_partial_rows: &[RiscvCompletedPartialScalarLoadHandoff],
+    younger_rows: usize,
+) -> Option<RiscvO3LiveDataHandoff> {
+    if completed_partial_rows.len() != 1
+        || !forwarded_rows.is_empty()
+        || issued_rows
+            .iter()
+            .any(|issued| issued.partial_overlay.is_some())
+        || entries.is_empty()
+        || entries.len() >= MAX_ROWS
+        || younger_rows != 0
+    {
+        return None;
+    }
+    let completed = completed_partial_rows[0];
+    let first_source = issued_rows
+        .iter()
+        .find(|issued| issued.data_request == entries[0].data_request)
+        .copied()?;
+    let sources = entries
+        .iter()
+        .map(|entry| {
+            let source = issued_rows
+                .iter()
+                .find(|issued| issued.data_request == entry.data_request)
+                .copied()?;
+            (source.operation == RiscvO3LiveDataHandoffOperation::Store
+                && matches!(source.target, RiscvO3LiveDataHandoffTarget::Memory { .. })
+                && source.partition == first_source.partition
+                && source.target == first_source.target
+                && source.partial_overlay.is_none())
+            .then_some(source)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (live_forwarded_mask, sources) = compose_completed_partial_overlay_sources(
+        &sources,
+        completed.address,
+        completed.bytes,
+        completed.original_forwarded_mask,
+        &completed.data,
+    )?;
+    RiscvO3LiveDataHandoff::with_completed_partial_overlay(
+        entries,
+        RiscvO3LiveDataHandoffCompletedPartialOverlay {
+            fetch_request: completed.fetch_request,
+            load_data_request: completed.data_request,
+            issue_tick: completed.issue_tick,
+            response_tick: completed.response_tick,
+            address: completed.address,
+            bytes: completed.bytes,
+            original_forwarded_mask: completed.original_forwarded_mask,
+            live_forwarded_mask,
+            data: completed.data,
+            o3_sequence: completed.o3_sequence,
+            trace_sequence: completed.trace_sequence,
+            sources,
+        },
+        younger_rows,
+    )
+}
+
 impl RiscvCore {
     pub fn capture_o3_live_data_handoff(&self) -> Option<RiscvO3LiveDataHandoff> {
         let state = self.state.lock().expect("riscv core lock");
@@ -665,7 +793,7 @@ impl RiscvCore {
         {
             return None;
         }
-        let (resident_rows, forwarded_rows, younger_rows) =
+        let (resident_rows, forwarded_rows, completed_partial_rows, younger_rows) =
             state.o3_runtime.live_scalar_memory_handoff()?;
         let mut rows = resident_rows
             .into_iter()
@@ -731,6 +859,15 @@ impl RiscvCore {
             return None;
         }
         entries.sort_by_key(|entry| entry.o3_sequence);
+        if !completed_partial_rows.is_empty() {
+            return build_completed_partial_overlay_handoff(
+                entries,
+                &issued_rows,
+                &forwarded_rows,
+                &completed_partial_rows,
+                younger_rows,
+            );
+        }
         let partial_rows = issued_rows
             .iter()
             .filter_map(|issued| issued.partial_overlay.map(|overlay| (*issued, overlay)))
@@ -835,7 +972,7 @@ impl RiscvCore {
 mod tests {
     use super::*;
 
-    const CURRENT_HEADER_BYTES: usize = HEADER_BYTES + 8;
+    const CURRENT_HEADER_BYTES: usize = HEADER_BYTES + 12;
     const CURRENT_MEMORY_ENTRY_BYTES: usize = V1_ENTRY_BYTES + 2 + 13;
     const CURRENT_ISSUE_TICK_OFFSET: usize = 24;
     const CURRENT_TARGET_KIND_OFFSET: usize = 50;
@@ -1269,6 +1406,7 @@ mod tests {
             entries: vec![store, load],
             forwarded_rows: Vec::new(),
             partial_overlays: vec![partial_overlay(load, unknown)],
+            completed_partial_overlays: Vec::new(),
             younger_rows: 0,
         };
         assert_eq!(
@@ -1299,6 +1437,7 @@ mod tests {
             entries: vec![store, load],
             forwarded_rows: Vec::new(),
             partial_overlays: Vec::new(),
+            completed_partial_overlays: Vec::new(),
             younger_rows: 0,
         }
         .encode();
@@ -1308,6 +1447,7 @@ mod tests {
                 entries: 2,
                 forwarded_rows: 0,
                 partial_overlays: 0,
+                completed_partial_overlays: 0,
                 younger_rows: 0,
             })
         );
@@ -1444,6 +1584,7 @@ mod tests {
                 entries: 1,
                 forwarded_rows: 0,
                 partial_overlays: 2,
+                completed_partial_overlays: 0,
                 younger_rows: 0,
             })
         );
@@ -1477,6 +1618,7 @@ mod tests {
             entries: vec![store],
             forwarded_rows: Vec::new(),
             partial_overlays: Vec::new(),
+            completed_partial_overlays: Vec::new(),
             younger_rows: 0,
         }
         .encode();
@@ -1487,6 +1629,7 @@ mod tests {
                 entries: 1,
                 forwarded_rows: 0,
                 partial_overlays: 0,
+                completed_partial_overlays: 0,
                 younger_rows: 0,
             })
         );
@@ -1539,6 +1682,7 @@ mod tests {
             entries: vec![entry(1), entry(2)],
             forwarded_rows: Vec::new(),
             partial_overlays: Vec::new(),
+            completed_partial_overlays: Vec::new(),
             younger_rows: 0,
         };
         let payload = handoff.encode();

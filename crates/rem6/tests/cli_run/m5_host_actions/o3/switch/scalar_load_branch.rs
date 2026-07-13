@@ -77,7 +77,7 @@ fn rem6_run_host_switch_transfers_o3_mixed_load_alu_branch_until_squash() {
     let handoff = super::scalar_load::transfer_handoff_chunk(transfer, "cpu0");
     assert_eq!(
         handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(6)
+        Some(7)
     );
     assert_eq!(
         handoff.pointer("/resident_rows").and_then(Value::as_u64),
