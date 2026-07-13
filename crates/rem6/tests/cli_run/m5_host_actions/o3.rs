@@ -18,6 +18,8 @@ mod fu_live_window;
 mod live_retire_gate;
 #[path = "o3/lsq.rs"]
 mod lsq;
+#[path = "o3/lsq_fu_branch.rs"]
+mod lsq_fu_branch;
 #[path = "o3/lsq_fu_window.rs"]
 mod lsq_fu_window;
 #[path = "o3/lsq_live.rs"]

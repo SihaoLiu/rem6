@@ -15,16 +15,30 @@ const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bo
     )
 }
 
+const fn scalar_integer_terminal_control(instruction: RiscvInstruction) -> bool {
+    matches!(
+        instruction,
+        RiscvInstruction::Beq { .. }
+            | RiscvInstruction::Bne { .. }
+            | RiscvInstruction::Blt { .. }
+            | RiscvInstruction::Bge { .. }
+            | RiscvInstruction::Bltu { .. }
+            | RiscvInstruction::Bgeu { .. }
+    )
+}
+
 pub(crate) struct RiscvScalarIntegerLiveWindow {
     unresolved_destinations: Vec<Register>,
     rows: usize,
     row_limit: usize,
+    admits_terminal_control: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RiscvScalarIntegerYoungerDecision {
     AdmitContinue,
     AdmitStop,
+    AdmitTerminalControl,
     Reject,
 }
 
@@ -38,6 +52,7 @@ impl RiscvScalarIntegerLiveWindow {
                     .collect(),
                 1,
                 O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
+                false,
             )
         })
     }
@@ -61,14 +76,20 @@ impl RiscvScalarIntegerLiveWindow {
             }
         }
         (!unresolved_destinations.is_empty())
-            .then(|| Self::new(unresolved_destinations, occupied_rows, row_limit))
+            .then(|| Self::new(unresolved_destinations, occupied_rows, row_limit, true))
     }
 
-    fn new(unresolved_destinations: Vec<Register>, rows: usize, row_limit: usize) -> Self {
+    fn new(
+        unresolved_destinations: Vec<Register>,
+        rows: usize,
+        row_limit: usize,
+        admits_terminal_control: bool,
+    ) -> Self {
         Self {
             unresolved_destinations,
             rows,
             row_limit: row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS),
+            admits_terminal_control,
         }
     }
 
@@ -82,6 +103,10 @@ impl RiscvScalarIntegerLiveWindow {
     ) -> RiscvScalarIntegerYoungerDecision {
         if self.is_full() {
             return RiscvScalarIntegerYoungerDecision::Reject;
+        }
+        if self.admits_terminal_control && scalar_integer_terminal_control(instruction) {
+            self.rows += 1;
+            return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
         }
         let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
             return RiscvScalarIntegerYoungerDecision::Reject;
@@ -104,7 +129,7 @@ impl RiscvScalarIntegerLiveWindow {
 
 #[cfg(test)]
 mod tests {
-    use rem6_isa_riscv::Immediate;
+    use rem6_isa_riscv::{Immediate, MemoryWidth};
 
     use super::*;
 
@@ -116,6 +141,14 @@ mod tests {
         }
     }
 
+    fn div_x3() -> RiscvInstruction {
+        RiscvInstruction::Div {
+            rd: Register::new(3).unwrap(),
+            rs1: Register::new(1).unwrap(),
+            rs2: Register::new(2).unwrap(),
+        }
+    }
+
     fn scalar_load_window(row_limit: usize) -> RiscvScalarIntegerLiveWindow {
         RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
             [Register::new(4).unwrap()],
@@ -123,6 +156,79 @@ mod tests {
             row_limit,
         )
         .unwrap()
+    }
+
+    fn beq() -> RiscvInstruction {
+        RiscvInstruction::Beq {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn bne() -> RiscvInstruction {
+        RiscvInstruction::Bne {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn blt() -> RiscvInstruction {
+        RiscvInstruction::Blt {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn bge() -> RiscvInstruction {
+        RiscvInstruction::Bge {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn bltu() -> RiscvInstruction {
+        RiscvInstruction::Bltu {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn bgeu() -> RiscvInstruction {
+        RiscvInstruction::Bgeu {
+            rs1: Register::new(5).unwrap(),
+            rs2: Register::new(6).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn jal() -> RiscvInstruction {
+        RiscvInstruction::Jal {
+            rd: Register::new(1).unwrap(),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn jalr() -> RiscvInstruction {
+        RiscvInstruction::Jalr {
+            rd: Register::new(1).unwrap(),
+            rs1: Register::new(5).unwrap(),
+            offset: Immediate::new(0),
+        }
+    }
+
+    fn scalar_load() -> RiscvInstruction {
+        RiscvInstruction::Load {
+            rd: Register::new(7).unwrap(),
+            rs1: Register::new(5).unwrap(),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+            signed: false,
+        }
     }
 
     #[test]
@@ -222,6 +328,53 @@ mod tests {
             window.classify_younger(addi(7, 0)),
             RiscvScalarIntegerYoungerDecision::Reject
         );
+    }
+
+    #[test]
+    fn scalar_memory_prefix_admits_direct_conditional_as_terminal_control() {
+        for branch in [beq(), bne(), blt(), bge(), bltu(), bgeu()] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(addi(5, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert_eq!(
+                window.classify_younger(addi(6, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert_eq!(
+                window.classify_younger(branch),
+                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl,
+                "{branch:?} should be admitted as the terminal control row"
+            );
+            assert!(
+                window.is_full(),
+                "{branch:?} should fill the four-row window"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_fu_head_rejects_direct_conditional_terminal_control() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_fu_head(div_x3()).unwrap();
+
+        assert_eq!(
+            window.classify_younger(beq()),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+    }
+
+    #[test]
+    fn scalar_memory_prefix_rejects_unsupported_control_and_memory_rows() {
+        for instruction in [jal(), jalr(), RiscvInstruction::Ecall, scalar_load()] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::Reject
+            );
+        }
     }
 
     #[test]

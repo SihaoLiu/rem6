@@ -267,6 +267,7 @@ fn scalar_integer_window_candidate_from(
         match window.classify_younger(younger.decoded().instruction()) {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
             RiscvScalarIntegerYoungerDecision::AdmitStop
+            | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }
@@ -372,6 +373,7 @@ fn scalar_memory_window_candidate(
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitStop
+            | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
                 return DetailedFetchAheadCandidate::Blocked;
             }

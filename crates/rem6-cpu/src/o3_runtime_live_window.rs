@@ -108,7 +108,11 @@ impl O3RuntimeState {
                 break;
             };
             self.live_scalar_memory_younger_sequences.insert(sequence);
-            if decision == RiscvScalarIntegerYoungerDecision::AdmitStop {
+            if matches!(
+                decision,
+                RiscvScalarIntegerYoungerDecision::AdmitStop
+                    | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+            ) {
                 break;
             }
         }
@@ -734,17 +738,44 @@ mod tests {
         assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
         assert_eq!(runtime.live_scalar_memory_younger_sequences.len(), 3);
         assert_eq!(
-            runtime
-                .snapshot()
-                .reorder_buffer()
-                .iter()
-                .map(|entry| entry.pc())
-                .collect::<Vec<_>>(),
-            [0x8000, 0x8004, 0x8008, 0x800c]
-                .into_iter()
-                .map(Address::new)
-                .collect::<Vec<_>>()
+            runtime.snapshot().reorder_buffer()[3].pc(),
+            Address::new(0x800c)
         );
+    }
+
+    #[test]
+    fn scalar_load_head_stages_terminal_branch_without_rename_or_younger_rows() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        let branch = RiscvInstruction::decode(0x00b2_0463).unwrap();
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), addi(5, 0)),
+                (Address::new(0x8008), addi(6, 5)),
+                (Address::new(0x800c), branch),
+                (Address::new(0x8010), addi(7, 0)),
+            ],
+        );
+
+        let snapshot = runtime.snapshot();
+        let rob = snapshot.reorder_buffer();
+        assert_eq!(
+            rob.iter().map(|entry| entry.pc()).collect::<Vec<_>>(),
+            [0x8000, 0x8004, 0x8008, 0x800c].map(Address::new)
+        );
+        let branch_row = rob[3];
+        assert_eq!(
+            (branch_row.destination(), branch_row.rename_destination()),
+            (None, None)
+        );
+        assert!(branch_row.is_live_staged() && !branch_row.is_ready());
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x800c), branch)
+            .is_none());
     }
 
     #[test]

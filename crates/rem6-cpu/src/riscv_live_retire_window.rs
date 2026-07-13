@@ -274,7 +274,8 @@ fn accepted_scalar_integer_younger_window(
     for younger in younger {
         match window.classify_younger(younger.decoded.instruction()) {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => accepted.push(younger),
-            RiscvScalarIntegerYoungerDecision::AdmitStop => {
+            RiscvScalarIntegerYoungerDecision::AdmitStop
+            | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl => {
                 accepted.push(younger);
                 break;
             }
