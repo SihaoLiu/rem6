@@ -10,9 +10,9 @@ use rem6_memory::{
     MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::{
-    FabricQosGrantActivity, FabricQosSuppressionReason, MemoryRoute, MemoryRouteHop, MemoryTrace,
-    MemoryTransport, ParallelMemoryTransaction, TargetBatchOutcome, TargetOutcome,
-    TransportEndpointId,
+    FabricQosGrantActivity, FabricQosGrantDirection, FabricQosSuppressionReason, MemoryRoute,
+    MemoryRouteHop, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, TargetBatchOutcome,
+    TargetOutcome, TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -417,6 +417,9 @@ fn shared_fabric_qos_activity_records_memory_order_suppression() {
 
     let activities = transport.fabric_qos_grant_activities();
     assert_eq!(activities.len(), 2);
+    assert!(activities
+        .iter()
+        .all(|activity| activity.direction() == FabricQosGrantDirection::Request));
     let first = &activities[0];
     assert_eq!(first.candidates().len(), 1);
     assert_eq!(first.candidates()[0].order(), 0);

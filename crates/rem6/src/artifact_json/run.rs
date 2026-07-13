@@ -10,7 +10,7 @@ use rem6_fabric::{FabricHopActivity, QosQueuePolicyKind, QosQueuedRequest, QosRe
 use rem6_kernel::WaitForEdgeKind;
 use rem6_memory::Address;
 use rem6_system::RiscvDataCacheProtocol;
-use rem6_transport::FabricQosSuppressionReason;
+use rem6_transport::{FabricQosGrantDirection, FabricQosSuppressionReason};
 
 use super::optional_count_json;
 use super::parallel::empty_parallel_json;
@@ -847,7 +847,8 @@ fn run_fabric_qos_grant_activities_json(summary: &Rem6RunFabricSummary) -> Strin
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"tick\":{},\"batch\":{},\"grant_index\":{},\"policy\":\"{}\",\"candidates\":[{}],\"suppressed\":[{}],\"selected_queue_index\":{},\"grant\":{},\"lrg_requestors_before\":[{}],\"lrg_requestors_after\":[{}]}}",
+                "{{\"direction\":\"{}\",\"tick\":{},\"batch\":{},\"grant_index\":{},\"policy\":\"{}\",\"candidates\":[{}],\"suppressed\":[{}],\"selected_queue_index\":{},\"grant\":{},\"lrg_requestors_before\":[{}],\"lrg_requestors_after\":[{}]}}",
+                run_fabric_qos_direction_json(activity.direction()),
                 activity.tick(),
                 activity.batch(),
                 activity.grant_index(),
@@ -862,6 +863,13 @@ fn run_fabric_qos_grant_activities_json(summary: &Rem6RunFabricSummary) -> Strin
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn run_fabric_qos_direction_json(direction: FabricQosGrantDirection) -> &'static str {
+    match direction {
+        FabricQosGrantDirection::Request => "request",
+        FabricQosGrantDirection::Response => "response",
+    }
 }
 
 fn run_fabric_qos_request_json(request: &QosQueuedRequest, queue_index: Option<usize>) -> String {

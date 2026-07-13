@@ -11,10 +11,10 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
-    MemoryTransport, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery,
-    SharedFabricQosState, TargetBatchOutcome, TargetOutcome, TransportEndpointId, TransportError,
-    TransportQosClass,
+    FabricQosGrantDirection, MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace,
+    MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    ResponseDelivery, SharedFabricQosState, TargetBatchOutcome, TargetOutcome, TransportEndpointId,
+    TransportError, TransportQosClass,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -1297,6 +1297,9 @@ fn transport_records_fifo_lifo_and_lrg_fabric_qos_grant_decisions() {
         assert!(activities
             .iter()
             .all(|activity| activity.policy() == policy));
+        assert!(activities
+            .iter()
+            .all(|activity| activity.direction() == FabricQosGrantDirection::Request));
         assert!(activities.iter().all(|activity| activity.tick() == 0));
         assert!(activities.iter().all(|activity| activity.batch() == 0));
         assert_eq!(
@@ -1830,6 +1833,472 @@ fn transport_parallel_batch_routes_response_after_batched_request_arrival() {
 }
 
 #[test]
+fn transport_fabric_qos_arbitrates_same_tick_response_hops() {
+    for worker_limit in [1, 3] {
+        for (policy, expected_sequences) in [
+            (QosQueuePolicyKind::Fifo, [301, 302, 303]),
+            (QosQueuePolicyKind::Lifo, [303, 302, 301]),
+            (QosQueuePolicyKind::LeastRecentlyGranted, [301, 303, 302]),
+        ] {
+            let mut scheduler =
+                PartitionedScheduler::with_parallel_worker_limit(4, 2, worker_limit).unwrap();
+            let mut transport =
+                MemoryTransport::with_fabric_qos(FabricModel::new(), QosQueueArbiter::new(policy));
+            let memory = endpoint("memory0");
+            let response_path = fabric_path("mesh_response_qos", 2, 4);
+            let routes = [0, 1, 2].map(|partition| {
+                transport
+                    .add_route(
+                        MemoryRoute::new_path(
+                            endpoint(&format!("core{partition}.dmem")),
+                            PartitionId::new(partition),
+                            [
+                                MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                                    .unwrap()
+                                    .with_response_fabric_path(response_path.clone()),
+                            ],
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap()
+            });
+            let requests = [
+                request_from(1, 301, 0x3000, 8),
+                request_from(1, 302, 0x3100, 8),
+                request_from(2, 303, 0x3200, 8),
+            ];
+            let responses = Arc::new(Mutex::new(Vec::new()));
+
+            for (route, request) in routes.into_iter().zip(requests) {
+                let response_log = Arc::clone(&responses);
+                transport
+                    .submit_parallel(
+                        &mut scheduler,
+                        route,
+                        request,
+                        MemoryTrace::new(),
+                        |delivery, _context| {
+                            TargetOutcome::Respond(
+                                MemoryResponse::completed(
+                                    delivery.request(),
+                                    Some(vec![0; delivery.request().size().bytes() as usize]),
+                                )
+                                .unwrap(),
+                            )
+                        },
+                        move |delivery| {
+                            response_log.lock().unwrap().push((
+                                delivery.tick(),
+                                delivery.response().request_id().sequence(),
+                            ));
+                        },
+                    )
+                    .unwrap();
+            }
+
+            scheduler.run_until_idle_parallel().unwrap();
+
+            assert_eq!(
+                responses
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(_, sequence)| *sequence)
+                    .collect::<Vec<_>>(),
+                expected_sequences,
+                "{policy:?} with {worker_limit} workers"
+            );
+            let activities = transport.fabric_qos_grant_activities();
+            assert_eq!(
+                activities.len(),
+                3,
+                "{policy:?} with {worker_limit} workers"
+            );
+            assert!(activities
+                .iter()
+                .all(|activity| activity.direction() == FabricQosGrantDirection::Response));
+            assert_eq!(
+                activities
+                    .iter()
+                    .map(|activity| activity.grant().order())
+                    .collect::<Vec<_>>(),
+                expected_sequences.map(|sequence| sequence - 301),
+                "{policy:?} with {worker_limit} workers"
+            );
+            assert_eq!(
+                activities
+                    .iter()
+                    .map(|activity| activity.candidates().len())
+                    .collect::<Vec<_>>(),
+                [3, 2, 1],
+                "{policy:?} with {worker_limit} workers"
+            );
+        }
+    }
+}
+
+#[test]
+fn shared_fabric_qos_state_batches_responses_across_transports() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 2, 3).unwrap();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let qos = SharedFabricQosState::new(QosQueueArbiter::new(QosQueuePolicyKind::Lifo));
+    let memory = endpoint("memory0");
+    let response_path = fabric_path("mesh_shared_response_qos", 2, 4);
+    let mut transports = [
+        MemoryTransport::with_shared_fabric_qos(Arc::clone(&fabric), qos.clone()),
+        MemoryTransport::with_shared_fabric_qos(fabric, qos),
+    ];
+    let routes = transports
+        .iter_mut()
+        .enumerate()
+        .map(|(partition, transport)| {
+            transport
+                .add_route(
+                    MemoryRoute::new_path(
+                        endpoint(&format!("core{partition}.dmem")),
+                        PartitionId::new(partition as u32),
+                        [
+                            MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                                .unwrap()
+                                .with_response_fabric_path(response_path.clone()),
+                        ],
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    for (index, (transport, route)) in transports.iter().zip(routes).enumerate() {
+        let response_log = Arc::clone(&responses);
+        transport
+            .submit_parallel(
+                &mut scheduler,
+                route,
+                request_from(index as u32 + 1, index as u64 + 401, 0x4000, 8),
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                    )
+                },
+                move |delivery| {
+                    response_log
+                        .lock()
+                        .unwrap()
+                        .push(delivery.response().request_id().sequence());
+                },
+            )
+            .unwrap();
+    }
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(*responses.lock().unwrap(), [402, 401]);
+    let first = transports[0].fabric_qos_grant_activities();
+    let second = transports[1].fabric_qos_grant_activities();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 2);
+    assert!(first.iter().all(|activity| {
+        activity.batch() == 0 && activity.direction() == FabricQosGrantDirection::Response
+    }));
+    assert_eq!(
+        first
+            .iter()
+            .map(|activity| activity.candidates().len())
+            .collect::<Vec<_>>(),
+        [2, 1]
+    );
+}
+
+#[test]
+fn response_qos_arbiter_starts_without_request_lrg_history() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted);
+    assert_eq!(
+        arbiter
+            .grant(&[qos_request(1, 1, 0, 8, 0), qos_request(2, 2, 0, 8, 1),])
+            .unwrap()
+            .requestor(),
+        QosRequestorId::new(1)
+    );
+    let qos = SharedFabricQosState::new(arbiter);
+    let mut transport = MemoryTransport::with_shared_fabric_qos(fabric, qos);
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0.dmem"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_response_fabric_path(fabric_path("mesh_response_fresh_lrg", 2, 4)),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    transport
+        .submit_parallel(
+            &mut scheduler,
+            route,
+            request_from(1, 411, 0x4100, 8),
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                )
+            },
+            |_| {},
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let activities = transport.fabric_qos_grant_activities();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].direction(), FabricQosGrantDirection::Response);
+    assert!(activities[0].lrg_requestors_before().is_empty());
+}
+
+#[test]
+fn transport_stale_response_qos_batch_schedules_fresh_same_key_event() {
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+    )
+    .with_direct_target_batch_responder(|_, _| None);
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0.dmem"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_response_fabric_path(fabric_path("mesh_response_stale_batch", 2, 4)),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let first_responses = Arc::clone(&responses);
+
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route,
+                    request_from(1, 421, 0x4200, 8),
+                    MemoryTrace::new(),
+                    |delivery, _context| {
+                        TargetOutcome::Respond(
+                            MemoryResponse::completed(delivery.request(), Some(vec![0; 8]))
+                                .unwrap(),
+                        )
+                    },
+                    move |delivery| {
+                        first_responses
+                            .lock()
+                            .unwrap()
+                            .push(delivery.response().request_id().sequence());
+                    },
+                ),
+                ParallelMemoryTransaction::new(
+                    route,
+                    request_from(2, 422, 0x4300, 8),
+                    MemoryTrace::new(),
+                    |_, _| panic!("fail after the first response batch is queued"),
+                    |_| {},
+                ),
+            ],
+        )
+        .unwrap();
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheduler.run_until_idle_parallel().unwrap();
+    }));
+    assert!(failed.is_err());
+    assert!(responses.lock().unwrap().is_empty());
+    assert!(transport.fabric_qos_grant_activities().is_empty());
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let fresh_responses = Arc::clone(&responses);
+    transport
+        .submit_parallel(
+            &mut scheduler,
+            route,
+            request_from(3, 423, 0x4400, 8),
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                )
+            },
+            move |delivery| {
+                fresh_responses
+                    .lock()
+                    .unwrap()
+                    .push(delivery.response().request_id().sequence());
+            },
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(*responses.lock().unwrap(), [423]);
+    let activities = transport.fabric_qos_grant_activities();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].batch(), 0);
+    assert_eq!(activities[0].direction(), FabricQosGrantDirection::Response);
+}
+
+#[test]
+fn transport_response_fabric_without_qos_emits_no_grant_activity() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let memory = endpoint("memory0");
+    let response_path = fabric_path("mesh_response_no_qos", 2, 4);
+    let routes = [0, 1].map(|partition| {
+        transport
+            .add_route(
+                MemoryRoute::new_path(
+                    endpoint(&format!("core{partition}.dmem")),
+                    PartitionId::new(partition),
+                    [
+                        MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                            .unwrap()
+                            .with_response_fabric_path(response_path.clone()),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    });
+
+    for (route, request) in routes.into_iter().zip([
+        request_from(1, 311, 0x3300, 8),
+        request_from(2, 312, 0x3400, 8),
+    ]) {
+        transport
+            .submit_parallel(
+                &mut scheduler,
+                route,
+                request,
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                    )
+                },
+                |_| {},
+            )
+            .unwrap();
+    }
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(transport.fabric_qos_grant_activities().is_empty());
+    assert_eq!(
+        transport
+            .fabric_lane_activities()
+            .unwrap()
+            .iter()
+            .map(|activity| activity.transfer_count())
+            .sum::<usize>(),
+        2
+    );
+}
+
+#[test]
+fn transport_failed_response_qos_batch_rolls_back_fabric_arbiter_and_batch_id() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+    );
+    let memory = endpoint("memory0");
+    let routes = [
+        ("core0.dmem", 0, fabric_path("mesh_response_rollback", 2, 4)),
+        (
+            "core1.dmem",
+            1,
+            fabric_path("mesh_response_rollback", u64::MAX, 4),
+        ),
+    ]
+    .map(|(source, partition, path)| {
+        transport
+            .add_route(
+                MemoryRoute::new_path(
+                    endpoint(source),
+                    PartitionId::new(partition),
+                    [
+                        MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                            .unwrap()
+                            .with_response_fabric_path(path),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    });
+
+    for (route, request) in routes.into_iter().zip([
+        request_from(1, 321, 0x3500, 8),
+        request_from(2, 322, 0x3600, 8),
+    ]) {
+        transport
+            .submit_parallel(
+                &mut scheduler,
+                route,
+                request,
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                    )
+                },
+                |_| {},
+            )
+            .unwrap();
+    }
+
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheduler.run_until_idle_parallel().unwrap();
+    }));
+    assert!(failed.is_err());
+    assert!(transport.fabric_hop_activities().unwrap().is_empty());
+    assert!(transport.fabric_qos_grant_activities().is_empty());
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    transport
+        .submit_parallel(
+            &mut scheduler,
+            routes[0],
+            request_from(1, 323, 0x3700, 8),
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![0; 8])).unwrap(),
+                )
+            },
+            |_| {},
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let activities = transport.fabric_qos_grant_activities();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].batch(), 0);
+    assert_eq!(activities[0].direction(), FabricQosGrantDirection::Response);
+    assert!(activities[0].lrg_requestors_before().is_empty());
+    assert_eq!(transport.fabric_hop_activities().unwrap().len(), 1);
+}
+
+#[test]
 fn transport_coalesces_same_tick_direct_qos_target_batches_across_submissions() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let batch_log = Arc::new(Mutex::new(Vec::new()));
@@ -1894,7 +2363,8 @@ fn transport_coalesces_same_tick_direct_qos_target_batches_across_submissions() 
                 trace.clone(),
                 |_, _| panic!("batch responder should handle the request"),
                 |_| panic!("request-only transfer must not deliver a response"),
-            )],
+            )
+            .with_qos_priority(QosPriority::new(1))],
         )
         .unwrap();
     let events_b = transport
@@ -1906,7 +2376,8 @@ fn transport_coalesces_same_tick_direct_qos_target_batches_across_submissions() 
                 trace,
                 |_, _| panic!("batch responder should handle the request"),
                 |_| panic!("request-only transfer must not deliver a response"),
-            )],
+            )
+            .with_qos_priority(QosPriority::new(0))],
         )
         .unwrap();
 
@@ -1917,8 +2388,83 @@ fn transport_coalesces_same_tick_direct_qos_target_batches_across_submissions() 
     assert_eq!(summary.executed_events(), 1);
     assert_eq!(
         *batch_log.lock().unwrap(),
-        vec![vec![(4, req_a.id()), (4, req_b.id())]]
+        vec![vec![(4, req_b.id()), (4, req_a.id())]]
     );
+}
+
+#[test]
+fn transport_canceled_direct_qos_batch_schedules_fresh_same_key_event() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let batch_log = Arc::new(Mutex::new(Vec::new()));
+    let responder_log = Arc::clone(&batch_log);
+    let mut transport = MemoryTransport::with_qos_policy(
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+        QosFixedPriorityPolicy::new(1, QosPriority::new(0)).unwrap(),
+    )
+    .with_direct_target_batch_responder(move |deliveries, _context| {
+        responder_log.lock().unwrap().push(
+            deliveries
+                .iter()
+                .map(|delivery| delivery.request().id())
+                .collect::<Vec<_>>(),
+        );
+        Some(
+            deliveries
+                .iter()
+                .map(|delivery| {
+                    TargetBatchOutcome::new(delivery.request().id(), TargetOutcome::NoResponse)
+                })
+                .collect(),
+        )
+    });
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first = request_from(1, 401, 0x4000, 8);
+    let second = request_from(1, 402, 0x4100, 8);
+
+    let first_event = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [ParallelMemoryTransaction::new(
+                route,
+                first,
+                MemoryTrace::new(),
+                |_, _| panic!("batch responder should handle the request"),
+                |_| panic!("request-only transfer must not deliver a response"),
+            )],
+        )
+        .unwrap()[0];
+    scheduler.cancel_event(first_event).unwrap();
+
+    let second_event = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [ParallelMemoryTransaction::new(
+                route,
+                second.clone(),
+                MemoryTrace::new(),
+                |_, _| panic!("batch responder should handle the request"),
+                |_| panic!("request-only transfer must not deliver a response"),
+            )],
+        )
+        .unwrap()[0];
+
+    assert_ne!(first_event, second_event);
+    assert!(scheduler.pending_event_snapshot(second_event).is_some());
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(*batch_log.lock().unwrap(), vec![vec![second.id()]]);
 }
 
 #[test]

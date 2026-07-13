@@ -64,6 +64,7 @@ fn fabric_qos_activity_contracts_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
     let qos_activity_rs = crate_dir.join("src/qos_activity.rs");
+    let qos_activity = fs::read_to_string(&qos_activity_rs).unwrap();
 
     assert!(
         qos_activity_rs.exists(),
@@ -84,6 +85,34 @@ fn fabric_qos_activity_contracts_live_in_focused_module() {
     assert!(
         !lib_rs.contains("pub struct SharedFabricQosState {"),
         "src/lib.rs should re-export shared fabric QoS state from a focused module"
+    );
+    assert!(
+        qos_activity.contains("pub enum FabricQosGrantDirection {"),
+        "fabric QoS grant direction belongs in src/qos_activity.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub enum FabricQosGrantDirection {"),
+        "src/lib.rs should re-export fabric QoS grant direction from a focused module"
+    );
+}
+
+#[test]
+fn response_qos_scheduling_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let response_qos_rs = crate_dir.join("src/response_qos.rs");
+
+    assert!(
+        response_qos_rs.exists(),
+        "parallel response QoS scheduling belongs in src/response_qos.rs"
+    );
+    assert!(
+        !lib_rs.contains("struct PendingResponseQosBatch {"),
+        "src/lib.rs should delegate response QoS batch state to a focused module"
+    );
+    assert!(
+        !lib_rs.contains("fn enqueue_parallel_response_qos_hop("),
+        "src/lib.rs should delegate response QoS scheduling to a focused module"
     );
 }
 

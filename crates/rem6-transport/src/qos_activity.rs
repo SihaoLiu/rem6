@@ -4,6 +4,12 @@ use rem6_fabric::{QosQueueArbiter, QosQueuePolicyKind, QosQueuedRequest, QosRequ
 use rem6_kernel::Tick;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FabricQosGrantDirection {
+    Request,
+    Response,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FabricQosSuppressionReason {
     MemoryOrder,
 }
@@ -30,6 +36,7 @@ impl FabricQosSuppressedRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricQosGrantActivity {
+    direction: FabricQosGrantDirection,
     tick: Tick,
     batch: u64,
     grant_index: usize,
@@ -45,28 +52,34 @@ pub struct FabricQosGrantActivity {
 #[derive(Clone, Debug)]
 pub struct SharedFabricQosState {
     pub(crate) inner: Arc<Mutex<FabricQosState>>,
+    pub(crate) response_batches: crate::response_qos::ResponseQosBatches,
 }
 
 impl SharedFabricQosState {
     pub fn new(arbiter: QosQueueArbiter) -> Self {
+        let response_arbiter = QosQueueArbiter::new(arbiter.policy());
         Self {
             inner: Arc::new(Mutex::new(FabricQosState {
-                arbiter,
+                request_arbiter: arbiter,
+                response_arbiter,
                 activity: FabricQosActivityLog::default(),
             })),
+            response_batches: crate::response_qos::ResponseQosBatches::default(),
         }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct FabricQosState {
-    pub(crate) arbiter: QosQueueArbiter,
+    pub(crate) request_arbiter: QosQueueArbiter,
+    pub(crate) response_arbiter: QosQueueArbiter,
     pub(crate) activity: FabricQosActivityLog,
 }
 
 impl FabricQosGrantActivity {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        direction: FabricQosGrantDirection,
         tick: Tick,
         batch: u64,
         grant_index: usize,
@@ -80,6 +93,7 @@ impl FabricQosGrantActivity {
     ) -> Self {
         debug_assert_eq!(candidates.get(selected_queue_index), Some(&grant));
         Self {
+            direction,
             tick,
             batch,
             grant_index,
@@ -91,6 +105,10 @@ impl FabricQosGrantActivity {
             lrg_requestors_before,
             lrg_requestors_after,
         }
+    }
+
+    pub const fn direction(&self) -> FabricQosGrantDirection {
+        self.direction
     }
 
     pub const fn tick(&self) -> Tick {

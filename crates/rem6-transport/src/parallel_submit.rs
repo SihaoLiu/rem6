@@ -3,7 +3,8 @@ use rem6_memory::MemoryRequest;
 
 use crate::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
-    PreparedParallelTransaction, RequestDelivery, ResponseDelivery, TargetOutcome, TransportError,
+    PreparedParallelTransaction, QosPriority, QosRequestorId, RequestDelivery, ResponseDelivery,
+    TargetOutcome, TransportError,
 };
 
 impl MemoryTransport {
@@ -30,6 +31,7 @@ impl MemoryTransport {
                 first_hop_delay,
                 qos_requestor: _,
                 qos_priority: _,
+                response_qos,
             } = transaction;
             let source_partition = route.source_partition();
             let fabric = self.fabric.clone();
@@ -52,6 +54,7 @@ impl MemoryTransport {
                         request,
                         trace,
                         fabric,
+                        response_qos,
                         responder,
                         response_sink,
                         first_hop_delay,
@@ -123,6 +126,10 @@ impl MemoryTransport {
         let source_partition = route.source_partition();
         self.validate_scheduler_route(scheduler, route_id, &route, start_tick)?;
         let fabric = self.fabric.clone();
+        let response_qos = self.response_qos_context(
+            QosRequestorId::new(request.id().agent().get()),
+            QosPriority::new(0),
+        );
         scheduler
             .schedule_parallel_at(source_partition, start_tick, move |context| {
                 let request_id = request.id();
@@ -142,6 +149,7 @@ impl MemoryTransport {
                     request,
                     trace,
                     fabric,
+                    response_qos,
                     responder,
                     response_sink,
                 );

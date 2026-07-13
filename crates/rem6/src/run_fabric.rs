@@ -7,7 +7,7 @@ use rem6_fabric::{
 };
 use rem6_kernel::{WaitForBlockedNodeWindow, WaitForEdgeKindWindow, WaitForTargetNodeWindow};
 use rem6_system::RiscvSystemRun;
-use rem6_transport::{FabricQosGrantActivity, MemoryTransport};
+use rem6_transport::{FabricQosGrantActivity, FabricQosGrantDirection, MemoryTransport};
 
 use crate::{config::RunFabricRouterStageConfig, execute_error, Rem6CliError, RunFabricConfig};
 
@@ -180,31 +180,40 @@ impl Rem6RunFabricSummary {
         &self.qos_grant_activities
     }
 
-    pub(crate) fn qos_candidate_count(&self) -> u64 {
+    fn qos_grant_activities_for(
+        &self,
+        direction: FabricQosGrantDirection,
+    ) -> impl Iterator<Item = &FabricQosGrantActivity> {
         self.qos_grant_activities
             .iter()
+            .filter(move |activity| activity.direction() == direction)
+    }
+
+    pub(crate) fn qos_grant_count(&self, direction: FabricQosGrantDirection) -> u64 {
+        self.qos_grant_activities_for(direction).count() as u64
+    }
+
+    pub(crate) fn qos_candidate_count(&self, direction: FabricQosGrantDirection) -> u64 {
+        self.qos_grant_activities_for(direction)
             .map(|activity| activity.candidates().len() as u64)
             .sum()
     }
 
-    pub(crate) fn qos_suppressed_count(&self) -> u64 {
-        self.qos_grant_activities
-            .iter()
+    pub(crate) fn qos_suppressed_count(&self, direction: FabricQosGrantDirection) -> u64 {
+        self.qos_grant_activities_for(direction)
             .map(|activity| activity.suppressed().len() as u64)
             .sum()
     }
 
-    pub(crate) fn qos_batch_count(&self) -> u64 {
-        self.qos_grant_activities
-            .iter()
+    pub(crate) fn qos_batch_count(&self, direction: FabricQosGrantDirection) -> u64 {
+        self.qos_grant_activities_for(direction)
             .map(FabricQosGrantActivity::batch)
             .collect::<BTreeSet<_>>()
             .len() as u64
     }
 
-    pub(crate) fn qos_max_candidate_count(&self) -> u64 {
-        self.qos_grant_activities
-            .iter()
+    pub(crate) fn qos_max_candidate_count(&self, direction: FabricQosGrantDirection) -> u64 {
+        self.qos_grant_activities_for(direction)
             .map(|activity| activity.candidates().len() as u64)
             .max()
             .unwrap_or(0)

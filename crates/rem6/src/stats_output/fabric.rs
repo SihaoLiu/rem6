@@ -4,6 +4,7 @@ use rem6_fabric::{
     FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
 };
 use rem6_stats::{StatResetPolicy, StatsRegistry};
+use rem6_transport::FabricQosGrantDirection;
 
 use crate::{Rem6CliError, Rem6RunFabricRouterActivity, Rem6RunFabricSummary};
 
@@ -112,12 +113,29 @@ fn emit_fabric_qos_stats(
     summary: &Rem6RunFabricSummary,
 ) -> Result<(), Rem6CliError> {
     let prefix = format!("{prefix}.qos");
+    for (direction, suffix) in [
+        (FabricQosGrantDirection::Request, "request"),
+        (FabricQosGrantDirection::Response, "response"),
+    ] {
+        emit_fabric_qos_direction_stats(stats, &prefix, suffix, direction, summary)?;
+    }
+    Ok(())
+}
+
+fn emit_fabric_qos_direction_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    direction_suffix: &str,
+    direction: FabricQosGrantDirection,
+    summary: &Rem6RunFabricSummary,
+) -> Result<(), Rem6CliError> {
+    let prefix = format!("{prefix}.{direction_suffix}");
     for (suffix, value) in [
-        ("grants", summary.qos_grant_activities().len() as u64),
-        ("candidates", summary.qos_candidate_count()),
-        ("suppressed", summary.qos_suppressed_count()),
-        ("batches", summary.qos_batch_count()),
-        ("max_candidates", summary.qos_max_candidate_count()),
+        ("grants", summary.qos_grant_count(direction)),
+        ("candidates", summary.qos_candidate_count(direction)),
+        ("suppressed", summary.qos_suppressed_count(direction)),
+        ("batches", summary.qos_batch_count(direction)),
+        ("max_candidates", summary.qos_max_candidate_count(direction)),
     ] {
         increment_stat(
             stats,
@@ -130,7 +148,11 @@ fn emit_fabric_qos_stats(
 
     let mut requestor_grants = BTreeMap::<u32, u64>::new();
     let mut priority_grants = BTreeMap::<u8, u64>::new();
-    for activity in summary.qos_grant_activities() {
+    for activity in summary
+        .qos_grant_activities()
+        .iter()
+        .filter(|activity| activity.direction() == direction)
+    {
         requestor_grants
             .entry(activity.grant().requestor().get())
             .and_modify(|count| *count = count.saturating_add(1))

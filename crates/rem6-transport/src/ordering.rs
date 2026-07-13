@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use crate::{FabricQosGrantActivity, FabricQosSuppressedRequest, FabricQosSuppressionReason};
+use crate::{
+    FabricQosGrantActivity, FabricQosGrantDirection, FabricQosSuppressedRequest,
+    FabricQosSuppressionReason,
+};
 use rem6_fabric::{
     FabricError, FabricPacket, FabricPath, FabricTransaction, FabricTransfer, QosPriority,
     QosQueueArbiter, QosQueuedRequest, QosRequestId, QosRequestorId,
@@ -49,6 +52,81 @@ impl OrderedFabricQosRequest {
     }
 }
 
+pub(crate) struct FabricQosTransfer {
+    packet: FabricPacket,
+    path: FabricPath,
+    requestor: QosRequestorId,
+    priority: QosPriority,
+    order: u64,
+}
+
+impl FabricQosTransfer {
+    pub(crate) fn new(
+        packet: FabricPacket,
+        path: FabricPath,
+        requestor: QosRequestorId,
+        priority: QosPriority,
+        order: u64,
+    ) -> Self {
+        Self {
+            packet,
+            path,
+            requestor,
+            priority,
+            order,
+        }
+    }
+
+    pub(crate) fn packet(&self) -> &FabricPacket {
+        &self.packet
+    }
+}
+
+pub(crate) fn transmit_qos_fabric_batch(
+    direction: FabricQosGrantDirection,
+    now: Tick,
+    batch: u64,
+    requests: &[FabricQosTransfer],
+    fabric: &mut FabricTransaction<'_>,
+    arbiter: &mut QosQueueArbiter,
+) -> Result<(Vec<FabricTransfer>, Vec<FabricQosGrantActivity>), FabricError> {
+    reject_duplicate_transfer_packets(requests)?;
+    let mut pending = (0..requests.len()).collect::<Vec<_>>();
+    let mut transfers = Vec::with_capacity(requests.len());
+    let mut activities = Vec::with_capacity(requests.len());
+    while !pending.is_empty() {
+        let queue = pending
+            .iter()
+            .map(|request_index| qos_queued_transfer(&requests[*request_index]))
+            .collect::<Vec<_>>();
+        let before = arbiter.snapshot();
+        let Some(grant) = arbiter.grant(&queue) else {
+            return Err(FabricError::QosNoGrant);
+        };
+        let after = arbiter.snapshot();
+        let request_index = pending.remove(grant.queue_index());
+        let request = &requests[request_index];
+        let transfer = fabric.transmit(now, request.packet.clone(), request.path.clone())?;
+        let selected = queue[grant.queue_index()].clone();
+        activities.push(FabricQosGrantActivity::new(
+            direction,
+            now,
+            batch,
+            activities.len(),
+            before.policy(),
+            queue,
+            Vec::new(),
+            grant.queue_index(),
+            selected,
+            before.lrg_requestors().to_vec(),
+            after.lrg_requestors().to_vec(),
+        ));
+        transfers.push(transfer);
+    }
+
+    Ok((transfers, activities))
+}
+
 pub(crate) fn transmit_ordered_qos_fabric_batch(
     now: Tick,
     batch: u64,
@@ -89,6 +167,7 @@ pub(crate) fn transmit_ordered_qos_fabric_batch(
         let transfer = fabric.transmit(now, request.packet.clone(), request.path.clone())?;
         let selected = queue[grant.queue_index()].clone();
         activities.push(FabricQosGrantActivity::new(
+            FabricQosGrantDirection::Request,
             now,
             batch,
             activities.len(),
@@ -117,7 +196,30 @@ fn qos_queued_request(request: &OrderedFabricQosRequest) -> QosQueuedRequest {
     .expect("fabric packets always have nonzero bytes")
 }
 
+fn qos_queued_transfer(request: &FabricQosTransfer) -> QosQueuedRequest {
+    QosQueuedRequest::new(
+        QosRequestId::new(request.packet.id().get()),
+        request.requestor,
+        request.priority,
+        request.packet.bytes(),
+        request.order,
+    )
+    .expect("fabric packets always have nonzero bytes")
+}
+
 fn reject_duplicate_packets(requests: &[OrderedFabricQosRequest]) -> Result<(), FabricError> {
+    let mut seen = BTreeSet::new();
+    for request in requests {
+        if !seen.insert(request.packet().id()) {
+            return Err(FabricError::DuplicatePacketInBatch {
+                packet: request.packet().id(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_transfer_packets(requests: &[FabricQosTransfer]) -> Result<(), FabricError> {
     let mut seen = BTreeSet::new();
     for request in requests {
         if !seen.insert(request.packet().id()) {

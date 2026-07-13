@@ -15,6 +15,7 @@ struct DirectTargetEntry {
     trace: crate::MemoryTrace,
     responder: crate::ParallelRequestResponder,
     response_sink: ResponseSink,
+    response_qos: Option<crate::response_qos::ResponseQosContext>,
     last_hop_index: usize,
     request_id: rem6_memory::MemoryRequestId,
     delivery: RequestDelivery,
@@ -66,15 +67,14 @@ impl MemoryTransport {
         }
 
         for ((arrival_tick, target_partition, _), group) in groups {
-            let ordered = self.order_direct_qos_group(group);
             if self.direct_target_batch_responder.is_some() {
-                let indexes = ordered.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                let indexes = group.iter().map(|(index, _)| *index).collect::<Vec<_>>();
                 let event = self.schedule_or_append_direct_parallel_target_batch(
                     scheduler,
                     start_tick,
                     arrival_tick,
                     target_partition,
-                    ordered
+                    group
                         .into_iter()
                         .map(|(_, transaction)| transaction)
                         .collect(),
@@ -85,6 +85,7 @@ impl MemoryTransport {
                 continue;
             }
 
+            let ordered = Self::order_direct_qos_group(self.qos_state.as_ref(), group);
             for (index, transaction) in ordered {
                 let event = self.schedule_direct_parallel_target_event(
                     scheduler,
@@ -104,10 +105,10 @@ impl MemoryTransport {
     }
 
     fn order_direct_qos_group(
-        &self,
+        qos_state: Option<&crate::SharedFabricQosState>,
         group: Vec<(usize, PreparedParallelTransaction)>,
     ) -> Vec<(usize, PreparedParallelTransaction)> {
-        let Some(qos_state) = &self.qos_state else {
+        let Some(qos_state) = qos_state else {
             return group;
         };
         let mut qos_state = qos_state.inner.lock().expect("QoS state lock");
@@ -133,7 +134,7 @@ impl MemoryTransport {
                 })
                 .collect::<Vec<_>>();
             let grant = qos_state
-                .arbiter
+                .request_arbiter
                 .grant(&queue)
                 .expect("nonempty direct QoS queue must produce a grant");
             ordered.push(pending.remove(eligible_indexes[grant.queue_index()]));
@@ -160,6 +161,7 @@ impl MemoryTransport {
             first_hop_delay: _,
             qos_requestor: _,
             qos_priority: _,
+            response_qos,
         } = transaction;
         let request_id = request.id();
         let last_hop_index = route.hops().len() - 1;
@@ -186,6 +188,7 @@ impl MemoryTransport {
                     outcome,
                     trace,
                     fabric,
+                    response_qos,
                     response_sink,
                 );
             })
@@ -221,13 +224,27 @@ impl MemoryTransport {
             .expect("validated direct batch trace timing");
         }
 
-        if let Some(pending) = self
-            .direct_target_batches
-            .lock()
-            .expect("direct target batch lock")
-            .get(&key)
-            .cloned()
-        {
+        let pending = {
+            let mut batches = self
+                .direct_target_batches
+                .lock()
+                .expect("direct target batch lock");
+            let pending = batches.get(&key).cloned();
+            if pending.as_ref().is_some_and(|pending| {
+                let event = pending
+                    .lock()
+                    .expect("pending direct target batch lock")
+                    .event
+                    .expect("scheduled direct target batch has an event");
+                scheduler.pending_event_snapshot(event).is_none()
+            }) {
+                batches.remove(&key);
+                None
+            } else {
+                pending
+            }
+        };
+        if let Some(pending) = pending {
             let mut pending = pending.lock().expect("pending direct target batch lock");
             pending.transactions.extend(transactions);
             return pending
@@ -244,6 +261,7 @@ impl MemoryTransport {
             .direct_target_batch_responder
             .as_ref()
             .map(std::sync::Arc::clone);
+        let qos_state = self.qos_state.clone();
         let pending_for_event = std::sync::Arc::clone(&pending);
         let batches = std::sync::Arc::clone(&self.direct_target_batches);
         let key_for_event = key.clone();
@@ -260,6 +278,13 @@ impl MemoryTransport {
                         .expect("pending direct target batch lock")
                         .transactions,
                 );
+                let transactions = Self::order_direct_qos_group(
+                    qos_state.as_ref(),
+                    transactions.into_iter().enumerate().collect(),
+                )
+                .into_iter()
+                .map(|(_, transaction)| transaction)
+                .collect();
                 Self::run_direct_parallel_target_batch(
                     context,
                     transactions,
@@ -298,6 +323,7 @@ impl MemoryTransport {
                 first_hop_delay: _,
                 qos_requestor: _,
                 qos_priority: _,
+                response_qos,
             } = transaction;
             let request_id = request.id();
             let last_hop_index = route.hops().len() - 1;
@@ -315,6 +341,7 @@ impl MemoryTransport {
                 trace,
                 responder,
                 response_sink,
+                response_qos,
                 last_hop_index,
                 request_id,
                 delivery,
@@ -338,6 +365,7 @@ impl MemoryTransport {
                 outcome,
                 entry.trace,
                 fabric.clone(),
+                entry.response_qos,
                 entry.response_sink,
             );
         }
@@ -363,6 +391,7 @@ impl MemoryTransport {
                 outcome.into_outcome(),
                 entry.trace,
                 fabric.clone(),
+                entry.response_qos,
                 entry.response_sink,
             );
         }
@@ -378,6 +407,7 @@ impl MemoryTransport {
         outcome: TargetOutcome,
         trace: crate::MemoryTrace,
         fabric: Option<std::sync::Arc<std::sync::Mutex<rem6_fabric::FabricModel>>>,
+        response_qos: Option<crate::response_qos::ResponseQosContext>,
         response_sink: ResponseSink,
     ) {
         match outcome {
@@ -390,6 +420,7 @@ impl MemoryTransport {
                     response,
                     trace,
                     fabric,
+                    response_qos,
                     response_sink,
                 );
             }
@@ -404,6 +435,7 @@ impl MemoryTransport {
                             response,
                             trace,
                             fabric,
+                            response_qos,
                             response_sink,
                         );
                     })
