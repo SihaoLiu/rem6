@@ -73,12 +73,16 @@ impl RiscvCore {
         if detailed_scalar_memory_blocks_execution(state, window.raw)? {
             return Ok(None);
         }
+        let live_speculative_ready_tick =
+            live_speculative_fu_ready_tick(state, &window)?;
         let completed_normal_execute_wait = state
             .in_order_pipeline
             .execute_wait_completed(window.request.sequence())
             && state.live_retire_gate.pending_ready_tick().is_none();
         let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
             return Ok((completed_normal_execute_wait
+                || live_speculative_ready_tick
+                    .is_some_and(|ready_tick| ready_tick <= window.fetch_tick)
                 || !state.live_retire_gate.blocks_without_scheduler())
             .then_some(window.fetch_tick));
         };
@@ -86,6 +90,9 @@ impl RiscvCore {
             .partition_now(self.partition())
             .map_err(RiscvCpuError::Scheduler)?;
         if completed_normal_execute_wait {
+            return Ok(Some(now));
+        }
+        if live_speculative_ready_tick.is_some_and(|ready_tick| ready_tick <= now) {
             return Ok(Some(now));
         }
         let ready_base_tick = now.max(window.fetch_tick);
@@ -147,6 +154,22 @@ impl RiscvCore {
             }
         }
     }
+}
+
+fn live_speculative_fu_ready_tick(
+    state: &RiscvCoreState,
+    window: &RiscvLiveRetireWindowRequest<'_>,
+) -> Result<Option<u64>, RiscvCpuError> {
+    let decoded = RiscvInstruction::decode_with_length(window.raw).map_err(RiscvCpuError::Isa)?;
+    if crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction()) == 0 {
+        return Ok(None);
+    }
+    let mut hart = state.hart.clone();
+    hart.set_pc(window.pc.get());
+    let execution = hart.execute_decoded(decoded).map_err(RiscvCpuError::Isa)?;
+    Ok(state
+        .o3_runtime
+        .live_speculative_execution_ready_tick(window.request, &execution))
 }
 
 fn detailed_scalar_memory_blocks_execution(

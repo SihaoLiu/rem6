@@ -153,6 +153,23 @@ impl O3RuntimeState {
             });
     }
 
+    pub(crate) fn live_speculative_execution_ready_tick(
+        &self,
+        request: MemoryRequestId,
+        execution: &RiscvExecutionRecord,
+    ) -> Option<u64> {
+        let issued = self.live_speculative_executions.iter().find(|issued| {
+            issued.producer_sequences.is_empty()
+                && issued.consumed_requests.first() == Some(&request)
+                && issued.execution == *execution
+        })?;
+        Some(
+            issued.issue_tick.saturating_add(
+                crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction()),
+            ),
+        )
+    }
+
     fn live_speculative_source_forwarding(
         &self,
         consumer_index: usize,

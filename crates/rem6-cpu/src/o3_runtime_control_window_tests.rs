@@ -91,17 +91,22 @@ fn predicted_mul_wakes_dependent_add_candidate() {
     let multiply_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), multiply)
         .expect("predicted MUL should be an issue candidate");
+    let multiply_execution = RiscvExecutionRecord::new(
+        multiply,
+        0x8004,
+        0x8008,
+        vec![RegisterWrite::new(reg(7), 42)],
+        None,
+    );
     runtime.record_live_speculative_execution(
         multiply_candidate,
         &[request(11)],
         12,
-        RiscvExecutionRecord::new(
-            multiply,
-            0x8004,
-            0x8008,
-            vec![RegisterWrite::new(reg(7), 42)],
-            None,
-        ),
+        multiply_execution.clone(),
+    );
+    assert_eq!(
+        runtime.live_speculative_execution_ready_tick(request(11), &multiply_execution),
+        Some(14)
     );
 
     let dependent_candidate = runtime
