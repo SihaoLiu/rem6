@@ -94,7 +94,7 @@ fn completed_partial_overlay_becomes_live_handoff_authority() {
     assert_eq!(completed_partial[0].bytes, 4);
     assert_eq!(completed_partial[0].original_forwarded_mask, 0b0010);
     assert_eq!(&completed_partial[0].data[..4], &[0x11, 0x5a, 0x33, 0x80]);
-    assert_eq!(completed_partial[0].o3_sequence, 11);
+    assert_eq!(completed_partial[0].o3_sequence, 1);
 }
 ```
 
