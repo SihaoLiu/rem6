@@ -110,7 +110,7 @@ fn user_ecall_close_range_closes_duplicate_fd_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(440 + u64::from(cpu.get())),
         )
         .unwrap();

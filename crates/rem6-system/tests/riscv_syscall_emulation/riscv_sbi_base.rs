@@ -68,7 +68,7 @@ fn run_single_core_sbi_program(
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            max_turns,
+            max_turns.saturating_mul(3),
             |cpu| GuestEventId::new(source_event_base + u64::from(cpu.get())),
         )
         .unwrap();

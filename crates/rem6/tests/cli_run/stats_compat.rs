@@ -1701,7 +1701,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"committed_instructions\":2"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":10,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":13,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
@@ -1718,7 +1718,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        10,
+        13,
         "monotonic",
     );
     assert_stat(
@@ -1825,7 +1825,7 @@ fn rem6_run_stats_emit_configured_in_order_pipeline_widths_from_execution() {
 }
 
 #[test]
-fn rem6_run_in_order_pipeline_width_changes_executed_stage_occupancy() {
+fn rem6_run_in_order_pipeline_scheduler_serializes_executed_stage_occupancy() {
     let program = riscv64_program(&[
         0x0010_0093, // addi x1, x0, 1
         0x0020_0113, // addi x2, x0, 2
@@ -1851,7 +1851,7 @@ fn rem6_run_in_order_pipeline_width_changes_executed_stage_occupancy() {
             &width_two,
             &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
             "Count",
-            2,
+            1,
             "monotonic",
         );
     }
@@ -6037,10 +6037,12 @@ fn in_order_pipeline_payload_stats_with_max_tick(
     program: &[u8],
     max_tick: u64,
 ) -> String {
+    let pipeline_stage_slack_ticks = u64::try_from(program.len()).unwrap();
     in_order_pipeline_payload_stats_with_optional_memory_system(
         name,
         program,
         max_tick,
+        pipeline_stage_slack_ticks,
         Some("direct"),
     )
 }
@@ -6050,18 +6052,29 @@ fn in_order_pipeline_payload_stats_with_default_memory_system(
     program: &[u8],
     max_tick: u64,
 ) -> String {
-    in_order_pipeline_payload_stats_with_optional_memory_system(name, program, max_tick, None)
+    let pipeline_stage_slack_ticks = u64::try_from(program.len()).unwrap();
+    in_order_pipeline_payload_stats_with_optional_memory_system(
+        name,
+        program,
+        max_tick,
+        pipeline_stage_slack_ticks,
+        None,
+    )
 }
 
 fn in_order_pipeline_payload_stats_with_optional_memory_system(
     name: &str,
     program: &[u8],
-    max_tick: u64,
+    base_max_tick: u64,
+    pipeline_stage_slack_ticks: u64,
     memory_system: Option<&str>,
 ) -> String {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary(name, &elf);
-    let max_tick = max_tick.to_string();
+    let max_tick = base_max_tick
+        .checked_add(pipeline_stage_slack_ticks)
+        .expect("pipeline timing test max tick should not overflow")
+        .to_string();
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
@@ -13642,7 +13655,7 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "12",
+            "16",
             "--memory-route-delay",
             "5",
             "--stats-format",
@@ -13772,7 +13785,7 @@ fn rem6_run_stats_issue_jal_fetch_ahead_before_retire() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "21",
+            "28",
             "--memory-route-delay",
             "5",
             "--stats-format",
@@ -14351,12 +14364,9 @@ fn rem6_run_text_stats_emit_in_order_stage_movement_aliases() {
     );
     assert!(stage_advanced_cycles.iter().any(|cycles| *cycles > 0));
     assert!(stage_retired_cycles.iter().any(|cycles| *cycles > 0));
-    assert!(
-        stage_advanced
-            .iter()
-            .zip(stage_advanced_cycles.iter())
-            .any(|(advanced, cycles)| advanced > cycles),
-        "widened pipeline should distinguish movement counts from cycle presence: advanced={stage_advanced:?} cycles={stage_advanced_cycles:?}"
+    assert_eq!(
+        stage_advanced, stage_advanced_cycles,
+        "serialized execution should attribute every stage advance to a distinct kernel tick"
     );
     assert!(
         stage_retired[4] > 0,
@@ -16151,7 +16161,7 @@ fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictio
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "21",
+            "28",
             "--memory-route-delay",
             "5",
             "--stats-format",

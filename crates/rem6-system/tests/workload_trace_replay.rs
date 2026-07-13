@@ -872,7 +872,7 @@ fn replay_with_packet_records(
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packet_records(packets);
     RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.fetch"),
@@ -888,7 +888,7 @@ fn replay_manifest_with_controller(
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(packets);
     RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.fetch"),
@@ -923,7 +923,7 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.fetch"),
@@ -1014,7 +1014,7 @@ fn workload_replay_matches_physical_trace_response_after_addr_offset() {
     );
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.fetch"),
@@ -1146,7 +1146,7 @@ fn workload_replay_records_trace_write_completion_metadata() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -1224,7 +1224,7 @@ fn workload_replay_counts_trace_write_completion_request_bytes_without_response_
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -1935,7 +1935,7 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2034,7 +2034,7 @@ fn workload_replay_applies_mem_sync_inv_l1_to_data_cache_line() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2105,7 +2105,7 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2212,7 +2212,7 @@ fn workload_replay_returns_contextual_data_cache_controller_error() {
     ]);
 
     let error = match RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2267,7 +2267,7 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2353,7 +2353,7 @@ fn workload_replay_delivers_trace_store_conditional_failed_response() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2426,7 +2426,7 @@ fn workload_replay_applies_trace_flush_after_no_response_writeback() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2491,7 +2491,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate(
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2584,7 +2584,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_respons
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2669,7 +2669,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_invalidate_response()
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2746,7 +2746,7 @@ fn workload_replay_cleans_data_cache_line_after_trace_clean_shared_response() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2802,7 +2802,7 @@ fn workload_replay_does_not_count_unaccepted_trace_clean_shared_response_as_main
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2879,7 +2879,7 @@ fn workload_replay_orders_trace_flush_before_delayed_read_response_cache_mutatio
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -2941,7 +2941,7 @@ fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3079,7 +3079,7 @@ fn workload_replay_restores_planned_checkpoint_over_data_cache_lines() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3162,7 +3162,7 @@ fn workload_replay_captures_dirty_data_cache_line_in_planned_checkpoint_payload(
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3229,7 +3229,7 @@ fn workload_replay_rejects_same_tick_checkpoint_and_data_cache_trace_line() {
     ]);
 
     let error = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3289,7 +3289,7 @@ fn workload_replay_rejects_same_tick_checkpoint_and_addressless_data_cache_trace
     ]);
 
     let error = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3351,7 +3351,7 @@ fn workload_replay_rejects_same_tick_restore_and_data_cache_trace_line() {
     ]);
 
     let error = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3373,7 +3373,7 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
         replay_manifest_with_data_translation("riscv-replay-trace-tlbi-data-translation");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packet_records(&[PacketRecord {
-        tick: 24,
+        tick: 40,
         command: GEM5_TLBI_EXT_SYNC,
         address: Some(0),
         size: Some(64),
@@ -3383,7 +3383,7 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     }]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3405,8 +3405,8 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     let tlb_sync_records = traffic_replay.trace_tlb_sync_records();
     assert_eq!(tlb_sync_records.len(), 1);
     let tlb_sync = &tlb_sync_records[0];
-    assert_eq!(tlb_sync.tick(), 24);
-    assert_eq!(tlb_sync.trace_tick(), 24);
+    assert_eq!(tlb_sync.tick(), 40);
+    assert_eq!(tlb_sync.trace_tick(), 40);
     assert_eq!(tlb_sync.sequence(), 0);
     assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
     assert_eq!(tlb_sync.flushed_entry_count(), 1);
@@ -3438,7 +3438,7 @@ fn workload_replay_records_tlbi_ext_sync_noop_for_translation_without_tlb() {
     }]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(32)
+        .with_max_turns(64)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3482,7 +3482,7 @@ fn workload_replay_binds_htm_abort_sideband_to_data_route_core() {
     }]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3532,7 +3532,7 @@ fn workload_replay_binds_htm_request_response_to_data_route_transaction() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3594,7 +3594,7 @@ fn workload_replay_orders_same_tick_htm_response_before_abort_sideband() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3651,7 +3651,7 @@ fn workload_replay_records_failed_htm_begin_for_trace_control_failure() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(128)
+        .with_max_turns(256)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3752,7 +3752,7 @@ fn workload_replay_records_htm_transaction_data_cache_access_sets() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(160)
+        .with_max_turns(320)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -3855,7 +3855,7 @@ fn workload_replay_keeps_htm_access_records_route_local() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(160)
+        .with_max_turns(320)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             cpu0_controller,
             route_id("cpu0.data"),
@@ -3953,7 +3953,7 @@ fn workload_replay_rolls_back_htm_data_cache_writes_on_abort() {
         ]);
 
         let outcome = RiscvWorkloadReplay::new(plan)
-            .with_max_turns(160)
+            .with_max_turns(320)
             .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
                 controller,
                 route_id("cpu0.data"),
@@ -4039,7 +4039,7 @@ fn workload_replay_keeps_htm_rollback_snapshots_route_scoped() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(192)
+        .with_max_turns(384)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             cpu0_controller,
             route_id("cpu0.data"),
@@ -4108,7 +4108,7 @@ fn workload_replay_preserves_other_route_cache_writes_across_htm_abort() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(192)
+        .with_max_turns(384)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             cpu0_controller,
             route_id("cpu0.data"),
@@ -4191,7 +4191,7 @@ fn workload_replay_ignores_failed_store_conditional_for_htm_rollback_write_set()
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(192)
+        .with_max_turns(384)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             cpu0_controller,
             route_id("cpu0.data"),
@@ -4274,7 +4274,7 @@ fn workload_replay_uses_executable_store_conditional_status_for_htm_rollback_wri
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(192)
+        .with_max_turns(384)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             cpu0_controller,
             route_id("cpu0.data"),
@@ -4355,7 +4355,7 @@ fn workload_replay_orders_htm_begin_after_earlier_same_tick_cache_response() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(192)
+        .with_max_turns(384)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -4424,7 +4424,7 @@ fn workload_replay_orders_htm_access_sets_across_data_cache_lines() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(160)
+        .with_max_turns(320)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -4465,7 +4465,7 @@ fn workload_replay_does_not_apply_fetch_trace_to_data_cache_line() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.fetch"),
@@ -4523,7 +4523,7 @@ fn workload_replay_orders_trace_flush_after_earlier_request_delivery_tick() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(64)
+        .with_max_turns(128)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),
@@ -4587,7 +4587,7 @@ fn workload_replay_applies_bound_trace_flush_to_mesi_data_cache_line() {
     ]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(96)
+        .with_max_turns(192)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
             route_id("cpu0.data"),

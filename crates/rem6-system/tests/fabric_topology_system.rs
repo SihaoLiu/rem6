@@ -482,7 +482,7 @@ fn topology_system_drives_cpu_fetch_over_declared_fabric_path() {
     assert_eq!(
         run.stop_reason(),
         RiscvSystemRunStopReason::HostStop(rem6_system::StopRequest::new(
-            10,
+            18,
             GuestEventId::new(700),
             source,
             0,
@@ -725,7 +725,7 @@ fn topology_system_composes_declared_fabric_path_with_dram_timing() {
     assert_eq!(
         run.stop_reason(),
         RiscvSystemRunStopReason::HostStop(rem6_system::StopRequest::new(
-            22,
+            30,
             GuestEventId::new(710),
             source,
             0,

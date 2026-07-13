@@ -240,37 +240,48 @@ fn drive_one_translated_action(
     transport: &MemoryTransport,
     page_map: &TranslationPageMap,
 ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError> {
-    let fetch_store = store.clone();
-    let data_store = store;
-    core.drive_next_action_with_data_translation(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        MemoryTrace::new(),
-        page_map,
-        move |delivery, _context| {
-            let response = fetch_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-        move |delivery, _context| {
-            let response = data_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-    )
+    for _ in 0..8 {
+        let fetch_store = store.clone();
+        let data_store = store.clone();
+        let action = core.drive_next_action_with_data_translation(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            page_map,
+            move |delivery, _context| {
+                let response = fetch_store
+                    .lock()
+                    .unwrap()
+                    .respond(delivery.request())
+                    .unwrap()
+                    .response()
+                    .cloned()
+                    .unwrap();
+                TargetOutcome::Respond(response)
+            },
+            move |delivery, _context| {
+                let response = data_store
+                    .lock()
+                    .unwrap()
+                    .respond(delivery.request())
+                    .unwrap()
+                    .response()
+                    .cloned()
+                    .unwrap();
+                TargetOutcome::Respond(response)
+            },
+        )?;
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return Ok(action);
+    }
+    panic!("expected a non-pipeline translated vector-memory action");
 }
 
 fn data_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {

@@ -400,37 +400,49 @@ pub(crate) fn drive_one_action(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> Option<RiscvCoreDriveAction> {
-    let fetch_store = store.clone();
-    let data_store = store;
-    core.drive_next_action(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        MemoryTrace::new(),
-        move |delivery, _context| {
-            let response = fetch_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-        move |delivery, _context| {
-            let response = data_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-    )
-    .unwrap()
+    for _ in 0..8 {
+        let fetch_store = store.clone();
+        let data_store = store.clone();
+        let action = core
+            .drive_next_action(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                move |delivery, _context| {
+                    let response = fetch_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+                move |delivery, _context| {
+                    let response = data_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!("expected a non-pipeline vector-float action");
 }
 
 pub(crate) fn drive_until_instruction(
@@ -451,6 +463,7 @@ pub(crate) fn drive_until_execution(
     for _ in 0..8 {
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
                 scheduler.run_until_idle_conservative();
             }
@@ -477,6 +490,7 @@ pub(crate) fn drive_until_trap_kind(
     for _ in 0..8 {
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
                 scheduler.run_until_idle_conservative();
             }

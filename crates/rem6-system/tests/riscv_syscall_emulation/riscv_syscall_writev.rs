@@ -396,7 +396,7 @@ fn user_ecall_writev_records_scatter_gather_bytes_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(640 + u64::from(cpu.get())),
         )
         .unwrap();

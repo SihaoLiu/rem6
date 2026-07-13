@@ -88,7 +88,7 @@ fn user_ecall_get_robust_list_writes_recorded_head_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(320 + u64::from(cpu.get())),
         )
         .unwrap();

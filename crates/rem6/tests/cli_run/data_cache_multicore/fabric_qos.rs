@@ -53,7 +53,7 @@ fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "900",
+            "1000",
             "--stats-format",
             "json",
             "--execute",

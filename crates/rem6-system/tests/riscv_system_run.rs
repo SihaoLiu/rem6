@@ -680,7 +680,7 @@ fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            40,
+            80,
             |cpu| GuestEventId::new(120 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1187,7 +1187,7 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            50,
+            100,
             |_cpu| {
                 let event = GuestEventId::new(next_event_id);
                 next_event_id += 1;
@@ -1219,7 +1219,7 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
         .collect::<Vec<_>>();
     assert_eq!(
         stats_actions,
-        vec![("reset", 16), ("dump", 29), ("dump", 42), ("reset", 42),]
+        vec![("reset", 30), ("dump", 57), ("dump", 84), ("reset", 84),]
     );
 }
 
@@ -1349,7 +1349,7 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            60,
+            120,
             |_cpu| {
                 let event = GuestEventId::new(next_event_id);
                 next_event_id += 1;
@@ -1385,12 +1385,20 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
         .collect::<Vec<_>>();
     assert_eq!(
         checkpoints,
-        vec![(
-            22,
-            GuestEventId::new(140),
-            source,
-            "gem5-m5-checkpoint".to_string(),
-        )]
+        vec![
+            (
+                42,
+                GuestEventId::new(140),
+                source,
+                "gem5-m5-checkpoint".to_string(),
+            ),
+            (
+                90,
+                GuestEventId::new(140),
+                source,
+                "gem5-m5-checkpoint".to_string(),
+            ),
+        ]
     );
 }
 
@@ -1445,7 +1453,7 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            60,
+            120,
             |_cpu| {
                 let event = GuestEventId::new(next_event_id);
                 next_event_id += 1;
@@ -1469,7 +1477,7 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
         controller.run().action_outcomes(),
         &[
             SystemActionOutcome::GuestHostCall {
-                tick: 44,
+                tick: 88,
                 event: GuestEventId::new(150),
                 source,
                 selector: 0x321,
@@ -1605,7 +1613,7 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            30,
+            60,
             |cpu| GuestEventId::new(100 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1876,7 +1884,7 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            30,
+            60,
             |cpu| GuestEventId::new(110 + u64::from(cpu.get())),
         )
         .unwrap();

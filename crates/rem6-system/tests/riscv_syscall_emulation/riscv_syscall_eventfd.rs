@@ -825,7 +825,7 @@ fn user_ecall_eventfd2_read_reaches_exit_path() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -923,7 +923,7 @@ fn user_ecall_eventfd2_blocking_read_stalls_without_host_trap() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(570 + u64::from(cpu.get())),
         )
         .unwrap();

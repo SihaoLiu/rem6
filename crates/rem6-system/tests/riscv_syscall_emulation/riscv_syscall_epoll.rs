@@ -831,7 +831,7 @@ fn user_ecall_epoll_pwait_observes_eventfd_readiness_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            200,
+            400,
             |cpu| GuestEventId::new(570 + u64::from(cpu.get())),
         )
         .unwrap();

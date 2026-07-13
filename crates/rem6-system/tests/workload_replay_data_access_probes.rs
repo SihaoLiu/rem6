@@ -225,7 +225,7 @@ fn workload_replay_records_riscv_data_access_probe_evidence() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -261,7 +261,7 @@ fn workload_replay_records_riscv_data_access_probe_reuse_samples() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -295,7 +295,7 @@ fn workload_replay_records_target_line_boundaries_for_data_access_probes() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -331,7 +331,7 @@ fn workload_replay_records_wide_target_line_reuse_for_data_access_probes() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 

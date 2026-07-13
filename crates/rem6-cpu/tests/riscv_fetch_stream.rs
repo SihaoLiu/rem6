@@ -196,6 +196,27 @@ fn drive_one_action(
     .unwrap()
 }
 
+fn drive_one_non_pipeline_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> RiscvCoreDriveAction {
+    for _ in 0..16 {
+        match drive_one_action(core, store.clone(), scheduler, transport) {
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. }) | None => {
+                assert!(
+                    !scheduler.is_idle(),
+                    "pipeline action should schedule a wake"
+                );
+                scheduler.run_until_idle_conservative();
+            }
+            Some(action) => return action,
+        }
+    }
+    panic!("expected a non-pipeline core action");
+}
+
 #[test]
 fn riscv_core_syscall_return_resets_fetch_stream_to_return_pc() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
@@ -208,7 +229,7 @@ fn riscv_core_syscall_return_resets_fetch_stream_to_return_pc() {
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
-    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let action = drive_one_non_pipeline_action(&core, store.clone(), &mut scheduler, &transport);
     let RiscvCoreDriveAction::InstructionExecuted(trap) = action else {
         panic!("expected environment-call trap execution");
     };
@@ -245,7 +266,7 @@ fn riscv_core_supervisor_syscall_return_resets_fetch_stream_to_return_pc() {
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
-    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let action = drive_one_non_pipeline_action(&core, store.clone(), &mut scheduler, &transport);
     let RiscvCoreDriveAction::InstructionExecuted(trap) = action else {
         panic!("expected supervisor environment-call trap execution");
     };
@@ -285,7 +306,7 @@ fn riscv_core_traps_machine_identity_csr_write_from_fetch_stream() {
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
-    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let action = drive_one_non_pipeline_action(&core, store, &mut scheduler, &transport);
     let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
         panic!("expected illegal CSR write to retire as a trap");
     };

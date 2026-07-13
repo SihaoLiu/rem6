@@ -13,8 +13,10 @@ const CHECKPOINT_HEADER_BYTES: usize = CHECKPOINT_MAGIC.len()
     + U32_BYTES;
 const CHECKPOINT_INSTRUCTION_BYTES: usize = U64_BYTES + 1;
 
+mod drive;
 mod error;
 
+use drive::InOrderPipelineRetirement;
 pub use error::InOrderPipelineError;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1517,8 +1519,10 @@ impl InOrderPipelineState {
             .transpose()?
             .flatten()
             .or(redirect);
-        let plan =
-            self.advance_cycle_with_redirect_and_retire_sequence(redirect, Some(sequence))?;
+        let plan = self.advance_cycle_with_redirect_and_retirement(
+            redirect,
+            InOrderPipelineRetirement::Sequence(sequence),
+        )?;
         let branch_predictions = prediction
             .map(InOrderBranchPredictionRecord::from_prediction)
             .transpose()?
@@ -1545,20 +1549,20 @@ impl InOrderPipelineState {
         &mut self,
         redirect: Option<InOrderBranchRedirect>,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
-        self.advance_cycle_with_redirect_and_retire_sequence(redirect, None)
+        self.advance_cycle_with_redirect_and_retirement(redirect, InOrderPipelineRetirement::Any)
     }
 
-    fn advance_cycle_with_redirect_and_retire_sequence(
+    fn advance_cycle_with_redirect_and_retirement(
         &mut self,
         redirect: Option<InOrderBranchRedirect>,
-        retire_sequence: Option<u64>,
+        retirement: InOrderPipelineRetirement,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
         let next_cycle = next_cycle(self.cycle)?;
         let plan = InOrderPipelineScheduler::new(self.config.clone())
-            .plan_with_redirect_and_retire_sequence(
+            .plan_with_redirect_and_retirement(
                 self.in_flight.iter().copied(),
                 redirect,
-                retire_sequence,
+                retirement,
             )?;
         self.apply_plan(&plan);
         self.cycle = next_cycle;
@@ -1610,7 +1614,7 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        match self.plan_ready(instructions, None, None) {
+        match self.plan_ready(instructions, None, InOrderPipelineRetirement::Any) {
             Ok(plan) => plan,
             Err(error) => unreachable!("planning without a redirect cannot fail: {error}"),
         }
@@ -1624,26 +1628,26 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        self.plan_ready(instructions, redirect, None)
+        self.plan_ready(instructions, redirect, InOrderPipelineRetirement::Any)
     }
 
-    pub(crate) fn plan_with_redirect_and_retire_sequence<I>(
+    fn plan_with_redirect_and_retirement<I>(
         &self,
         instructions: I,
         redirect: Option<InOrderBranchRedirect>,
-        retire_sequence: Option<u64>,
+        retirement: InOrderPipelineRetirement,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        self.plan_ready(instructions, redirect, retire_sequence)
+        self.plan_ready(instructions, redirect, retirement)
     }
 
     fn plan_ready<I>(
         &self,
         instructions: I,
         redirect: Option<InOrderBranchRedirect>,
-        retire_sequence: Option<u64>,
+        retirement: InOrderPipelineRetirement,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
@@ -1671,9 +1675,7 @@ impl InOrderPipelineScheduler {
             }
 
             let stage = instruction.stage();
-            if stage == InOrderPipelineStage::Commit
-                && retire_sequence.is_some_and(|sequence| sequence != instruction.sequence())
-            {
+            if stage == InOrderPipelineStage::Commit && !retirement.allows(instruction.sequence()) {
                 resource_blocked.push(instruction);
                 older_blocked = true;
                 continue;

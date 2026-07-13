@@ -970,7 +970,7 @@ fn topology_system_routes_riscv_data_accesses_through_msi_cache_bank() {
         .drive_attached_until_host_stop_parallel(
             Default::default(),
             Default::default(),
-            240,
+            480,
             |cpu: CpuId| GuestEventId::new(1220 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1187,7 +1187,7 @@ fn topology_system_routes_dirty_peer_read_through_msi_data_cache() {
         .drive_attached_until_host_stop_parallel(
             Default::default(),
             Default::default(),
-            240,
+            480,
             |cpu: CpuId| GuestEventId::new(1210 + u64::from(cpu.get())),
         )
         .unwrap();

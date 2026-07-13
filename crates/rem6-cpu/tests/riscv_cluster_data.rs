@@ -189,6 +189,77 @@ fn responder(
     move |delivery, _context| memory_response(&store, &delivery)
 }
 
+fn advance_core_to_commit_stage(
+    cluster: &RiscvCluster,
+    cpu: CpuId,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) {
+    for _ in 0..8 {
+        let core = cluster.core(cpu).unwrap();
+        if core
+            .in_order_pipeline_snapshot()
+            .in_flight()
+            .first()
+            .is_some_and(|instruction| instruction.stage() == InOrderPipelineStage::Commit)
+        {
+            return;
+        }
+        let action = cluster
+            .drive_core_next_action(
+                cpu,
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap();
+        assert!(matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ));
+        scheduler.run_until_idle_conservative();
+    }
+    panic!("expected core pipeline to reach commit");
+}
+
+fn drive_core_until_instruction(
+    cluster: &RiscvCluster,
+    cpu: CpuId,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> RiscvCoreDriveAction {
+    for _ in 0..24 {
+        let action = cluster
+            .drive_core_next_action(
+                cpu,
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap();
+        match action {
+            Some(action @ RiscvCoreDriveAction::InstructionExecuted(_)) => return action,
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+            | None => {
+                scheduler.run_until_idle_conservative();
+            }
+            Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
+                panic!("expected instruction execution before data issue")
+            }
+        }
+    }
+    panic!("expected instruction execution");
+}
+
 #[test]
 fn parallel_driver_clears_prepared_scalar_marker_when_later_fetch_prepare_fails() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
@@ -371,9 +442,22 @@ fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() 
     cpu1.write_register(reg(10), 0x9000);
     cpu1.set_detailed_live_retire_gate_enabled(true);
     let store = store_with_programs_and_data(
-        &[(0x8100, i_type(0, 10, 0x3, 5, 0x03))],
+        &[
+            (0x8000, i_type(0, 0, 0x0, 0, 0x13)),
+            (0x8100, i_type(0, 10, 0x3, 5, 0x03)),
+        ],
         &[(0x9000, 41_u64.to_le_bytes().to_vec())],
     );
+    let fetch_store = store.clone();
+    cpu0.issue_next_fetch_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| memory_response(&fetch_store, &delivery),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    cpu0.execute_next_completed_fetch().unwrap().unwrap();
     let fetch_store = store.clone();
     cpu1.issue_next_fetch_parallel(
         &mut scheduler,
@@ -390,7 +474,7 @@ fn parallel_driver_registers_later_data_after_submitted_fetch_recording_error() 
             .clone(),
         u64::MAX,
         [InOrderPipelineInstruction::new(
-            99,
+            0,
             InOrderPipelineStage::Fetch1,
         )],
     ))
@@ -526,7 +610,7 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
         .is_some());
     assert_eq!(cpu.read_register(reg(5)), 41);
 
-    for _ in 0..16 {
+    for _ in 0..32 {
         cluster
             .drive_ready_cores_parallel(
                 &mut scheduler,
@@ -679,6 +763,14 @@ fn prepared_instruction_budget_scan() -> (
         move |delivery, _context| memory_response(&cpu0_store, &delivery),
     )
     .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    advance_core_to_commit_stage(
+        &cluster,
+        CpuId::new(0),
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
 
     (scheduler, transport, cluster, store)
 }
@@ -850,7 +942,7 @@ fn riscv_cluster_parallel_turns_issue_completed_data_accesses() {
     );
 
     let mut turns = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..32 {
         let turn = cluster
             .drive_turn_parallel(
                 &mut scheduler,
@@ -1288,18 +1380,14 @@ fn riscv_cluster_invalidates_peer_reservation_after_completed_store() {
     ));
     scheduler.run_until_idle_conservative();
     assert!(matches!(
-        cluster
-            .drive_core_next_action(
-                CpuId::new(0),
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap(),
-        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+        drive_core_until_instruction(
+            &cluster,
+            CpuId::new(0),
+            &mut scheduler,
+            &transport,
+            store.clone(),
+        ),
+        RiscvCoreDriveAction::InstructionExecuted(_)
     ));
     assert!(matches!(
         cluster
@@ -1334,18 +1422,14 @@ fn riscv_cluster_invalidates_peer_reservation_after_completed_store() {
     ));
     scheduler.run_until_idle_conservative();
     assert!(matches!(
-        cluster
-            .drive_core_next_action(
-                CpuId::new(1),
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap(),
-        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+        drive_core_until_instruction(
+            &cluster,
+            CpuId::new(1),
+            &mut scheduler,
+            &transport,
+            store.clone(),
+        ),
+        RiscvCoreDriveAction::InstructionExecuted(_)
     ));
     assert!(matches!(
         cluster
@@ -1380,18 +1464,14 @@ fn riscv_cluster_invalidates_peer_reservation_after_completed_store() {
     assert_eq!(cpu0.load_reservation(), None);
     scheduler.run_until_idle_conservative();
     assert!(matches!(
-        cluster
-            .drive_core_next_action(
-                CpuId::new(0),
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap(),
-        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+        drive_core_until_instruction(
+            &cluster,
+            CpuId::new(0),
+            &mut scheduler,
+            &transport,
+            store.clone(),
+        ),
+        RiscvCoreDriveAction::InstructionExecuted(_)
     ));
     assert!(matches!(
         cluster
@@ -1516,19 +1596,27 @@ fn riscv_cluster_invalidates_peer_reservation_after_completed_store_conditional(
     );
 
     let mut drive = |cpu| {
-        let action = cluster
-            .drive_core_next_action(
-                cpu,
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap();
-        scheduler.run_until_idle_conservative();
-        action
+        for _ in 0..24 {
+            let action = cluster
+                .drive_core_next_action(
+                    cpu,
+                    &mut scheduler,
+                    &transport,
+                    MemoryTrace::new(),
+                    MemoryTrace::new(),
+                    responder(store.clone()),
+                    responder(store.clone()),
+                )
+                .unwrap();
+            scheduler.run_until_idle_conservative();
+            if !matches!(
+                action,
+                Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. }) | None
+            ) {
+                return action;
+            }
+        }
+        panic!("expected non-pipeline core action");
     };
 
     assert!(matches!(
@@ -1701,7 +1789,7 @@ fn riscv_cluster_parallel_data_batches_shared_fabric_by_packet_order() {
     );
     let deliveries = Arc::new(Mutex::new(Vec::new()));
 
-    for _ in 0..10 {
+    for _ in 0..32 {
         let turn = cluster
             .drive_turn_parallel(
                 &mut scheduler,
@@ -1728,6 +1816,7 @@ fn riscv_cluster_parallel_data_batches_shared_fabric_by_packet_order() {
         }
     }
 
+    let data_issue_tick = scheduler.now();
     let data_issued = cluster
         .drive_ready_cores_parallel(
             &mut scheduler,
@@ -1769,8 +1858,16 @@ fn riscv_cluster_parallel_data_batches_shared_fabric_by_packet_order() {
     assert_eq!(
         *deliveries.lock().unwrap(),
         vec![
-            (cpu1_data, 8, MemoryRequestId::new(AgentId::new(8), 1),),
-            (cpu0_data, 10, MemoryRequestId::new(AgentId::new(7), 1),),
+            (
+                cpu1_data,
+                data_issue_tick + 4,
+                MemoryRequestId::new(AgentId::new(8), 1),
+            ),
+            (
+                cpu0_data,
+                data_issue_tick + 6,
+                MemoryRequestId::new(AgentId::new(7), 1),
+            ),
         ],
     );
 }

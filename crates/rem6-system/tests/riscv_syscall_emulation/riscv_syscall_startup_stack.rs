@@ -80,7 +80,7 @@ fn user_program_reads_startup_stack_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(290 + u64::from(cpu.get())),
         )
         .unwrap();

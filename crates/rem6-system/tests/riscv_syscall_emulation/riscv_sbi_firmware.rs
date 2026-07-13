@@ -116,7 +116,7 @@ fn supervisor_sbi_hsm_reports_started_and_stopped_harts() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(620 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -215,7 +215,7 @@ fn supervisor_sbi_hart_start_releases_secondary_with_entry_and_opaque() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            240,
+            480,
             |cpu| GuestEventId::new(640 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -302,7 +302,7 @@ fn supervisor_sbi_registration_preserves_restored_started_secondary_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(660 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -356,7 +356,7 @@ fn supervisor_sbi_registration_stops_fresh_secondary_hart_after_prior_run() {
         MemoryTrace::new(),
         |_cpu| responder(Arc::clone(&warm_store)),
         |_cpu| responder(Arc::clone(&warm_store)),
-        1,
+        2,
         |cpu| GuestEventId::new(670 + u64::from(cpu.get())),
     );
     assert!(warmup.is_err());
@@ -417,7 +417,7 @@ fn supervisor_sbi_registration_stops_fresh_secondary_hart_after_prior_run() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(680 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -484,7 +484,7 @@ fn supervisor_sbi_hart_stop_stops_current_hart_before_next_instruction() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(690 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -554,7 +554,7 @@ fn supervisor_sbi_time_set_timer_clears_and_reasserts_stip() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(420 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -645,7 +645,7 @@ fn supervisor_sbi_time_set_timer_max_disables_pending_timer() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(430 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -741,7 +741,7 @@ fn supervisor_sbi_time_set_timer_max_clears_pending_stip_without_scheduling() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(431 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -841,7 +841,7 @@ fn supervisor_sbi_send_ipi_sets_target_hart_ssip() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(440 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -931,7 +931,7 @@ fn supervisor_sbi_send_ipi_wakes_suspended_target_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(700 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1022,7 +1022,7 @@ fn supervisor_sbi_send_ipi_uses_hart_mask_base() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(460 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1105,7 +1105,7 @@ fn supervisor_sbi_send_ipi_rejects_missing_target_without_partial_ssip() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(480 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1175,7 +1175,7 @@ fn supervisor_sbi_remote_sfence_vma_rejects_missing_target() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(580 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1247,7 +1247,7 @@ fn supervisor_sbi_system_reset_shutdown_stops_without_returning() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(500 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1338,7 +1338,7 @@ fn supervisor_sbi_system_reset_system_failure_stops_with_failure_code() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1429,7 +1429,7 @@ fn supervisor_sbi_system_reset_rejects_reserved_type_before_user_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(520 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1505,7 +1505,7 @@ fn delegated_supervisor_environment_call_is_not_consumed_as_sbi() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(400 + u64::from(cpu.get())),
         )
         .unwrap();

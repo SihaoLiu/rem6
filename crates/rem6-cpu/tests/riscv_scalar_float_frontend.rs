@@ -189,7 +189,9 @@ fn drive_until_execution(
             )
             .unwrap()
         {
-            Some(RiscvCoreDriveAction::FetchIssued { .. }) | None => {
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+            | None => {
                 scheduler.run_until_idle_conservative();
             }
             Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {

@@ -74,12 +74,12 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
                 bytes: "93027000",
             },
             ExpectedExecTraceRecord {
-                tick: 4,
+                tick: 8,
                 pc: "0x80000004",
                 bytes: "13831200",
             },
             ExpectedExecTraceRecord {
-                tick: 6,
+                tick: 13,
                 pc: "0x80000008",
                 bytes: "73000000",
             },
@@ -184,13 +184,13 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
                 size: 4,
             },
             ExpectedFetchTraceRecord {
-                tick: 2,
+                tick: 6,
                 pc: "0x80000004",
                 sequence: 1,
                 size: 4,
             },
             ExpectedFetchTraceRecord {
-                tick: 4,
+                tick: 11,
                 pc: "0x80000008",
                 sequence: 2,
                 size: 4,
@@ -4413,9 +4413,22 @@ fn assert_pipeline_trace_stage_activity(stdout: &str) {
         !stage_resource_blocked.is_empty(),
         "pipeline trace should preserve resource-blocked in-flight instructions: {trace:?}"
     );
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert!(
+            stage_advanced.contains_key(stage),
+            "pipeline trace should expose {stage}-stage advancement: {trace:?}"
+        );
+    }
     assert!(
-        stage_resource_blocked.contains_key("commit"),
-        "pipeline trace should expose commit-stage resource blocking: {trace:?}"
+        stage_resource_blocked.contains_key("fetch1")
+            && stage_resource_blocked.contains_key("fetch2"),
+        "pipeline trace should expose fetch-stage resource blocking: {trace:?}"
+    );
+    assert!(
+        stage_resource_blocked
+            .keys()
+            .all(|stage| matches!(stage.as_str(), "fetch1" | "fetch2")),
+        "explicit stage ticks should not classify ready decode/execute/commit stages as resource-blocked: {trace:?}"
     );
     for (stage, advanced) in stage_advanced {
         assert_stat(
@@ -5989,13 +6002,13 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
     );
     assert_eq!(host_action_trace_kind_count(trace, "injected_command"), 0);
     assert_eq!(host_action_trace_kind_count(trace, "guest_host_call"), 1);
-    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 1);
+    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 2);
     assert_eq!(
         host_action_trace_kind_count(trace, "execution_mode_switch"),
         1
     );
     assert_eq!(host_action_trace_kind_count(trace, "stop"), 1);
-    assert_eq!(trace.len(), 4);
+    assert_eq!(trace.len(), 5);
 
     let call = host_action_trace_record(trace, "guest_host_call");
     assert_eq!(
@@ -6100,7 +6113,7 @@ fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trac
         &stdout,
         "sim.debug.host_action_trace.checkpoints",
         "Count",
-        1,
+        2,
         "monotonic",
     );
     assert_stat(
@@ -6311,7 +6324,7 @@ fn rem6_run_host_action_debug_flag_emits_scheduled_checkpoint_restore_trace() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "500",
+            "1000",
             "--stats-format",
             "json",
             "--execute",
@@ -8533,7 +8546,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
     assert_eq!(trace.len(), 1);
     let record = &trace[0];
     for (field, value) in [
-        ("instructions", 13),
+        ("instructions", 12),
         ("rename_writes", 8),
         ("lsq_loads", 3),
         ("lsq_stores", 5),
@@ -8552,7 +8565,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         .pointer("/events")
         .and_then(Value::as_array)
         .expect("O3 trace events array");
-    assert_eq!(events.len(), 13);
+    assert_eq!(events.len(), 12);
     let by_pc = |pc: &str| {
         events
             .iter()
@@ -15892,7 +15905,7 @@ fn rem6_run_loads_debug_flags_from_toml_config() {
                 bytes: "93027000",
             },
             ExpectedExecTraceRecord {
-                tick: 4,
+                tick: 8,
                 pc: "0x80000004",
                 bytes: "73000000",
             },

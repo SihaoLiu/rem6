@@ -302,7 +302,7 @@ fn user_ecall_clock_gettime_writes_timespec_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -379,7 +379,7 @@ fn user_ecall_gettimeofday_writes_timeval_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(570 + u64::from(cpu.get())),
         )
         .unwrap();

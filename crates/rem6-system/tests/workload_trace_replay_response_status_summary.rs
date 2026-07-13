@@ -196,7 +196,13 @@ fn workload_replay_summarizes_executable_response_statuses() {
         .iter()
         .map(|delivery| delivery.response().status())
         .collect::<Vec<_>>();
-    assert_eq!(delivered_statuses, vec![ResponseStatus::Completed],);
+    assert_eq!(
+        delivered_statuses,
+        vec![
+            ResponseStatus::Completed,
+            ResponseStatus::StoreConditionalFailed,
+        ],
+    );
     let recorded_statuses = traffic_replay
         .memory_response_records()
         .iter()
@@ -211,7 +217,7 @@ fn workload_replay_summarizes_executable_response_statuses() {
     );
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
-    assert_eq!(summary.response_delivery_count(), 1);
+    assert_eq!(summary.response_delivery_count(), 2);
     assert_eq!(summary.trace_response_data_byte_count(), 8);
     assert_eq!(summary.trace_response_fill_data_byte_count(), 8);
     assert_eq!(summary.trace_completed_response_count(), 1);

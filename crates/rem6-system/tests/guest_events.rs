@@ -239,36 +239,49 @@ fn drive_one_action(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> Option<RiscvCoreDriveAction> {
-    let fetch_store = Arc::clone(&store);
-    core.drive_next_action(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        MemoryTrace::new(),
-        move |delivery, _context| {
-            let response = fetch_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-        move |delivery, _context| {
-            let response = store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-    )
-    .unwrap()
+    for _ in 0..8 {
+        let fetch_store = Arc::clone(&store);
+        let data_store = Arc::clone(&store);
+        let action = core
+            .drive_next_action(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                move |delivery, _context| {
+                    let response = fetch_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+                move |delivery, _context| {
+                    let response = data_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!("expected a non-pipeline guest-event core action");
 }
 
 #[test]

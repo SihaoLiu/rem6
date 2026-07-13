@@ -96,7 +96,7 @@ fn user_ecall_riscv_flush_icache_returns_zero_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(640 + u64::from(cpu.get())),
         )
         .unwrap();

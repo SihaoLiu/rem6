@@ -14,7 +14,7 @@ use rem6_memory::{
 use rem6_stats::{MemProbePacketAccess, MemProbePacketKind, ProbePayload, StackDistProbeConfig};
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvDataAccessStats, RiscvSystemRunDriver,
-    RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -189,7 +189,7 @@ fn system_run_data_access_stats_emit_retry_response_probe_and_keep_checker_pendi
     );
 
     let run = driver
-        .drive_until_host_stop_parallel(
+        .drive_until_host_stop_or_tick_limit_parallel(
             &cluster,
             &mut scheduler,
             &transport,
@@ -197,10 +197,17 @@ fn system_run_data_access_stats_emit_retry_response_probe_and_keep_checker_pendi
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| retry_responder(),
-            40,
+            32,
             |cpu| GuestEventId::new(210 + u64::from(cpu.get())),
         )
         .unwrap();
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::TickLimit {
+            tick: 32,
+            limit: 32,
+        }
+    );
 
     let core_events = cluster.core(CpuId::new(0)).unwrap().data_access_events();
     assert_eq!(

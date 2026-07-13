@@ -72,6 +72,7 @@ mod riscv_gshare_checkpoint;
 mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_in_order_config;
+mod riscv_in_order_drive;
 mod riscv_live_retire_gate;
 mod riscv_live_retire_window;
 mod riscv_multiperspective_perceptron_checkpoint;
@@ -315,6 +316,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.in_order_pipeline = InOrderPipelineState::new(config);
         state.in_order_pipeline_cycle_records.clear();
+        state.detach_pending_in_order_pipeline_advance();
     }
 
     pub fn restore_in_order_pipeline_snapshot(
@@ -325,6 +327,7 @@ impl RiscvCore {
         let restored_cycle = restored.snapshot().cycle();
         let mut state = self.state.lock().expect("riscv core lock");
         state.in_order_pipeline = restored;
+        state.detach_pending_in_order_pipeline_advance();
         state
             .in_order_pipeline_cycle_records
             .retain(|record| record.cycle() < restored_cycle);
@@ -836,6 +839,10 @@ struct RiscvCoreState {
     live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
+    pending_in_order_pipeline_advance: Option<(u64, u64)>,
+    pending_in_order_pipeline_wake: Option<riscv_in_order_drive::RiscvInOrderPipelineWake>,
+    detached_in_order_pipeline_wakes: Vec<riscv_in_order_drive::RiscvInOrderPipelineWake>,
+    next_in_order_pipeline_wake_generation: u64,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -920,6 +927,10 @@ impl RiscvCoreState {
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),
             in_order_pipeline_cycle_records: Vec::new(),
+            pending_in_order_pipeline_advance: None,
+            pending_in_order_pipeline_wake: None,
+            detached_in_order_pipeline_wakes: Vec::new(),
+            next_in_order_pipeline_wake_generation: 0,
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
@@ -941,6 +952,10 @@ impl RiscvCoreState {
     }
 
     fn discard_data_accesses_for_control_boundary(&mut self) {
+        self.detach_pending_in_order_pipeline_advance();
+        self.in_order_pipeline
+            .replace_in_flight([])
+            .expect("empty in-order pipeline state is valid");
         let stale_data_fetches = self
             .events
             .iter()

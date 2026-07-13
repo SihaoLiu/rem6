@@ -113,7 +113,7 @@ fn supervisor_sbi_hsm_reports_suspended_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(720 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -202,7 +202,7 @@ fn supervisor_sbi_hart_start_reports_already_available_for_suspended_secondary_h
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(710 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -292,7 +292,7 @@ fn supervisor_sbi_hart_start_reports_already_available_for_started_secondary_har
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(790 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -382,7 +382,7 @@ fn supervisor_sbi_hart_start_reports_invalid_address_for_stopped_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(750 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -453,7 +453,7 @@ fn supervisor_sbi_hart_start_reports_invalid_param_for_unknown_hart_before_addre
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(740 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -524,7 +524,7 @@ fn supervisor_sbi_hart_start_reports_already_available_for_started_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(730 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -591,7 +591,7 @@ fn supervisor_sbi_hart_suspend_ignores_resume_addr_for_retentive_suspend() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(700 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -673,7 +673,7 @@ fn supervisor_sbi_hart_suspend_resumes_default_non_retentive_suspend_at_resume_a
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(760 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -756,7 +756,7 @@ fn supervisor_sbi_hart_suspend_reports_invalid_param_for_reserved_suspend_type()
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(770 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -860,7 +860,7 @@ fn supervisor_sbi_ipi_wakes_retentive_suspended_hart() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            480,
+            960,
             |cpu| GuestEventId::new(780 + u64::from(cpu.get())),
         )
         .unwrap();

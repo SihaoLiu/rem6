@@ -565,7 +565,7 @@ fn workload_replay_installs_resolved_linux_boot_payloads() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -607,7 +607,7 @@ fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(160)
+        .with_max_turns(320)
         .run_parallel()
         .unwrap();
 
@@ -646,7 +646,7 @@ fn workload_replay_sbi_debug_console_write_reads_cached_guest_payload() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(200)
+        .with_max_turns(400)
         .run_parallel()
         .unwrap();
 
@@ -682,7 +682,7 @@ fn workload_replay_sbi_debug_console_read_consumes_input_resource() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(160)
+        .with_max_turns(320)
         .run_parallel()
         .unwrap();
 
@@ -727,7 +727,7 @@ fn workload_replay_sbi_debug_console_read_updates_cached_destination() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(200)
+        .with_max_turns(400)
         .run_parallel()
         .unwrap();
 
@@ -765,7 +765,7 @@ fn workload_replay_rejects_resolved_payloads_from_different_manifest() {
 
     let error = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap_err();
 

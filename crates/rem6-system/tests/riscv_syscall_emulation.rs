@@ -118,11 +118,10 @@ fn user_ecall_exit_is_consumed_as_riscv_se_syscall() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            30,
+            60,
             |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
         )
         .unwrap();
-
     let stop = StopRequest::new(
         run.final_tick().unwrap(),
         GuestEventId::new(160),
@@ -188,7 +187,7 @@ fn user_ecall_getpid_returns_identity_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(240 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -258,7 +257,7 @@ fn user_ecall_getuid_returns_default_identity_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(260 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -329,7 +328,7 @@ fn user_ecall_getppid_overwrites_a0_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(280 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -395,7 +394,7 @@ fn user_ecall_set_tid_address_records_pointer_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(300 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -475,7 +474,7 @@ fn user_ecall_rt_sigaction_returns_zero_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(320 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -541,7 +540,7 @@ fn user_ecall_mprotect_zero_length_returns_zero_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(340 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -607,7 +606,7 @@ fn user_ecall_mlockall_empty_flags_returns_einval_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(345 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -682,7 +681,7 @@ fn user_ecall_rseq_registers_thread_area_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(360 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -753,7 +752,7 @@ fn user_ecall_unknown_syscall_returns_enosys_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(370 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -829,7 +828,7 @@ fn user_ecall_futex_wake_private_returns_zero_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(380 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -902,7 +901,7 @@ fn user_ecall_fcntl_sets_and_reads_close_on_exec_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(390 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1004,7 +1003,7 @@ fn user_ecall_fcntl_getlk_writes_no_conflict_lock_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(430 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1076,7 +1075,7 @@ fn user_ecall_close_removes_fd_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(410 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1163,7 +1162,7 @@ fn user_ecall_dup_and_dup3_resume_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(430 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1241,7 +1240,7 @@ fn user_ecall_mmap_returns_mapping_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(200 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1324,7 +1323,7 @@ fn user_ecall_munmap_updates_mapping_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(220 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1440,7 +1439,7 @@ fn user_ecall_mmap_installs_zeroed_backing_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1567,7 +1566,7 @@ fn user_ecall_mmap_installs_registered_guest_file_contents_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            220,
+            440,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1660,7 +1659,7 @@ fn user_ecall_write_reads_guest_memory_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(420 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1767,7 +1766,7 @@ fn user_ecall_read_writes_guest_memory_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(440 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1882,7 +1881,7 @@ fn user_ecall_getrandom_writes_guest_memory_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1976,7 +1975,7 @@ fn user_ecall_read_then_write_uses_bidirectional_guest_memory_io() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            110,
+            220,
             |cpu| GuestEventId::new(460 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -2060,7 +2059,7 @@ fn user_ecall_openat_reads_guest_path_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(480 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -2149,7 +2148,7 @@ fn user_ecall_openat_then_read_copies_registered_guest_file_contents() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(500 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -2263,7 +2262,7 @@ fn user_ecall_newfstatat_writes_unaligned_guest_stat_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(520 + u64::from(cpu.get())),
         )
         .unwrap();

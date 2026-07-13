@@ -1293,13 +1293,13 @@ fn replay_manifest_with_sinic_pci_checkpoint_restore() -> WorkloadManifest {
     .unwrap()
     .add_required_resource(resource_id("kernel"))
     .add_host_event(WorkloadHostEvent::new(
-        40,
+        80,
         HostEventIntent::Checkpoint {
             label: "sinic-state".to_string(),
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        240,
+        480,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-state".to_string(),
         },
@@ -1324,13 +1324,13 @@ fn replay_manifest_with_sinic_pci_fifo_checkpoint_restore() -> WorkloadManifest 
     .unwrap()
     .add_required_resource(resource_id("kernel"))
     .add_host_event(WorkloadHostEvent::new(
-        40,
+        80,
         HostEventIntent::Checkpoint {
             label: "sinic-fifo".to_string(),
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        240,
+        480,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-fifo".to_string(),
         },
@@ -1355,13 +1355,13 @@ fn replay_manifest_with_sinic_pci_interrupt_checkpoint_restore() -> WorkloadMani
     .unwrap()
     .add_required_resource(resource_id("kernel"))
     .add_host_event(WorkloadHostEvent::new(
-        40,
+        80,
         HostEventIntent::Checkpoint {
             label: "sinic-interrupt".to_string(),
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
-        240,
+        480,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-interrupt".to_string(),
         },
@@ -1856,7 +1856,7 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -1988,7 +1988,7 @@ fn workload_replay_records_sinic_pci_device_summaries() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2018,7 +2018,7 @@ fn workload_replay_routes_sinic_pci_bar_loads_to_mmio_registers() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2042,7 +2042,7 @@ fn workload_replay_routes_shared_endpoint_sinic_pci_bar_loads_to_matching_device
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2065,7 +2065,7 @@ fn workload_replay_snapshots_sinic_pci_mmio_register_state() {
     let config = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(48)
+        .with_max_turns(96)
         .run_parallel()
         .unwrap();
 
@@ -2091,7 +2091,7 @@ fn workload_replay_uses_entry_target_layout_for_fetches() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2107,7 +2107,7 @@ fn workload_replay_uses_fetch_target_layout_after_pc_redirect() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2124,7 +2124,7 @@ fn workload_replay_uses_data_target_layout_for_data_accesses() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2146,7 +2146,7 @@ fn workload_replay_summary_reports_resource_wait_diagnostics() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2203,7 +2203,7 @@ fn workload_replay_routes_declared_fabric_path_and_reports_activity() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2256,7 +2256,7 @@ fn workload_replay_reports_fabric_credit_delay_activity() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2281,7 +2281,7 @@ fn workload_replay_routes_declared_multihop_fabric_path_and_reports_activity() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2332,7 +2332,7 @@ fn workload_replay_executes_planned_host_actions() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2485,7 +2485,7 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2536,7 +2536,7 @@ fn workload_replay_restores_execution_mode_transfer_manifest_by_label() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2572,7 +2572,7 @@ fn workload_replay_checkpoint_captures_sinic_pci_mmio_components() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2602,7 +2602,7 @@ fn workload_replay_checkpoint_restore_reverts_sinic_pci_mmio_register_state() {
     let saved = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(512)
+        .with_max_turns(1024)
         .run_parallel()
         .unwrap();
 
@@ -2637,7 +2637,7 @@ fn workload_replay_checkpoint_restore_reverts_sinic_pci_fifo_descriptor_state() 
     let saved = SinicDataDescriptor::new(0x180, 1).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(512)
+        .with_max_turns(1024)
         .run_parallel()
         .unwrap();
 
@@ -2669,7 +2669,7 @@ fn workload_replay_checkpoint_restore_replays_sinic_pci_interrupt_status() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(512)
+        .with_max_turns(1024)
         .run_parallel()
         .unwrap();
 
@@ -2703,7 +2703,7 @@ fn workload_replay_records_planned_guest_host_calls() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(20)
+        .with_max_turns(40)
         .run_parallel()
         .unwrap();
 
@@ -2739,7 +2739,7 @@ fn workload_replay_reconstructs_riscv_data_route() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2766,7 +2766,7 @@ fn workload_replay_routes_data_load_through_declared_msi_cache() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2819,7 +2819,7 @@ fn workload_replay_routes_data_load_through_declared_cache_protocols() {
         let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
         let outcome = RiscvWorkloadReplay::new(plan.clone())
-            .with_max_turns(32)
+            .with_max_turns(64)
             .run_parallel()
             .unwrap();
 
@@ -2867,7 +2867,7 @@ fn workload_replay_routes_data_loads_through_declared_msi_cache_lines() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(48)
+        .with_max_turns(96)
         .run_parallel()
         .unwrap();
 
@@ -2901,7 +2901,7 @@ fn workload_replay_preserves_riscv_data_store_in_memory_snapshot() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2929,7 +2929,7 @@ fn workload_replay_preserves_cached_riscv_data_store_in_memory_snapshot() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -2955,7 +2955,7 @@ fn workload_replay_uses_profiled_external_memory() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(48)
+        .with_max_turns(96)
         .run_parallel()
         .unwrap();
 
@@ -3015,7 +3015,7 @@ fn workload_replay_preserves_nvm_media_timing_profile() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(128)
+        .with_max_turns(256)
         .run_parallel()
         .unwrap();
 
@@ -3053,7 +3053,7 @@ fn workload_replay_preserves_nvm_media_timing_through_data_cache_miss() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(128)
+        .with_max_turns(256)
         .run_parallel()
         .unwrap();
 
@@ -3087,7 +3087,7 @@ fn workload_replay_routes_profiled_data_cache_miss_through_dram() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(48)
+        .with_max_turns(96)
         .run_parallel()
         .unwrap();
 

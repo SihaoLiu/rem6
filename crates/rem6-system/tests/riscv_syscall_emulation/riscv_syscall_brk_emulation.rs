@@ -99,7 +99,7 @@ fn user_ecall_brk_returns_to_guest_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(180 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -176,7 +176,7 @@ fn user_ecall_brk_uses_boot_image_program_break_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(230 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -271,7 +271,7 @@ fn check_getcwd_then_brk_with_boot_image_and_guest_writer(seed_before_writer: bo
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(310 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -386,7 +386,7 @@ fn user_ecall_brk_installs_zeroed_heap_backing_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            160,
+            320,
             |cpu| GuestEventId::new(330 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -481,7 +481,7 @@ fn user_ecall_brk_regrows_previously_backed_heap_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            180,
+            360,
             |cpu| GuestEventId::new(340 + u64::from(cpu.get())),
         )
         .unwrap();

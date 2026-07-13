@@ -217,6 +217,7 @@ impl RiscvMultiperspectivePerceptronBranchUpdate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvCoreDriveAction {
     FetchIssued { event: PartitionEventId },
+    PipelineCycleScheduled { event: PartitionEventId },
     InstructionExecuted(Box<RiscvCpuExecutionEvent>),
     DataAccessIssued { event: PartitionEventId },
 }

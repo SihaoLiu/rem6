@@ -119,7 +119,7 @@ fn workload_replay_summary_exposes_multihop_fabric_hop_activity() {
         rem6_workload::WorkloadReplayPlan::from_manifest(&multihop_fabric_manifest()).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -143,7 +143,7 @@ fn workload_replay_summary_exposes_router_stage_fabric_hop_activity() {
         rem6_workload::WorkloadReplayPlan::from_manifest(&multihop_fabric_manifest()).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan)
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 

@@ -399,7 +399,7 @@ fn user_ecall_readv_returns_scatter_read_count_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(640 + u64::from(cpu.get())),
         )
         .unwrap();

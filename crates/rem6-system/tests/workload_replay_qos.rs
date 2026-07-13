@@ -1049,7 +1049,7 @@ fn workload_replay_applies_declared_qos_policy_to_fabric_fetch_order() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1068,7 +1068,7 @@ fn workload_replay_applies_proportional_fair_qos_policy_to_fabric_fetch_order() 
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1087,7 +1087,7 @@ fn workload_replay_applies_declared_qos_policy_to_dram_accesses() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1150,7 +1150,7 @@ fn workload_replay_applies_proportional_fair_qos_policy_to_dram_accesses() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1200,7 +1200,7 @@ fn workload_replay_batches_same_tick_dram_accesses_before_qos_arbitration() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1214,7 +1214,7 @@ fn workload_replay_batches_uncached_dram_fetches_when_data_cache_exists() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1229,7 +1229,7 @@ fn workload_replay_orders_multihop_same_tick_dram_accesses_before_target_deliver
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1243,7 +1243,7 @@ fn workload_replay_coalesces_same_tick_dram_target_deliveries_into_controller_ba
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(256)
+        .with_max_turns(512)
         .run_parallel()
         .unwrap();
 
@@ -1264,7 +1264,7 @@ fn workload_replay_coalesces_uncached_dram_deliveries_when_data_cache_exists() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(256)
+        .with_max_turns(512)
         .run_parallel()
         .unwrap();
 
@@ -1304,7 +1304,7 @@ fn workload_replay_applies_declared_qos_policy_to_data_cache_backing_dram_access
         let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
         let outcome = RiscvWorkloadReplay::new(plan.clone())
-            .with_max_turns(256)
+            .with_max_turns(512)
             .run_parallel()
             .unwrap();
 
@@ -1376,7 +1376,7 @@ fn workload_replay_routes_batched_sinic_pci_bar_loads_to_mmio_registers() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(256)
+        .with_max_turns(512)
         .run_parallel()
         .unwrap();
 

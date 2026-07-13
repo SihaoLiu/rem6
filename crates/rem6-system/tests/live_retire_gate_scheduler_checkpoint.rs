@@ -81,6 +81,25 @@ fn loaded_div_store() -> Arc<Mutex<PartitionedMemoryStore>> {
     Arc::new(Mutex::new(store))
 }
 
+fn loaded_nop_store() -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), 0x0000_0013u32.to_le_bytes().to_vec())
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
 fn responder(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl FnOnce(rem6_transport::RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome
@@ -99,6 +118,39 @@ fn responder(
     }
 }
 
+fn drive_non_pipeline_action(
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+) -> Option<RiscvCoreDriveAction> {
+    for _ in 0..8 {
+        let action = core
+            .drive_next_action(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(Arc::clone(store)),
+                responder(Arc::clone(store)),
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!(
+        "expected a non-pipeline live-gate action at pc {:?} with pipeline {:?}",
+        core.pc(),
+        core.in_order_pipeline_snapshot().in_flight()
+    );
+}
+
 fn drive_to_live_gate(
     core: &RiscvCore,
     scheduler: &mut PartitionedScheduler,
@@ -106,41 +158,17 @@ fn drive_to_live_gate(
     store: &Arc<Mutex<PartitionedMemoryStore>>,
 ) {
     assert!(matches!(
-        core.drive_next_action(
-            scheduler,
-            transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(store)),
-            responder(Arc::clone(store)),
-        )
-        .unwrap(),
+        drive_non_pipeline_action(core, scheduler, transport, store),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
     assert!(matches!(
-        core.drive_next_action(
-            scheduler,
-            transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(store)),
-            responder(Arc::clone(store)),
-        )
-        .unwrap(),
+        drive_non_pipeline_action(core, scheduler, transport, store),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
     assert_eq!(
-        core.drive_next_action(
-            scheduler,
-            transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(store)),
-            responder(Arc::clone(store)),
-        )
-        .unwrap(),
+        drive_non_pipeline_action(core, scheduler, transport, store),
         None
     );
 }
@@ -360,4 +388,90 @@ fn redirected_live_gate_wake_remains_owned_until_scheduler_restore_discards_it()
     ));
     assert!(scheduler.lock().unwrap().is_idle());
     assert!(core.checkpoint_owned_live_retire_gate_wakes().is_empty());
+}
+
+#[test]
+fn scheduler_restore_discards_and_forgets_pending_pipeline_wake() {
+    let (core, transport) = core_and_transport();
+    let store = loaded_nop_store();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_min_remote_delay(2, 1).unwrap(),
+    ));
+    {
+        let mut scheduler = scheduler.lock().unwrap();
+        assert!(matches!(
+            core.drive_next_action(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(Arc::clone(&store)),
+                responder(Arc::clone(&store)),
+            )
+            .unwrap(),
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+        ));
+        scheduler.run_until_idle_conservative();
+        assert!(matches!(
+            core.drive_next_action(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(Arc::clone(&store)),
+                responder(Arc::clone(&store)),
+            )
+            .unwrap(),
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ));
+    }
+    assert_eq!(core.checkpoint_owned_in_order_pipeline_wakes().len(), 1);
+
+    let (mut executor, _, _) = attached_checkpoint_executor(&core, &scheduler);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(51);
+    let checkpoint = HostActionRecord::new(
+        scheduler.lock().unwrap().now(),
+        host,
+        host,
+        GuestEventId::new(71),
+        source,
+        HostAction::Checkpoint {
+            label: "pending-pipeline-wake".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    let restore = HostActionRecord::new(
+        checkpoint.tick().saturating_add(1),
+        host,
+        host,
+        GuestEventId::new(72),
+        source,
+        HostAction::RestoreCheckpoint { manifest },
+    );
+    assert!(matches!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored { .. }
+    ));
+    assert!(scheduler.lock().unwrap().is_idle());
+    assert!(core.checkpoint_owned_in_order_pipeline_wakes().is_empty());
+
+    let second_checkpoint = HostActionRecord::new(
+        restore.tick().saturating_add(1),
+        host,
+        host,
+        GuestEventId::new(73),
+        source,
+        HostAction::Checkpoint {
+            label: "after-pipeline-wake-restore".to_string(),
+        },
+    );
+    assert!(matches!(
+        executor.apply(&second_checkpoint).unwrap(),
+        SystemActionOutcome::Checkpoint { .. }
+    ));
 }

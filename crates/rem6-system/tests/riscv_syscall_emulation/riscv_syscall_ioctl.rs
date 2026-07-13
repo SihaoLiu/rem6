@@ -327,7 +327,7 @@ fn user_ecall_ioctl_tcgets_writes_termios_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(600 + u64::from(cpu.get())),
         )
         .unwrap();

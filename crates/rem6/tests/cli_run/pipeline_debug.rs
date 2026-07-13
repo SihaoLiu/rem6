@@ -984,12 +984,9 @@ fn rem6_run_stats_emit_in_order_stage_movement_matrix_without_debug_flag() {
         stage_retired_cycles.iter().any(|cycles| *cycles > 0),
         "stage retired cycles should be visible in normal stats: {stage_retired_cycles:?}"
     );
-    assert!(
-        stage_advanced
-            .iter()
-            .zip(stage_advanced_cycles.iter())
-            .any(|(advanced, cycles)| advanced > cycles),
-        "widened pipeline should distinguish movement counts from cycle presence: advanced={stage_advanced:?} cycles={stage_advanced_cycles:?}"
+    assert_eq!(
+        stage_advanced, stage_advanced_cycles,
+        "the execution scheduler should emit at most one stage advance per kernel tick"
     );
     assert!(
         stage_retired[4] > 0,
@@ -2080,8 +2077,8 @@ fn rem6_run_pipeline_debug_flag_attributes_in_flight_stage_cycles() {
         before
             .values()
             .chain(after.values())
-            .any(|summary| summary.count > summary.cycles),
-        "stage in-flight instruction counts should stay distinct from per-record cycle counts: before={before:?} after={after:?}"
+            .all(|summary| summary.count == summary.cycles),
+        "serialized execution should observe each in-flight stage row on a distinct kernel tick: before={before:?} after={after:?}"
     );
 
     for (stage, summary) in before {
@@ -2185,8 +2182,8 @@ fn rem6_run_pipeline_debug_flag_attributes_advance_retire_stage_cycles() {
     assert!(
         movement
             .values()
-            .any(|summary| summary.advanced > summary.advanced_cycles),
-        "stage advancement counts should stay distinct from per-record cycle counts: {movement:?}"
+            .all(|summary| summary.advanced == summary.advanced_cycles),
+        "serialized execution should attribute every stage advance to a distinct kernel tick: {movement:?}"
     );
 
     for (stage, summary) in movement {

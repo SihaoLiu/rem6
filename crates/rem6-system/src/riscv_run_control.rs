@@ -668,6 +668,7 @@ fn last_committed_instruction_tick(turn: &RiscvClusterTurn) -> Option<u64> {
             }
             RiscvCoreDriveAction::InstructionExecuted(_) => None,
             RiscvCoreDriveAction::FetchIssued { .. }
+            | RiscvCoreDriveAction::PipelineCycleScheduled { .. }
             | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
         })
         .max()

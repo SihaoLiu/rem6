@@ -20,7 +20,9 @@ fn rem6_run_checkpoints_and_restores_live_retire_gate_with_attached_scheduler() 
             "--memory-system",
             "direct",
             "--m5-switch-cpu-mode",
-            "timing",
+            "detailed",
+            "--debug-flags",
+            "O3",
         ])
         .output()
         .unwrap();
@@ -32,9 +34,16 @@ fn rem6_run_checkpoints_and_restores_live_retire_gate_with_attached_scheduler() 
     let timing: Value = serde_json::from_slice(&timing_output.stdout)
         .unwrap_or_else(|error| panic!("invalid timing stdout JSON: {error}"));
     let checkpoint_tick = timing
-        .pointer("/simulation/final_tick")
-        .and_then(Value::as_u64)
-        .expect("timing run final tick");
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        })
+        .and_then(|event| event.pointer("/issue_tick").and_then(Value::as_u64))
+        .expect("detailed DIV issue tick")
+        .saturating_add(1);
     let restore_tick = checkpoint_tick.saturating_add(1);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
@@ -510,7 +519,7 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "500",
+            "1200",
             "--stats-format",
             "json",
             "--execute",
@@ -519,11 +528,11 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
             "--host-checkpoint",
             "8:o3-baseline",
             "--host-checkpoint",
-            "50:o3-mutated",
+            "158:o3-mutated",
             "--host-restore-checkpoint",
-            "70:o3-baseline",
+            "170:o3-baseline",
             "--host-checkpoint",
-            "113:o3-replayed",
+            "323:o3-replayed",
             "--debug-flags",
             "HostAction",
         ])
@@ -676,8 +685,8 @@ fn rem6_run_restores_scheduled_o3_checkpoint_and_replays_detailed_work() {
         "restored execution-mode component should expose the modes chunk: {restored_execution_mode_component}"
     );
     assert_checkpoint(host_actions, 0, "o3-baseline", 9, 9);
-    assert_checkpoint(host_actions, 1, "o3-mutated", 51, 51);
-    assert_checkpoint(host_actions, 2, "o3-replayed", 114, 114);
+    assert_checkpoint(host_actions, 1, "o3-mutated", 159, 159);
+    assert_checkpoint(host_actions, 2, "o3-replayed", 324, 324);
     let restored_components = host_actions
         .pointer("/checkpoint_restored_component_count")
         .and_then(Value::as_u64)
@@ -998,7 +1007,7 @@ fn rem6_run_reports_latest_debug_o3_restore_after_multiple_restores() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "500",
+            "1500",
             "--stats-format",
             "json",
             "--execute",
@@ -1007,13 +1016,13 @@ fn rem6_run_reports_latest_debug_o3_restore_after_multiple_restores() {
             "--host-checkpoint",
             "8:o3-baseline",
             "--host-checkpoint",
-            "50:o3-mutated",
+            "140:o3-mutated",
             "--host-restore-checkpoint",
-            "70:o3-baseline",
+            "170:o3-baseline",
             "--host-checkpoint",
-            "113:o3-replayed",
+            "305:o3-replayed",
             "--host-restore-checkpoint",
-            "130:o3-replayed",
+            "315:o3-replayed",
             "--debug-flags",
             "HostAction",
         ])
@@ -1173,14 +1182,14 @@ fn rem6_run_m5_dump_stats_resets_o3_snapshot_after_scheduled_restore() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "500",
+            "1200",
             "--stats-format",
             "json",
             "--execute",
             "--memory-system",
             "direct",
             "--host-restore-checkpoint",
-            "150:gem5-m5-checkpoint",
+            "250:gem5-m5-checkpoint",
         ])
         .output()
         .unwrap();
@@ -1291,7 +1300,7 @@ fn rem6_run_m5_dump_stats_restores_o3_fu_class_snapshot_after_scheduled_restore(
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "1000",
+            "1500",
             "--stats-format",
             "json",
             "--execute",

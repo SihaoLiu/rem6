@@ -58,7 +58,7 @@ fn rem6_run_repeats_m5_checkpoint_host_actions_when_period_is_set_from_real_risc
         host_actions
             .pointer("/checkpoint_count")
             .and_then(Value::as_u64),
-        Some(6)
+        Some(8)
     );
     assert_eq!(
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
@@ -66,7 +66,7 @@ fn rem6_run_repeats_m5_checkpoint_host_actions_when_period_is_set_from_real_risc
     );
 
     let checkpoint_ticks = action_ticks(host_actions, "checkpoints");
-    assert_eq!(checkpoint_ticks, vec![7, 12, 17, 22, 27, 32]);
+    assert_eq!(checkpoint_ticks, vec![17, 22, 27, 32, 37, 42, 47, 52]);
     for checkpoint in host_actions
         .pointer("/checkpoints")
         .and_then(Value::as_array)

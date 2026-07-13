@@ -269,7 +269,7 @@ fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "1200",
+            "2000",
             "--stats-format",
             "json",
             "--execute",

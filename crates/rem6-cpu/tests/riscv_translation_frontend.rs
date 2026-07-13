@@ -379,38 +379,50 @@ fn drive_one_translated_action(
     transport: &MemoryTransport,
     page_map: &TranslationPageMap,
 ) -> Option<RiscvCoreDriveAction> {
-    let fetch_store = store.clone();
-    let data_store = store;
-    core.drive_next_action_with_data_translation(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        MemoryTrace::new(),
-        page_map,
-        move |delivery, _context| {
-            let response = fetch_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-        move |delivery, _context| {
-            let response = data_store
-                .lock()
-                .unwrap()
-                .respond(delivery.request())
-                .unwrap()
-                .response()
-                .cloned()
-                .unwrap();
-            TargetOutcome::Respond(response)
-        },
-    )
-    .unwrap()
+    for _ in 0..8 {
+        let fetch_store = store.clone();
+        let data_store = store.clone();
+        let action = core
+            .drive_next_action_with_data_translation(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                page_map,
+                move |delivery, _context| {
+                    let response = fetch_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+                move |delivery, _context| {
+                    let response = data_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!("expected a non-pipeline translated core action");
 }
 
 #[test]
@@ -547,14 +559,14 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
     );
     assert!(!event.counts_as_retired_instruction());
     assert!(event.in_order_pipeline_cycle().is_none());
-    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 4);
     assert_eq!(
         core.in_order_pipeline_snapshot()
             .in_flight()
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(0, InOrderPipelineStage::Fetch1)]
+        vec![(0, InOrderPipelineStage::Commit)]
     );
     assert_eq!(core.pending_trap(), event.execution().trap().copied());
     assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Supervisor);

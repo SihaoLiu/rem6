@@ -197,6 +197,137 @@ fn responder(
     move |delivery, _context| memory_response(&store, &delivery)
 }
 
+fn drive_parallel_fetch_until_non_pipeline_action(
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> Vec<RiscvClusterDriveEvent> {
+    for _ in 0..16 {
+        let actions = cluster
+            .drive_ready_cores_parallel_fetch(scheduler, transport, MemoryTrace::new(), |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            })
+            .unwrap();
+        if actions.iter().any(|event| {
+            !matches!(
+                event.action(),
+                RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            )
+        }) {
+            return actions;
+        }
+        assert!(
+            !scheduler.is_idle(),
+            "pipeline action should schedule a wake"
+        );
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    panic!("expected a non-pipeline cluster action");
+}
+
+fn drive_core_until_non_pipeline_action(
+    cluster: &RiscvCluster,
+    cpu: CpuId,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> Option<RiscvCoreDriveAction> {
+    for _ in 0..16 {
+        let action = cluster
+            .drive_core_next_action(
+                cpu,
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap();
+        if !matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            return action;
+        }
+        scheduler.run_until_idle_conservative();
+    }
+    panic!("expected a non-pipeline core action");
+}
+
+fn drive_ready_cores_until_non_pipeline_action(
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> Vec<RiscvClusterDriveEvent> {
+    for _ in 0..16 {
+        let actions = cluster
+            .drive_ready_cores(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| responder(store.clone()),
+                |_cpu| responder(store.clone()),
+            )
+            .unwrap();
+        if actions.iter().any(|event| {
+            !matches!(
+                event.action(),
+                RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            )
+        }) {
+            return actions;
+        }
+        assert!(
+            !scheduler.is_idle(),
+            "pipeline action should schedule a wake"
+        );
+        scheduler.run_until_idle_conservative();
+    }
+    panic!("expected a non-pipeline ready-core action");
+}
+
+fn drive_parallel_mmio_until_non_pipeline_action(
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    bus: &MmioBus,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> RiscvClusterTurn {
+    for _ in 0..24 {
+        let turn = cluster
+            .drive_turn_parallel_with_mmio(
+                scheduler,
+                transport,
+                bus,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        if turn.core_events().iter().any(|event| {
+            !matches!(
+                event.action(),
+                RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            )
+        }) {
+            return turn;
+        }
+    }
+    panic!("expected a non-pipeline MMIO cluster action");
+}
+
 #[test]
 fn riscv_cluster_rejects_duplicate_identities_and_endpoints() {
     assert_eq!(
@@ -378,31 +509,23 @@ fn riscv_cluster_drives_distinct_cores_without_hidden_scheduler_runs() {
     scheduler.run_until_idle_conservative();
 
     assert!(matches!(
-        cluster
-            .drive_core_next_action(
-                CpuId::new(0),
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap(),
+        drive_core_until_non_pipeline_action(
+            &cluster,
+            CpuId::new(0),
+            &mut scheduler,
+            &transport,
+            store.clone(),
+        ),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     assert!(matches!(
-        cluster
-            .drive_core_next_action(
-                CpuId::new(1),
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(store.clone()),
-                responder(store.clone()),
-            )
-            .unwrap(),
+        drive_core_until_non_pipeline_action(
+            &cluster,
+            CpuId::new(1),
+            &mut scheduler,
+            &transport,
+            store.clone(),
+        ),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     assert_eq!(
@@ -586,16 +709,12 @@ fn riscv_cluster_drives_ready_cores_in_cpu_order() {
 
     scheduler.run_until_idle_conservative();
 
-    let executed = cluster
-        .drive_ready_cores(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            |_cpu| responder(store.clone()),
-            |_cpu| responder(store.clone()),
-        )
-        .unwrap();
+    let executed = drive_ready_cores_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     assert_eq!(
         executed
             .iter()
@@ -759,7 +878,7 @@ fn riscv_cluster_turns_drive_cores_before_scheduler_epochs() {
 
     let mut turns = vec![first];
     let executed = loop {
-        assert!(turns.len() < 10);
+        assert!(turns.len() < 24);
         let turn = cluster
             .drive_turn(
                 &mut scheduler,
@@ -917,7 +1036,7 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
 
     let mut turns = vec![first];
     let executed = loop {
-        assert!(turns.len() < 10);
+        assert!(turns.len() < 24);
         let turn = cluster
             .drive_turn_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
                 let store = store.clone();
@@ -1103,7 +1222,7 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
             MemoryTrace::new(),
             |_cpu| responder(store.clone()),
             |_cpu| responder(store.clone()),
-            10,
+            24,
             |turn| {
                 turn.core_events().iter().any(|event| {
                     matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
@@ -1142,7 +1261,7 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
                 let store = parallel_store.clone();
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            10,
+            24,
             |turn| {
                 turn.core_events().iter().any(|event| {
                     matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
@@ -1606,7 +1725,7 @@ fn riscv_cluster_parallel_turns_issue_mmio_and_memory_data_accesses() {
     .unwrap();
 
     let mut turns = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..32 {
         let turn = cluster
             .drive_turn_parallel_with_mmio(
                 &mut scheduler,
@@ -1929,12 +2048,12 @@ fn riscv_cluster_parallel_fetch_commits_branch_fetch_ahead_speculation() {
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    let fetch_ahead = drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead.first().map(RiscvClusterDriveEvent::action),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -2031,12 +2150,12 @@ fn riscv_cluster_parallel_fetch_retires_branch_before_wrong_path_fetch_ahead_com
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    let fetch_ahead = drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead.first().map(RiscvClusterDriveEvent::action),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -2121,19 +2240,19 @@ fn riscv_cluster_parallel_fetch_retires_fallthrough_branch_after_predicted_targe
     .unwrap();
     let taken_branch = b_type(12, 0, 0, 0x0);
     let training_store = store_with_programs(&[(0x8000, taken_branch)]);
-    cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = training_store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        training_store.clone(),
+    );
     scheduler.run_until_idle_parallel().unwrap();
-    cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = training_store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        training_store.clone(),
+    );
     let trained = cluster
         .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
             let store = training_store.clone();
@@ -2157,19 +2276,19 @@ fn riscv_cluster_parallel_fetch_retires_fallthrough_branch_after_predicted_targe
         (0x8004, i_type(1, 0, 0x0, 1, 0x13)),
         (0x800c, i_type(2, 0, 0x0, 2, 0x13)),
     ]);
-    cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     scheduler.run_until_idle_parallel().unwrap();
-    cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     scheduler.run_until_idle_parallel().unwrap();
 
     let retired = cluster
@@ -2192,7 +2311,7 @@ fn riscv_cluster_parallel_fetch_retires_fallthrough_branch_after_predicted_targe
     );
 
     let mut fallthrough = None;
-    for _ in 0..8 {
+    for _ in 0..16 {
         let actions = cluster
             .drive_ready_cores_parallel_fetch(
                 &mut scheduler,
@@ -2211,9 +2330,11 @@ fn riscv_cluster_parallel_fetch_retires_fallthrough_branch_after_predicted_targe
             break;
         }
         assert!(
-            actions
-                .iter()
-                .all(|event| matches!(event.action(), RiscvCoreDriveAction::FetchIssued { .. })),
+            actions.iter().all(|event| matches!(
+                event.action(),
+                RiscvCoreDriveAction::FetchIssued { .. }
+                    | RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            )),
             "unexpected cluster action before fallthrough instruction retired"
         );
         scheduler.run_until_idle_parallel().unwrap();
@@ -2386,12 +2507,12 @@ fn riscv_cluster_parallel_fetch_retires_completed_fetch_while_fetch_ahead_is_pen
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    let fetch_ahead = drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead.first().map(RiscvClusterDriveEvent::action),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -2475,12 +2596,12 @@ fn riscv_cluster_parallel_fetch_ahead_accepts_compressed_straight_line_instructi
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
-            let store = store.clone();
-            move |delivery, _context| memory_response(&store, &delivery)
-        })
-        .unwrap();
+    let fetch_ahead = drive_parallel_fetch_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead.first().map(RiscvClusterDriveEvent::action),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -2566,23 +2687,13 @@ fn riscv_cluster_parallel_mmio_path_commits_branch_fetch_ahead_speculation() {
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_turn_parallel_with_mmio(
-            &mut scheduler,
-            &transport,
-            &bus,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-        )
-        .unwrap();
+    let fetch_ahead = drive_parallel_mmio_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        &bus,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead
             .core_events()
@@ -2727,7 +2838,7 @@ fn riscv_cluster_run_records_bounded_turn_trace_until_stop_condition() {
             MemoryTrace::new(),
             |_cpu| responder(store.clone()),
             |_cpu| responder(store.clone()),
-            10,
+            24,
             |turn| {
                 turn.core_events().iter().any(|event| {
                     matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))

@@ -190,7 +190,7 @@ fn system_parallel_run_preserves_riscv_store_conditional_failure_diagnostics() {
                     panic!("failed store conditional should not issue a memory transaction")
                 }
             },
-            40,
+            80,
             |cpu| GuestEventId::new(400 + u64::from(cpu.get())),
         )
         .unwrap();

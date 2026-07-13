@@ -4,15 +4,14 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{ParallelSchedulerContext, PartitionedScheduler, SchedulerContext, Tick};
 use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
-use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
-    TargetOutcome,
-};
+use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 use crate::riscv_cluster_drive::{
-    completed_fetch_drive_event, push_completed_fetch_drive_event,
+    completed_fetch_drive_event, finish_prepared_parallel_actions,
+    push_completed_fetch_drive_event, push_pipeline_cycle_drive_event,
     push_prepared_completed_fetch_drive_event, push_prepared_data_action,
-    push_prepared_parallel_fetch_action, PreparedParallelAction, PreparedParallelActions,
+    push_prepared_parallel_fetch_action, push_prepared_pipeline_cycle_drive_event,
+    PreparedParallelAction, PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -24,8 +23,7 @@ use crate::riscv_cluster_translation::schedule_pending_data_translation_wake;
 use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
-    CpuId, HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
-    RiscvStoreConditionalFailureDiagnostic,
+    CpuId, HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvStoreConditionalFailureDiagnostic,
 };
 
 #[derive(Clone, Debug)]
@@ -321,6 +319,15 @@ impl RiscvCluster {
                 continue;
             }
 
+            if push_prepared_pipeline_cycle_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
+                continue;
+            }
+
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
                 let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
@@ -362,7 +369,7 @@ impl RiscvCluster {
             )?;
         }
 
-        self.finish_prepared_parallel_actions(
+        finish_prepared_parallel_actions(
             scheduler,
             transport,
             prepared_actions,
@@ -435,6 +442,15 @@ impl RiscvCluster {
                 continue;
             }
 
+            if push_prepared_pipeline_cycle_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
+                continue;
+            }
+
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
                 let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
@@ -476,7 +492,7 @@ impl RiscvCluster {
             )?;
         }
 
-        self.finish_prepared_parallel_actions(
+        finish_prepared_parallel_actions(
             scheduler,
             transport,
             prepared_actions,
@@ -542,8 +558,11 @@ impl RiscvCluster {
                 if !instruction_budget_exhausted {
                     if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
                         if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
+                            committed_instructions += u64::from(matches!(
+                                event.action(),
+                                RiscvCoreDriveAction::InstructionExecuted(_)
+                            ));
                             prepared_actions.push(PreparedParallelAction::Ready(event));
-                            committed_instructions += 1;
                             continue;
                         }
                         if core.live_retire_gate_blocks_new_work() {
@@ -552,6 +571,17 @@ impl RiscvCluster {
                     }
                     record_pending_fetch_resource_stall(*cpu, core)?;
                 }
+                continue;
+            }
+
+            if !instruction_budget_exhausted
+                && push_prepared_pipeline_cycle_drive_event(
+                    *cpu,
+                    core,
+                    scheduler,
+                    &mut prepared_actions,
+                )?
+            {
                 continue;
             }
 
@@ -577,8 +607,11 @@ impl RiscvCluster {
 
             if !instruction_budget_exhausted {
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
+                    committed_instructions += u64::from(matches!(
+                        event.action(),
+                        RiscvCoreDriveAction::InstructionExecuted(_)
+                    ));
                     prepared_actions.push(PreparedParallelAction::Ready(event));
-                    committed_instructions += 1;
                     continue;
                 }
                 if core.live_retire_gate_blocks_new_work() {
@@ -604,7 +637,7 @@ impl RiscvCluster {
             )?;
         }
 
-        self.finish_prepared_parallel_actions(
+        finish_prepared_parallel_actions(
             scheduler,
             transport,
             prepared_actions,
@@ -704,6 +737,15 @@ impl RiscvCluster {
                 continue;
             }
 
+            if push_prepared_pipeline_cycle_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
+                continue;
+            }
+
             if let Some(decision) = core.next_cached_translated_memory_fetch_ahead_before_retire() {
                 let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
@@ -745,7 +787,7 @@ impl RiscvCluster {
             )?;
         }
 
-        self.finish_prepared_parallel_actions(
+        finish_prepared_parallel_actions(
             scheduler,
             transport,
             prepared_actions,
@@ -868,6 +910,15 @@ impl RiscvCluster {
                 continue;
             }
 
+            if push_prepared_pipeline_cycle_drive_event(
+                *cpu,
+                core,
+                scheduler,
+                &mut prepared_actions,
+            )? {
+                continue;
+            }
+
             if let Some(decision) =
                 core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(bus)
             {
@@ -911,160 +962,13 @@ impl RiscvCluster {
             )?;
         }
 
-        self.finish_prepared_parallel_actions(
+        finish_prepared_parallel_actions(
             scheduler,
             transport,
             prepared_actions,
             transaction_cpus,
             transactions,
         )
-    }
-
-    fn finish_prepared_parallel_actions(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        mut prepared_actions: PreparedParallelActions,
-        transaction_cpus: Vec<CpuId>,
-        transactions: Vec<ParallelMemoryTransaction>,
-    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError> {
-        debug_assert_eq!(transaction_cpus.len(), transactions.len());
-        let events = if transactions.is_empty() {
-            Vec::new()
-        } else {
-            transport
-                .submit_parallel_batch(scheduler, transactions)
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: transaction_cpus
-                        .first()
-                        .copied()
-                        .expect("batch submission has at least one CPU"),
-                    error: RiscvCpuError::Transport(error),
-                })?
-        };
-
-        let mut actions = Vec::with_capacity(prepared_actions.len());
-        let mut first_error = None;
-        for prepared in prepared_actions.drain() {
-            match prepared {
-                PreparedParallelAction::Ready(event) => actions.push(event),
-                PreparedParallelAction::Fetch {
-                    cpu,
-                    core,
-                    issue,
-                    fetch_ahead,
-                    transaction_index,
-                } => {
-                    match core
-                        .record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, fetch_ahead)
-                    {
-                        Ok(()) => actions.push(RiscvClusterDriveEvent::new(
-                            cpu,
-                            RiscvCoreDriveAction::FetchIssued {
-                                event: events[transaction_index],
-                            },
-                        )),
-                        Err(error) => {
-                            first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
-                        }
-                    }
-                }
-                PreparedParallelAction::Data {
-                    cpu,
-                    core,
-                    issue,
-                    transaction_index,
-                    cleanup,
-                } => {
-                    core.record_prepared_data_issue(issue);
-                    cleanup.disarm();
-                    actions.push(RiscvClusterDriveEvent::new(
-                        cpu,
-                        RiscvCoreDriveAction::DataAccessIssued {
-                            event: events[transaction_index],
-                        },
-                    ));
-                }
-                PreparedParallelAction::LocalDataFailure {
-                    cpu,
-                    core,
-                    issue,
-                    cleanup,
-                } => {
-                    match core
-                        .schedule_prepared_store_conditional_failure_parallel(scheduler, issue)
-                    {
-                        Ok(event) => {
-                            cleanup.disarm();
-                            actions.push(RiscvClusterDriveEvent::new(
-                                cpu,
-                                RiscvCoreDriveAction::DataAccessIssued { event },
-                            ));
-                        }
-                        Err(error) => {
-                            first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
-                        }
-                    }
-                }
-                PreparedParallelAction::LocalDataForwarding {
-                    cpu,
-                    core,
-                    issue,
-                    cleanup,
-                } => match core.schedule_forwarded_load_completion_parallel(scheduler, issue) {
-                    Ok(event) => {
-                        cleanup.disarm();
-                        actions.push(RiscvClusterDriveEvent::new(
-                            cpu,
-                            RiscvCoreDriveAction::DataAccessIssued { event },
-                        ));
-                    }
-                    Err(error) => {
-                        first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
-                    }
-                },
-                PreparedParallelAction::LocalBufferedStore {
-                    cpu,
-                    core,
-                    issue,
-                    request,
-                    predecessor,
-                    cleanup,
-                } => match core.schedule_prepared_buffered_o3_store_parallel(
-                    scheduler,
-                    issue,
-                    request,
-                    predecessor,
-                ) {
-                    Ok(event) => {
-                        cleanup.disarm();
-                        actions.push(RiscvClusterDriveEvent::new(
-                            cpu,
-                            RiscvCoreDriveAction::DataAccessIssued { event },
-                        ));
-                    }
-                    Err(error) => {
-                        first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
-                    }
-                },
-                PreparedParallelAction::BufferedStoreData {
-                    cpu,
-                    core,
-                    request_id,
-                    transaction_index,
-                } => {
-                    core.record_buffered_o3_store_submission(request_id);
-                    actions.push(RiscvClusterDriveEvent::new(
-                        cpu,
-                        RiscvCoreDriveAction::DataAccessIssued {
-                            event: events[transaction_index],
-                        },
-                    ));
-                }
-            }
-        }
-
-        first_error.map_or(Ok(actions), Err)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1136,6 +1040,10 @@ impl RiscvCluster {
                     continue;
                 }
                 record_pending_fetch_resource_stall(*cpu, core)?;
+                continue;
+            }
+
+            if push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
 
@@ -1248,8 +1156,11 @@ impl RiscvCluster {
                 if !instruction_budget_exhausted {
                     if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
                         if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
+                            committed_instructions += u64::from(matches!(
+                                event.action(),
+                                RiscvCoreDriveAction::InstructionExecuted(_)
+                            ));
                             actions.push(event);
-                            committed_instructions += 1;
                             continue;
                         }
                         if core.live_retire_gate_blocks_new_work() {
@@ -1258,6 +1169,12 @@ impl RiscvCluster {
                     }
                     record_pending_fetch_resource_stall(*cpu, core)?;
                 }
+                continue;
+            }
+
+            if !instruction_budget_exhausted
+                && push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)?
+            {
                 continue;
             }
 
@@ -1282,8 +1199,11 @@ impl RiscvCluster {
                 }
 
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
+                    committed_instructions += u64::from(matches!(
+                        event.action(),
+                        RiscvCoreDriveAction::InstructionExecuted(_)
+                    ));
                     actions.push(event);
-                    committed_instructions += 1;
                     continue;
                 }
                 if core.live_retire_gate_blocks_new_work() {

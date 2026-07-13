@@ -10,8 +10,9 @@ use crate::{
 };
 
 use super::{
-    execution_mode_handoff::supports_live_data_handoff, ExecutionModeSwitchStateTransfer,
-    SystemActionExecutor, EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
+    execution_mode_handoff::supports_live_data_handoff, BorrowedSchedulerRestoreMode,
+    ExecutionModeSwitchStateTransfer, SystemActionExecutor,
+    EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -21,6 +22,17 @@ pub(super) struct AttachedCheckpointCapture {
 }
 
 impl SystemActionExecutor {
+    pub(super) fn forget_pipeline_wakes_after_scheduler_restore(
+        &self,
+        borrowed_scheduler_restore_mode: Option<BorrowedSchedulerRestoreMode>,
+    ) {
+        if self.scheduler_checkpoints.is_some() || borrowed_scheduler_restore_mode.is_some() {
+            if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+                riscv_checkpoints.forget_discarded_in_order_pipeline_wakes();
+            }
+        }
+    }
+
     pub fn attach_scheduler_checkpoint_bank(
         &mut self,
         scheduler_checkpoints: SchedulerCheckpointBank,
@@ -148,10 +160,11 @@ impl SystemActionExecutor {
             }
         };
         let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let scheduler_capture_events = self.scheduler_checkpoint_capture_events();
         let capture_borrowed_scheduler = !live_data_handoff
             && scheduler_checkpoint.as_ref().is_some_and(|scheduler| {
                 borrowed_scheduler_is_attached
-                    || scheduler.has_pending_discard_claim(&owned_scheduler_events)
+                    || scheduler.has_pending_discard_claim(&scheduler_capture_events)
             });
         let borrowed_scheduler_component = capture_borrowed_scheduler
             .then(|| scheduler_checkpoint.as_ref().unwrap().component().clone());
@@ -365,6 +378,20 @@ impl SystemActionExecutor {
     }
 
     pub(super) fn owned_scheduler_checkpoint_events(&self) -> Vec<SchedulerCheckpointOwnedEvent> {
+        let mut events = self.scheduler_checkpoint_capture_events();
+        events.extend(
+            self.riscv_checkpoints
+                .as_ref()
+                .into_iter()
+                .flat_map(|checkpoints| checkpoints.pending_in_order_pipeline_wakes())
+                .map(|(scheduler, event)| {
+                    SchedulerCheckpointOwnedEvent::discard_on_restore(scheduler, event)
+                }),
+        );
+        events
+    }
+
+    fn scheduler_checkpoint_capture_events(&self) -> Vec<SchedulerCheckpointOwnedEvent> {
         let mut events = self.scheduler_checkpoint_control_events.clone();
         events.extend(
             self.riscv_checkpoints

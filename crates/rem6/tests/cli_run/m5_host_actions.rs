@@ -1143,7 +1143,7 @@ fn rem6_run_restores_m5_switch_cpu_transfer_and_reports_authority_rollback() {
             "--memory-system",
             "direct",
             "--host-restore-checkpoint",
-            "8:execution-mode-switch-cpu0-3",
+            "12:execution-mode-switch-cpu0-7",
         ])
         .output()
         .unwrap();
@@ -1187,7 +1187,7 @@ fn rem6_run_restores_m5_switch_cpu_transfer_and_reports_authority_rollback() {
         format!("execution-mode-switch-cpu0-{switch_tick}")
     );
     assert_eq!(
-        transfer_label, "execution-mode-switch-cpu0-3",
+        transfer_label, "execution-mode-switch-cpu0-7",
         "test assumes the first m5_switch_cpu transfer label remains tick-derived: {host_actions}"
     );
 
@@ -1684,10 +1684,10 @@ fn rem6_run_emits_m5_stats_host_action_details_from_real_riscv_execution() {
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
-    assert_stats_reset(host_actions, 0, 0, 3, 1);
-    assert_stats_dump(host_actions, 0, 0, 5, 1, 3);
-    assert_stats_dump(host_actions, 1, 1, 7, 1, 3);
-    assert_stats_reset(host_actions, 1, 1, 7, 2);
+    assert_stats_reset(host_actions, 0, 0, 7, 1);
+    assert_stats_dump(host_actions, 0, 0, 13, 1, 7);
+    assert_stats_dump(host_actions, 1, 1, 19, 1, 7);
+    assert_stats_reset(host_actions, 1, 1, 19, 2);
 }
 
 #[test]
@@ -1741,13 +1741,13 @@ fn rem6_run_repeats_m5_stats_host_actions_when_period_is_set_from_real_riscv_exe
         host_actions
             .pointer("/stats_reset_count")
             .and_then(Value::as_u64),
-        Some(6)
+        Some(8)
     );
     assert_eq!(
         host_actions
             .pointer("/stats_dump_count")
             .and_then(Value::as_u64),
-        Some(6)
+        Some(8)
     );
     assert_eq!(
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
@@ -1756,7 +1756,7 @@ fn rem6_run_repeats_m5_stats_host_actions_when_period_is_set_from_real_riscv_exe
 
     let reset_ticks = action_ticks(host_actions, "stats_resets");
     let dump_ticks = action_ticks(host_actions, "stats_dumps");
-    assert_eq!(reset_ticks, vec![7, 11, 15, 19, 23, 27]);
+    assert_eq!(reset_ticks, vec![17, 21, 25, 29, 33, 37, 41, 45]);
     assert_eq!(dump_ticks, reset_ticks);
 }
 
@@ -1815,7 +1815,7 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
-    assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 3, 3);
+    assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 7, 7);
     assert_checkpoint_component_count(host_actions, 0, 2);
     assert_checkpoint_component_chunks(
         host_actions,
@@ -1904,7 +1904,7 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
-    assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 11, 11);
+    assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 15, 15);
     assert_checkpoint_component_count(host_actions, 0, 2);
     assert_checkpoint_component_chunks(
         host_actions,
@@ -2401,7 +2401,7 @@ fn detailed_o3_dump_stats_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_SWITCH_CPU),           // switch cpu0 to detailed
         u_type(0, 5, 0x17),            // auipc x5, 0
         i_type(60, 5, 0x0, 5, 0x13),   // addi x5, x5, data
-        i_type(7, 0, 0x0, 11, 0x13),   // addi x11, x0, 7
+        i_type(7, 0, 0x0, 14, 0x13),   // addi x14, x0, 7
         i_type(0, 5, 0b010, 12, 0x03), // lw x12, 0(x5)
         s_type(4, 12, 5, 0b010),       // sw x12, 4(x5)
         m5op(M5_DUMP_STATS),           // dump live detailed-mode stats

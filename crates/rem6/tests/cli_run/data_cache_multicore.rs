@@ -110,7 +110,7 @@ fn assert_multicore_data_cache(
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "320",
+            "700",
             "--stats-format",
             "json",
             "--execute",

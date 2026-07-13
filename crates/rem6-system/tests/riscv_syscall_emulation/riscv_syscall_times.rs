@@ -119,7 +119,7 @@ fn user_ecall_times_writes_tms_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(590 + u64::from(cpu.get())),
         )
         .unwrap();

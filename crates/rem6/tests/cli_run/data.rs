@@ -89,13 +89,13 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
     assert!(stdout.contains("\"data_loads\":1"));
     assert!(stdout.contains("\"data_stores\":1"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":49,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":59,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
     assert!(stdout.contains("\"retired\":6"));
-    assert!(stdout.contains("\"resource_blocked\":28"));
-    assert!(stdout.contains("\"stall_cycles\":28"));
+    assert!(stdout.contains("\"resource_blocked\":32"));
+    assert!(stdout.contains("\"stall_cycles\":32"));
     assert!(stdout.contains("\"fetch_wait_cycles\":24"));
     assert!(stdout.contains("\"data_wait_cycles\":8"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
@@ -120,7 +120,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        49,
+        59,
         "monotonic",
     );
     assert_stat(
@@ -134,7 +134,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.stall_cycles",
         "Cycle",
-        28,
+        32,
         "monotonic",
     );
     assert_stat(
@@ -148,7 +148,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.resource_blocked",
         "Count",
-        28,
+        32,
         "monotonic",
     );
     assert_stat(
@@ -4524,7 +4524,7 @@ fn rem6_run_exposes_distinct_riscv_hart_ids_to_parallel_cores() {
     assert!(stdout.contains("\"hex\":\"00000000000000000100000000000000\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert!(stdout.contains("\"path\":\"sim.cpu1.data.stores\""));
-    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 5, 5);
+    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 4, 4);
     assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 1, 4, 4);
 }
 

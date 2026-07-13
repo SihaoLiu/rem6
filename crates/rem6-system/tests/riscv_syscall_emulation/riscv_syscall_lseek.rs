@@ -350,7 +350,7 @@ fn user_ecall_lseek_seek_set_changes_read_offset_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(std::sync::Arc::clone(&store)),
             |_cpu| responder(std::sync::Arc::clone(&store)),
-            180,
+            360,
             |cpu| GuestEventId::new(620 + u64::from(cpu.get())),
         )
         .unwrap();

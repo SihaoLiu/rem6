@@ -91,7 +91,7 @@ fn user_ecall_wait4_consumes_pending_child_status_and_resumes() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();

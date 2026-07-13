@@ -243,18 +243,34 @@ fn drive_one_translated_action(
     transport: &MemoryTransport,
     page_map: &TranslationPageMap,
 ) -> Option<RiscvCoreDriveAction> {
-    let fetch_store = Arc::clone(&store);
-    let data_store = store;
-    core.drive_next_action_with_data_translation(
-        scheduler,
-        transport,
-        MemoryTrace::new(),
-        MemoryTrace::new(),
-        page_map,
-        move |delivery, _context| memory_response(&fetch_store, &delivery),
-        move |delivery, _context| memory_response(&data_store, &delivery),
-    )
-    .unwrap()
+    for _ in 0..8 {
+        let fetch_store = Arc::clone(&store);
+        let data_store = Arc::clone(&store);
+        let action = core
+            .drive_next_action_with_data_translation(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                page_map,
+                move |delivery, _context| memory_response(&fetch_store, &delivery),
+                move |delivery, _context| memory_response(&data_store, &delivery),
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!(
+        "expected a non-pipeline translated action at pc {:?} with pipeline {:?}",
+        core.pc(),
+        core.in_order_pipeline_snapshot().in_flight()
+    );
 }
 
 fn topology() -> Topology {
@@ -618,7 +634,7 @@ fn riscv_topology_config_builds_translated_parallel_data_cores() {
                     memory_response(&store, &delivery)
                 }
             },
-            40,
+            160,
             |cpu| GuestEventId::new(150 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -828,7 +844,7 @@ fn assert_remote_tlb_fence_flushes_translated_data_tlb(
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            80,
+            160,
             |cpu| GuestEventId::new(event_base + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1065,7 +1081,7 @@ fn riscv_sbi_remote_sfence_vma_asid_preserves_other_address_spaces() {
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            80,
+            160,
             |cpu| GuestEventId::new(180 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1339,7 +1355,7 @@ fn assert_remote_tlb_fence_range_flushes_each_overlapping_page(
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
             },
-            80,
+            160,
             |cpu| GuestEventId::new(event_base + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1599,7 +1615,7 @@ fn assert_riscv_system_parallel_driver_routes_translated_mmio_and_memory_data(ti
                     memory_response(&store, &delivery)
                 }
             },
-            40,
+            80,
             |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
         )
     }

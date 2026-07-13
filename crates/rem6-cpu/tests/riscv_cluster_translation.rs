@@ -154,6 +154,48 @@ fn memory_response(
     TargetOutcome::Respond(response)
 }
 
+fn drive_translated_until_non_pipeline_action(
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    page_map: &TranslationPageMap,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> Vec<RiscvClusterDriveEvent> {
+    for _ in 0..16 {
+        let actions = cluster
+            .drive_ready_cores_parallel_with_data_translation(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                page_map,
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        if actions.iter().any(|event| {
+            !matches!(
+                event.action(),
+                RiscvCoreDriveAction::PipelineCycleScheduled { .. }
+            )
+        }) {
+            return actions;
+        }
+        assert!(
+            !scheduler.is_idle(),
+            "pipeline action should schedule a wake"
+        );
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    panic!("expected a non-pipeline translated core action");
+}
+
 #[test]
 fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -261,7 +303,7 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
     let deliveries = Arc::new(Mutex::new(Vec::new()));
 
     let mut turns = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..32 {
         let turn = cluster
             .drive_turn_parallel_with_data_translation(
                 &mut scheduler,
@@ -542,23 +584,13 @@ fn riscv_cluster_parallel_data_translation_commits_branch_fetch_ahead_speculatio
     ));
     scheduler.run_until_idle_parallel().unwrap();
 
-    let fetch_ahead = cluster
-        .drive_ready_cores_parallel_with_data_translation(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            &page_map,
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-        )
-        .unwrap();
+    let fetch_ahead = drive_translated_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        &page_map,
+        store.clone(),
+    );
     assert!(matches!(
         fetch_ahead.first().map(RiscvClusterDriveEvent::action),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -574,23 +606,13 @@ fn riscv_cluster_parallel_data_translation_commits_branch_fetch_ahead_speculatio
     );
     scheduler.run_until_idle_parallel().unwrap();
 
-    let retired = cluster
-        .drive_ready_cores_parallel_with_data_translation(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            &page_map,
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-            |_cpu| {
-                let store = store.clone();
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-        )
-        .unwrap();
+    let retired = drive_translated_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        &page_map,
+        store.clone(),
+    );
     let Some(RiscvCoreDriveAction::InstructionExecuted(event)) =
         retired.first().map(RiscvClusterDriveEvent::action)
     else {
@@ -655,7 +677,7 @@ fn riscv_cluster_parallel_data_translation_fault_emits_guest_page_fault_trap() {
     let store = store_with_programs_and_data(&[(0x8000, i_type(8, 2, 0x3, 5, 0x03))], &[]);
 
     let mut trap = None;
-    for _ in 0..8 {
+    for _ in 0..24 {
         let turn = cluster
             .drive_turn_parallel_with_data_translation(
                 &mut scheduler,

@@ -27,7 +27,8 @@ use rem6_memory::{
     MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -1209,6 +1210,30 @@ fn drive_one_action(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> Option<RiscvCoreDriveAction> {
+    for _ in 0..8 {
+        let action = drive_raw_action(core, store.clone(), scheduler, transport);
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!(
+        "expected a non-pipeline core action at pc {:?} with pipeline {:?}",
+        core.pc(),
+        in_order_in_flight(core)
+    );
+}
+
+fn drive_raw_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> Option<RiscvCoreDriveAction> {
     let fetch_store = store.clone();
     let data_store = store;
     core.drive_next_action(
@@ -1242,6 +1267,48 @@ fn drive_one_action(
     .unwrap()
 }
 
+#[derive(Clone, Copy)]
+enum FixedTargetOutcome {
+    Retry,
+    NoResponse,
+}
+
+fn fixed_target_outcome(outcome: FixedTargetOutcome, delivery: &RequestDelivery) -> TargetOutcome {
+    match outcome {
+        FixedTargetOutcome::Retry => {
+            TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+        }
+        FixedTargetOutcome::NoResponse => TargetOutcome::NoResponse,
+    }
+}
+
+fn drive_one_fixed_outcome_action(
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    outcome: FixedTargetOutcome,
+) -> RiscvCoreDriveAction {
+    for _ in 0..8 {
+        let action = core
+            .drive_next_action(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                move |delivery, _context| fixed_target_outcome(outcome, &delivery),
+                move |delivery, _context| fixed_target_outcome(outcome, &delivery),
+            )
+            .unwrap()
+            .expect("fixed-outcome drive should produce an action");
+        if matches!(action, RiscvCoreDriveAction::PipelineCycleScheduled { .. }) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!("expected a non-pipeline fixed-outcome action");
+}
+
 fn drive_until_instruction(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -1260,6 +1327,7 @@ fn drive_until_execution_event(
     for _ in 0..8 {
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
                 scheduler.run_until_idle_conservative();
             }
@@ -1382,7 +1450,7 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(1, InOrderPipelineStage::Commit)]
+        vec![(1, InOrderPipelineStage::Fetch2)]
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
@@ -1470,6 +1538,7 @@ fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
     for _ in 0..16 {
         match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(RiscvCoreDriveAction::DataAccessIssued { .. })
             | None => {
                 scheduler.run_until_idle_conservative();
@@ -5608,12 +5677,12 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
     assert_eq!(
         in_order_in_flight(&core),
         vec![
-            (0, InOrderPipelineStage::Fetch2),
+            (0, InOrderPipelineStage::Commit),
             (1, InOrderPipelineStage::Fetch1)
         ]
     );
     let records = core.in_order_pipeline_cycle_records();
-    assert_eq!(records.len(), 1);
+    assert_eq!(records.len(), 4);
     assert_eq!(records[0].cycle(), 0);
     assert_eq!(records[0].summary().advanced_count(), 1);
     assert_eq!(records[0].summary().retired_count(), 0);
@@ -5644,7 +5713,7 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(1, InOrderPipelineStage::Commit)]
+        vec![(1, InOrderPipelineStage::Fetch2)]
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
@@ -5706,7 +5775,7 @@ fn riscv_core_driver_in_order_width_allows_frontend_overlap_without_false_retire
     assert_eq!(
         in_order_in_flight(&core),
         vec![
-            (0, InOrderPipelineStage::Fetch1),
+            (0, InOrderPipelineStage::Commit),
             (1, InOrderPipelineStage::Fetch1)
         ]
     );
@@ -5795,23 +5864,18 @@ fn riscv_core_driver_removes_retried_fetch_ahead_from_in_order_pipeline() {
     ));
     scheduler.run_until_idle_conservative();
 
-    let action = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
-            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
-        )
-        .unwrap()
-        .unwrap();
+    let action = drive_one_fixed_outcome_action(
+        &core,
+        &mut scheduler,
+        &transport,
+        FixedTargetOutcome::Retry,
+    );
     assert!(matches!(action, RiscvCoreDriveAction::FetchIssued { .. }));
 
     scheduler.run_until_idle_conservative();
     assert_eq!(
         in_order_in_flight(&core),
-        vec![(0, InOrderPipelineStage::Fetch2)]
+        vec![(0, InOrderPipelineStage::Commit)]
     );
 
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
@@ -5832,17 +5896,12 @@ fn riscv_core_driver_removes_failed_fetch_ahead_from_in_order_pipeline() {
     ));
     scheduler.run_until_idle_conservative();
 
-    let action = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            |_, _| TargetOutcome::NoResponse,
-            |_, _| TargetOutcome::NoResponse,
-        )
-        .unwrap()
-        .unwrap();
+    let action = drive_one_fixed_outcome_action(
+        &core,
+        &mut scheduler,
+        &transport,
+        FixedTargetOutcome::NoResponse,
+    );
     assert!(matches!(action, RiscvCoreDriveAction::FetchIssued { .. }));
     let failed = core
         .inner()
@@ -5859,7 +5918,7 @@ fn riscv_core_driver_removes_failed_fetch_ahead_from_in_order_pipeline() {
     );
     assert_eq!(
         in_order_in_flight(&core),
-        vec![(0, InOrderPipelineStage::Fetch2)]
+        vec![(0, InOrderPipelineStage::Commit)]
     );
 
     drop(store);
@@ -6121,6 +6180,9 @@ fn riscv_core_driver_retires_fallthrough_branch_after_predicted_target_fetch_ahe
     for _ in 0..8 {
         match drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap() {
             RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_conservative();
+            }
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {
                 scheduler.run_until_idle_conservative();
             }
             RiscvCoreDriveAction::InstructionExecuted(event) => {
@@ -7772,8 +7834,9 @@ fn riscv_core_independent_live_younger_remains_non_architectural_until_retiremen
     ));
     scheduler.run_until_idle_conservative();
     assert_eq!(
-        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
-        None
+        drive_raw_action(&core, store.clone(), &mut scheduler, &transport),
+        None,
+        "a live detailed O3 gate must not schedule normal in-order pipeline work"
     );
     assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 4);
     assert_eq!(core.read_register(reg(3)), 0);

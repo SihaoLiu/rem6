@@ -90,7 +90,7 @@ fn user_ecall_readlinkat_copies_registered_executable_link() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            140,
+            280,
             |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -222,7 +222,7 @@ fn user_ecall_readlinkat_copies_proc_self_fd_guest_path() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            180,
+            360,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();

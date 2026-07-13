@@ -19,7 +19,7 @@ const SBI_TIME_SET_TIMER: i32 = 0;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
 const RISCV_INTERRUPT_BIT: u64 = 1 << 63;
 const RISCV_SUPERVISOR_TIMER_INTERRUPT: u64 = 5;
-const INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE: i32 = 145;
+const INTERRUPT_FLUSH_WITH_YOUNGERS_DEADLINE: i32 = 184;
 
 #[test]
 fn rem6_run_pipeline_debug_flag_attributes_interrupt_redirect_cause() {

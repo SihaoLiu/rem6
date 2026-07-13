@@ -1430,6 +1430,7 @@ impl SystemActionExecutor {
                 );
             }
         }
+        self.forget_pipeline_wakes_after_scheduler_restore(borrowed_scheduler_restore_mode);
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
                 .restore_all_from(&self.checkpoints)

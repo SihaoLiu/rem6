@@ -83,7 +83,7 @@ fn supervisor_sbi_debug_console_write_byte_records_output() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(710 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -165,7 +165,7 @@ fn supervisor_sbi_legacy_console_getchar_consumes_debug_console_input() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(760 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -246,7 +246,7 @@ fn supervisor_sbi_debug_console_write_records_guest_memory_output() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(720 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -325,7 +325,7 @@ fn supervisor_sbi_debug_console_write_rejects_unreadable_guest_memory() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(730 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -414,7 +414,7 @@ fn supervisor_sbi_debug_console_read_writes_guest_memory_and_advertises_dbcn() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            100,
+            200,
             |cpu| GuestEventId::new(740 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -502,7 +502,7 @@ fn supervisor_sbi_debug_console_read_rejects_unwritable_requested_range() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            80,
+            160,
             |cpu| GuestEventId::new(750 + u64::from(cpu.get())),
         )
         .unwrap();

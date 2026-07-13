@@ -128,7 +128,7 @@ fn rem6_run_pipeline_debug_correlates_fetch_wait_backlog_with_branch_flush() {
 }
 
 #[test]
-fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_branch_flush() {
+fn rem6_run_pipeline_debug_correlates_younger_data_wait_backlog_with_branch_flush() {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
         i_type(20, 2, 0x2, 5, 0x03), // lw x5, 20(x2)

@@ -344,7 +344,7 @@ fn topology_system_routes_dirty_owner_peer_read_through_moesi_data_cache() {
         .drive_attached_until_host_stop_parallel(
             Default::default(),
             Default::default(),
-            240,
+            480,
             |cpu: CpuId| GuestEventId::new(1110 + u64::from(cpu.get())),
         )
         .unwrap();

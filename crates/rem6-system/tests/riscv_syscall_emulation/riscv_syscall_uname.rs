@@ -81,7 +81,7 @@ fn user_ecall_uname_writes_riscv64_machine_field() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            110,
+            220,
             |cpu| GuestEventId::new(560 + u64::from(cpu.get())),
         )
         .unwrap();

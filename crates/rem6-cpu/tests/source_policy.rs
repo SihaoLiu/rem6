@@ -90,6 +90,24 @@ fn in_order_pipeline_lives_in_focused_module() {
 }
 
 #[test]
+fn normal_riscv_drivers_delegate_pipeline_time_to_focused_scheduler_authority() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let drive = fs::read_to_string(crate_dir.join("src/riscv_drive.rs")).unwrap();
+    let translated = fs::read_to_string(crate_dir.join("src/riscv_translation.rs")).unwrap();
+    let cluster_drive = fs::read_to_string(crate_dir.join("src/riscv_cluster_drive.rs")).unwrap();
+    let timing = fs::read_to_string(crate_dir.join("src/riscv_in_order_drive.rs")).unwrap();
+
+    assert!(timing.contains("fn schedule_reserved_pipeline_cycle("));
+    assert!(timing.contains("try_advance_cycle_recorded_without_retirement"));
+    assert!(drive.contains("schedule_next_completed_fetch_pipeline_cycle_serial"));
+    assert!(translated.contains("schedule_next_completed_fetch_pipeline_cycle_serial"));
+    assert!(cluster_drive.contains("schedule_next_completed_fetch_pipeline_cycle_parallel"));
+    assert!(!drive.contains("execute_next_completed_fetch_serial("));
+    assert!(!translated.contains("execute_next_completed_fetch_serial("));
+    assert!(!cluster_drive.contains("execute_next_completed_fetch_parallel("));
+}
+
+#[test]
 fn in_order_redirect_flush_authority_stays_in_pipeline_plan() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(crate_dir.join("src/in_order_pipeline.rs")).unwrap();

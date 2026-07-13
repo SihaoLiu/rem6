@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineInstruction,
-    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore, RiscvDataAccessEventKind,
+    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction,
+    RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
@@ -324,6 +325,133 @@ fn mmio_bus_with_u64(address: u64, bytes: [u8; 8]) -> MmioBus {
     )
     .unwrap();
     bus
+}
+
+#[test]
+fn normal_driver_schedules_pipeline_stages_before_architectural_execution() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = i_type(7, 0, 0x0, 1, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let store = loaded_program(0x8000, &[raw, 0x0010_0073]);
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+
+    let mut scheduled_cycles = 0;
+    while core
+        .in_order_pipeline_snapshot()
+        .in_flight()
+        .iter()
+        .find(|instruction| instruction.sequence() == 0)
+        .is_none_or(|instruction| instruction.stage() != InOrderPipelineStage::Commit)
+    {
+        let fetch_store = Arc::clone(&store);
+        let action = core
+            .drive_next_action(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                move |delivery, _context| {
+                    let response = fetch_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+                |_delivery, _context| panic!("integer ALU must not issue data traffic"),
+            )
+            .unwrap()
+            .expect("normal driver should make fetch or pipeline progress");
+
+        match action {
+            RiscvCoreDriveAction::FetchIssued { .. } => {}
+            RiscvCoreDriveAction::PipelineCycleScheduled { .. } => {
+                scheduled_cycles += 1;
+                assert_eq!(core.read_register(reg(1)), 0);
+                assert!(core.execution_events().is_empty());
+            }
+            RiscvCoreDriveAction::InstructionExecuted(event) => {
+                panic!("instruction executed before commit stage: {event:?}")
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("integer ALU unexpectedly issued data traffic")
+            }
+        }
+        scheduler.run_until_idle_conservative();
+    }
+
+    assert_eq!(scheduled_cycles, 4);
+    assert_eq!(core.read_register(reg(1)), 0);
+    assert!(core.execution_events().is_empty());
+    assert_eq!(
+        core.in_order_pipeline_snapshot()
+            .in_flight()
+            .iter()
+            .find(|instruction| instruction.sequence() == 0)
+            .map(|instruction| instruction.stage()),
+        Some(InOrderPipelineStage::Commit)
+    );
+
+    let event = loop {
+        let fetch_store = Arc::clone(&store);
+        let action = core
+            .drive_next_action(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                move |delivery, _context| {
+                    let response = fetch_store
+                        .lock()
+                        .unwrap()
+                        .respond(delivery.request())
+                        .unwrap()
+                        .response()
+                        .cloned()
+                        .unwrap();
+                    TargetOutcome::Respond(response)
+                },
+                |_delivery, _context| panic!("integer ALU must not issue data traffic"),
+            )
+            .unwrap()
+            .expect("commit-ready instruction should execute or issue fetch-ahead");
+        match action {
+            RiscvCoreDriveAction::FetchIssued { .. } => {
+                assert_eq!(core.read_register(reg(1)), 0);
+                scheduler.run_until_idle_conservative();
+            }
+            RiscvCoreDriveAction::InstructionExecuted(event) => break event,
+            other => panic!("commit-ready instruction made unexpected progress: {other:?}"),
+        }
+    };
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert_eq!(
+        event
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .summary()
+            .retired_count(),
+        1
+    );
 }
 
 #[test]

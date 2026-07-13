@@ -5,14 +5,25 @@ fn rem6_run_o3_detailed_div_live_retire_gate_delays_architectural_commit() {
     let path = live_retire_gate_div_witness_binary("m5-switch-cpu-o3-live-retire-div-gate");
 
     let timing = run_live_retire_gate_case(&path, "direct", "timing", 180, "stopped_by_host");
+    let detailed = run_live_retire_gate_case(&path, "direct", "detailed", 220, "stopped_by_host");
+    let detailed_div_writeback = detailed
+        .json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some("0x8000000c"))
+        })
+        .and_then(|event| event.pointer("/writeback_tick").and_then(Value::as_u64))
+        .expect("detailed DIV writeback tick");
     let detailed_before_commit = run_live_retire_gate_case(
         &path,
         "direct",
         "detailed",
-        timing.final_tick,
+        detailed_div_writeback.saturating_sub(1),
         "stopped_at_tick_limit",
     );
-    let detailed = run_live_retire_gate_case(&path, "direct", "detailed", 220, "stopped_by_host");
 
     assert_eq!(
         timing.memory_hex, "01000000",
@@ -38,18 +49,18 @@ fn rem6_run_o3_detailed_div_live_retire_gate_delays_architectural_commit() {
     );
     assert_eq!(
         detailed_before_commit.memory_hex, "00000000",
-        "detailed mode must not store the divide witness by the timing-mode stop tick: {}",
+        "detailed mode must not store the divide witness before DIV writeback: {}",
         detailed_before_commit.json
     );
     assert_eq!(
         detailed_before_commit.stop_code, None,
-        "detailed mode must not reach m5_exit by the timing-mode stop tick: {}",
+        "detailed mode must not reach m5_exit before DIV writeback: {}",
         detailed_before_commit.json
     );
     assert!(
         detailed_before_commit.committed_instructions < timing.committed_instructions,
         "detailed mode should retain the DIV before architectural commit at tick {}: timing={} detailed={}",
-        timing.final_tick,
+        detailed_div_writeback.saturating_sub(1),
         timing.json,
         detailed_before_commit.json
     );

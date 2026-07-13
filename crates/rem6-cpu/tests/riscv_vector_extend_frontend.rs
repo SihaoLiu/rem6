@@ -171,6 +171,7 @@ fn drive_until_instruction(
             .unwrap()
         {
             Some(rem6_cpu::RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(rem6_cpu::RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(rem6_cpu::RiscvCoreDriveAction::DataAccessIssued { .. })
             | None => {
                 scheduler.run_until_idle_conservative();

@@ -732,6 +732,21 @@ impl RiscvCoreCheckpointBank {
             .collect()
     }
 
+    pub(crate) fn pending_in_order_pipeline_wakes(
+        &self,
+    ) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
+        self.ports
+            .values()
+            .flat_map(|port| port.core().checkpoint_owned_in_order_pipeline_wakes())
+            .collect()
+    }
+
+    pub(crate) fn forget_discarded_in_order_pipeline_wakes(&self) {
+        for port in self.ports.values() {
+            port.core().forget_discarded_in_order_pipeline_wakes();
+        }
+    }
+
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         for port in self.ports.values() {
             port.register(registry)?;

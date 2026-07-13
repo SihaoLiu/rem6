@@ -477,7 +477,7 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "160",
+            "400",
             "--memory-route-delay",
             "1",
             "--riscv-branch-lookahead",

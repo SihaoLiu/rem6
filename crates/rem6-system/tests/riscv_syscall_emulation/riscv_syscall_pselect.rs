@@ -518,7 +518,7 @@ fn user_ecall_pselect6_observes_eventfd_readiness_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(580 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -616,7 +616,7 @@ fn user_ecall_pselect6_blocking_no_ready_stalls_without_host_trap() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            120,
+            240,
             |cpu| GuestEventId::new(590 + u64::from(cpu.get())),
         )
         .unwrap();

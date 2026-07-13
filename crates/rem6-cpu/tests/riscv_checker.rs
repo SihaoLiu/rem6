@@ -232,6 +232,9 @@ fn retire_one(
             Some(RiscvCoreDriveAction::FetchIssued { .. }) => {
                 scheduler.run_until_idle_conservative();
             }
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. }) => {
+                scheduler.run_until_idle_conservative();
+            }
             Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
                 panic!("checker test program should not issue data traffic");
             }
@@ -251,6 +254,7 @@ fn retire_one_allowing_data(
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::InstructionExecuted(_)) => return,
             Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
             | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
                 scheduler.run_until_idle_conservative();
             }

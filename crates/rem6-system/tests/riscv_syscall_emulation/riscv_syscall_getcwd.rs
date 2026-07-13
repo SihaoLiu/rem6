@@ -247,7 +247,7 @@ fn user_ecall_getcwd_writes_cross_line_buffer_and_resumes() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            110,
+            220,
             |cpu| GuestEventId::new(600 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -355,7 +355,7 @@ fn user_ecall_getcwd_writes_target_cwd_and_resumes() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            110,
+            220,
             |cpu| GuestEventId::new(580 + u64::from(cpu.get())),
         )
         .unwrap();

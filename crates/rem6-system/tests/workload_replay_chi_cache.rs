@@ -158,7 +158,7 @@ fn workload_replay_routes_data_load_through_declared_chi_cache() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 

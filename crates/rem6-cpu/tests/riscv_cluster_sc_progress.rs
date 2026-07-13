@@ -171,7 +171,7 @@ fn cluster_parallel_run_preserves_store_conditional_failure_diagnostics() {
                     panic!("failed store conditional should not issue a memory transaction")
                 }
             },
-            32,
+            64,
             |_| !core.store_conditional_failure_diagnostics().is_empty(),
         )
         .unwrap();

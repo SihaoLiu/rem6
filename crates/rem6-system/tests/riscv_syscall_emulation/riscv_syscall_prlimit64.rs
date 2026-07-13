@@ -506,7 +506,7 @@ fn user_ecall_prlimit64_writes_stack_limit_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            90,
+            180,
             |cpu| GuestEventId::new(580 + u64::from(cpu.get())),
         )
         .unwrap();

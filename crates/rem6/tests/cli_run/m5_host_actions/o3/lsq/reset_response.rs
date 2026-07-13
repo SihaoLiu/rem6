@@ -41,21 +41,21 @@ fn rem6_run_m5_reset_between_o3_lsq_request_and_response_keeps_latency() {
             name: "direct",
             memory_system: "direct",
             operation: CrossResetOperation::LoadReserved,
-            request_tick: 140,
-            reset_tick: 157,
-            response_tick: 160,
+            request_tick: 188,
+            reset_tick: 195,
+            response_tick: 208,
             response_latency_ticks: 20,
-            dump_tick: 182,
+            dump_tick: 238,
         },
         CrossResetMemoryCase {
             name: "cache-fabric-dram",
             memory_system: "cache-fabric-dram",
             operation: CrossResetOperation::AtomicSwap,
-            request_tick: 154,
-            reset_tick: 165,
-            response_tick: 176,
+            request_tick: 202,
+            reset_tick: 203,
+            response_tick: 224,
             response_latency_ticks: 22,
-            dump_tick: 200,
+            dump_tick: 256,
         },
     ] {
         assert_cross_reset_atomic_response(case);
@@ -286,7 +286,7 @@ fn cross_reset_atomic_response_binary(
     let data_start = 96_i32;
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
-        i_type(75, 0, 0x0, 10, 0x13),
+        i_type(85, 0, 0x0, 10, 0x13),
         i_type(0, 0, 0x0, 11, 0x13),
         m5op(M5_RESET_STATS),
     ];

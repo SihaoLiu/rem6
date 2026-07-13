@@ -22,6 +22,7 @@ use rem6_transport::{
     TransportError,
 };
 
+use crate::riscv_in_order_drive::RiscvInOrderDriveStatus;
 use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
@@ -1063,16 +1064,37 @@ impl RiscvCore {
                 self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
-            if let Some(event) = self.execute_next_completed_fetch_serial(scheduler)? {
-                return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
-                    event,
-                ))));
+            if let Some(action) = self.drive_next_completed_fetch_serial_action(scheduler)? {
+                return Ok(Some(action));
             }
             if self.live_retire_gate_blocks_new_work() {
                 return Ok(None);
             }
             self.record_in_order_fetch_wait_stall_cycle()?;
             return Ok(None);
+        }
+
+        let pending_o3_scalar_memory_retirement = self.has_pending_o3_scalar_memory_retirement();
+        if !self.detailed_o3_window_prefers_fetch_ahead() {
+            if pending_o3_scalar_memory_retirement {
+                return Ok(None);
+            }
+            match self.schedule_next_completed_fetch_pipeline_cycle_serial(scheduler)? {
+                RiscvInOrderDriveStatus::Scheduled(event) => {
+                    return Ok(Some(RiscvCoreDriveAction::PipelineCycleScheduled { event }));
+                }
+                RiscvInOrderDriveStatus::Pending => return Ok(None),
+                RiscvInOrderDriveStatus::Ready if self.live_retire_gate_blocks_new_work() => {
+                    return self.drive_next_completed_fetch_serial_action(scheduler);
+                }
+                RiscvInOrderDriveStatus::Unavailable if self.live_retire_gate_blocks_new_work() => {
+                    return Ok(None);
+                }
+                RiscvInOrderDriveStatus::Unavailable | RiscvInOrderDriveStatus::Ready => {}
+                RiscvInOrderDriveStatus::Reserved { .. } => {
+                    unreachable!("pipeline reservation is scheduled before returning")
+                }
+            }
         }
 
         if let Some(decision) = self.next_cached_translated_memory_fetch_ahead_before_retire() {
@@ -1088,10 +1110,8 @@ impl RiscvCore {
             return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
         }
 
-        if let Some(event) = self.execute_next_completed_fetch_serial(scheduler)? {
-            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
-                event,
-            ))));
+        if let Some(action) = self.drive_next_completed_fetch_serial_action(scheduler)? {
+            return Ok(Some(action));
         }
         if self.live_retire_gate_blocks_new_work() {
             return Ok(None);

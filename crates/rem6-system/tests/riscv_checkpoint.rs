@@ -175,6 +175,39 @@ fn responder(
     }
 }
 
+fn drive_non_pipeline_action(
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+) -> Option<RiscvCoreDriveAction> {
+    for _ in 0..8 {
+        let action = core
+            .drive_next_action(
+                scheduler,
+                transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(Arc::clone(store)),
+                responder(Arc::clone(store)),
+            )
+            .unwrap();
+        if matches!(
+            action,
+            Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
+        ) {
+            scheduler.run_until_idle_conservative();
+            continue;
+        }
+        return action;
+    }
+    panic!(
+        "expected a non-pipeline checkpoint action at pc {:?} with pipeline {:?}",
+        core.pc(),
+        core.in_order_pipeline_snapshot().in_flight()
+    );
+}
+
 fn fetch_and_execute_one(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -496,31 +529,13 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     let store = loaded_store(entry, div);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
 
-    let issued = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(Arc::clone(&store)),
-        )
-        .unwrap();
+    let issued = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
     assert!(matches!(
         issued,
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
-    let fetch_ahead = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(Arc::clone(&store)),
-        )
-        .unwrap();
+    let fetch_ahead = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
     assert!(matches!(
         fetch_ahead,
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -528,15 +543,7 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     scheduler.run_until_idle_conservative();
     let ready_tick = scheduler.now().checked_add(19).unwrap();
     assert_eq!(
-        core.drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(Arc::clone(&store)),
-        )
-        .unwrap(),
+        drive_non_pipeline_action(&core, &mut scheduler, &transport, &store),
         None
     );
     assert!(matches!(
@@ -564,31 +571,13 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     assert_eq!(core.o3_runtime_snapshot(), live_snapshot);
 
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
-    let reissued = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(Arc::clone(&store)),
-        )
-        .unwrap();
+    let reissued = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
     assert!(matches!(
         reissued,
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
     scheduler.run_until_idle_conservative();
-    let restored_fetch_ahead = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(Arc::clone(&store)),
-        )
-        .unwrap();
+    let restored_fetch_ahead = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
     assert!(matches!(
         restored_fetch_ahead,
         Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -596,15 +585,7 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     scheduler.run_until_idle_conservative();
     for _ in 0..2 {
         assert_eq!(
-            core.drive_next_action(
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                responder(Arc::clone(&store)),
-                responder(Arc::clone(&store)),
-            )
-            .unwrap(),
+            drive_non_pipeline_action(&core, &mut scheduler, &transport, &store),
             None
         );
         assert!(matches!(
@@ -620,16 +601,7 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     core.set_detailed_live_retire_gate_enabled(false);
     scheduler.run_until_idle_conservative();
     assert_eq!(scheduler.now(), ready_tick);
-    let retired = core
-        .drive_next_action(
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            responder(Arc::clone(&store)),
-            responder(store),
-        )
-        .unwrap();
+    let retired = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
     assert!(matches!(
         retired,
         Some(RiscvCoreDriveAction::InstructionExecuted(_))

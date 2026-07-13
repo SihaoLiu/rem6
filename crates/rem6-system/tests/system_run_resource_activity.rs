@@ -1339,7 +1339,7 @@ fn topology_run_keeps_code_and_data_dram_targets_separate() {
         .drive_attached_until_host_stop_parallel(
             MemoryTrace::new(),
             MemoryTrace::new(),
-            40,
+            80,
             |cpu| GuestEventId::new(920 + u64::from(cpu.get())),
         )
         .unwrap();

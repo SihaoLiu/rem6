@@ -729,7 +729,7 @@ fn selected_branch_predictor_stdout_with_format(
         "--binary",
         path.to_str().unwrap(),
         "--max-tick",
-        "160",
+        "400",
         "--memory-route-delay",
         "1",
         "--riscv-branch-lookahead",

@@ -271,7 +271,7 @@ fn topology_system_routes_cpu_data_load_through_chi_cache_backend() {
         .drive_attached_until_host_stop_parallel(
             MemoryTrace::new(),
             data_trace.clone(),
-            40,
+            80,
             |cpu: CpuId| GuestEventId::new(1010 + u64::from(cpu.get())),
         )
         .unwrap();

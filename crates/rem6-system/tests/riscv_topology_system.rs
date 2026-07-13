@@ -585,7 +585,7 @@ fn topology_system_builds_cluster_and_drives_parallel_host_stop() {
                     memory_response(&store, &delivery)
                 }
             },
-            30,
+            60,
             |cpu| GuestEventId::new(120 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1571,7 +1571,7 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
         )
         .unwrap();
 
-    let stop = StopRequest::new(20, GuestEventId::new(150), source, 0);
+    let stop = StopRequest::new(28, GuestEventId::new(150), source, 0);
     let fetch_request = system
         .cluster()
         .core(CpuId::new(0))
@@ -1625,7 +1625,7 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
     );
     assert_eq!(
         run.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown),
-        4
+        12
     );
     assert_eq!(
         run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),

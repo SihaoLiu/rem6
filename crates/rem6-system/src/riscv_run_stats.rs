@@ -139,6 +139,7 @@ impl RiscvSystemRunDriver {
                 }
                 RiscvCoreDriveAction::InstructionExecuted(_)
                 | RiscvCoreDriveAction::FetchIssued { .. }
+                | RiscvCoreDriveAction::PipelineCycleScheduled { .. }
                 | RiscvCoreDriveAction::DataAccessIssued { .. } => {}
             }
         }

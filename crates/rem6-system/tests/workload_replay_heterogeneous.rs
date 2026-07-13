@@ -887,7 +887,7 @@ fn workload_replay_summary_reports_compute_wait_diagnostics() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(64)
+        .with_max_turns(128)
         .run_parallel()
         .unwrap();
 
@@ -928,7 +928,7 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(512)
+        .with_max_turns(1024)
         .run_parallel()
         .unwrap();
 
@@ -1064,7 +1064,7 @@ fn workload_replay_runs_declared_gpu_kernel_on_parallel_scheduler() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1087,7 +1087,7 @@ fn workload_replay_runs_declared_gpu_dma_copy_on_parallel_memory_backend() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1156,7 +1156,7 @@ fn workload_replay_runs_declared_accelerator_command_on_parallel_scheduler() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1188,7 +1188,7 @@ fn workload_replay_runs_declared_accelerator_dma_copy_on_parallel_memory_backend
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 
@@ -1223,7 +1223,7 @@ fn workload_replay_routes_accelerator_dma_read_through_declared_msi_cache() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
-        .with_max_turns(32)
+        .with_max_turns(64)
         .run_parallel()
         .unwrap();
 

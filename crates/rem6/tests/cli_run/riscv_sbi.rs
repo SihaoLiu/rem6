@@ -443,7 +443,7 @@ fn rem6_run_riscv_sbi_console_input_feeds_legacy_getchar_and_dbcn_read() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "128",
+            "256",
             "--stats-format",
             "json",
             "--execute",

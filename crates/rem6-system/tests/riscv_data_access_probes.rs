@@ -271,7 +271,7 @@ fn system_run_data_access_stats_drive_mem_footprint_from_real_loads() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(120 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -398,7 +398,7 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests_and_r
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(130 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -541,7 +541,7 @@ fn system_run_data_access_stats_drive_mmio_load_requests_and_responses() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(190 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -679,7 +679,7 @@ fn system_run_data_access_stats_drive_mem_checker_monitor_from_real_mmio_store_t
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(200 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -787,7 +787,7 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests_and_
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -888,7 +888,7 @@ fn system_run_data_access_stats_drive_mem_checker_monitor_from_real_store_then_l
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(150 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1011,7 +1011,7 @@ fn system_run_data_access_stats_do_not_feed_atomic_writes_to_mem_checker_monitor
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1101,7 +1101,7 @@ fn system_run_data_access_stats_labels_memory_side_store_conditional_failures() 
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| store_conditional_failed_responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(170 + u64::from(cpu.get())),
         )
         .unwrap();
@@ -1202,7 +1202,7 @@ fn system_run_data_access_stats_filters_local_store_conditional_failures_from_me
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            40,
+            64,
             |cpu| GuestEventId::new(180 + u64::from(cpu.get())),
         )
         .unwrap();

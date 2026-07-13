@@ -298,7 +298,7 @@ fn user_ecall_openat2_sets_close_on_exec_before_exit() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            150,
+            300,
             |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
         )
         .unwrap();

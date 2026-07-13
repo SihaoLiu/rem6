@@ -167,6 +167,9 @@ pub enum RiscvCpuError {
         request: MemoryRequestId,
         bytes: u64,
     },
+    MissingInOrderPipelineInstruction {
+        sequence: u64,
+    },
     MissingBranchSpeculationInstruction {
         sequence: u64,
     },
@@ -266,6 +269,10 @@ impl fmt::Display for RiscvCpuError {
                 "fetch response {} from agent {} has {bytes} bytes instead of 4",
                 request.sequence(),
                 request.agent().get()
+            ),
+            Self::MissingInOrderPipelineInstruction { sequence } => write!(
+                formatter,
+                "completed fetch sequence {sequence} is absent from the in-order pipeline"
             ),
             Self::MissingBranchSpeculationInstruction { sequence } => write!(
                 formatter,
