@@ -17,13 +17,26 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
     sequence: u64,
     pc: Address,
     instruction: RiscvInstruction,
-    destination: O3RenameMapEntry,
+    kind: O3LiveSpeculativeIssueKind,
     producer_sequences: Vec<u64>,
     forwarded_register_writes: Vec<RegisterWrite>,
     dependency_ready_tick: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum O3LiveSpeculativeIssueKind {
+    Scalar { destination: O3RenameMapEntry },
+    DirectConditional,
+}
+
 impl O3LiveSpeculativeIssueCandidate {
+    pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
+        match self.kind {
+            O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
+            O3LiveSpeculativeIssueKind::DirectConditional => None,
+        }
+    }
+
     pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
         &self.forwarded_register_writes
     }
@@ -39,8 +52,12 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
-            return None;
+        let (destination, sources) = if let Some((destination, sources)) =
+            o3_predicted_scalar_descendant_operands(instruction)
+        {
+            (Some(destination), sources)
+        } else {
+            (None, o3_direct_conditional_sources(instruction)?)
         };
         let Some((index, entry)) = self
             .snapshot
@@ -53,8 +70,6 @@ impl O3RuntimeState {
             return None;
         };
         if index == 0
-            || entry.rename_destination()
-                != Some((O3RegisterClass::Integer, u32::from(destination.index())))
             || self
                 .live_speculative_executions
                 .iter()
@@ -62,6 +77,21 @@ impl O3RuntimeState {
         {
             return None;
         }
+        let kind = match destination {
+            Some(destination)
+                if entry.rename_destination()
+                    == Some((O3RegisterClass::Integer, u32::from(destination.index()))) =>
+            {
+                O3LiveSpeculativeIssueKind::Scalar {
+                    destination: staged_rename_entry(entry)
+                        .expect("eligible scalar execution has a rename destination"),
+                }
+            }
+            None if entry.destination().is_none() && entry.rename_destination().is_none() => {
+                O3LiveSpeculativeIssueKind::DirectConditional
+            }
+            Some(_) | None => return None,
+        };
 
         let (producer_sequences, forwarded_register_writes, dependency_ready_tick) =
             self.live_speculative_source_forwarding(index, &sources)?;
@@ -69,8 +99,7 @@ impl O3RuntimeState {
             sequence: entry.sequence(),
             pc,
             instruction,
-            destination: staged_rename_entry(entry)
-                .expect("eligible live speculative execution has a rename destination"),
+            kind,
             producer_sequences,
             forwarded_register_writes,
             dependency_ready_tick,
@@ -92,16 +121,24 @@ impl O3RuntimeState {
             || execution.system_event().is_some()
             || execution.memory_access().is_some()
             || !execution.float_register_writes().is_empty()
-            || execution.next_pc()
-                != execution
-                    .pc()
-                    .wrapping_add(u64::from(execution.instruction_bytes()))
         {
             return;
         }
-        if execution.register_writes().len() != 1
-            || !execution_writes_rename_destination(&execution, candidate.destination)
-        {
+        let valid_kind = match candidate.kind {
+            O3LiveSpeculativeIssueKind::Scalar { destination } => {
+                execution.next_pc()
+                    == execution
+                        .pc()
+                        .wrapping_add(u64::from(execution.instruction_bytes()))
+                    && execution.register_writes().len() == 1
+                    && execution_writes_rename_destination(&execution, destination)
+            }
+            O3LiveSpeculativeIssueKind::DirectConditional => {
+                execution.register_writes().is_empty()
+                    && o3_direct_conditional_sources(execution.instruction()).is_some()
+            }
+        };
+        if !valid_kind {
             return;
         }
 
@@ -233,6 +270,20 @@ impl O3RuntimeState {
                 .producer_sequences
                 .retain(|producer| *producer != sequence);
         }
+    }
+
+    pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
+        self.snapshot.reorder_buffer.retain(|entry| {
+            !entry.is_live_staged() || entry.sequence() <= branch_sequence
+        });
+        self.live_scalar_memory_younger_sequences
+            .retain(|sequence| *sequence <= branch_sequence);
+        self.live_speculative_executions
+            .retain(|execution| execution.sequence <= branch_sequence);
+        self.live_retired_instructions
+            .retain(|instruction| instruction.sequence <= branch_sequence);
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }
 
     fn invalidate_live_speculative_execution_chain(&mut self, sequence: u64) {

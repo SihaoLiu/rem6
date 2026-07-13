@@ -22,6 +22,9 @@ mod o3_runtime_checkpoint;
 mod o3_runtime_checkpoint_branch_mismatch;
 #[path = "o3_runtime_control_window.rs"]
 mod o3_runtime_control_window;
+#[cfg(test)]
+#[path = "o3_runtime_control_window_tests.rs"]
+mod o3_runtime_control_window_tests;
 #[path = "o3_runtime_handoff.rs"]
 mod o3_runtime_handoff;
 #[path = "o3_runtime_helpers.rs"]
