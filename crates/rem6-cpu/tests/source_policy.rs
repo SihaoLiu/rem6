@@ -322,18 +322,35 @@ fn o3_runtime_issue_lives_in_focused_module() {
         "src/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_LINES} lines: {lines}"
     );
 
-    for anchor in [
-        "O3ScopedIssueScheduler",
-        "schedule_live_speculative_issues",
-        "record_issue_cycle",
-    ] {
+    let issue_authority_patterns = [
+        "pub(crate) fn schedule_live_speculative_issues(",
+        "O3ScopedIssueScheduler::new(",
+        "self.stats.record_issue_cycle(",
+        "pub(crate) fn live_scalar_memory_head_reservation(",
+        "O3LiveIssueHeadReservation::memory(",
+    ];
+    for anchor in issue_authority_patterns {
         assert!(
             module.contains(anchor),
             "src/o3_runtime_issue.rs is missing issue-scheduler owner `{anchor}`"
         );
     }
+    for anchor in issue_authority_patterns {
+        for path in rust_source_files(&crate_dir.join("src")) {
+            let relative = path.strip_prefix(crate_dir).unwrap();
+            if relative == Path::new("src/o3_runtime_issue.rs") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            assert!(
+                !source.contains(anchor),
+                "{} duplicates scoped issue authority `{anchor}`; keep it in src/o3_runtime_issue.rs",
+                relative.display()
+            );
+        }
+    }
     assert!(
-        live_retire.contains("schedule_live_speculative_issues"),
+        live_retire.contains(".schedule_live_speculative_issues("),
         "src/riscv_live_retire_window.rs must delegate live younger issue scheduling"
     );
     assert!(

@@ -436,8 +436,13 @@ fn cli_stats_output_o3_runtime_issue_stays_focused() {
         root.contains("mod o3_runtime_issue;"),
         "src/stats_output/o3_runtime.rs must declare the focused issue-stats module"
     );
+    let emit_o3_runtime_stats = source_section(
+        &root,
+        "pub(super) fn emit_o3_runtime_stats(",
+        "fn increment_count_stat(",
+    );
     assert!(
-        root.contains("emit_o3_runtime_issue_stats"),
+        emit_o3_runtime_stats.contains("emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;"),
         "src/stats_output/o3_runtime.rs must delegate issue counters via emit_o3_runtime_issue_stats"
     );
     let root_lines = line_count(&root_path);
@@ -460,6 +465,33 @@ fn cli_stats_output_o3_runtime_issue_stays_focused() {
         module.contains("fn emit_o3_runtime_issue_stats"),
         "src/stats_output/o3_runtime_issue.rs is missing `fn emit_o3_runtime_issue_stats`"
     );
+    let issue_stat_fields = [
+        "\"issue_cycles\"",
+        "\"issued_rows\"",
+        "\"resource_blocked_row_cycles\"",
+        "\"dependency_blocked_row_cycles\"",
+        "\"max_rows_per_cycle\"",
+    ];
+    for field in issue_stat_fields {
+        assert!(
+            module.contains(field),
+            "src/stats_output/o3_runtime_issue.rs is missing issue stat field {field}"
+        );
+    }
+    for field in issue_stat_fields {
+        for path in rust_source_files(&crate_dir.join("src/stats_output")) {
+            let relative = path.strip_prefix(crate_dir).unwrap();
+            if relative == Path::new("src/stats_output/o3_runtime_issue.rs") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            assert!(
+                !source.contains(field),
+                "{} duplicates O3 issue stat field {field}; keep emission in src/stats_output/o3_runtime_issue.rs",
+                relative.display()
+            );
+        }
+    }
 }
 
 #[test]
