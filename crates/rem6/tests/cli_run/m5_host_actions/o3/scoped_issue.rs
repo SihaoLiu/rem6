@@ -112,7 +112,7 @@ fn rem6_run_o3_scoped_issue_serializes_same_multiply_resource() {
 #[test]
 fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
     let path = scoped_issue_fu_head_binary("o3-scoped-issue-dependent-fu-head");
-    let json = scoped_issue_fu_json(&path, "direct", 2, 1_500);
+    let json = scoped_issue_fu_json(&path, "direct", 1, 1_500);
 
     assert_final_witness(
         &json,
@@ -129,6 +129,11 @@ fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
     let multiply = event_at_pc(&json, FU_HEAD_PC);
     let independent = event_at_pc(&json, FU_INDEPENDENT_PC);
     let dependent = event_at_pc(&json, FU_DEPENDENT_PC);
+    assert_eq!(
+        event_u64(independent, "issue_tick"),
+        event_u64(multiply, "issue_tick") + 2,
+        "the fetched younger row must not inherit a phantom head reservation: multiply={multiply}, independent={independent}"
+    );
     assert!(
         event_u64(dependent, "issue_tick") >= event_u64(multiply, "writeback_tick"),
         "dependent ADDI must wait for IntMult writeback: multiply={multiply}, dependent={dependent}"

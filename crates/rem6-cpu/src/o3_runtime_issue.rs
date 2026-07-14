@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvHartState, RiscvInstruction};
+use rem6_isa_riscv::{
+    RiscvDecodedInstruction, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
+};
 
 use super::*;
 use crate::o3_pipeline::{
@@ -66,6 +68,56 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn record_live_issue_head_execution(
+        &mut self,
+        head: O3LiveIssueHeadReservation,
+        consumed_requests: &[MemoryRequestId],
+        execution: RiscvExecutionRecord,
+    ) -> bool {
+        if let Some(recorded) = self
+            .live_speculative_executions
+            .iter()
+            .find(|recorded| recorded.sequence == head.sequence)
+        {
+            return recorded.consumed_requests == consumed_requests
+                && recorded.issue_tick == head.issue_tick
+                && recorded.execution == execution;
+        }
+        let Some(entry) = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .copied()
+            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+        else {
+            return false;
+        };
+        if !valid_live_speculative_fetch_identity(consumed_requests)
+            || entry.pc() != Address::new(execution.pc())
+            || live_issue_op_class(execution.instruction()) != head.op_class
+            || execution.trap().is_some()
+            || execution.system_event().is_some()
+            || execution.memory_access().is_some()
+            || !execution.float_register_writes().is_empty()
+            || staged_rename_entry(entry).is_some_and(|destination| {
+                !execution_writes_rename_destination(&execution, destination)
+            })
+        {
+            return false;
+        }
+        self.live_speculative_executions
+            .push(O3LiveSpeculativeExecution {
+                consumed_requests: consumed_requests.to_vec(),
+                sequence: head.sequence,
+                producer_sequences: Vec::new(),
+                issue_tick: head.issue_tick,
+                execution,
+            });
+        self.live_speculative_executions
+            .sort_by_key(|recorded| recorded.sequence);
+        true
+    }
+
     pub(crate) fn schedule_live_speculative_issues(
         &mut self,
         hart: &RiscvHartState,
@@ -73,6 +125,14 @@ impl O3RuntimeState {
         earliest_tick: u64,
         requests: &[O3LiveIssueRequest],
     ) {
+        if !self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+        {
+            return;
+        }
         let mut tick = earliest_tick;
         loop {
             if requests
@@ -168,10 +228,14 @@ impl O3RuntimeState {
                 .map(O3ScopedReadyInstruction::sequence)
                 .collect::<BTreeSet<_>>();
 
-            for (request_index, candidate, _) in candidates
+            let mut selected = candidates
                 .into_iter()
                 .filter(|(_, candidate, _)| issued_sequences.contains(&candidate.sequence()))
-            {
+                .collect::<Vec<_>>();
+            selected.sort_by_key(|(_, candidate, _)| candidate.sequence());
+            let mut recorded_sequences = BTreeSet::new();
+            for (request_index, candidate, _) in selected {
+                let sequence = candidate.sequence();
                 let request = &requests[request_index];
                 let mut speculative_hart = hart.clone();
                 for write in candidate.forwarded_register_writes() {
@@ -187,6 +251,12 @@ impl O3RuntimeState {
                     tick,
                     execution,
                 );
+                if self.live_issue_request_is_recorded(request) {
+                    recorded_sequences.insert(sequence);
+                }
+            }
+            if recorded_sequences != issued_sequences {
+                break;
             }
 
             if resource_blocked {

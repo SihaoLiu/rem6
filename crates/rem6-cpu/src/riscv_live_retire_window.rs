@@ -82,7 +82,11 @@ impl RiscvCore {
         if detailed_scalar_memory_blocks_execution(state, window.raw)? {
             return Ok(None);
         }
-        let live_speculative_ready_tick = live_speculative_fu_ready_tick(state, &window)?;
+        let live_speculative_ready_tick = if state.live_retire_gate.pending_ready_tick().is_none() {
+            live_speculative_fu_ready_tick(state, &window)?
+        } else {
+            None
+        };
         let completed_normal_execute_wait = state
             .in_order_pipeline
             .execute_wait_completed(window.request.sequence())
@@ -214,7 +218,7 @@ fn stage_o3_live_retire_window(
     current_request: MemoryRequestId,
     pc: Address,
     raw: u32,
-    issue_tick: u64,
+    earliest_tick: u64,
     ready_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) -> Result<(), RiscvCpuError> {
@@ -240,22 +244,50 @@ fn stage_o3_live_retire_window(
     ) else {
         return Ok(());
     };
+    let head_issue_tick = ready_tick.saturating_sub(
+        crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction()),
+    );
+    let head = O3LiveIssueHeadReservation::for_instruction(
+        head_sequence,
+        head_issue_tick,
+        decoded.instruction(),
+    );
+    let Some(head_fetch) = fetch_events.iter().find(|event| {
+        event.kind() == CpuFetchEventKind::Completed
+            && event.request_id() == current_request
+            && event.pc() == pc
+    }) else {
+        return Ok(());
+    };
+    let Some(head_instruction) = completed_fetch_instruction_starting_with(
+        &state.executed_fetches,
+        fetch_events,
+        head_fetch,
+    ) else {
+        return Ok(());
+    };
+    if head_instruction.decoded != decoded {
+        return Ok(());
+    }
+    let mut head_hart = state.hart.clone();
+    head_hart.set_pc(pc.get());
+    let head_execution = head_hart
+        .execute_decoded(decoded)
+        .map_err(RiscvCpuError::Isa)?;
+    if !state.o3_runtime.record_live_issue_head_execution(
+        head,
+        &head_instruction.consumed_requests,
+        head_execution,
+    ) {
+        return Ok(());
+    }
     if younger.is_empty() {
         return Ok(());
     }
     if !state.live_retire_gate.detailed_policy_enabled() {
         return Ok(());
     }
-    schedule_o3_live_speculative_younger_executions(
-        state,
-        O3LiveIssueHeadReservation::for_instruction(
-            head_sequence,
-            issue_tick,
-            decoded.instruction(),
-        ),
-        &younger,
-        issue_tick,
-    );
+    schedule_o3_live_speculative_younger_executions(state, head, &younger, earliest_tick);
     Ok(())
 }
 

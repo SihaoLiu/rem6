@@ -63,6 +63,66 @@ fn scoped_issue_waits_for_register_producer_ready_tick() {
 }
 
 #[test]
+fn scoped_issue_tracks_long_fu_head_dependency() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_issue_width(1);
+    let head_instruction = div(3, 1, 2);
+    let independent = addi(4, 0, 5);
+    let dependent = addi(5, 3, -11);
+    let head_sequence = runtime
+        .stage_live_retire_window(
+            Address::new(LOAD_PC),
+            head_instruction,
+            31,
+            [
+                (Address::new(BRANCH_PC), independent),
+                (Address::new(MUL_PC), dependent),
+            ],
+        )
+        .unwrap();
+    let head = O3LiveIssueHeadReservation::for_instruction(head_sequence, 12, head_instruction);
+    let mut hart = RiscvHartState::new(LOAD_PC);
+    hart.write(reg(1), 84);
+    hart.write(reg(2), 7);
+    let mut head_hart = hart.clone();
+    head_hart.set_pc(LOAD_PC);
+    let head_execution = head_hart
+        .execute_decoded(decoded(head_instruction))
+        .unwrap();
+    assert!(runtime.record_live_issue_head_execution(head, &[request(10)], head_execution,));
+    let requests = [
+        O3LiveIssueRequest::new(
+            Address::new(BRANCH_PC),
+            vec![request(11)],
+            decoded(independent),
+        ),
+        O3LiveIssueRequest::new(Address::new(MUL_PC), vec![request(12)], decoded(dependent)),
+    ];
+
+    runtime.schedule_live_speculative_issues(&hart, head, 14, &requests);
+
+    assert_eq!(runtime.live_speculative_executions[0].issue_tick, 12);
+    assert_eq!(
+        runtime
+            .live_speculative_executions
+            .iter()
+            .find(|execution| execution.execution.pc() == BRANCH_PC)
+            .unwrap()
+            .issue_tick,
+        14
+    );
+    assert_eq!(
+        runtime
+            .live_speculative_executions
+            .iter()
+            .find(|execution| execution.execution.pc() == MUL_PC)
+            .unwrap()
+            .issue_tick,
+        31
+    );
+}
+
+#[test]
 fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
     let branch = fixture.requests[0].clone();
@@ -76,6 +136,26 @@ fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(MUL_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
+}
+
+#[test]
+fn scoped_issue_records_selected_rows_in_sequence_order() {
+    let mut fixture = ScalarIssueFixture::new(4, ScalarIssueCase::CrossResource);
+    fixture.requests.reverse();
+
+    fixture.schedule_all(20);
+
+    let expected = fixture.runtime.snapshot().reorder_buffer()[1..]
+        .iter()
+        .map(|entry| entry.sequence())
+        .collect::<Vec<_>>();
+    let actual = fixture
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .map(|execution| execution.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -268,6 +348,9 @@ fn raw(instruction: RiscvInstruction) -> u32 {
         RiscvInstruction::Mul { rd, rs1, rs2 } => {
             r_type(1, rs2.index(), rs1.index(), 0x0, rd.index(), 0x33)
         }
+        RiscvInstruction::Div { rd, rs1, rs2 } => {
+            r_type(1, rs2.index(), rs1.index(), 0x4, rd.index(), 0x33)
+        }
         _ => panic!("unsupported test instruction: {instruction:?}"),
     }
 }
@@ -298,6 +381,14 @@ fn branch() -> RiscvInstruction {
 
 fn mul(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
     RiscvInstruction::Mul {
+        rd: reg(rd),
+        rs1: reg(rs1),
+        rs2: reg(rs2),
+    }
+}
+
+fn div(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+    RiscvInstruction::Div {
         rd: reg(rd),
         rs1: reg(rs1),
         rs2: reg(rs2),

@@ -408,7 +408,7 @@ impl O3RuntimeState {
     }
 }
 
-fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryRequestId]) -> bool {
+pub(super) fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryRequestId]) -> bool {
     let Some(first) = consumed_requests.first() else {
         return false;
     };
