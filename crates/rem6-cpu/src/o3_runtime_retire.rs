@@ -4,6 +4,7 @@ use super::*;
 struct O3RobRetireObservation {
     sequence: u64,
     issue_tick: u64,
+    admitted_writeback_tick: Option<u64>,
     commit_tick: u64,
     occupancy: usize,
     commits: usize,
@@ -40,6 +41,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence: live.sequence,
                 issue_tick: live.issue_tick,
+                admitted_writeback_tick: None,
                 commit_tick,
                 occupancy: live.issue_rob_occupancy,
                 commits: 1,
@@ -53,6 +55,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence: live.sequence,
                 issue_tick: live.issue_tick,
+                admitted_writeback_tick: Some(live.admitted_writeback_tick),
                 commit_tick: live.commit_tick,
                 occupancy: live.rob_occupancy,
                 commits: live.rob_commits,
@@ -82,6 +85,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence,
                 issue_tick: execution.fetch().tick(),
+                admitted_writeback_tick: None,
                 commit_tick: rob_commit_tick(&self.snapshot, commits).unwrap_or(writeback_tick),
                 occupancy,
                 commits,
@@ -203,6 +207,9 @@ impl O3RuntimeState {
             fu_latency_cycles,
             record.system_event().is_some(),
         );
+        if let Some(admitted_writeback_tick) = observation.admitted_writeback_tick {
+            trace_record.set_admitted_writeback_tick(admitted_writeback_tick);
+        }
 
         if let Some(live) = live_scalar_memory {
             let response_tick = live

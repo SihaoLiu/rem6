@@ -9,6 +9,9 @@ pub(super) struct O3LiveSpeculativeExecution {
     pub(super) sequence: u64,
     pub(super) producer_sequences: Vec<u64>,
     pub(super) issue_tick: u64,
+    pub(super) raw_ready_tick: u64,
+    pub(super) admitted_writeback_tick: u64,
+    pub(super) writeback_slot: Option<usize>,
     pub(super) execution: RiscvExecutionRecord,
 }
 
@@ -156,7 +159,7 @@ impl O3RuntimeState {
         consumed_requests: &[MemoryRequestId],
         issue_tick: u64,
         execution: RiscvExecutionRecord,
-    ) {
+    ) -> Result<bool, O3RuntimeError> {
         let issue_tick = candidate.issue_tick(issue_tick);
         if !valid_live_speculative_fetch_identity(consumed_requests)
             || Address::new(execution.pc()) != candidate.pc
@@ -166,7 +169,7 @@ impl O3RuntimeState {
             || execution.memory_access().is_some()
             || !execution.float_register_writes().is_empty()
         {
-            return;
+            return Ok(false);
         }
         let valid_kind = match candidate.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => {
@@ -183,8 +186,20 @@ impl O3RuntimeState {
             }
         };
         if !valid_kind {
-            return;
+            return Ok(false);
         }
+        let raw_ready_tick = issue_tick
+            .checked_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                execution.instruction(),
+            ))
+            .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
+        let consumes_writeback_slot =
+            matches!(candidate.kind, O3LiveSpeculativeIssueKind::Scalar { .. });
+        let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
+            candidate.sequence,
+            raw_ready_tick,
+            consumes_writeback_slot,
+        )?;
 
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
@@ -192,8 +207,12 @@ impl O3RuntimeState {
                 sequence: candidate.sequence,
                 producer_sequences: candidate.producer_sequences,
                 issue_tick,
+                raw_ready_tick,
+                admitted_writeback_tick,
+                writeback_slot,
                 execution,
             });
+        Ok(true)
     }
 
     pub(crate) fn live_speculative_execution_ready_tick(
@@ -206,13 +225,7 @@ impl O3RuntimeState {
                 && issued.consumed_requests.as_slice() == consumed_requests
                 && issued.execution == *execution
         })?;
-        Some(
-            issued
-                .issue_tick
-                .saturating_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
-                    execution.instruction(),
-                )),
-        )
+        Some(issued.admitted_writeback_tick)
     }
 
     fn live_speculative_source_forwarding(
@@ -247,13 +260,7 @@ impl O3RuntimeState {
                         .iter()
                         .find(|write| write.register() == source)
                         .cloned()
-                        .map(|write| {
-                            let ready_cycles = crate::riscv_fu_latency::riscv_execute_wait_cycles(
-                                issued.execution.instruction(),
-                            )
-                            .max(1);
-                            (write, issued.issue_tick.saturating_add(ready_cycles))
-                        })
+                        .map(|write| (write, issued.admitted_writeback_tick))
                 });
             let (write, producer_ready_tick) = speculative
                 .or_else(|| self.completed_live_scalar_load_source(producer.sequence(), source))?;
@@ -319,12 +326,12 @@ impl O3RuntimeState {
         ))
     }
 
-    pub(super) fn take_live_speculative_issue_tick(
+    pub(super) fn take_live_speculative_issue_timing(
         &mut self,
         entry: O3ReorderBufferEntry,
         execution: &RiscvCpuExecutionEvent,
         consumed_requests: &[MemoryRequestId],
-    ) -> Option<u64> {
+    ) -> Option<(u64, u64)> {
         let index = self
             .live_speculative_executions
             .iter()
@@ -336,8 +343,9 @@ impl O3RuntimeState {
             && issued.execution == *execution.execution();
         if valid {
             self.validate_live_speculative_producer(entry.sequence());
-            Some(issued.issue_tick)
+            Some((issued.issue_tick, issued.admitted_writeback_tick))
         } else {
+            self.remove_live_writeback_sequence(issued.sequence);
             self.invalidate_live_speculative_execution_chain(entry.sequence());
             None
         }
@@ -369,8 +377,7 @@ impl O3RuntimeState {
             .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
         self.live_scalar_memory_younger_sequences
             .retain(|sequence| *sequence <= branch_sequence);
-        self.live_speculative_executions
-            .retain(|execution| execution.sequence <= branch_sequence);
+        self.retain_live_speculative_executions(|execution| execution.sequence <= branch_sequence);
         self.live_control_dependencies
             .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_control_window_sequences
@@ -392,6 +399,7 @@ impl O3RuntimeState {
                     .contains(&producer)
                 {
                     let removed = self.live_speculative_executions.remove(index).sequence;
+                    self.remove_live_writeback_sequence(removed);
                     if invalidated.insert(removed) {
                         pending.push(removed);
                     }

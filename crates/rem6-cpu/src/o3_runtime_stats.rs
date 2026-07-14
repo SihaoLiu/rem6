@@ -109,6 +109,12 @@ pub struct O3RuntimeStats {
     pub(crate) resource_blocked_row_cycles: u64,
     pub(crate) dependency_blocked_row_cycles: u64,
     pub(crate) max_rows_per_cycle: u64,
+    pub(crate) writeback_port_cycles: u64,
+    pub(crate) writeback_port_admitted_rows: u64,
+    pub(crate) writeback_port_deferred_rows: u64,
+    pub(crate) writeback_port_deferred_row_cycles: u64,
+    pub(crate) writeback_port_max_ready_rows_per_cycle: u64,
+    pub(crate) writeback_port_max_deferred_rows: u64,
     pub(crate) live_retire_gate_scheduled_waits: u64,
     pub(crate) live_retire_gate_wait_ticks: u64,
     pub(crate) live_retire_gate_max_wait_ticks: u64,
@@ -730,6 +736,30 @@ impl O3RuntimeStats {
         self.max_rows_per_cycle
     }
 
+    pub const fn writeback_port_cycles(self) -> u64 {
+        self.writeback_port_cycles
+    }
+
+    pub const fn writeback_port_admitted_rows(self) -> u64 {
+        self.writeback_port_admitted_rows
+    }
+
+    pub const fn writeback_port_deferred_rows(self) -> u64 {
+        self.writeback_port_deferred_rows
+    }
+
+    pub const fn writeback_port_deferred_row_cycles(self) -> u64 {
+        self.writeback_port_deferred_row_cycles
+    }
+
+    pub const fn writeback_port_max_ready_rows_per_cycle(self) -> u64 {
+        self.writeback_port_max_ready_rows_per_cycle
+    }
+
+    pub const fn writeback_port_max_deferred_rows(self) -> u64 {
+        self.writeback_port_max_deferred_rows
+    }
+
     pub const fn live_retire_gate_scheduled_waits(self) -> u64 {
         self.live_retire_gate_scheduled_waits
     }
@@ -788,6 +818,12 @@ impl O3RuntimeStats {
             || self.resource_blocked_row_cycles != 0
             || self.dependency_blocked_row_cycles != 0
             || self.max_rows_per_cycle != 0
+            || self.writeback_port_cycles != 0
+            || self.writeback_port_admitted_rows != 0
+            || self.writeback_port_deferred_rows != 0
+            || self.writeback_port_deferred_row_cycles != 0
+            || self.writeback_port_max_ready_rows_per_cycle != 0
+            || self.writeback_port_max_deferred_rows != 0
             || self.live_retire_gate_scheduled_waits != 0
             || self.live_retire_gate_wait_ticks != 0
             || self.live_retire_gate_max_wait_ticks != 0

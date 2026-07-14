@@ -8,6 +8,7 @@ pub(super) struct O3LiveRetiredInstruction {
     pub(super) request: MemoryRequestId,
     pub(super) sequence: u64,
     pub(super) issue_tick: u64,
+    pub(super) admitted_writeback_tick: u64,
     pub(super) commit_tick: u64,
     pub(super) rob_occupancy: usize,
     pub(super) rob_commits: usize,
@@ -152,8 +153,9 @@ impl O3RuntimeState {
             self.snapshot.reorder_buffer.drain(index..);
             self.live_scalar_memory_younger_sequences
                 .retain(|sequence| *sequence < boundary_sequence);
-            self.live_speculative_executions
-                .retain(|speculative| speculative.sequence < boundary_sequence);
+            self.retain_live_speculative_executions(|speculative| {
+                speculative.sequence < boundary_sequence
+            });
             self.live_control_dependencies
                 .retain(|sequence, _| *sequence < boundary_sequence);
             self.live_control_window_sequences
@@ -165,8 +167,8 @@ impl O3RuntimeState {
             return;
         }
         let entry = self.snapshot.reorder_buffer[index];
-        let speculative_issue_tick =
-            self.take_live_speculative_issue_tick(entry, execution, consumed_requests);
+        let speculative_timing =
+            self.take_live_speculative_issue_timing(entry, execution, consumed_requests);
         let dependencies = self.record_scalar_integer_dependencies(&execution.instruction());
         let rename_destination = staged_rename_entry(entry).filter(|destination| {
             execution_writes_rename_destination(execution.execution(), *destination)
@@ -175,7 +177,9 @@ impl O3RuntimeState {
             self.publish_live_rename_entry(rename_destination);
         }
 
-        self.snapshot.reorder_buffer[index].mark_ready_at(retire_tick);
+        let admitted_writeback_tick =
+            speculative_timing.map_or(retire_tick, |(_, admitted_tick)| admitted_tick);
+        self.snapshot.reorder_buffer[index].mark_ready_at(admitted_writeback_tick);
         let rob_occupancy = self.snapshot.reorder_buffer.len();
         let (rob_commits, _) = rob_commit_boundary(&self.snapshot);
         let rob_commit_blocked = rob_commits <= index;
@@ -191,8 +195,10 @@ impl O3RuntimeState {
             .push(O3LiveRetiredInstruction {
                 request: execution.fetch().request_id(),
                 sequence: entry.sequence(),
-                issue_tick: speculative_issue_tick
+                issue_tick: speculative_timing
+                    .map(|(issue_tick, _)| issue_tick)
                     .unwrap_or_else(|| retire_tick.saturating_sub(fu_latency_cycles)),
+                admitted_writeback_tick,
                 commit_tick,
                 rob_occupancy,
                 rob_commits,
@@ -223,7 +229,13 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_speculative_executions(&mut self) {
-        self.live_speculative_executions.clear();
+        for execution in self
+            .live_speculative_executions
+            .drain(..)
+            .collect::<Vec<_>>()
+        {
+            self.remove_live_writeback_sequence(execution.sequence);
+        }
     }
 
     pub(crate) fn live_scalar_memory_younger_wakeup_seed(
@@ -253,8 +265,7 @@ impl O3RuntimeState {
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);
         self.live_scalar_memory_younger_sequences
             .retain(|younger| *younger < sequence);
-        self.live_speculative_executions
-            .retain(|execution| execution.sequence < sequence);
+        self.retain_live_speculative_executions(|execution| execution.sequence < sequence);
         self.live_control_dependencies
             .retain(|dependent, _| *dependent < sequence);
         self.live_control_window_sequences
@@ -382,6 +393,25 @@ impl O3RuntimeState {
                 entry.architectural(),
             )
         });
+    }
+
+    pub(super) fn retain_live_speculative_executions<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(&O3LiveSpeculativeExecution) -> bool,
+    {
+        let mut retained = Vec::with_capacity(self.live_speculative_executions.len());
+        for execution in self
+            .live_speculative_executions
+            .drain(..)
+            .collect::<Vec<_>>()
+        {
+            if keep(&execution) {
+                retained.push(execution);
+            } else {
+                self.remove_live_writeback_sequence(execution.sequence);
+            }
+        }
+        self.live_speculative_executions = retained;
     }
 }
 
@@ -615,34 +645,38 @@ mod tests {
         let first_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), first)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            first_candidate,
-            &[request(11)],
-            10,
-            RiscvExecutionRecord::new(
-                first,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(5).unwrap(), 5)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                first_candidate,
+                &[request(11)],
+                10,
+                RiscvExecutionRecord::new(
+                    first,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(5).unwrap(), 5)],
+                    None,
+                ),
+            )
+            .unwrap();
         let second_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), second)
             .expect("the first younger ALU should wake the second");
-        assert_eq!(second_candidate.issue_tick(10), 11);
-        runtime.record_live_speculative_execution(
-            second_candidate,
-            &[request(12)],
-            10,
-            RiscvExecutionRecord::new(
-                second,
-                0x8008,
-                0x800c,
-                vec![RegisterWrite::new(Register::new(6).unwrap(), 16)],
-                None,
-            ),
-        );
+        assert_eq!(second_candidate.issue_tick(10), 10);
+        runtime
+            .record_live_speculative_execution(
+                second_candidate,
+                &[request(12)],
+                10,
+                RiscvExecutionRecord::new(
+                    second,
+                    0x8008,
+                    0x800c,
+                    vec![RegisterWrite::new(Register::new(6).unwrap(), 16)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let third_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x800c), third)
@@ -655,7 +689,7 @@ mod tests {
                 RegisterWrite::new(Register::new(6).unwrap(), 16),
             ]
         );
-        assert_eq!(third_candidate.issue_tick(10), 12);
+        assert_eq!(third_candidate.issue_tick(10), 11);
     }
 
     #[test]
@@ -858,18 +892,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
@@ -881,7 +917,9 @@ mod tests {
         let trace = runtime.trace_records().last().copied().unwrap();
         assert_eq!(trace.issue_tick(), 10);
         assert_eq!(trace.writeback_tick(), 10);
-        assert_eq!(trace.commit_tick(), 30);
+        assert_eq!(trace.admitted_writeback_tick(), Some(10));
+        assert_eq!(trace.fu_latency_cycles(), 0);
+        assert_eq!(trace.commit_tick(), 10);
     }
 
     #[test]
@@ -897,18 +935,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(2), request(3)],
-            10,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(2), request(3)],
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
@@ -920,7 +960,9 @@ mod tests {
         let trace = runtime.trace_records().last().copied().unwrap();
         assert_eq!(trace.issue_tick(), 10);
         assert_eq!(trace.writeback_tick(), 10);
-        assert_eq!(trace.commit_tick(), 30);
+        assert_eq!(trace.admitted_writeback_tick(), Some(10));
+        assert_eq!(trace.fu_latency_cycles(), 0);
+        assert_eq!(trace.commit_tick(), 10);
     }
 
     #[test]
@@ -997,18 +1039,20 @@ mod tests {
         let producer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            producer_candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                producer,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                producer_candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    producer,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let consumer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), consumer)
@@ -1018,7 +1062,7 @@ mod tests {
             consumer_candidate.forwarded_register_writes(),
             &[RegisterWrite::new(Register::new(4).unwrap(), 1)]
         );
-        assert_eq!(consumer_candidate.issue_tick(10), 11);
+        assert_eq!(consumer_candidate.issue_tick(10), 10);
     }
 
     #[test]
@@ -1041,34 +1085,38 @@ mod tests {
         let first_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), first)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            first_candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                first,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 5)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                first_candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    first,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 5)],
+                    None,
+                ),
+            )
+            .unwrap();
         let second_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), second)
             .unwrap();
-        assert_eq!(second_candidate.issue_tick(10), 11);
-        runtime.record_live_speculative_execution(
-            second_candidate,
-            &[request(3)],
-            10,
-            RiscvExecutionRecord::new(
-                second,
-                0x8008,
-                0x800c,
-                vec![RegisterWrite::new(Register::new(5).unwrap(), 16)],
-                None,
-            ),
-        );
+        assert_eq!(second_candidate.issue_tick(10), 10);
+        runtime
+            .record_live_speculative_execution(
+                second_candidate,
+                &[request(3)],
+                10,
+                RiscvExecutionRecord::new(
+                    second,
+                    0x8008,
+                    0x800c,
+                    vec![RegisterWrite::new(Register::new(5).unwrap(), 16)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let third_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x800c), third)
@@ -1081,7 +1129,7 @@ mod tests {
                 RegisterWrite::new(Register::new(5).unwrap(), 16),
             ]
         );
-        assert_eq!(third_candidate.issue_tick(10), 12);
+        assert_eq!(third_candidate.issue_tick(10), 11);
     }
 
     #[test]
@@ -1108,21 +1156,23 @@ mod tests {
             let candidate = runtime
                 .live_speculative_issue_candidate(Address::new(pc), instruction)
                 .unwrap();
-            runtime.record_live_speculative_execution(
-                candidate,
-                &[request(request_id)],
-                10,
-                RiscvExecutionRecord::new(
-                    instruction,
-                    pc,
-                    pc + 4,
-                    vec![RegisterWrite::new(
-                        Register::new(destination).unwrap(),
-                        value,
-                    )],
-                    None,
-                ),
-            );
+            runtime
+                .record_live_speculative_execution(
+                    candidate,
+                    &[request(request_id)],
+                    10,
+                    RiscvExecutionRecord::new(
+                        instruction,
+                        pc,
+                        pc + 4,
+                        vec![RegisterWrite::new(
+                            Register::new(destination).unwrap(),
+                            value,
+                        )],
+                        None,
+                    ),
+                )
+                .unwrap();
         }
         assert_eq!(runtime.live_speculative_executions.len(), 3);
         let mismatched = execution_event(first, 0x8004, 2, 4);
@@ -1147,18 +1197,20 @@ mod tests {
         let producer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            producer_candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                producer,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(3).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                producer_candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    producer,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(3).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let consumer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), consumer)
@@ -1168,7 +1220,7 @@ mod tests {
             consumer_candidate.forwarded_register_writes(),
             &[RegisterWrite::new(Register::new(3).unwrap(), 1)]
         );
-        assert_eq!(consumer_candidate.issue_tick(10), 11);
+        assert_eq!(consumer_candidate.issue_tick(10), 10);
     }
 
     #[test]
@@ -1188,33 +1240,37 @@ mod tests {
         let producer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            producer_candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                producer,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                producer_candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    producer,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
         let consumer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), consumer)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            consumer_candidate,
-            &[request(3)],
-            10,
-            RiscvExecutionRecord::new(
-                consumer,
-                0x8008,
-                0x800c,
-                vec![RegisterWrite::new(Register::new(5).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                consumer_candidate,
+                &[request(3)],
+                10,
+                RiscvExecutionRecord::new(
+                    consumer,
+                    0x8008,
+                    0x800c,
+                    vec![RegisterWrite::new(Register::new(5).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
@@ -1244,18 +1300,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
@@ -1292,18 +1350,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(2), request(3)],
-            10,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(2), request(3)],
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
@@ -1339,18 +1399,20 @@ mod tests {
             let candidate = runtime
                 .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
                 .unwrap();
-            runtime.record_live_speculative_execution(
-                candidate,
-                &consumed_requests,
-                10,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            );
+            runtime
+                .record_live_speculative_execution(
+                    candidate,
+                    &consumed_requests,
+                    10,
+                    RiscvExecutionRecord::new(
+                        younger_instruction,
+                        0x8004,
+                        0x8008,
+                        vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                        None,
+                    ),
+                )
+                .unwrap();
 
             assert!(runtime.live_speculative_executions.is_empty());
             assert!(runtime
@@ -1372,18 +1434,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(2)],
-            10,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(2)],
+                10,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
         assert_eq!(runtime.live_speculative_executions.len(), 1);
 
         let checkpoint = runtime.checkpoint_payload();
@@ -1393,35 +1457,39 @@ mod tests {
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
 
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(3)],
-            20,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(3)],
+                20,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
         runtime.discard_live_speculative_executions();
         assert!(runtime.live_speculative_executions.is_empty());
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(4)],
-            21,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(4)],
+                21,
+                RiscvExecutionRecord::new(
+                    younger_instruction,
+                    0x8004,
+                    0x8008,
+                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
+                    None,
+                ),
+            )
+            .unwrap();
         runtime.discard_live_staged_instructions();
         assert!(runtime.live_speculative_executions.is_empty());
     }

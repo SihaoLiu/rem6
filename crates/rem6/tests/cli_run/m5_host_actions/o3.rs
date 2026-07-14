@@ -52,6 +52,8 @@ mod runtime;
 mod scoped_issue;
 #[path = "o3/switch.rs"]
 mod switch;
+#[path = "o3/writeback_port.rs"]
+mod writeback_port;
 
 #[test]
 fn rem6_run_records_o3_runtime_stats_after_detailed_switch() {

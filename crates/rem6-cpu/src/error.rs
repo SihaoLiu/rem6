@@ -10,7 +10,8 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId, TransportError};
 use crate::{
     BiModeBranchPredictorError, BranchPredictorError, CpuId, CpuTranslationFrontendError,
     GShareBranchPredictorError, InOrderPipelineError, MultiperspectivePerceptronError,
-    ReturnAddressStackError, TageScLBranchPredictorError, TournamentBranchPredictorError,
+    O3RuntimeError, ReturnAddressStackError, TageScLBranchPredictorError,
+    TournamentBranchPredictorError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -230,6 +231,7 @@ pub enum RiscvCpuError {
     MultiperspectivePerceptron(MultiperspectivePerceptronError),
     ReturnAddressStack(ReturnAddressStackError),
     InOrderPipeline(InOrderPipelineError),
+    O3Runtime(O3RuntimeError),
     Isa(RiscvError),
     Memory(MemoryError),
     Mmio(MmioError),
@@ -371,6 +373,7 @@ impl fmt::Display for RiscvCpuError {
             Self::MultiperspectivePerceptron(error) => write!(formatter, "{error}"),
             Self::ReturnAddressStack(error) => write!(formatter, "{error}"),
             Self::InOrderPipeline(error) => write!(formatter, "{error}"),
+            Self::O3Runtime(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Mmio(error) => write!(formatter, "{error}"),
@@ -392,6 +395,7 @@ impl Error for RiscvCpuError {
             Self::MultiperspectivePerceptron(error) => Some(error),
             Self::ReturnAddressStack(error) => Some(error),
             Self::InOrderPipeline(error) => Some(error),
+            Self::O3Runtime(error) => Some(error),
             Self::DataTranslation(error) => Some(error),
             Self::FetchPmpAccess { error, .. } => Some(error),
             Self::FetchPmaAccess { error, .. } => Some(error),

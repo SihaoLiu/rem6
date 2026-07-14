@@ -83,15 +83,15 @@ impl O3RuntimeState {
         head: O3LiveIssueHeadReservation,
         consumed_requests: &[MemoryRequestId],
         execution: RiscvExecutionRecord,
-    ) -> bool {
+    ) -> Result<bool, O3RuntimeError> {
         if let Some(recorded) = self
             .live_speculative_executions
             .iter()
             .find(|recorded| recorded.sequence == head.sequence)
         {
-            return recorded.consumed_requests == consumed_requests
+            return Ok(recorded.consumed_requests == consumed_requests
                 && recorded.issue_tick == head.issue_tick
-                && recorded.execution == execution;
+                && recorded.execution == execution);
         }
         let Some(entry) = self
             .snapshot
@@ -100,7 +100,7 @@ impl O3RuntimeState {
             .copied()
             .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
         else {
-            return false;
+            return Ok(false);
         };
         if !valid_live_speculative_fetch_identity(consumed_requests)
             || entry.pc() != Address::new(execution.pc())
@@ -113,7 +113,29 @@ impl O3RuntimeState {
                 !execution_writes_rename_destination(&execution, destination)
             })
         {
-            return false;
+            return Ok(false);
+        }
+        let raw_ready_tick = head
+            .issue_tick
+            .checked_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                execution.instruction(),
+            ))
+            .ok_or(O3RuntimeError::WritebackTickOverflow {
+                tick: head.issue_tick,
+            })?;
+        let consumes_writeback_slot = staged_rename_entry(entry).is_some();
+        let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
+            head.sequence,
+            raw_ready_tick,
+            consumes_writeback_slot,
+        )?;
+        if let Some(entry) = self
+            .snapshot
+            .reorder_buffer
+            .iter_mut()
+            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+        {
+            entry.mark_ready_at(admitted_writeback_tick);
         }
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
@@ -121,11 +143,14 @@ impl O3RuntimeState {
                 sequence: head.sequence,
                 producer_sequences: Vec::new(),
                 issue_tick: head.issue_tick,
+                raw_ready_tick,
+                admitted_writeback_tick,
+                writeback_slot,
                 execution,
             });
         self.live_speculative_executions
             .sort_by_key(|recorded| recorded.sequence);
-        true
+        Ok(true)
     }
 
     pub(crate) fn schedule_live_speculative_issues(
@@ -134,14 +159,14 @@ impl O3RuntimeState {
         head: O3LiveIssueHeadReservation,
         earliest_tick: u64,
         requests: &[O3LiveIssueRequest],
-    ) {
+    ) -> Result<(), O3RuntimeError> {
         if !self
             .snapshot
             .reorder_buffer
             .iter()
             .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
         {
-            return;
+            return Ok(());
         }
         let mut tick = earliest_tick;
         loop {
@@ -273,7 +298,7 @@ impl O3RuntimeState {
                     &request.consumed_requests,
                     tick,
                     execution,
-                );
+                )?;
                 if self.live_issue_request_is_recorded(request) {
                     recorded_sequences.insert(sequence);
                 }
@@ -323,6 +348,7 @@ impl O3RuntimeState {
                 break;
             }
         }
+        Ok(())
     }
 
     fn live_issue_request_is_recorded(&self, request: &O3LiveIssueRequest) -> bool {

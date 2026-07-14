@@ -1070,18 +1070,20 @@ mod tests {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), dependent)
             .expect("forwarded load should wake the dependent ALU");
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[memory_request(12)],
-            32,
-            RiscvExecutionRecord::new(
-                dependent,
-                0x8008,
-                0x800c,
-                vec![RegisterWrite::new(reg(13), 0x2b)],
-                None,
-            ),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[memory_request(12)],
+                32,
+                RiscvExecutionRecord::new(
+                    dependent,
+                    0x8008,
+                    0x800c,
+                    vec![RegisterWrite::new(reg(13), 0x2b)],
+                    None,
+                ),
+            )
+            .unwrap();
         assert_eq!(runtime.live_speculative_executions.len(), 1);
 
         let mut retry = store.clone();

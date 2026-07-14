@@ -83,3 +83,157 @@ fn o3_writeback_width_defaults_to_one_and_rejects_out_of_range_updates() {
     assert!(runtime.set_writeback_width(MIN_RISCV_O3_WRITEBACK_WIDTH));
     assert_eq!(runtime.writeback_width(), MIN_RISCV_O3_WRITEBACK_WIDTH);
 }
+
+#[test]
+fn writeback_width_one_reserves_oldest_same_cycle_row_first() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+
+    let reservations = runtime
+        .reserve_writeback_completions([
+            O3LiveWritebackReady::fixed_fu(4, 20),
+            O3LiveWritebackReady::fixed_fu(5, 20),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        reservation_rows(&reservations),
+        vec![(4, 20, 20, 0, true), (5, 20, 21, 0, true)]
+    );
+}
+
+#[test]
+fn writeback_width_two_admits_exact_fit_same_cycle_rows() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(2));
+
+    let reservations = runtime
+        .reserve_writeback_completions([
+            O3LiveWritebackReady::fixed_fu(4, 20),
+            O3LiveWritebackReady::fixed_fu(5, 20),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        reservation_rows(&reservations),
+        vec![(4, 20, 20, 0, true), (5, 20, 20, 1, true)]
+    );
+}
+
+#[test]
+fn writeback_planner_does_not_introduce_future_raw_ready_rows_early() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+
+    let reservations = runtime
+        .reserve_writeback_completions([
+            O3LiveWritebackReady::fixed_fu(1, 10),
+            O3LiveWritebackReady::fixed_fu(2, 30),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        reservation_rows(&reservations),
+        vec![(1, 10, 10, 0, true), (2, 30, 30, 0, true)]
+    );
+    let stats = runtime.stats();
+    assert_eq!(stats.writeback_port_cycles(), 2);
+    assert_eq!(stats.writeback_port_admitted_rows(), 2);
+    assert_eq!(stats.writeback_port_deferred_rows(), 0);
+    assert_eq!(stats.writeback_port_deferred_row_cycles(), 0);
+    assert_eq!(stats.writeback_port_max_ready_rows_per_cycle(), 1);
+    assert_eq!(stats.writeback_port_max_deferred_rows(), 0);
+}
+
+#[test]
+fn writeback_reentry_returns_identical_reservation_without_recounting() {
+    let mut runtime = O3RuntimeState::default();
+
+    let first = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(9, 12)])
+        .unwrap();
+    let stats = runtime.stats();
+    let second = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(9, 12)])
+        .unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(runtime.stats(), stats);
+    assert_eq!(
+        reservation_rows(&runtime.writeback_reservations()),
+        vec![(9, 12, 12, 0, true)]
+    );
+}
+
+#[test]
+fn partial_reentry_cannot_overbook_or_recount_writeback() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+    let first = runtime
+        .reserve_writeback_completions([
+            O3LiveWritebackReady::fixed_fu(4, 20),
+            O3LiveWritebackReady::fixed_fu(5, 20),
+        ])
+        .unwrap();
+    let stats = runtime.stats();
+
+    let second = runtime
+        .reserve_writeback_completions([
+            O3LiveWritebackReady::fixed_fu(5, 20),
+            O3LiveWritebackReady::fixed_fu(4, 20),
+        ])
+        .unwrap();
+
+    assert_eq!(reservation_rows(&second), reservation_rows(&first));
+    assert_eq!(runtime.stats(), stats);
+    assert_eq!(runtime.writeback_calendar.occupied_slots(20), vec![0]);
+    assert_eq!(runtime.writeback_calendar.occupied_slots(21), vec![0]);
+}
+
+#[test]
+fn reentry_rejects_changed_raw_ready_tick() {
+    let mut runtime = O3RuntimeState::default();
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(4, 20)])
+        .unwrap();
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(4, 21)])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackReservationMismatch {
+            sequence: 4,
+            existing_raw_ready_tick: 20,
+            requested_raw_ready_tick: 21,
+        }
+    );
+}
+
+#[test]
+fn writeback_width_change_is_rejected_while_reservations_are_live() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(4, 20)])
+        .unwrap();
+
+    assert!(!runtime.set_writeback_width(2));
+    assert_eq!(runtime.writeback_width(), 1);
+}
+
+fn reservation_rows(reservations: &[O3WritebackReservation]) -> Vec<(u64, u64, u64, usize, bool)> {
+    reservations
+        .iter()
+        .map(|reservation| {
+            (
+                reservation.sequence(),
+                reservation.raw_ready_tick(),
+                reservation.admitted_tick(),
+                reservation.slot(),
+                reservation.decision_counted(),
+            )
+        })
+        .collect()
+}

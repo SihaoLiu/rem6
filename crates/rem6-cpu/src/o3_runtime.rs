@@ -7,10 +7,7 @@ use rem6_memory::{Address, MemoryRequestId};
 
 use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
-use crate::o3_pipeline::{
-    O3PendingStateSnapshot, O3PipelineError, O3PipelineStage, O3WritebackTransferPolicy,
-    O3WritebackTransferSnapshot,
-};
+use crate::o3_pipeline::{O3PendingStateSnapshot, O3PipelineError};
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
 use crate::riscv_defaults::{
@@ -53,6 +50,8 @@ mod o3_runtime_retire;
 mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
 mod o3_runtime_stats;
+#[path = "o3_runtime_writeback.rs"]
+mod o3_runtime_writeback;
 #[cfg(test)]
 #[path = "o3_runtime_writeback_tests.rs"]
 mod o3_runtime_writeback_tests;
@@ -82,6 +81,9 @@ pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
+pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
+#[cfg(test)]
+pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
 pub(crate) use o3_source_operands::{
     o3_direct_conditional_sources, o3_predicted_scalar_descendant_operands,
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
@@ -203,6 +205,9 @@ pub struct O3RuntimeState {
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     live_issue_cycle_ticks: BTreeSet<u64>,
+    writeback_calendar: O3WritebackReservationCalendar,
+    live_writeback_cycle_ticks: BTreeSet<u64>,
+    live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
     live_control_dependencies: BTreeMap<u64, u64>,
     live_control_window_sequences: BTreeSet<u64>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
@@ -243,6 +248,7 @@ impl O3RuntimeState {
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
         self.live_issue_cycle_ticks.clear();
+        self.clear_live_writeback_state();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
         self.deferred_scalar_memory_execution = None;
@@ -299,21 +305,15 @@ impl O3RuntimeState {
         {
             return false;
         }
+        if !self.writeback_calendar.is_empty()
+            || !self.live_writeback_ready_rows_by_tick.is_empty()
+            || !self.live_writeback_cycle_ticks.is_empty()
+        {
+            return false;
+        }
 
-        let pending_state = self.snapshot.pending_state();
-        let resolved_dependency_scopes = pending_state.resolved_dependency_scopes().to_vec();
-        let ready = pending_state.ready().to_vec();
-        let deferred = pending_state.writeback().deferred().to_vec();
-        self.snapshot.pending_state = O3PendingStateSnapshot::new(
-            resolved_dependency_scopes,
-            ready,
-            O3WritebackTransferSnapshot::new(
-                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, writeback_width, 0)
-                    .expect("validated RISC-V O3 writeback policy is valid"),
-                deferred,
-            ),
-        )
-        .expect("rebuilt O3 pending-state snapshot is valid");
+        self.rebuild_writeback_policy(writeback_width)
+            .expect("rebuilt O3 pending-state snapshot is valid");
         debug_assert_eq!(self.writeback_width(), writeback_width);
         true
     }
@@ -386,6 +386,8 @@ impl O3RuntimeState {
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.live_issue_cycle_ticks.clear();
+        self.live_writeback_cycle_ticks.clear();
+        self.live_writeback_ready_rows_by_tick.clear();
         let live_rob_occupancy = self
             .live_retired_instructions
             .iter()
@@ -612,6 +614,9 @@ impl Default for O3RuntimeState {
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
             live_issue_cycle_ticks: BTreeSet::new(),
+            writeback_calendar: O3WritebackReservationCalendar::default(),
+            live_writeback_cycle_ticks: BTreeSet::new(),
+            live_writeback_ready_rows_by_tick: BTreeMap::new(),
             live_control_dependencies: BTreeMap::new(),
             live_control_window_sequences: BTreeSet::new(),
             deferred_scalar_memory_execution: None,
@@ -1448,6 +1453,24 @@ pub enum O3RuntimeError {
     InvalidPendingState {
         error: O3PipelineError,
     },
+    DuplicateWritebackReadySequence {
+        sequence: u64,
+    },
+    WritebackReservationMismatch {
+        sequence: u64,
+        existing_raw_ready_tick: u64,
+        requested_raw_ready_tick: u64,
+    },
+    WritebackCalendarSlotOccupied {
+        tick: u64,
+        slot: usize,
+    },
+    StableWritebackQueueNotEmpty {
+        deferred: usize,
+    },
+    WritebackTickOverflow {
+        tick: u64,
+    },
     CheckpointValueTooLarge {
         field: &'static str,
         value: usize,
@@ -1520,6 +1543,29 @@ impl fmt::Display for O3RuntimeError {
             Self::InvalidPendingState { error } => {
                 write!(formatter, "O3 runtime checkpoint has invalid pending state: {error}")
             }
+            Self::DuplicateWritebackReadySequence { sequence } => {
+                write!(formatter, "O3 runtime writeback ready row repeats sequence {sequence}")
+            }
+            Self::WritebackReservationMismatch {
+                sequence,
+                existing_raw_ready_tick,
+                requested_raw_ready_tick,
+            } => write!(
+                formatter,
+                "O3 runtime writeback reservation for sequence {sequence} has raw-ready tick {existing_raw_ready_tick} but was requested at {requested_raw_ready_tick}"
+            ),
+            Self::WritebackCalendarSlotOccupied { tick, slot } => write!(
+                formatter,
+                "O3 runtime writeback calendar tick {tick} slot {slot} is already occupied"
+            ),
+            Self::StableWritebackQueueNotEmpty { deferred } => write!(
+                formatter,
+                "O3 runtime writeback reservation requires an empty stable deferred queue but found {deferred} rows"
+            ),
+            Self::WritebackTickOverflow { tick } => write!(
+                formatter,
+                "O3 runtime writeback reservation tick overflowed after {tick}"
+            ),
             Self::CheckpointValueTooLarge {
                 field,
                 value,

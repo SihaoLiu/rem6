@@ -20,7 +20,9 @@ fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() 
     assert_eq!(candidate.issue_tick(11), 11);
 
     let execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
-    runtime.record_live_speculative_execution(candidate, &[request(11)], 11, execution.clone());
+    runtime
+        .record_live_speculative_execution(candidate, &[request(11)], 11, execution.clone())
+        .unwrap();
     runtime.retire_live_staged_instruction(
         &RiscvCpuExecutionEvent::new(fetch_event(0x8004, 11), branch, execution),
         &[request(11)],
@@ -116,12 +118,14 @@ fn inner_control_uses_staged_outer_ownership_before_execution_record() {
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        outer_candidate,
-        &[request(11)],
-        11,
-        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
-    );
+    runtime
+        .record_live_speculative_execution(
+            outer_candidate,
+            &[request(11)],
+            11,
+            RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+        )
+        .unwrap();
 
     assert!(runtime
         .live_speculative_issue_candidate(Address::new(0x8008), inner)
@@ -175,12 +179,14 @@ fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        outer_candidate,
-        &[request(11)],
-        11,
-        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
-    );
+    runtime
+        .record_live_speculative_execution(
+            outer_candidate,
+            &[request(11)],
+            11,
+            RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+        )
+        .unwrap();
 
     runtime.validate_live_speculative_producer(outer_sequence);
 
@@ -345,12 +351,14 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        branch_candidate,
-        &[request(11)],
-        11,
-        branch_execution.clone(),
-    );
+    runtime
+        .record_live_speculative_execution(
+            branch_candidate,
+            &[request(11)],
+            11,
+            branch_execution.clone(),
+        )
+        .unwrap();
 
     let multiply_execution = RiscvExecutionRecord::new(
         multiply,
@@ -359,12 +367,14 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
         vec![RegisterWrite::new(reg(7), 42)],
         None,
     );
-    runtime.record_live_speculative_execution(
-        multiply_candidate,
-        &[request(12)],
-        12,
-        multiply_execution,
-    );
+    runtime
+        .record_live_speculative_execution(
+            multiply_candidate,
+            &[request(12)],
+            12,
+            multiply_execution,
+        )
+        .unwrap();
     let dependent_execution = RiscvExecutionRecord::new(
         dependent,
         0x800c,
@@ -375,12 +385,14 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let dependent_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), dependent)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        dependent_candidate,
-        &[request(13)],
-        14,
-        dependent_execution,
-    );
+    runtime
+        .record_live_speculative_execution(
+            dependent_candidate,
+            &[request(13)],
+            14,
+            dependent_execution,
+        )
+        .unwrap();
     assert_eq!(runtime.live_speculative_executions.len(), 3);
 
     runtime.retire_live_staged_instruction(
@@ -418,12 +430,14 @@ fn predicted_mul_wakes_dependent_add_candidate() {
         vec![RegisterWrite::new(reg(7), 42)],
         None,
     );
-    runtime.record_live_speculative_execution(
-        multiply_candidate,
-        &[request(11)],
-        12,
-        multiply_execution.clone(),
-    );
+    runtime
+        .record_live_speculative_execution(
+            multiply_candidate,
+            &[request(11)],
+            12,
+            multiply_execution.clone(),
+        )
+        .unwrap();
     assert_eq!(
         runtime.live_speculative_execution_ready_tick(&[request(11)], &multiply_execution),
         Some(14)
@@ -465,42 +479,48 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        branch_candidate,
-        &[request(11)],
-        11,
-        branch_execution.clone(),
-    );
+    runtime
+        .record_live_speculative_execution(
+            branch_candidate,
+            &[request(11)],
+            11,
+            branch_execution.clone(),
+        )
+        .unwrap();
     let multiply_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), multiply)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        multiply_candidate,
-        &[request(12)],
-        12,
-        RiscvExecutionRecord::new(
-            multiply,
-            0x8008,
-            0x800c,
-            vec![RegisterWrite::new(reg(7), 42)],
-            None,
-        ),
-    );
+    runtime
+        .record_live_speculative_execution(
+            multiply_candidate,
+            &[request(12)],
+            12,
+            RiscvExecutionRecord::new(
+                multiply,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(reg(7), 42)],
+                None,
+            ),
+        )
+        .unwrap();
     let dependent_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), dependent)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        dependent_candidate,
-        &[request(13)],
-        14,
-        RiscvExecutionRecord::new(
-            dependent,
-            0x800c,
-            0x8010,
-            vec![RegisterWrite::new(reg(8), 43)],
-            None,
-        ),
-    );
+    runtime
+        .record_live_speculative_execution(
+            dependent_candidate,
+            &[request(13)],
+            14,
+            RiscvExecutionRecord::new(
+                dependent,
+                0x800c,
+                0x8010,
+                vec![RegisterWrite::new(reg(8), 43)],
+                None,
+            ),
+        )
+        .unwrap();
     assert_eq!(runtime.live_speculative_executions.len(), 3);
 
     runtime.discard_live_control_descendants_from(branch_sequence);
@@ -594,38 +614,44 @@ fn issued_nested_control_runtime() -> (
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        outer_candidate,
-        &[request(11)],
-        11,
-        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
-    );
+    runtime
+        .record_live_speculative_execution(
+            outer_candidate,
+            &[request(11)],
+            11,
+            RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+        )
+        .unwrap();
 
     let inner_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), inner)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        inner_candidate,
-        &[request(12)],
-        12,
-        RiscvExecutionRecord::new(inner, 0x8008, 0x800c, Vec::new(), None),
-    );
+    runtime
+        .record_live_speculative_execution(
+            inner_candidate,
+            &[request(12)],
+            12,
+            RiscvExecutionRecord::new(inner, 0x8008, 0x800c, Vec::new(), None),
+        )
+        .unwrap();
 
     let descendant_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), descendant)
         .unwrap();
-    runtime.record_live_speculative_execution(
-        descendant_candidate,
-        &[request(13)],
-        13,
-        RiscvExecutionRecord::new(
-            descendant,
-            0x800c,
-            0x8010,
-            vec![RegisterWrite::new(reg(9), 42)],
-            None,
-        ),
-    );
+    runtime
+        .record_live_speculative_execution(
+            descendant_candidate,
+            &[request(13)],
+            13,
+            RiscvExecutionRecord::new(
+                descendant,
+                0x800c,
+                0x8010,
+                vec![RegisterWrite::new(reg(9), 42)],
+                None,
+            ),
+        )
+        .unwrap();
     (runtime, outer, inner, descendant)
 }
 
@@ -668,12 +694,14 @@ fn issued_three_deep_control_runtime() -> (
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .unwrap();
-        runtime.record_live_speculative_execution(
-            candidate,
-            &[request(sequence)],
-            sequence,
-            RiscvExecutionRecord::new(instruction, pc, next_pc, Vec::new(), None),
-        );
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(sequence)],
+                sequence,
+                RiscvExecutionRecord::new(instruction, pc, next_pc, Vec::new(), None),
+            )
+            .unwrap();
     }
     (runtime, outer, middle, inner)
 }

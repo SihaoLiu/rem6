@@ -46,6 +46,7 @@ pub struct O3RuntimeTraceRecord {
     branch_squashed_target: Option<Address>,
     fu_latency_class: Option<O3RuntimeFuLatencyClass>,
     fu_latency_cycles: u64,
+    admitted_writeback_tick: Option<u64>,
     system_event: bool,
 }
 
@@ -355,6 +356,7 @@ impl O3RuntimeTraceRecord {
             branch_squashed_target,
             fu_latency_class,
             fu_latency_cycles,
+            admitted_writeback_tick: None,
             system_event,
         }
     }
@@ -372,6 +374,9 @@ impl O3RuntimeTraceRecord {
     }
 
     pub fn writeback_tick(self) -> u64 {
+        if let Some(tick) = self.admitted_writeback_tick {
+            return tick;
+        }
         self.tick
             .saturating_add(self.fu_latency_cycles)
             .max(self.tick.saturating_add(self.lsq_data_latency_ticks))
@@ -588,6 +593,17 @@ impl O3RuntimeTraceRecord {
 
     pub const fn fu_latency_cycles(self) -> u64 {
         self.fu_latency_cycles
+    }
+
+    pub const fn admitted_writeback_tick(self) -> Option<u64> {
+        self.admitted_writeback_tick
+    }
+
+    pub(crate) fn set_admitted_writeback_tick(&mut self, tick: u64) {
+        self.admitted_writeback_tick = Some(tick);
+        if self.current_instruction_committed() {
+            self.commit_tick = self.commit_tick.max(tick);
+        }
     }
 
     pub const fn system_event(self) -> bool {

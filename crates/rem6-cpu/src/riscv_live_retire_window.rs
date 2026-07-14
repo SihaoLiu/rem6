@@ -5,7 +5,7 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
-    o3_runtime::{O3LiveIssueHeadReservation, O3LiveIssueRequest},
+    o3_runtime::{O3LiveIssueHeadReservation, O3LiveIssueRequest, O3RuntimeError},
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
     riscv_o3_window_policy::{
@@ -101,13 +101,36 @@ impl RiscvCore {
         let now = scheduler
             .partition_now(self.partition())
             .map_err(RiscvCpuError::Scheduler)?;
+        if let Some(ready_tick) = state.live_retire_gate.pending_ready_tick() {
+            if ready_tick <= now && state.live_retire_gate.detailed_policy_enabled() {
+                stage_o3_live_retire_window(
+                    state,
+                    window.request,
+                    window.pc,
+                    window.raw,
+                    now,
+                    ready_tick,
+                    window.fetch_events,
+                )?;
+            }
+        }
         if completed_normal_execute_wait {
             return Ok(Some(now));
         }
         if live_speculative_ready_tick.is_some_and(|ready_tick| ready_tick <= now) {
             return Ok(Some(now));
         }
-        let decision = if let Some(ready_tick) = live_speculative_ready_tick {
+        let mut known_ready_tick = live_speculative_ready_tick;
+        if known_ready_tick.is_none()
+            && state.live_retire_gate.pending_ready_tick().is_none()
+            && state.live_retire_gate.detailed_policy_enabled()
+        {
+            known_ready_tick = stage_live_speculative_fu_ready_tick(state, &window, now)?;
+            if known_ready_tick.is_some_and(|ready_tick| ready_tick <= now) {
+                return Ok(Some(now));
+            }
+        }
+        let decision = if let Some(ready_tick) = known_ready_tick {
             state.live_retire_gate.before_retire_at_known_ready_tick(
                 window.request,
                 now,
@@ -129,15 +152,17 @@ impl RiscvCore {
                     .live_retire_gate
                     .pending_ready_tick()
                     .expect("blocked live retire gate has a pending ready tick");
-                stage_o3_live_retire_window(
-                    state,
-                    window.request,
-                    window.pc,
-                    window.raw,
-                    now,
-                    ready_tick,
-                    window.fetch_events,
-                )?;
+                if known_ready_tick.is_none() {
+                    stage_o3_live_retire_window(
+                        state,
+                        window.request,
+                        window.pc,
+                        window.raw,
+                        now,
+                        ready_tick,
+                        window.fetch_events,
+                    )?;
+                }
                 Ok(None)
             }
             RiscvLiveRetireGateDecision::Schedule {
@@ -162,19 +187,50 @@ impl RiscvCore {
                 if let Some(wait_ticks) = created_wait_ticks {
                     state.o3_runtime.record_live_retire_gate_wait(wait_ticks);
                 }
-                stage_o3_live_retire_window(
-                    state,
-                    window.request,
-                    window.pc,
-                    window.raw,
-                    now,
-                    ready_tick,
-                    window.fetch_events,
-                )?;
+                if known_ready_tick.is_none() {
+                    stage_o3_live_retire_window(
+                        state,
+                        window.request,
+                        window.pc,
+                        window.raw,
+                        now,
+                        ready_tick,
+                        window.fetch_events,
+                    )?;
+                }
                 Ok(None)
             }
         }
     }
+}
+
+fn stage_live_speculative_fu_ready_tick(
+    state: &mut RiscvCoreState,
+    window: &RiscvLiveRetireWindowRequest<'_>,
+    now: u64,
+) -> Result<Option<u64>, RiscvCpuError> {
+    let decoded = RiscvInstruction::decode_with_length(window.raw).map_err(RiscvCpuError::Isa)?;
+    let latency = crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction());
+    if latency == 0 {
+        return Ok(None);
+    }
+    let ready_base_tick = now.max(window.fetch_tick);
+    let raw_ready_tick = ready_base_tick
+        .checked_add(latency)
+        .ok_or(RiscvCpuError::O3Runtime(
+            O3RuntimeError::WritebackTickOverflow {
+                tick: ready_base_tick,
+            },
+        ))?;
+    stage_o3_live_retire_window(
+        state,
+        window.request,
+        window.pc,
+        window.raw,
+        now,
+        raw_ready_tick,
+        window.fetch_events,
+    )
 }
 
 fn live_speculative_fu_ready_tick(
@@ -230,7 +286,7 @@ fn stage_o3_live_retire_window(
     earliest_tick: u64,
     ready_tick: u64,
     fetch_events: &[CpuFetchEvent],
-) -> Result<(), RiscvCpuError> {
+) -> Result<Option<u64>, RiscvCpuError> {
     let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
     let next_pc = Address::new(pc.get().wrapping_add(u64::from(decoded.bytes())));
     let younger = completed_fetch_instruction_window(
@@ -251,7 +307,7 @@ fn stage_o3_live_retire_window(
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     ) else {
-        return Ok(());
+        return Ok(None);
     };
     let head_issue_tick = ready_tick.saturating_sub(
         crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction()),
@@ -266,38 +322,43 @@ fn stage_o3_live_retire_window(
             && event.request_id() == current_request
             && event.pc() == pc
     }) else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(head_instruction) = completed_fetch_instruction_starting_with(
         &state.executed_fetches,
         fetch_events,
         head_fetch,
     ) else {
-        return Ok(());
+        return Ok(None);
     };
     if head_instruction.decoded != decoded {
-        return Ok(());
+        return Ok(None);
     }
     let mut head_hart = state.hart.clone();
     head_hart.set_pc(pc.get());
     let head_execution = head_hart
         .execute_decoded(decoded)
         .map_err(RiscvCpuError::Isa)?;
-    if !state.o3_runtime.record_live_issue_head_execution(
-        head,
-        &head_instruction.consumed_requests,
-        head_execution,
-    ) {
-        return Ok(());
+    let head_execution_key = head_execution.clone();
+    if !state
+        .o3_runtime
+        .record_live_issue_head_execution(head, &head_instruction.consumed_requests, head_execution)
+        .map_err(RiscvCpuError::O3Runtime)?
+    {
+        return Ok(None);
     }
-    if younger.is_empty() {
-        return Ok(());
+    let admitted_tick = state
+        .o3_runtime
+        .live_speculative_execution_ready_tick(
+            &head_instruction.consumed_requests,
+            &head_execution_key,
+        )
+        .unwrap_or(ready_tick);
+    if younger.is_empty() || !state.live_retire_gate.detailed_policy_enabled() {
+        return Ok(Some(admitted_tick));
     }
-    if !state.live_retire_gate.detailed_policy_enabled() {
-        return Ok(());
-    }
-    schedule_o3_live_speculative_younger_executions(state, head, &younger, earliest_tick);
-    Ok(())
+    schedule_o3_live_speculative_younger_executions(state, head, &younger, earliest_tick)?;
+    Ok(Some(admitted_tick))
 }
 
 pub(crate) fn stage_o3_scalar_memory_younger_window(
@@ -348,7 +409,8 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         head,
         &younger[..staged_rows.min(younger.len())],
         issue_tick,
-    );
+    )
+    .expect("live scalar memory younger writeback reservation");
 }
 
 pub(crate) fn wake_o3_scalar_memory_younger_window(
@@ -378,7 +440,8 @@ pub(crate) fn wake_o3_scalar_memory_younger_window(
     else {
         return;
     };
-    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick);
+    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick)
+        .expect("live scalar memory wake writeback reservation");
 }
 
 fn accepted_scalar_integer_younger_window(
@@ -406,7 +469,7 @@ fn schedule_o3_live_speculative_younger_executions(
     head: O3LiveIssueHeadReservation,
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
-) {
+) -> Result<(), RiscvCpuError> {
     let requests = younger
         .iter()
         .map(|younger| {
@@ -420,7 +483,8 @@ fn schedule_o3_live_speculative_younger_executions(
     let hart = state.hart.clone();
     state
         .o3_runtime
-        .schedule_live_speculative_issues(&hart, head, issue_tick, &requests);
+        .schedule_live_speculative_issues(&hart, head, issue_tick, &requests)
+        .map_err(RiscvCpuError::O3Runtime)
 }
 
 fn completed_fetch_instruction_window(
@@ -566,12 +630,15 @@ mod tests {
     use rem6_isa_riscv::{
         Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord,
     };
-    use rem6_kernel::PartitionId;
+    use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{AccessSize, AgentId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
     use super::*;
-    use crate::{riscv_live_retire_gate::RiscvLiveRetireGatePolicy, CpuFetchRecord};
+    use crate::{
+        o3_runtime::O3LiveWritebackReady, riscv_live_retire_gate::RiscvLiveRetireGatePolicy,
+        CacheLineLayout, CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState,
+    };
 
     #[test]
     fn live_younger_selection_matches_oldest_retirement_request_order() {
@@ -760,6 +827,73 @@ mod tests {
     }
 
     #[test]
+    fn live_retire_gate_arms_fixed_fu_admitted_tick() {
+        for (kind, label) in [
+            (RiscvLiveRetireGateWakeKind::Serial, "serial"),
+            (RiscvLiveRetireGateWakeKind::Parallel, "parallel"),
+        ] {
+            let core = test_core();
+            let mut state = RiscvCoreState::new(0x8000, 0);
+            state
+                .live_retire_gate
+                .set_policy(RiscvLiveRetireGatePolicy::detailed());
+            assert!(state.o3_runtime.set_writeback_width(1));
+            state.hart.write(Register::new(1).unwrap(), 6);
+            state.hart.write(Register::new(2).unwrap(), 7);
+            state
+                .o3_runtime
+                .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(99, 12)])
+                .unwrap();
+            let raw = r_type(1, 2, 1, 0x0, 3, 0x33);
+            let events = vec![completed_fetch_with_data(
+                7,
+                10,
+                Address::new(0x8000),
+                raw.to_le_bytes().to_vec(),
+            )];
+            let window = RiscvLiveRetireWindowRequest::new(
+                request(7, 10),
+                Address::new(0x8000),
+                raw,
+                10,
+                &events,
+            );
+            let mut scheduler = PartitionedScheduler::new(1).unwrap();
+            let mut gate_scheduler = Some((&mut scheduler, kind));
+
+            let retire_tick = core
+                .live_retire_gate_retire_tick(&mut state, &mut gate_scheduler, window)
+                .unwrap();
+
+            assert_eq!(
+                retire_tick, None,
+                "{label} path should schedule a gate wake"
+            );
+            assert_eq!(
+                state.live_retire_gate.pending_ready_tick(),
+                Some(13),
+                "{label} path must arm the admitted writeback tick, not the raw FU tick"
+            );
+            let wakes = state.live_retire_gate.owned_scheduler_wakes();
+            assert_eq!(wakes.len(), 1, "{label} path should own one gate wake");
+            assert_eq!(
+                wakes[0].tick(),
+                13,
+                "{label} path must not leave behind a transient raw-tick wake"
+            );
+            let head = state.o3_runtime.writeback_reservation(0).unwrap();
+            assert_eq!(head.raw_ready_tick(), 12);
+            assert_eq!(head.admitted_tick(), 13);
+            assert_eq!(head.slot(), 0);
+            assert_eq!(
+                state.o3_runtime.snapshot().reorder_buffer()[0].ready_tick(),
+                13,
+                "{label} path should stage the head ROB row at the admitted tick"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_load_head_staging_collects_three_younger_scalar_alus() {
         let execution = scalar_load_execution(7, 10, 12, 2, 0x9000);
         let events = vec![
@@ -890,21 +1024,24 @@ mod tests {
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8004), multiply)
             .unwrap();
-        state.o3_runtime.record_live_speculative_execution(
-            candidate,
-            &[request(7, 11), request(7, 12)],
-            10,
-            RiscvExecutionRecord::new(
-                multiply,
-                0x8004,
-                0x8008,
-                vec![rem6_isa_riscv::RegisterWrite::new(
-                    Register::new(7).unwrap(),
-                    42,
-                )],
-                None,
-            ),
-        );
+        state
+            .o3_runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(7, 11), request(7, 12)],
+                10,
+                RiscvExecutionRecord::new(
+                    multiply,
+                    0x8004,
+                    0x8008,
+                    vec![rem6_isa_riscv::RegisterWrite::new(
+                        Register::new(7).unwrap(),
+                        42,
+                    )],
+                    None,
+                ),
+            )
+            .unwrap();
         state.hart.write(Register::new(1).unwrap(), 6);
         state.hart.write(Register::new(2).unwrap(), 7);
         let raw = 0x0220_83b3_u32;
@@ -954,6 +1091,35 @@ mod tests {
             ),
             data,
         )
+    }
+
+    fn test_core() -> RiscvCore {
+        RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    CpuId::new(0),
+                    PartitionId::new(0),
+                    AgentId::new(7),
+                    Address::new(0x8000),
+                ),
+                CpuFetchConfig::new(
+                    TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                    MemoryRouteId::new(0),
+                    CacheLineLayout::new(16).unwrap(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+        (funct7 << 25)
+            | (u32::from(rs2) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | (u32::from(rd) << 7)
+            | opcode
     }
 
     fn scalar_load_execution(

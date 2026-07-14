@@ -63,6 +63,32 @@ fn scoped_issue_waits_for_register_producer_ready_tick() {
 }
 
 #[test]
+fn scoped_issue_waits_for_admitted_writeback_tick() {
+    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::Dependent);
+    assert!(fixture.runtime.set_writeback_width(1));
+
+    fixture.schedule_all(20);
+
+    let multiply = fixture.execution_at(MUL_PC);
+    let dependent = fixture.execution_at(THIRD_PC);
+    assert_eq!(
+        dependent.issue_tick, multiply.admitted_writeback_tick,
+        "dependent issue must use the producer's admitted writeback tick"
+    );
+    assert_eq!(
+        dependent.raw_ready_tick, dependent.issue_tick,
+        "the dependent ADDI itself has zero execution latency"
+    );
+    assert_eq!(
+        dependent.admitted_writeback_tick,
+        multiply.admitted_writeback_tick + 1,
+        "the consumer writeback must move to the next free slot after issuing in the producer writeback cycle"
+    );
+    assert_eq!(multiply.writeback_slot, Some(0));
+    assert_eq!(dependent.writeback_slot, Some(0));
+}
+
+#[test]
 fn issue_arbitration_width_one_records_scheduler_decisions() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
 
@@ -129,7 +155,9 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
     let head_execution = head_hart
         .execute_decoded(decoded(head_instruction))
         .unwrap();
-    assert!(runtime.record_live_issue_head_execution(head, &[request(10)], head_execution,));
+    assert!(runtime
+        .record_live_issue_head_execution(head, &[request(10)], head_execution,)
+        .unwrap());
     let requests = [
         O3LiveIssueRequest::new(
             Address::new(BRANCH_PC),
@@ -139,7 +167,9 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
         O3LiveIssueRequest::new(Address::new(MUL_PC), vec![request(12)], decoded(dependent)),
     ];
 
-    runtime.schedule_live_speculative_issues(&hart, head, 14, &requests);
+    runtime
+        .schedule_live_speculative_issues(&hart, head, 14, &requests)
+        .unwrap();
 
     assert_eq!(runtime.live_speculative_executions[0].issue_tick, 12);
     assert_eq!(
@@ -179,9 +209,13 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
         .find(|entry| entry.pc() == Address::new(MUL_PC))
         .unwrap();
     assert_eq!(
-        runtime.take_live_speculative_issue_tick(dependent_entry, &dependent_event, &[request(12)]),
-        Some(31),
-        "exact fetch identity must consume the scheduler-owned issue tick"
+        runtime.take_live_speculative_issue_timing(
+            dependent_entry,
+            &dependent_event,
+            &[request(12)]
+        ),
+        Some((31, 32)),
+        "exact fetch identity must consume scheduler-owned issue and admitted writeback ticks"
     );
 }
 
@@ -190,18 +224,14 @@ fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
     let branch_request = fixture.requests[0].clone();
 
-    fixture.runtime.schedule_live_speculative_issues(
-        &fixture.hart,
-        fixture.head,
-        20,
-        &[branch_request],
-    );
-    fixture.runtime.schedule_live_speculative_issues(
-        &fixture.hart,
-        fixture.head,
-        20,
-        &fixture.requests[1..],
-    );
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[branch_request])
+        .unwrap();
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &fixture.requests[1..])
+        .unwrap();
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
@@ -219,12 +249,15 @@ fn scoped_issue_deduplicates_repeated_request_for_one_rob_row() {
         decoded(branch()),
     );
 
-    fixture.runtime.schedule_live_speculative_issues(
-        &fixture.hart,
-        fixture.head,
-        20,
-        &[branch_request, duplicate],
-    );
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(
+            &fixture.hart,
+            fixture.head,
+            20,
+            &[branch_request, duplicate],
+        )
+        .unwrap();
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
 }
@@ -354,12 +387,9 @@ impl ScalarIssueFixture {
     }
 
     fn schedule_all(&mut self, earliest_tick: u64) {
-        self.runtime.schedule_live_speculative_issues(
-            &self.hart,
-            self.head,
-            earliest_tick,
-            &self.requests,
-        );
+        self.runtime
+            .schedule_live_speculative_issues(&self.hart, self.head, earliest_tick, &self.requests)
+            .unwrap();
     }
 
     fn issue_tick(&self, pc: u64) -> u64 {
