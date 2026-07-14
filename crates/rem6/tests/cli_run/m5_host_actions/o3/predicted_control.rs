@@ -1,6 +1,9 @@
 use super::lsq_fu_branch::{event_at_pc, event_at_pc_if_present, event_u64};
 use super::*;
 
+#[path = "predicted_control/nested.rs"]
+mod nested;
+
 const LOAD_PC: &str = "0x80000024";
 const BRANCH_PC: &str = "0x80000028";
 const MUL_PC: &str = "0x8000002c";
