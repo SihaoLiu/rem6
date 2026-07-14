@@ -92,6 +92,9 @@ pub enum Rem6CliError {
     InvalidRiscvO3ScalarMemoryDepth {
         value: String,
     },
+    InvalidRiscvO3IssueWidth {
+        value: String,
+    },
     InvalidRiscvBranchPredictor {
         value: String,
     },
@@ -341,6 +344,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
     RiscvO3ScalarMemoryDepthRequiresExecution,
+    RiscvO3IssueWidthRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
     RiscvInOrderWidthRequiresExecution,
     RiscvExecutionModeRequiresExecution,
@@ -381,6 +385,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresRiscv,
     RiscvBranchLookaheadRequiresRiscv,
     RiscvO3ScalarMemoryDepthRequiresRiscv,
+    RiscvO3IssueWidthRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
     RiscvInOrderWidthRequiresRiscv,
     RiscvExecutionModeRequiresRiscv,
@@ -578,6 +583,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvO3ScalarMemoryDepth { value } => {
                 write!(formatter, "invalid RISC-V O3 scalar memory depth {value}")
+            }
+            Self::InvalidRiscvO3IssueWidth { value } => {
+                write!(formatter, "invalid RISC-V O3 issue width {value}")
             }
             Self::InvalidRiscvBranchPredictor { value } => {
                 write!(formatter, "invalid RISC-V branch predictor {value}")
@@ -927,6 +935,9 @@ impl fmt::Display for Rem6CliError {
                     "--riscv-o3-scalar-memory-depth requires --execute"
                 )
             }
+            Self::RiscvO3IssueWidthRequiresExecution => {
+                write!(formatter, "--riscv-o3-issue-width requires --execute")
+            }
             Self::RiscvBranchPredictorRequiresExecution => {
                 write!(formatter, "--riscv-branch-predictor requires --execute")
             }
@@ -1050,6 +1061,9 @@ impl fmt::Display for Rem6CliError {
                     formatter,
                     "--riscv-o3-scalar-memory-depth requires --isa riscv"
                 )
+            }
+            Self::RiscvO3IssueWidthRequiresRiscv => {
+                write!(formatter, "--riscv-o3-issue-width requires --isa riscv")
             }
             Self::RiscvBranchPredictorRequiresRiscv => {
                 write!(formatter, "--riscv-branch-predictor requires --isa riscv")

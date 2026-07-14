@@ -10,6 +10,9 @@ use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::{O3PendingStateSnapshot, O3PipelineError};
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
+use crate::riscv_defaults::{
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
 use crate::{RiscvCoreState, RiscvDataAccessEventKind};
@@ -190,6 +193,7 @@ pub struct O3RuntimeState {
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
     scalar_memory_window_limit_explicit: bool,
+    issue_width: usize,
     last_scalar_memory_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
@@ -249,6 +253,19 @@ impl O3RuntimeState {
 
     pub const fn stats(&self) -> O3RuntimeStats {
         self.stats
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn issue_width(&self) -> usize {
+        self.issue_width
+    }
+
+    pub(crate) fn set_issue_width(&mut self, issue_width: usize) -> bool {
+        if !(MIN_RISCV_O3_ISSUE_WIDTH..=MAX_RISCV_O3_ISSUE_WIDTH).contains(&issue_width) {
+            return false;
+        }
+        self.issue_width = issue_width;
+        true
     }
 
     pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
@@ -550,6 +567,7 @@ impl Default for O3RuntimeState {
             live_scalar_memory_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
             scalar_memory_window_limit_explicit: false,
+            issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
             last_scalar_memory_commit_tick: None,
             next_sequence: 0,
             next_physical_register: 1,
@@ -960,6 +978,49 @@ mod tests {
 
     #[path = "pending_data.rs"]
     mod pending_data;
+
+    #[test]
+    fn o3_issue_width_defaults_to_shared_cpu_default() {
+        let runtime = O3RuntimeState::default();
+
+        assert_eq!(runtime.issue_width(), DEFAULT_RISCV_O3_ISSUE_WIDTH);
+    }
+
+    #[test]
+    fn o3_issue_width_setter_accepts_shared_range() {
+        let mut runtime = O3RuntimeState::default();
+
+        for width in [
+            MIN_RISCV_O3_ISSUE_WIDTH,
+            DEFAULT_RISCV_O3_ISSUE_WIDTH,
+            MAX_RISCV_O3_ISSUE_WIDTH,
+        ] {
+            assert!(runtime.set_issue_width(width), "{width}");
+            assert_eq!(runtime.issue_width(), width);
+        }
+    }
+
+    #[test]
+    fn o3_issue_width_setter_rejects_out_of_range_without_changing_existing_width() {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_issue_width(2));
+
+        for width in [MIN_RISCV_O3_ISSUE_WIDTH - 1, MAX_RISCV_O3_ISSUE_WIDTH + 1] {
+            assert!(!runtime.set_issue_width(width), "{width}");
+            assert_eq!(runtime.issue_width(), 2);
+        }
+    }
+
+    #[test]
+    fn o3_issue_width_survives_snapshot_restore() {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_issue_width(3));
+        let snapshot = O3RuntimeState::default().snapshot();
+
+        runtime.restore(snapshot).unwrap();
+
+        assert_eq!(runtime.issue_width(), 3);
+    }
 
     #[test]
     fn failed_store_conditional_stats_count_failed_operation() {

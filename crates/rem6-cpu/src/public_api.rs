@@ -109,6 +109,9 @@ pub use crate::riscv_data_access::{
     RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
     RiscvLoadReservation,
 };
+pub use crate::riscv_defaults::{
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+};
 pub use crate::riscv_execution_event::{
     RiscvBiModeBranchUpdate, RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
     RiscvMultiperspectivePerceptronBranchUpdate, RiscvTageScLBranchUpdate,

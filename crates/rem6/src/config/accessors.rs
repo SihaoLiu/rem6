@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rem6_cpu::RiscvBranchPredictorKind;
+use rem6_cpu::{RiscvBranchPredictorKind, DEFAULT_RISCV_O3_ISSUE_WIDTH};
 use rem6_stats::PcCountPair;
 use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 
@@ -113,6 +113,15 @@ impl Rem6RunConfig {
 
     pub const fn riscv_o3_scalar_memory_depth_is_explicit(&self) -> bool {
         self.riscv_o3_scalar_memory_depth.is_some()
+    }
+
+    pub fn riscv_o3_issue_width(&self) -> usize {
+        self.riscv_o3_issue_width
+            .unwrap_or(DEFAULT_RISCV_O3_ISSUE_WIDTH)
+    }
+
+    pub const fn riscv_o3_issue_width_is_explicit(&self) -> bool {
+        self.riscv_o3_issue_width.is_some()
     }
 
     pub const fn riscv_branch_predictor(&self) -> RiscvBranchPredictorKind {

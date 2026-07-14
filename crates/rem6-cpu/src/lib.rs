@@ -754,6 +754,14 @@ impl RiscvCore {
             .set_scalar_memory_window_limit(depth);
     }
 
+    pub fn set_o3_issue_width(&self, issue_width: usize) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        assert!(
+            state.o3_runtime.set_issue_width(issue_width),
+            "RISC-V O3 issue width must be between {MIN_RISCV_O3_ISSUE_WIDTH} and {MAX_RISCV_O3_ISSUE_WIDTH}"
+        );
+    }
+
     pub fn set_branch_predictor_kind(&self, kind: RiscvBranchPredictorKind) {
         self.state
             .lock()
