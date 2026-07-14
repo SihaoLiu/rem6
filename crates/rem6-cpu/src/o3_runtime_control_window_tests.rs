@@ -124,9 +124,7 @@ fn outer_control_validation_preserves_inner_control_chain() {
         .live_control_dependencies
         .contains_key(&inner_sequence));
     assert_eq!(
-        runtime
-            .live_control_dependencies
-            .get(&descendant_sequence),
+        runtime.live_control_dependencies.get(&descendant_sequence),
         Some(&inner_sequence)
     );
     let inner_record = runtime
@@ -184,6 +182,39 @@ fn inner_control_discard_preserves_outer_branch() {
         .collect::<Vec<_>>();
     assert_eq!(instructions, [outer, inner]);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+}
+
+#[test]
+fn split_inner_branch_suffix_replacement_prunes_nested_chain() {
+    let (mut runtime, outer, inner, _) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let inner_sequence = rob[2].sequence();
+    runtime.validate_live_speculative_producer(outer_sequence);
+
+    let inner_execution = runtime
+        .live_speculative_executions
+        .iter_mut()
+        .find(|issued| issued.sequence == inner_sequence)
+        .map(|issued| {
+            issued.consumed_requests = vec![request(12), request(14)];
+            issued.execution.clone()
+        })
+        .unwrap();
+    runtime.retire_live_staged_instruction(
+        &RiscvCpuExecutionEvent::new(fetch_event(0x8008, 12), inner, inner_execution),
+        &[request(12), request(15)],
+        40,
+    );
+
+    assert_eq!(runtime.live_speculative_executions.len(), 1);
+    assert_eq!(
+        runtime.live_speculative_executions[0]
+            .execution
+            .instruction(),
+        outer
+    );
+    assert!(runtime.live_control_dependencies.is_empty());
 }
 
 #[test]

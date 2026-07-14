@@ -338,20 +338,27 @@ impl O3RuntimeState {
     }
 
     fn invalidate_live_speculative_execution_chain(&mut self, sequence: u64) {
-        let mut invalidated = vec![sequence];
-        while let Some(producer) = invalidated.pop() {
+        let mut invalidated = BTreeSet::from([sequence]);
+        let mut pending = vec![sequence];
+        while let Some(producer) = pending.pop() {
             let mut index = 0;
             while index < self.live_speculative_executions.len() {
                 if self.live_speculative_executions[index]
                     .producer_sequences
                     .contains(&producer)
                 {
-                    invalidated.push(self.live_speculative_executions.remove(index).sequence);
+                    let removed = self.live_speculative_executions.remove(index).sequence;
+                    if invalidated.insert(removed) {
+                        pending.push(removed);
+                    }
                 } else {
                     index += 1;
                 }
             }
         }
+        self.live_control_dependencies.retain(|dependent, control| {
+            !invalidated.contains(dependent) && !invalidated.contains(control)
+        });
     }
 }
 

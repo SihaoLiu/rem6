@@ -66,8 +66,7 @@ fn rem6_run_o3_nested_controls_commit_direct() {
         .and_then(Value::as_array)
         .is_some_and(|records| records.iter().any(|record| {
             record.pointer("/kind").and_then(Value::as_str) == Some("store")
-                && record.pointer("/address").and_then(Value::as_str)
-                    == Some(WRONG_STORE_ADDRESS)
+                && record.pointer("/address").and_then(Value::as_str) == Some(WRONG_STORE_ADDRESS)
         })));
     assert_json_stat(
         &json,
@@ -88,13 +87,7 @@ fn rem6_run_o3_nested_controls_commit_direct() {
 #[test]
 fn rem6_run_o3_outer_misprediction_discards_nested_control_cache_fabric_dram() {
     let path = nested_control_binary("o3-nested-outer-mispredict", true, false, false);
-    let completed = run_nested_control_json(
-        &path,
-        "cache-fabric-dram",
-        2_500,
-        "detailed",
-        &[],
-    );
+    let completed = run_nested_control_json(&path, "cache-fabric-dram", 2_500, "detailed", &[]);
     let load = event_at_pc(&completed, LOAD_PC);
     let outer = event_at_pc(&completed, OUTER_BRANCH_PC);
     let response_tick = event_u64(load, "lsq_data_response_tick");
@@ -130,13 +123,7 @@ fn rem6_run_o3_outer_misprediction_discards_nested_control_cache_fabric_dram() {
 
     let live_tick = event_u64(outer, "issue_tick") + 1;
     assert!(live_tick < response_tick);
-    let resident = run_nested_control_json(
-        &path,
-        "cache-fabric-dram",
-        live_tick,
-        "detailed",
-        &[],
-    );
+    let resident = run_nested_control_json(&path, "cache-fabric-dram", live_tick, "detailed", &[]);
     assert_eq!(
         resident_rob_pcs(&resident),
         [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC, DESCENDANT_PC]
@@ -208,6 +195,35 @@ fn rem6_run_o3_inner_misprediction_preserves_outer_control_direct() {
         "Count",
         1,
         "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_o3_load_dependent_inner_branch_suppresses_descendant() {
+    let path = nested_control_binary("o3-nested-dependent-inner", false, false, true);
+    let completed = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+    let load = event_at_pc(&completed, LOAD_PC);
+    let outer = event_at_pc(&completed, OUTER_BRANCH_PC);
+    let inner = event_at_pc(&completed, INNER_BRANCH_PC);
+    let descendant = event_at_pc(&completed, DESCENDANT_PC);
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+
+    assert!(event_u64(outer, "issue_tick") < response_tick);
+    assert!(event_u64(inner, "issue_tick") >= response_tick);
+    assert!(event_u64(descendant, "issue_tick") >= response_tick);
+
+    let live_tick = event_u64(outer, "issue_tick") + 1;
+    assert!(live_tick < response_tick);
+    let resident = run_nested_control_json(&path, "direct", live_tick, "detailed", &[]);
+    assert_eq!(
+        resident_rob_pcs(&resident),
+        [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC]
+    );
+    assert_eq!(
+        resident
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(1)
     );
 }
 

@@ -18,7 +18,7 @@ Production ownership:
 - Modify `crates/rem6-cpu/src/o3_runtime_control_window.rs`: keep immediate control ancestry and sequence-bounded rollback here, and prune dependency edges for every execution removed by stale-identity chain invalidation.
 - Modify `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`: prove nested ancestry, validation, and outer/inner rollback.
 - Modify `crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control.rs`: prove two recorded predictions are followed in order and split inner branches use their prefix request identity.
-- Modify `crates/rem6-cpu/src/riscv_live_retire_window.rs`: add the split inner-branch replacement regression to the existing inline tests while preserving complete-vector matching.
+- Modify `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`: add the split inner-branch replacement regression while preserving the existing live-retire complete-vector regression.
 
 CLI evidence:
 
@@ -824,8 +824,9 @@ git commit -m "test: distinguish nested control rollback"
 
 **Files:**
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/nested.rs`
-- Modify: `crates/rem6-cpu/src/riscv_live_retire_window.rs`
-- Modify: `crates/rem6-cpu/src/riscv_live_retire_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
+- Inspect: `crates/rem6-cpu/src/riscv_live_retire_window.rs`
 
 - [ ] **Step 1: Add the dependent-inner-branch CLI row**
 
@@ -863,7 +864,7 @@ The completed run may execute the descendant normally after branch 2 resolves. T
 
 - [ ] **Step 2: Add the split inner-branch suffix-replacement regression**
 
-Extend the existing split-fetch readiness test pattern so the original branch 2 record consumes `[prefix, original_suffix]`, then replace only the completed suffix event with a different request ID carrying the same bytes. Assert:
+Add `split_inner_branch_suffix_replacement_prunes_nested_chain` in the focused control-window tests. Validate the outer producer, rewrite the inner record's consumed vector to `[prefix, original_suffix]`, then retire the same inner execution with `[prefix, replacement_suffix]`. Assert the outer execution remains, the inner and scalar descendant records disappear, and `live_control_dependencies` is empty. Retain this exact readiness assertion in the existing live-retire split-fetch regression:
 
 ```rust
 assert_eq!(
@@ -921,7 +922,7 @@ fn invalidate_live_speculative_execution_chain(&mut self, sequence: u64) {
 ```bash
 cargo test -p rem6-cpu --lib split_suffix_replacement -- --nocapture
 cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::nested::rem6_run_o3_load_dependent_inner_branch_suppresses_descendant -- --exact --nocapture
-git add crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/nested.rs
+git add crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/o3_runtime_control_window_tests.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/nested.rs
 git commit -m "fix: validate nested control fetch identity"
 ```
 
