@@ -487,9 +487,7 @@ fn detailed_scalar_window_follows_two_recorded_control_paths() {
         core.prepare_fetch_ahead_speculation(&inner).unwrap(),
     );
 
-    let descendant = core.next_fetch_ahead_before_retire().unwrap();
-    assert_eq!(descendant.pc(), Address::new(0x8010));
-    assert!(descendant.branch_speculation().is_none());
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
 ```
 
@@ -499,7 +497,7 @@ Run:
 cargo test -p rem6-cpu --lib riscv_fetch_ahead::tests::detailed_o3_control::detailed_scalar_window_follows_two_recorded_control_paths -- --exact --nocapture
 ```
 
-Expected: FAIL before Task 1 and PASS once repeated `AdmitPredictedControl` decisions are accepted. If it still fails, preserve the existing loop in `scalar_integer_window_candidate_from`: update `previous_request`, derive the sequential PC, call `recorded_predicted_pc`, and continue from the recorded PC for every admitted control row.
+Expected: FAIL before Task 1 and PASS once repeated `AdmitPredictedControl` decisions are accepted. The final `None` proves the completed scalar descendant filled the fourth row and the walker did not request a fifth row. Preserve the existing loop in `scalar_integer_window_candidate_from`: update `previous_request`, derive the sequential PC, call `recorded_predicted_pc`, and continue from the recorded PC for every admitted control row.
 
 - [ ] **Step 3: Add the split inner-branch identity test**
 

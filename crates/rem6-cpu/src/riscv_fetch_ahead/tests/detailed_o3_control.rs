@@ -17,6 +17,30 @@ fn detailed_control_core(branch_rs1: u8, with_descendant: bool) -> RiscvCore {
     core
 }
 
+fn detailed_nested_control_core(split_inner: bool) -> RiscvCore {
+    let load = i_type(0, 2, 0x2, 5, 0x03);
+    let outer = b_type(12, 1, 2, 0x0);
+    let inner = b_type(8, 3, 4, 0x0).to_le_bytes();
+    let mul = r_type(0x01, 7, 8, 0x0, 9, 0x33);
+    let mut fetches = vec![
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, outer.to_le_bytes().to_vec()),
+    ];
+    if split_inner {
+        fetches.push((2, 0x8008, inner[..2].to_vec()));
+        fetches.push((3, 0x800a, inner[2..].to_vec()));
+        fetches.push((4, 0x800c, mul.to_le_bytes().to_vec()));
+    } else {
+        fetches.push((2, 0x8008, inner.to_vec()));
+        fetches.push((3, 0x800c, mul.to_le_bytes().to_vec()));
+    }
+    let core = core_with_completed_fetches(fetches);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(4);
+    core
+}
+
 #[test]
 fn detailed_scalar_window_returns_existing_branch_prediction_decision() {
     let core = detailed_control_core(1, false);
@@ -58,6 +82,45 @@ fn detailed_scalar_window_follows_recorded_not_taken_path() {
 
     assert_eq!(descendant.pc(), Address::new(0x800c));
     assert!(descendant.branch_speculation().is_none());
+}
+
+#[test]
+fn detailed_scalar_window_follows_two_recorded_control_paths() {
+    let core = detailed_nested_control_core(false);
+
+    let outer = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(
+        outer.branch_speculation().unwrap().pc(),
+        Address::new(0x8004)
+    );
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&outer).unwrap(),
+    );
+
+    let inner = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(
+        inner.branch_speculation().unwrap().pc(),
+        Address::new(0x8008)
+    );
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&inner).unwrap(),
+    );
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_split_inner_control_keys_prediction_to_prefix_request() {
+    let core = detailed_nested_control_core(true);
+    let outer = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&outer).unwrap(),
+    );
+
+    let inner = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(inner.branch_speculation().unwrap().sequence(), 2);
+    assert_eq!(inner.pc(), Address::new(0x800c));
 }
 
 #[test]
