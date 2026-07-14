@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "predicted_control/nested.rs"]
 mod nested;
+#[path = "predicted_control/three_deep.rs"]
+mod three_deep;
 #[path = "predicted_control/window_support.rs"]
 mod window_support;
 
