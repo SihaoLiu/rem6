@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
+const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_SOURCE_LINES: usize = 1800;
 
@@ -296,6 +297,49 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
             "src/o3_runtime.rs still owns scalar memory lifecycle `{anchor}`"
         );
     }
+}
+
+#[test]
+fn o3_runtime_issue_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
+    let module_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let live_retire =
+        fs::read_to_string(crate_dir.join("src/riscv_live_retire_window.rs")).unwrap();
+
+    assert!(
+        root.contains("mod o3_runtime_issue;"),
+        "src/o3_runtime.rs must declare the focused O3 issue module"
+    );
+    assert!(
+        module_path.exists(),
+        "live O3 issue scheduling belongs in src/o3_runtime_issue.rs"
+    );
+    let module = fs::read_to_string(&module_path).unwrap();
+    let lines = module.lines().count();
+    assert!(
+        lines <= MAX_O3_RUNTIME_ISSUE_LINES,
+        "src/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_LINES} lines: {lines}"
+    );
+
+    for anchor in [
+        "O3ScopedIssueScheduler",
+        "schedule_live_speculative_issues",
+        "record_issue_cycle",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_issue.rs is missing issue-scheduler owner `{anchor}`"
+        );
+    }
+    assert!(
+        live_retire.contains("schedule_live_speculative_issues"),
+        "src/riscv_live_retire_window.rs must delegate live younger issue scheduling"
+    );
+    assert!(
+        !live_retire.contains("O3ScopedIssueScheduler"),
+        "src/riscv_live_retire_window.rs must not construct the scoped issue scheduler"
+    );
 }
 
 #[test]

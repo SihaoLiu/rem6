@@ -18,6 +18,7 @@ const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
+const MAX_O3_RUNTIME_ISSUE_STATS_LINES: usize = 800;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_ROOT_LINES: usize = 16_650;
@@ -421,6 +422,43 @@ fn cli_stats_output_o3_runtime_stays_focused() {
     assert!(
         lines <= MAX_O3_RUNTIME_STATS_LINES,
         "src/stats_output/o3_runtime.rs should delegate O3 stat families to focused modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_stats_output_o3_runtime_issue_stays_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/stats_output/o3_runtime.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let module_path = crate_dir.join("src/stats_output/o3_runtime_issue.rs");
+
+    assert!(
+        root.contains("mod o3_runtime_issue;"),
+        "src/stats_output/o3_runtime.rs must declare the focused issue-stats module"
+    );
+    assert!(
+        root.contains("emit_o3_runtime_issue_stats"),
+        "src/stats_output/o3_runtime.rs must delegate issue counters via emit_o3_runtime_issue_stats"
+    );
+    let root_lines = line_count(&root_path);
+    assert!(
+        root_lines <= MAX_O3_RUNTIME_STATS_LINES,
+        "src/stats_output/o3_runtime.rs should delegate O3 issue stats, but it has {root_lines} lines"
+    );
+
+    assert!(
+        module_path.exists(),
+        "O3 issue stats output belongs in src/stats_output/o3_runtime_issue.rs"
+    );
+    let module = fs::read_to_string(&module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_O3_RUNTIME_ISSUE_STATS_LINES,
+        "src/stats_output/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_STATS_LINES} lines: {module_lines}"
+    );
+    assert!(
+        module.contains("fn emit_o3_runtime_issue_stats"),
+        "src/stats_output/o3_runtime_issue.rs is missing `fn emit_o3_runtime_issue_stats`"
     );
 }
 
