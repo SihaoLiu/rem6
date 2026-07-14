@@ -324,8 +324,7 @@ impl RiscvCore {
                 .defer_scalar_memory_if_detailed(detailed, &event));
         }
         if redirects_fetch {
-            if instruction_is_conditional_branch(instruction)
-                && event.execution().trap().is_none()
+            if instruction_is_conditional_branch(instruction) && event.execution().trap().is_none()
             {
                 if branch_prediction_redirects {
                     if let Some(sequence) = live_control_sequence {

@@ -73,8 +73,7 @@ impl RiscvCore {
         if detailed_scalar_memory_blocks_execution(state, window.raw)? {
             return Ok(None);
         }
-        let live_speculative_ready_tick =
-            live_speculative_fu_ready_tick(state, &window)?;
+        let live_speculative_ready_tick = live_speculative_fu_ready_tick(state, &window)?;
         let completed_normal_execute_wait = state
             .in_order_pipeline
             .execute_wait_completed(window.request.sequence())
@@ -394,11 +393,7 @@ fn completed_scalar_integer_younger_window(
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
         let next_pc = if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
-            crate::riscv_fetch_ahead::recorded_predicted_pc(
-                state,
-                current_request,
-                sequential_pc,
-            )
+            crate::riscv_fetch_ahead::recorded_predicted_pc(state, current_request, sequential_pc)
         } else {
             Some(sequential_pc)
         };

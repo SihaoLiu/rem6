@@ -313,7 +313,6 @@ impl O3RuntimeState {
             )
         });
     }
-
 }
 
 pub(super) fn staged_rename_entry(entry: O3ReorderBufferEntry) -> Option<O3RenameMapEntry> {

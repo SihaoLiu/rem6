@@ -164,9 +164,11 @@ impl O3RuntimeState {
                 && issued.execution == *execution
         })?;
         Some(
-            issued.issue_tick.saturating_add(
-                crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction()),
-            ),
+            issued
+                .issue_tick
+                .saturating_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                    execution.instruction(),
+                )),
         )
     }
 
@@ -203,11 +205,10 @@ impl O3RuntimeState {
                         .find(|write| write.register() == source)
                         .cloned()
                         .map(|write| {
-                            let ready_cycles =
-                                crate::riscv_fu_latency::riscv_execute_wait_cycles(
-                                    issued.execution.instruction(),
-                                )
-                                .max(1);
+                            let ready_cycles = crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                                issued.execution.instruction(),
+                            )
+                            .max(1);
                             (write, issued.issue_tick.saturating_add(ready_cycles))
                         })
                 });
@@ -298,9 +299,9 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
-        self.snapshot.reorder_buffer.retain(|entry| {
-            !entry.is_live_staged() || entry.sequence() <= branch_sequence
-        });
+        self.snapshot
+            .reorder_buffer
+            .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
         self.live_scalar_memory_younger_sequences
             .retain(|sequence| *sequence <= branch_sequence);
         self.live_speculative_executions

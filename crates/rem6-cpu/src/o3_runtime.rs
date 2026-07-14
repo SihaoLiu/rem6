@@ -48,13 +48,11 @@ mod o3_store_forwarding;
 
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
+use o3_runtime_control_window::{execution_writes_rename_destination, O3LiveSpeculativeExecution};
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
-};
-use o3_runtime_control_window::{
-    execution_writes_rename_destination, O3LiveSpeculativeExecution,
 };
 use o3_runtime_live_window::{staged_rename_entry, O3LiveRetiredInstruction};
 use o3_runtime_memory::{

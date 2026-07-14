@@ -45,12 +45,9 @@ fn rem6_run_o3_predicted_descendants_commit_direct() {
         event_u64(add, "issue_tick"),
         event_u64(multiply, "writeback_tick")
     );
-    assert!(
-        [load, branch, multiply, add]
-            .windows(2)
-            .all(|events| event_u64(events[0], "commit_tick")
-                <= event_u64(events[1], "commit_tick"))
-    );
+    assert!([load, branch, multiply, add]
+        .windows(2)
+        .all(|events| event_u64(events[0], "commit_tick") <= event_u64(events[1], "commit_tick")));
     assert_eq!(
         branch
             .pointer("/branch_predicted_taken")
@@ -108,8 +105,7 @@ fn rem6_run_o3_predicted_descendants_commit_direct() {
 #[test]
 fn rem6_run_o3_predicted_descendants_squash_cache_fabric_dram() {
     let path = predicted_control_binary("o3-predicted-control-hierarchy", true, true, false);
-    let completed =
-        run_predicted_control_json(&path, "cache-fabric-dram", 2_000, "detailed", &[]);
+    let completed = run_predicted_control_json(&path, "cache-fabric-dram", 2_000, "detailed", &[]);
 
     assert_eq!(register_value(&completed, "x12"), 0x2a);
     assert_eq!(register_value(&completed, "x13"), 0);
@@ -269,8 +265,7 @@ fn rem6_run_host_switch_transfers_o3_predicted_descendants() {
             switches.iter().find(|switch| {
                 switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
                     && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
-                    && switch.pointer("/previous_mode").and_then(Value::as_str)
-                        == Some("detailed")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
             })
         })
         .unwrap_or_else(|| panic!("missing predicted-control timing switch: {switched}"));
@@ -427,7 +422,10 @@ fn rem6_run_timing_suppresses_o3_predicted_descendants() {
                 .any(|prefix| path.starts_with(prefix))
         })
         .collect::<Vec<_>>();
-    assert!(unexpected.is_empty(), "timing mode leaked O3 stats: {unexpected:?}");
+    assert!(
+        unexpected.is_empty(),
+        "timing mode leaked O3 stats: {unexpected:?}"
+    );
 }
 
 fn predicted_control_binary(
@@ -565,8 +563,7 @@ fn transfer_live_data_handoff_chunk<'a>(transfer: &'a Value, component: &str) ->
         .and_then(Value::as_array)
         .and_then(|chunks| {
             chunks.iter().find(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str)
-                    == Some("o3-live-data-handoff")
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-live-data-handoff")
             })
         })
         .and_then(|chunk| chunk.pointer("/o3_live_data_handoff"))

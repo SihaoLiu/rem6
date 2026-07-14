@@ -113,8 +113,7 @@ impl RiscvScalarIntegerLiveWindow {
             return RiscvScalarIntegerYoungerDecision::Reject;
         }
         if self.control_open {
-            let Some((destination, sources)) =
-                o3_predicted_scalar_descendant_operands(instruction)
+            let Some((destination, sources)) = o3_predicted_scalar_descendant_operands(instruction)
             else {
                 return RiscvScalarIntegerYoungerDecision::Reject;
             };
