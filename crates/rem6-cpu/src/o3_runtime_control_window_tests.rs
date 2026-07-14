@@ -73,6 +73,120 @@ fn scalar_load_stages_predicted_branch_and_two_descendants() {
 }
 
 #[test]
+fn nested_control_dependencies_follow_immediate_branch() {
+    let (runtime, _, _, _) = nested_control_runtime();
+    let snapshot = runtime.snapshot();
+    let rob = snapshot.reorder_buffer();
+    let outer = rob[1].sequence();
+    let inner = rob[2].sequence();
+    let descendant = rob[3].sequence();
+
+    assert_eq!(runtime.live_control_dependencies.get(&inner), Some(&outer));
+    assert_eq!(
+        runtime.live_control_dependencies.get(&descendant),
+        Some(&inner)
+    );
+}
+
+#[test]
+fn inner_control_waits_for_outer_execution_record() {
+    let (mut runtime, outer, inner, _) = nested_control_runtime();
+    assert!(runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), inner)
+        .is_none());
+
+    let outer_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), outer)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        outer_candidate,
+        &[request(11)],
+        11,
+        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+    );
+
+    assert!(runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), inner)
+        .is_some());
+}
+
+#[test]
+fn outer_control_validation_preserves_inner_control_chain() {
+    let (mut runtime, _, inner, descendant) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let inner_sequence = rob[2].sequence();
+    let descendant_sequence = rob[3].sequence();
+
+    runtime.validate_live_speculative_producer(outer_sequence);
+
+    assert!(!runtime
+        .live_control_dependencies
+        .contains_key(&inner_sequence));
+    assert_eq!(
+        runtime
+            .live_control_dependencies
+            .get(&descendant_sequence),
+        Some(&inner_sequence)
+    );
+    let inner_record = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.execution.instruction() == inner)
+        .unwrap();
+    assert!(inner_record.producer_sequences.is_empty());
+    assert!(runtime
+        .live_speculative_executions
+        .iter()
+        .any(|issued| issued.execution.instruction() == descendant));
+}
+
+#[test]
+fn outer_control_discard_removes_inner_branch_and_descendant() {
+    let (mut runtime, outer, inner, descendant) = issued_nested_control_runtime();
+    let outer_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
+
+    runtime.discard_live_control_descendants_from(outer_sequence);
+
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [Address::new(0x8000), Address::new(0x8004)]
+    );
+    assert_eq!(runtime.live_speculative_executions.len(), 1);
+    assert_eq!(
+        runtime.live_speculative_executions[0]
+            .execution
+            .instruction(),
+        outer
+    );
+    assert!(runtime
+        .live_speculative_executions
+        .iter()
+        .all(|issued| ![inner, descendant].contains(&issued.execution.instruction())));
+}
+
+#[test]
+fn inner_control_discard_preserves_outer_branch() {
+    let (mut runtime, outer, inner, _) = issued_nested_control_runtime();
+    let inner_sequence = runtime.snapshot().reorder_buffer()[2].sequence();
+
+    runtime.discard_live_control_descendants_from(inner_sequence);
+
+    let instructions = runtime
+        .live_speculative_executions
+        .iter()
+        .map(|issued| issued.execution.instruction())
+        .collect::<Vec<_>>();
+    assert_eq!(instructions, [outer, inner]);
+    assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+}
+
+#[test]
 fn predicted_descendants_wait_for_branch_record_and_invalidate_with_it() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
@@ -313,6 +427,75 @@ fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {
         [(Address::new(0x8004), branch)],
     );
     runtime
+}
+
+fn nested_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let outer = beq(5, 6);
+    let inner = beq(7, 8);
+    let descendant = mul(9, 1, 2);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), outer),
+            (Address::new(0x8008), inner),
+            (Address::new(0x800c), descendant),
+        ],
+    );
+    (runtime, outer, inner, descendant)
+}
+
+fn issued_nested_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let (mut runtime, outer, inner, descendant) = nested_control_runtime();
+    let outer_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), outer)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        outer_candidate,
+        &[request(11)],
+        11,
+        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+    );
+
+    let inner_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), inner)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        inner_candidate,
+        &[request(12)],
+        12,
+        RiscvExecutionRecord::new(inner, 0x8008, 0x800c, Vec::new(), None),
+    );
+
+    let descendant_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x800c), descendant)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        descendant_candidate,
+        &[request(13)],
+        13,
+        RiscvExecutionRecord::new(
+            descendant,
+            0x800c,
+            0x8010,
+            vec![RegisterWrite::new(reg(9), 42)],
+            None,
+        ),
+    );
+    (runtime, outer, inner, descendant)
 }
 
 fn scalar_load_event() -> RiscvCpuExecutionEvent {
