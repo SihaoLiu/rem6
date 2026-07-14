@@ -315,6 +315,12 @@ impl O3RuntimeState {
             .retain(|_, control| *control != sequence);
     }
 
+    pub(crate) fn has_live_control_descendants(&self, branch_sequence: u64) -> bool {
+        self.live_control_dependencies
+            .values()
+            .any(|control| *control == branch_sequence)
+    }
+
     pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
         self.snapshot
             .reorder_buffer

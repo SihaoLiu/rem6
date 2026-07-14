@@ -242,15 +242,23 @@ impl RiscvCore {
         let branch_prediction_redirects =
             fetch_prediction.is_some_and(branch_prediction_redirects_fetch);
         let redirects_fetch = execution.trap().is_some()
-            || branch_prediction_redirects
-            || (fetch_prediction.is_none() && next_pc.get() != sequential_next_pc);
+            || next_pc.get() != sequential_next_pc
+            || branch_prediction_redirects;
+        let preserves_live_control_path = live_control_sequence.is_some_and(|sequence| {
+            fetch_prediction.is_some()
+                && !branch_prediction_redirects
+                && state.o3_runtime.has_live_control_descendants(sequence)
+        });
+        let redirects_fetch_path = redirects_fetch && !preserves_live_control_path;
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
                 && !state.executed_fetches.contains(&event.request_id())
                 && !consumed_requests.contains(&event.request_id())
         });
-        if redirects_fetch || !has_completed_successor_fetch || self.core.pc().get() < next_pc.get()
+        if redirects_fetch_path
+            || !has_completed_successor_fetch
+            || self.core.pc().get() < next_pc.get()
         {
             self.core.set_pc(next_pc);
         }
@@ -343,7 +351,7 @@ impl RiscvCore {
             .in_order_pipeline_cycle()
             .map(|cycle| squashed_fetch_requests(state, &fetch_events, cycle, consumed_requests))
             .unwrap_or_default();
-        let redirected_target = redirects_fetch.then_some(next_pc);
+        let redirected_target = redirects_fetch_path.then_some(next_pc);
         let stale_requests = stale_fetch_requests_after_retire(
             state,
             &fetch_events,

@@ -30,14 +30,14 @@ impl O3RuntimeState {
             return;
         }
         let mut control_sequence = self
-            .stage_live_instruction(current_pc, current, current_ready_tick)
+            .stage_or_existing_live_instruction(current_pc, current, current_ready_tick)
             .filter(|_| o3_direct_conditional_sources(current).is_some());
         for (pc, instruction) in younger {
             if is_deferred_o3_scalar_memory_instruction(instruction) {
                 break;
             }
-            let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) else {
-                break;
+            let Some(sequence) = self.stage_or_existing_live_instruction(pc, instruction, 0) else {
+                continue;
             };
             if let Some(control_sequence) = control_sequence {
                 self.live_control_dependencies
@@ -306,6 +306,22 @@ impl O3RuntimeState {
                 .with_live_staged_rename_destination(rename_destination),
         );
         Some(sequence)
+    }
+
+    fn stage_or_existing_live_instruction(
+        &mut self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        ready_tick: u64,
+    ) -> Option<u64> {
+        if let Some(sequence) = self.stage_live_instruction(pc, instruction, ready_tick) {
+            return Some(sequence);
+        }
+        self.snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.is_live_staged() && entry.pc() == pc)
+            .map(|entry| entry.sequence())
     }
 
     pub(super) fn retain_live_scalar_memory_younger_sequences_in_rob(&mut self) {
@@ -871,6 +887,42 @@ mod tests {
                 .live_speculative_issue_candidate(Address::new(0x8004), dependent)
                 .is_none(),
             "a ready-but-uncommitted producer is still absent from the architectural hart clone"
+        );
+    }
+
+    #[test]
+    fn repeated_live_window_staging_extends_past_existing_rows() {
+        let mut runtime = O3RuntimeState::default();
+        let head = div_x3();
+        let first = addi(4, 0);
+        let second = addi(5, 4);
+        let third = addi(6, 5);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            head,
+            29,
+            Some((Address::new(0x8004), first)),
+        );
+
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            head,
+            29,
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), third),
+            ],
+        );
+
+        assert_eq!(
+            runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [0x8000, 0x8004, 0x8008, 0x800c].map(Address::new)
         );
     }
 
