@@ -1192,20 +1192,29 @@ git commit -m "cpu: reserve live O3 writeback slots"
 **Files:**
 - Modify: `crates/rem6-cpu/src/lib.rs`
 - Modify: `crates/rem6-cpu/src/riscv_cluster.rs`
+- Modify: `crates/rem6-cpu/src/riscv_cluster_translation.rs`
 - Modify: `crates/rem6-cpu/src/riscv_drive.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_writeback.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_handoff.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_live_window.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory.rs`
+- Create: `crates/rem6-cpu/src/o3_runtime_memory_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_retire.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_source_operands.rs`
+- Modify: `crates/rem6-cpu/src/riscv_o3_window_policy.rs`
 - Modify: `crates/rem6-cpu/src/riscv_data_issue.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue/forwarding.rs`
+- Create: `crates/rem6-cpu/src/riscv_data_issue/o3_callback.rs`
 - Modify: `crates/rem6-cpu/src/riscv_data_issue_tests.rs`
 - Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/forwarding.rs`
 - Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/multi_load.rs`
 - Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/store_store_load.rs`
 - Create: `crates/rem6-cpu/src/riscv_o3_writeback_wake.rs`
+- Test: `crates/rem6-cpu/tests/riscv_frontend.rs`
+- Test: `crates/rem6-cpu/tests/riscv_cluster_data.rs`
 - Modify: `crates/rem6-system/src/lib.rs`
 - Modify: `crates/rem6-system/src/riscv_run_stats.rs`
 - Test: `crates/rem6-system/src/riscv_o3_runtime_stats.rs`
@@ -1317,6 +1326,9 @@ ROB readiness, wake, or owner timing was committed. Assert repeated direct
 `drive_next_action` calls return the same `RiscvCpuError::O3Runtime`. Add a
 cluster variant that proves both serial and parallel `drive_turn` return
 `RiscvClusterError::Core` after the scheduler callback records the error.
+Add `mmio_response_writeback_error_is_sticky_without_partial_state` to force
+the same reservation mismatch through a completed MMIO load and prove the
+request, resident event, architectural register, LSQ, and ROB remain unchanged.
 Use a `#[cfg(test)] pub(crate)` core helper implemented in
 `o3_runtime_writeback.rs` that accepts only `(sequence, raw_ready_tick)` and
 reserves one synthetic fixed-FU row under the core lock; do not widen the
@@ -1425,10 +1437,13 @@ exactly then. The wake-state unit tests cover replacement and detached-wake
 pruning independently.
 
 Add the direct cross-class CLI row. Run a deterministic route-delay table
-`[4, 8, 12, 16, 20]` at width two, select the first run where
+`[4, 8, 9, 12, 16, 20]` at width two, select the first run where
 `load.lsq_data_response_tick + 1 == fu.issue_tick + 19`, assert exactly one
-match, then rerun that route delay at width one. This keeps calibration inside
-the test instead of hard-coding a host-dependent tick. Assert:
+match, then rerun that route delay at width one. The first younger DIV issues
+with the load, and direct memory makes the load raw-ready at
+`issue + 2 * route_delay + 1`, so delay nine is the measured collision point.
+This keeps calibration inside the test instead of hard-coding a host-dependent
+tick. Assert:
 
 ```rust
 assert_eq!(load_raw_ready, fu_raw_ready);
@@ -1448,10 +1463,10 @@ Run:
 
 ```bash
 cargo test -p rem6-cpu scalar_load_publication_waits_until_admitted_tick --lib -- --nocapture
-cargo test -p rem6-cpu data_response_writeback_error_is_sticky_and_surfaces_from_drive --lib -- --nocapture
+cargo test -p rem6-cpu writeback_error_is_sticky --lib -- --nocapture
 cargo test -p rem6-cpu o3_writeback_wake --lib -- --nocapture
 cargo test -p rem6-system schedule_riscv_system_events_from_turn_schedules_o3_writeback_wake -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission -- --exact --nocapture
+cargo test -p rem6 --test cli_run rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission -- --nocapture
 ```
 
 Expected: failures because loads still mark ROB ready at response time, scalar
@@ -1537,6 +1552,11 @@ Change `RiscvCore::record_ready_o3_scalar_memory_event_with_trace` to
 `riscv_run_stats.rs`. Apply deferred load
 architectural writeback only after `take_ready_live_scalar_memory_event`
 succeeds.
+
+Admit the existing scalar integer multiply/divide fixed-FU classes as
+speculative younger rows in a scalar-load window. Preserve the existing source
+dependency rule: an independent DIV may issue while the load is resident, but
+a DIV that reads the unresolved load destination remains blocked/terminal.
 Update every direct unit-test caller in `o3_runtime_memory.rs`,
 `o3_runtime_memory_window.rs`, `riscv_data_issue_tests.rs`, and its
 `forwarding`, `multi_load`, and `store_store_load` children. Existing tests that
@@ -1737,11 +1757,11 @@ Run:
 
 ```bash
 cargo test -p rem6-cpu scalar_load_publication --lib -- --nocapture
-cargo test -p rem6-cpu data_response_writeback_error_is_sticky_and_surfaces_from_drive --lib -- --nocapture
+cargo test -p rem6-cpu writeback_error_is_sticky --lib -- --nocapture
 cargo test -p rem6-cpu o3_writeback_wake --lib -- --nocapture
 cargo test -p rem6-system schedule_riscv_system_events_from_turn_ -- --nocapture
 cargo test -p rem6-system record_run_stats_does_not_publish_scalar_load_before_admitted_tick -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission -- --exact --nocapture
+cargo test -p rem6 --test cli_run rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission -- --nocapture
 ```
 
 Expected: load response data may be resident before admission, but ROB readiness,
@@ -1753,20 +1773,29 @@ response state.
 ```bash
 git add crates/rem6-cpu/src/lib.rs \
   crates/rem6-cpu/src/riscv_cluster.rs \
+  crates/rem6-cpu/src/riscv_cluster_translation.rs \
   crates/rem6-cpu/src/riscv_drive.rs \
   crates/rem6-cpu/src/o3_runtime.rs \
   crates/rem6-cpu/src/o3_runtime_writeback.rs \
   crates/rem6-cpu/src/o3_runtime_handoff.rs \
   crates/rem6-cpu/src/o3_runtime_live_window.rs \
   crates/rem6-cpu/src/o3_runtime_memory.rs \
+  crates/rem6-cpu/src/o3_runtime_memory_tests.rs \
   crates/rem6-cpu/src/o3_runtime_memory_window.rs \
+  crates/rem6-cpu/src/o3_runtime_retire.rs \
   crates/rem6-cpu/src/o3_runtime_control_window.rs \
+  crates/rem6-cpu/src/o3_source_operands.rs \
+  crates/rem6-cpu/src/riscv_o3_window_policy.rs \
   crates/rem6-cpu/src/riscv_data_issue.rs \
+  crates/rem6-cpu/src/riscv_data_issue/forwarding.rs \
+  crates/rem6-cpu/src/riscv_data_issue/o3_callback.rs \
   crates/rem6-cpu/src/riscv_data_issue_tests.rs \
   crates/rem6-cpu/src/riscv_data_issue_tests/forwarding.rs \
   crates/rem6-cpu/src/riscv_data_issue_tests/multi_load.rs \
   crates/rem6-cpu/src/riscv_data_issue_tests/store_store_load.rs \
   crates/rem6-cpu/src/riscv_o3_writeback_wake.rs \
+  crates/rem6-cpu/tests/riscv_frontend.rs \
+  crates/rem6-cpu/tests/riscv_cluster_data.rs \
   crates/rem6-system/src/lib.rs \
   crates/rem6-system/src/riscv_run_stats.rs \
   crates/rem6-system/src/riscv_o3_runtime_stats.rs \
