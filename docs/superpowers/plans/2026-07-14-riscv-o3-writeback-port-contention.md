@@ -344,7 +344,7 @@ Run:
 ```bash
 cargo test -p rem6-cpu o3_writeback_width --lib -- --nocapture
 cargo test -p rem6 --test cli_run riscv_o3_writeback_width -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_config_scan_treats_riscv_o3_writeback_width_as_value_taking -- --exact --nocapture
+cargo test -p rem6 --test cli_run validation::rem6_run_config_scan_treats_riscv_o3_writeback_width_as_value_taking -- --exact --nocapture
 cargo test -p rem6 --test source_policy cli_config_root_stays_focused -- --exact --nocapture
 ```
 
