@@ -298,9 +298,7 @@ impl O3RuntimeState {
         source: rem6_isa_riscv::Register,
     ) -> Option<(RegisterWrite, u64)> {
         let live = self.live_scalar_memories.iter().find(|live| {
-            live.sequence == sequence
-                && live.outcome == O3LiveScalarMemoryOutcome::Completed
-                && !live.event_taken
+            live.sequence == sequence && live.outcome == O3LiveScalarMemoryOutcome::Completed
         })?;
         let rob = self
             .snapshot
@@ -322,7 +320,7 @@ impl O3RuntimeState {
         }
         Some((
             RegisterWrite::new(source, writeback.value()),
-            live.response_tick?.saturating_add(1),
+            live.admitted_writeback_tick?,
         ))
     }
 

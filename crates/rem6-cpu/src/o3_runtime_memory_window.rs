@@ -265,7 +265,7 @@ impl O3RuntimeState {
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction,
+        Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
@@ -419,26 +419,32 @@ mod tests {
             (&completed[0], requests[2], 40, 7, [0x77, 0, 0, 0]),
             (&completed[1], requests[1], 42, 10, [0x63, 0, 0, 0]),
         ] {
-            assert!(runtime.complete_live_scalar_memory_response(
-                event,
-                request,
-                response_tick,
-                latency_ticks,
-                Some(&data),
-            ));
-            assert!(runtime.take_ready_live_scalar_memory_event().is_none());
+            assert!(runtime
+                .complete_live_scalar_memory_response(
+                    event,
+                    request,
+                    response_tick,
+                    latency_ticks,
+                    Some(&data),
+                )
+                .unwrap());
+            assert!(runtime
+                .take_ready_live_scalar_memory_event(u64::MAX)
+                .is_none());
         }
-        assert!(runtime.complete_live_scalar_memory_response(
-            &completed[2],
-            requests[0],
-            45,
-            14,
-            Some(&[0x2a, 0, 0, 0]),
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(
+                &completed[2],
+                requests[0],
+                45,
+                14,
+                Some(&[0x2a, 0, 0, 0]),
+            )
+            .unwrap());
 
         for expected in [&completed[2], &completed[1], &completed[0]] {
             let retired = runtime
-                .take_ready_live_scalar_memory_event()
+                .take_ready_live_scalar_memory_event(u64::MAX)
                 .expect("completed scalar load should retire in program order");
             assert_eq!(&retired, expected);
             runtime.record_retired_instruction_with_trace(&retired, true);
@@ -498,26 +504,32 @@ mod tests {
             (&completed[1], requests[2], 41, [0x77, 0, 0, 0]),
             (&completed[2], requests[1], 42, [0x63, 0, 0, 0]),
         ] {
-            assert!(runtime.complete_live_scalar_memory_response(
-                event,
-                request,
-                response_tick,
-                response_tick - 30,
-                Some(&data),
-            ));
-            assert!(runtime.take_ready_live_scalar_memory_event().is_none());
+            assert!(runtime
+                .complete_live_scalar_memory_response(
+                    event,
+                    request,
+                    response_tick,
+                    response_tick - 30,
+                    Some(&data),
+                )
+                .unwrap());
+            assert!(runtime
+                .take_ready_live_scalar_memory_event(u64::MAX)
+                .is_none());
         }
-        assert!(runtime.complete_live_scalar_memory_response(
-            &completed[3],
-            requests[0],
-            45,
-            14,
-            Some(&[0x2a, 0, 0, 0]),
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(
+                &completed[3],
+                requests[0],
+                45,
+                14,
+                Some(&[0x2a, 0, 0, 0]),
+            )
+            .unwrap());
 
         for expected in [&completed[3], &completed[2], &completed[1], &completed[0]] {
             let retired = runtime
-                .take_ready_live_scalar_memory_event()
+                .take_ready_live_scalar_memory_event(u64::MAX)
                 .expect("completed scalar load should retire in program order");
             assert_eq!(&retired, expected);
             runtime.record_retired_instruction_with_trace(&retired, true);
@@ -544,13 +556,9 @@ mod tests {
         let mut failed = middle.clone();
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
-        assert!(runtime.complete_live_scalar_memory_response(
-            &failed,
-            memory_request(21),
-            40,
-            8,
-            None,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(&failed, memory_request(21), 40, 8, None,)
+            .unwrap());
 
         assert_eq!(runtime.live_scalar_memories.len(), 2);
         assert_eq!(
@@ -585,13 +593,9 @@ mod tests {
         let mut failed = loads[2].clone();
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
-        assert!(runtime.complete_live_scalar_memory_response(
-            &failed,
-            memory_request(22),
-            40,
-            7,
-            None,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(&failed, memory_request(22), 40, 7, None,)
+            .unwrap());
 
         assert_eq!(runtime.live_scalar_memories.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
@@ -617,23 +621,21 @@ mod tests {
         }
         let mut completed_fourth = loads[3].clone();
         completed_fourth.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
-        assert!(runtime.complete_live_scalar_memory_response(
-            &completed_fourth,
-            memory_request(23),
-            40,
-            7,
-            Some(&[0x88, 0, 0, 0]),
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(
+                &completed_fourth,
+                memory_request(23),
+                40,
+                7,
+                Some(&[0x88, 0, 0, 0]),
+            )
+            .unwrap());
         let mut failed_third = loads[2].clone();
         failed_third.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
-        assert!(runtime.complete_live_scalar_memory_response(
-            &failed_third,
-            memory_request(22),
-            41,
-            8,
-            None,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(&failed_third, memory_request(22), 41, 8, None,)
+            .unwrap());
 
         assert_eq!(runtime.live_scalar_memories.len(), 3);
         assert!(runtime
@@ -767,13 +769,9 @@ mod tests {
         let mut failed = middle.clone();
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
-        assert!(runtime.complete_live_scalar_memory_response(
-            &failed,
-            memory_request(21),
-            40,
-            8,
-            None,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(&failed, memory_request(21), 40, 8, None,)
+            .unwrap());
 
         assert_eq!(runtime.live_scalar_memories.len(), 2);
         assert_eq!(
@@ -1059,42 +1057,25 @@ mod tests {
 
         let mut completed_load = load.clone();
         completed_load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
-        assert!(runtime.complete_live_scalar_memory_forwarding(
-            &completed_load,
-            memory_request(21),
-            32,
-            0,
-            &0x2a_u32.to_le_bytes(),
-            forwarding_plan,
-        ));
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8008), dependent)
-            .expect("forwarded load should wake the dependent ALU");
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[memory_request(12)],
+        assert!(runtime
+            .complete_live_scalar_memory_forwarding(
+                &completed_load,
+                memory_request(21),
                 32,
-                RiscvExecutionRecord::new(
-                    dependent,
-                    0x8008,
-                    0x800c,
-                    vec![RegisterWrite::new(reg(13), 0x2b)],
-                    None,
-                ),
+                0,
+                &0x2a_u32.to_le_bytes(),
+                forwarding_plan,
             )
-            .unwrap();
-        assert_eq!(runtime.live_speculative_executions.len(), 1);
+            .unwrap());
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), dependent)
+            .is_none());
 
         let mut retry = store.clone();
         retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
-        assert!(runtime.complete_live_scalar_memory_response(
-            &retry,
-            memory_request(20),
-            40,
-            9,
-            None,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(&retry, memory_request(20), 40, 9, None,)
+            .unwrap());
 
         assert!(runtime.snapshot.reorder_buffer.is_empty());
         assert!(runtime.snapshot.load_store_queue.is_empty());

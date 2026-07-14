@@ -364,8 +364,8 @@ mod tests {
     use super::helpers::ratio_ppm;
     use super::*;
     use crate::{
-        riscv_execution_mode_target_for_cpu, ExecutionMode, GuestSourceId, HostEventPolicy,
-        RiscvCoreCheckpointError, RiscvCoreCheckpointPort, RiscvInstructionStats,
+        riscv_execution_mode_target_for_cpu, ExecutionMode, GuestEventId, GuestSourceId,
+        HostEventPolicy, RiscvCoreCheckpointError, RiscvCoreCheckpointPort, RiscvInstructionStats,
         RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
         RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
     };
@@ -399,6 +399,92 @@ mod tests {
                 .expect("counted MMIO register bank lock")
                 .respond(request)
         }
+    }
+
+    #[test]
+    fn schedule_riscv_system_events_from_turn_schedules_o3_writeback_wake() {
+        let (driver, core, cluster, mut scheduler, turn, wake_tick) =
+            completed_load_waiting_for_writeback();
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 0);
+        assert!(!core.o3_runtime_snapshot().reorder_buffer()[0].is_ready());
+        let events = driver
+            .schedule_riscv_system_events_from_turn(&cluster, &mut scheduler, &turn, |_| {
+                GuestEventId::new(1)
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            scheduler.pending_event_snapshot(events[0]).unwrap().tick(),
+            wake_tick
+        );
+        assert!(driver
+            .schedule_riscv_system_events_from_turn(&cluster, &mut scheduler, &turn, |_| {
+                GuestEventId::new(2)
+            })
+            .unwrap()
+            .is_empty());
+
+        let wake_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        assert_eq!(scheduler.now(), wake_tick);
+
+        driver
+            .record_run_stats(&cluster, scheduler.now(), &wake_turn)
+            .unwrap();
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 42);
+        assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
+    }
+
+    #[test]
+    fn schedule_riscv_system_events_from_turn_parallel_schedules_o3_writeback_wake() {
+        let (driver, core, cluster, mut scheduler, turn, wake_tick) =
+            completed_load_waiting_for_writeback();
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 0);
+        assert!(!core.o3_runtime_snapshot().reorder_buffer()[0].is_ready());
+        let events = driver
+            .schedule_riscv_system_events_from_turn_parallel(
+                &cluster,
+                &mut scheduler,
+                &turn,
+                |_| GuestEventId::new(1),
+            )
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            scheduler.pending_event_snapshot(events[0]).unwrap().tick(),
+            wake_tick
+        );
+        assert!(driver
+            .schedule_riscv_system_events_from_turn_parallel(
+                &cluster,
+                &mut scheduler,
+                &turn,
+                |_| GuestEventId::new(2),
+            )
+            .unwrap()
+            .is_empty());
+
+        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        assert!(recorded
+            .dispatches()
+            .iter()
+            .any(|dispatch| dispatch.tick() == wake_tick));
+        let wake_turn = RiscvClusterTurn::parallel_scheduler(plan, recorded);
+        assert!(scheduler.now() >= wake_tick);
+
+        driver
+            .record_run_stats(&cluster, scheduler.now(), &wake_turn)
+            .unwrap();
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 42);
+        assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
+    }
+
+    #[test]
+    fn record_run_stats_does_not_publish_scalar_load_before_admitted_tick() {
+        let (_driver, core, _cluster, _scheduler, _turn, _wake_tick) =
+            completed_load_waiting_for_writeback();
+        assert!(!core.o3_runtime_snapshot().reorder_buffer()[0].is_ready());
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 0);
     }
 
     #[test]
@@ -1224,6 +1310,69 @@ mod tests {
         core.set_detailed_live_retire_gate_enabled(true);
         let cluster = RiscvCluster::new([core.clone()]).unwrap();
         (core, cluster, scheduler, transport)
+    }
+
+    fn completed_load_waiting_for_writeback() -> (
+        RiscvSystemRunDriver,
+        RiscvCore,
+        RiscvCluster,
+        PartitionedScheduler,
+        RiscvClusterTurn,
+        u64,
+    ) {
+        let cpu = CpuId::new(0);
+        let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
+        let driver = detailed_o3_driver_with_stats(cpu);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        issue_fetch_instruction(
+            &core,
+            &mut scheduler,
+            &transport,
+            load_word_instruction(0, 2, 12),
+        );
+        let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(execution)),
+                )]),
+            )
+            .unwrap();
+        let issued = core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |delivery, _context| {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0x2a, 0, 0, 0]))
+                            .unwrap(),
+                    )
+                },
+            )
+            .unwrap()
+            .unwrap();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::DataAccessIssued { event: issued },
+                )]),
+            )
+            .unwrap();
+        let turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        driver
+            .record_run_stats(&cluster, scheduler.now(), &turn)
+            .unwrap();
+        let wake_tick = core
+            .requested_o3_writeback_wake_tick(scheduler.now())
+            .unwrap();
+        (driver, core, cluster, scheduler, turn, wake_tick)
     }
 
     fn issue_fetch_instruction(

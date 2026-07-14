@@ -3,7 +3,8 @@ use rem6_kernel::{PartitionEventId, PartitionedScheduler, Tick};
 use rem6_memory::MemoryRequestId;
 
 use super::{
-    deferred_o3_scalar_load_writeback, mark_data_access_event_kind, record_o3_data_access_outcome,
+    cloned_data_access_event_with_kind, deferred_o3_scalar_load_writeback,
+    mark_data_access_event_kind, record_callback_error, record_o3_data_access_outcome,
     OutstandingDataAccess,
 };
 use crate::{
@@ -79,7 +80,10 @@ impl RiscvCore {
     ) {
         let fetch_events = self.o3_scalar_load_wakeup_fetch_events(request_id);
         let mut state = self.state.lock().expect("riscv core lock");
-        let Some(access) = state.outstanding_data.remove(&request_id) else {
+        if state.pending_callback_error.is_some() {
+            return;
+        }
+        let Some(access) = state.outstanding_data.get(&request_id).cloned() else {
             return;
         };
         if !matches!(access.access, MemoryAccessKind::Load { .. }) {
@@ -90,16 +94,26 @@ impl RiscvCore {
             deferred_o3_scalar_load_writeback(&state, &access),
             "forwarded scalar load must defer architectural writeback"
         );
-        let completed_event =
-            mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Completed);
-        record_o3_data_access_outcome(
+        let completed_event = cloned_data_access_event_with_kind(
+            &state,
+            &access,
+            RiscvDataAccessEventKind::Completed,
+        );
+        if let Err(error) = record_o3_data_access_outcome(
             &mut state,
             &access,
             completed_event,
             tick,
             Some(&data),
             access.store_load_forwarding_plan,
-        );
+        ) {
+            record_callback_error(&mut state, error);
+            return;
+        }
+        state.outstanding_data.remove(&request_id);
+        let completed_event =
+            mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Completed);
+        debug_assert!(completed_event.is_some());
         wake_o3_scalar_memory_younger_window(&mut state, tick, &fetch_events);
         state.data_events.push(RiscvDataAccessEvent::completed(
             access.record(tick),

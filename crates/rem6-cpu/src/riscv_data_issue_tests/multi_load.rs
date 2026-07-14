@@ -57,7 +57,7 @@ fn three_load_responses_write_back_in_program_order() {
     );
     for (pc, register, value) in [(0x8000, 16, 0x2a), (0x8004, 17, 0x63), (0x8008, 18, 0x77)] {
         let retired = core
-            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
             .expect("completed scalar load should retire in program order");
         assert_eq!(retired.fetch_pc(), Address::new(pc));
         assert_eq!(core.read_register(reg(register)), value);

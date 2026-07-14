@@ -302,6 +302,26 @@ mod tests {
     }
 
     #[test]
+    fn scalar_load_window_admits_independent_div_and_stops_load_dependent_div() {
+        let mut independent = scalar_load_window(4);
+        assert_eq!(
+            independent.classify_younger(div_x3()),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+
+        let mut dependent = scalar_load_window(4);
+        let load_dependent_div = RiscvInstruction::Div {
+            rd: Register::new(3).unwrap(),
+            rs1: Register::new(4).unwrap(),
+            rs2: Register::new(2).unwrap(),
+        };
+        assert_eq!(
+            dependent.classify_younger(load_dependent_div),
+            RiscvScalarIntegerYoungerDecision::AdmitStop
+        );
+    }
+
+    #[test]
     fn younger_write_can_shadow_the_load_destination() {
         let mut window = scalar_load_window(4);
 

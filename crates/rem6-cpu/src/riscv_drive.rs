@@ -19,6 +19,9 @@ impl RiscvCore {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        if let Some(error) = self.pending_callback_error() {
+            return Err(error);
+        }
         if !self.is_hart_started() {
             return Ok(None);
         }

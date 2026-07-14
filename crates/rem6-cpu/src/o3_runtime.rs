@@ -42,6 +42,9 @@ mod o3_runtime_issue_tests;
 mod o3_runtime_live_window;
 #[path = "o3_runtime_memory.rs"]
 mod o3_runtime_memory;
+#[cfg(test)]
+#[path = "o3_runtime_memory_tests.rs"]
+mod o3_runtime_memory_tests;
 #[path = "o3_runtime_memory_window.rs"]
 mod o3_runtime_memory_window;
 #[path = "o3_runtime_retire.rs"]
@@ -448,6 +451,11 @@ impl O3RuntimeState {
             .as_ref()
             .filter(|live| live.outcome == O3LiveScalarMemoryOutcome::Completed);
         let mut trace_record = self.record_runtime_state(execution, completed_live_scalar_memory);
+        if let Some(tick) =
+            completed_live_scalar_memory.and_then(|live| live.admitted_writeback_tick)
+        {
+            trace_record.set_admitted_writeback_tick(tick);
+        }
         self.stats
             .record_retired_instruction(execution, trace_record);
         let observation = self.record_store_forwarding_window(
@@ -1625,18 +1633,28 @@ impl crate::RiscvCore {
 
     pub fn record_ready_o3_scalar_memory_event_with_trace(
         &self,
+        current_tick: u64,
         trace_enabled: bool,
     ) -> Option<RiscvCpuExecutionEvent> {
+        let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
-        if let Some((fetch_request, issue_tick, response_tick)) = state
+        if !state
+            .o3_runtime
+            .live_scalar_memory_publication_is_admitted(current_tick)
+        {
+            return None;
+        }
+        let mut wake_tick = current_tick;
+        if let Some((fetch_request, issue_tick, publication_tick)) = state
             .o3_runtime
             .ready_live_scalar_memory_completion_timing()
         {
+            wake_tick = publication_tick;
             let execution = crate::riscv_data_issue::record_deferred_o3_data_retire_cycle(
                 &mut state,
                 fetch_request,
                 issue_tick,
-                response_tick,
+                publication_tick,
             )
             .expect("completed O3 scalar memory has a matching execution event");
             assert!(
@@ -1646,13 +1664,14 @@ impl crate::RiscvCore {
                 "completed O3 scalar memory accepts its ordered pipeline retirement"
             );
         }
-        let (execution, writeback) = {
-            let runtime = &mut state.o3_runtime;
-            let writeback = runtime.ready_live_scalar_load_writeback();
-            let execution = runtime.take_ready_live_scalar_memory_event()?;
-            runtime.record_retired_instruction_with_trace(&execution, trace_enabled);
-            (execution, writeback)
-        };
+        let writeback = state.o3_runtime.ready_live_scalar_load_writeback();
+        let execution = state
+            .o3_runtime
+            .take_ready_live_scalar_memory_event(current_tick)?;
+        state.wake_ready_o3_scalar_memory_younger_window(wake_tick, &fetch_events);
+        state
+            .o3_runtime
+            .record_retired_instruction_with_trace(&execution, trace_enabled);
         if let Some((access, data)) = writeback {
             apply_deferred_scalar_load_writeback(&mut state, &access, &data);
             crate::riscv_checker::sync_checker_hart(&mut state);

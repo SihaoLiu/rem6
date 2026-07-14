@@ -25,19 +25,24 @@ use crate::{
         stage_o3_scalar_memory_younger_window, wake_o3_scalar_memory_younger_window,
     },
     CpuFetchEvent, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
-    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
-    RiscvLoadReservation,
+    InOrderPipelineStallCause, O3RuntimeError, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent, RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord,
+    RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 mod buffered_store;
 mod forwarding;
 mod handoff;
+mod o3_callback;
 mod prepared;
 mod request_helpers;
 
 pub(crate) use buffered_store::BufferedO3Store;
 use buffered_store::PreparedDataAccess;
+use o3_callback::{
+    cloned_data_access_event_with_kind, mark_data_access_event_kind, record_callback_error,
+    record_o3_data_access_outcome,
+};
 pub(crate) use prepared::{PreparedDataIssueCleanup, PreparedDataParallelAccess};
 pub(crate) use request_helpers::{
     access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
@@ -650,6 +655,9 @@ impl RiscvCore {
 
     fn record_store_conditional_failure(&self, request_id: MemoryRequestId, tick: Tick) {
         let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_callback_error.is_some() {
+            return;
+        }
         let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
         };
@@ -669,7 +677,12 @@ impl RiscvCore {
             tick,
             RiscvDataAccessEventKind::ConditionalFailed,
         );
-        record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, None);
+        if let Err(error) =
+            record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, None)
+        {
+            record_callback_error(&mut state, error);
+            return;
+        }
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -705,7 +718,10 @@ impl RiscvCore {
             .then(|| self.o3_scalar_load_wakeup_fetch_events(request_id))
             .unwrap_or_default();
         let mut state = self.state.lock().expect("riscv core lock");
-        let Some(access) = state.outstanding_data.remove(&request_id) else {
+        if state.pending_callback_error.is_some() {
+            return;
+        }
+        let Some(access) = state.outstanding_data.get(&request_id).cloned() else {
             return;
         };
 
@@ -719,6 +735,54 @@ impl RiscvCore {
                             .is_some_and(|data| plan.overlay_response_data(data))
                 });
                 let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                let completed_event = if deferred_retirement {
+                    cloned_data_access_event_with_kind(
+                        &state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                } else {
+                    None
+                };
+                if deferred_retirement {
+                    if let Err(error) = record_o3_data_access_outcome(
+                        &mut state,
+                        &access,
+                        completed_event,
+                        delivery.tick(),
+                        data.as_deref(),
+                        forwarding_plan,
+                    ) {
+                        record_callback_error(&mut state, error);
+                        return;
+                    }
+                    state.outstanding_data.remove(&request_id);
+                    let completed_event = mark_data_access_event_kind(
+                        &mut state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    );
+                    debug_assert!(completed_event.is_some());
+                } else {
+                    state.outstanding_data.remove(&request_id);
+                    let completed_event = record_data_retire_cycle(
+                        &mut state,
+                        &access,
+                        delivery.tick(),
+                        RiscvDataAccessEventKind::Completed,
+                    );
+                    if let Err(error) = record_o3_data_access_outcome(
+                        &mut state,
+                        &access,
+                        completed_event,
+                        delivery.tick(),
+                        data.as_deref(),
+                        forwarding_plan,
+                    ) {
+                        record_callback_error(&mut state, error);
+                        return;
+                    }
+                }
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
                     record_load_completion(
                         &mut state,
@@ -729,28 +793,6 @@ impl RiscvCore {
                     );
                     riscv_checker::sync_checker_hart(&mut state);
                 }
-                let completed_event = if deferred_retirement {
-                    mark_data_access_event_kind(
-                        &mut state,
-                        &access,
-                        RiscvDataAccessEventKind::Completed,
-                    )
-                } else {
-                    record_data_retire_cycle(
-                        &mut state,
-                        &access,
-                        delivery.tick(),
-                        RiscvDataAccessEventKind::Completed,
-                    )
-                };
-                record_o3_data_access_outcome(
-                    &mut state,
-                    &access,
-                    completed_event,
-                    delivery.tick(),
-                    data.as_deref(),
-                    forwarding_plan,
-                );
                 if matches!(access.access, MemoryAccessKind::Load { .. }) {
                     wake_o3_scalar_memory_younger_window(
                         &mut state,
@@ -764,24 +806,29 @@ impl RiscvCore {
                 ));
             }
             ResponseStatus::Retry => {
+                state.outstanding_data.remove(&request_id);
                 let retry_event = mark_data_access_event_kind(
                     &mut state,
                     &access,
                     RiscvDataAccessEventKind::Retry,
                 );
-                record_o3_data_access_outcome(
+                if let Err(error) = record_o3_data_access_outcome(
                     &mut state,
                     &access,
                     retry_event,
                     delivery.tick(),
                     None,
                     None,
-                );
+                ) {
+                    record_callback_error(&mut state, error);
+                    return;
+                }
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
             }
             ResponseStatus::StoreConditionalFailed => {
+                state.outstanding_data.remove(&request_id);
                 let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
                     debug_assert!(false, "store-conditional failure for non-SC access");
                     state
@@ -807,14 +854,17 @@ impl RiscvCore {
                     delivery.tick(),
                     RiscvDataAccessEventKind::ConditionalFailed,
                 );
-                record_o3_data_access_outcome(
+                if let Err(error) = record_o3_data_access_outcome(
                     &mut state,
                     &access,
                     completed_event,
                     delivery.tick(),
                     None,
                     None,
-                );
+                ) {
+                    record_callback_error(&mut state, error);
+                    return;
+                }
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::conditional_failed(
@@ -826,12 +876,20 @@ impl RiscvCore {
 
     pub fn record_data_failure(&self, request_id: MemoryRequestId, tick: Tick) {
         let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_callback_error.is_some() {
+            return;
+        }
         let Some(access) = state.outstanding_data.remove(&request_id) else {
             return;
         };
         let failed_event =
             mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Failed);
-        record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None, None);
+        if let Err(error) =
+            record_o3_data_access_outcome(&mut state, &access, failed_event, tick, None, None)
+        {
+            record_callback_error(&mut state, error);
+            return;
+        }
         state
             .data_events
             .push(RiscvDataAccessEvent::failed(access.record(tick)));
@@ -843,7 +901,10 @@ impl RiscvCore {
         completion: MmioCompletion,
     ) {
         let mut state = self.state.lock().expect("riscv core lock");
-        let Some(access) = state.outstanding_data.remove(&request_id) else {
+        if state.pending_callback_error.is_some() {
+            return;
+        }
+        let Some(access) = state.outstanding_data.get(&request_id).cloned() else {
             return;
         };
 
@@ -851,6 +912,54 @@ impl RiscvCore {
             Ok(response) => {
                 let data = response.data().map(ToOwned::to_owned);
                 let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                let completed_event = if deferred_retirement {
+                    cloned_data_access_event_with_kind(
+                        &state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    )
+                } else {
+                    None
+                };
+                if deferred_retirement {
+                    if let Err(error) = record_o3_data_access_outcome(
+                        &mut state,
+                        &access,
+                        completed_event,
+                        completion.tick(),
+                        data.as_deref(),
+                        None,
+                    ) {
+                        record_callback_error(&mut state, error);
+                        return;
+                    }
+                    state.outstanding_data.remove(&request_id);
+                    let completed_event = mark_data_access_event_kind(
+                        &mut state,
+                        &access,
+                        RiscvDataAccessEventKind::Completed,
+                    );
+                    debug_assert!(completed_event.is_some());
+                } else {
+                    state.outstanding_data.remove(&request_id);
+                    let completed_event = record_data_retire_cycle(
+                        &mut state,
+                        &access,
+                        completion.tick(),
+                        RiscvDataAccessEventKind::Completed,
+                    );
+                    if let Err(error) = record_o3_data_access_outcome(
+                        &mut state,
+                        &access,
+                        completed_event,
+                        completion.tick(),
+                        data.as_deref(),
+                        None,
+                    ) {
+                        record_callback_error(&mut state, error);
+                        return;
+                    }
+                }
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
                     record_load_completion(
                         &mut state,
@@ -861,47 +970,29 @@ impl RiscvCore {
                     );
                     riscv_checker::sync_checker_hart(&mut state);
                 }
-                let completed_event = if deferred_retirement {
-                    mark_data_access_event_kind(
-                        &mut state,
-                        &access,
-                        RiscvDataAccessEventKind::Completed,
-                    )
-                } else {
-                    record_data_retire_cycle(
-                        &mut state,
-                        &access,
-                        completion.tick(),
-                        RiscvDataAccessEventKind::Completed,
-                    )
-                };
-                record_o3_data_access_outcome(
-                    &mut state,
-                    &access,
-                    completed_event,
-                    completion.tick(),
-                    data.as_deref(),
-                    None,
-                );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
                     data,
                 ));
             }
             Err(_) => {
+                state.outstanding_data.remove(&request_id);
                 let retry_event = mark_data_access_event_kind(
                     &mut state,
                     &access,
                     RiscvDataAccessEventKind::Retry,
                 );
-                record_o3_data_access_outcome(
+                if let Err(error) = record_o3_data_access_outcome(
                     &mut state,
                     &access,
                     retry_event,
                     completion.tick(),
                     None,
                     None,
-                );
+                ) {
+                    record_callback_error(&mut state, error);
+                    return;
+                }
                 state.data_events.push(RiscvDataAccessEvent::retry(
                     access.record(completion.tick()),
                 ));
@@ -1001,95 +1092,6 @@ fn deferred_o3_scalar_memory_retirement(state: &RiscvCoreState, access: &IssuedD
 fn deferred_o3_scalar_load_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
     matches!(access.access, MemoryAccessKind::Load { .. })
         && deferred_o3_scalar_memory_retirement(state, access)
-}
-
-fn mark_data_access_event_kind(
-    state: &mut RiscvCoreState,
-    access: &IssuedDataAccess,
-    kind: RiscvDataAccessEventKind,
-) -> Option<RiscvCpuExecutionEvent> {
-    let event = state
-        .events
-        .iter_mut()
-        .find(|event| event.fetch().request_id() == access.fetch_request)?;
-    event.set_data_access_event_kind(kind);
-    Some(event.clone())
-}
-
-fn record_o3_data_access_outcome(
-    state: &mut RiscvCoreState,
-    access: &IssuedDataAccess,
-    execution: Option<RiscvCpuExecutionEvent>,
-    response_tick: Tick,
-    load_data: Option<&[u8]>,
-    forwarding_plan: Option<O3StoreLoadForwardingPlan>,
-) {
-    let Some(execution) = execution else {
-        state.buffered_o3_stores.remove(&access.request);
-        state
-            .o3_runtime
-            .discard_data_access_outcome(access.fetch_request);
-        return;
-    };
-    state.buffered_o3_stores.remove(&access.request);
-    let latency_ticks = response_tick.saturating_sub(access.tick);
-    let squash_younger_requests = matches!(
-        execution.data_access_event_kind(),
-        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
-    )
-    .then(|| {
-        state
-            .o3_runtime
-            .younger_live_scalar_memory_requests(access.fetch_request, access.request)
-    })
-    .unwrap_or_default();
-    let completed_live_scalar_memory = if let Some(forwarding_plan) = forwarding_plan {
-        load_data.is_some_and(|data| {
-            state.o3_runtime.complete_live_scalar_memory_forwarding(
-                &execution,
-                access.request,
-                response_tick,
-                latency_ticks,
-                data,
-                forwarding_plan,
-            )
-        })
-    } else {
-        state.o3_runtime.complete_live_scalar_memory_response(
-            &execution,
-            access.request,
-            response_tick,
-            latency_ticks,
-            load_data,
-        )
-    };
-    if completed_live_scalar_memory {
-        for (request, fetch_request) in squash_younger_requests {
-            state.outstanding_data.remove(&request);
-            state.buffered_o3_stores.remove(&request);
-            state.issued_data_for_fetches.remove(&fetch_request);
-            if let Some(event) = state
-                .events
-                .iter_mut()
-                .find(|event| event.fetch().request_id() == fetch_request)
-            {
-                event.clear_data_access_retirement();
-            }
-        }
-        return;
-    }
-    if matches!(
-        execution.data_access_event_kind(),
-        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
-    ) {
-        state
-            .o3_runtime
-            .discard_data_access_outcome(access.fetch_request);
-    } else {
-        state
-            .o3_runtime
-            .record_data_access_outcome(&execution, response_tick, latency_ticks);
-    }
 }
 
 fn retag_existing_fetch_wait_cycles_for_data_access(

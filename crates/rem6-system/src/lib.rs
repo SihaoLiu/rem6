@@ -365,9 +365,10 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        let scheduled = self
+        let mut scheduled = self
             .trap_port
             .schedule_riscv_system_events_from_turn(scheduler, turn, event_for)?;
+        scheduled.extend(schedule_o3_writeback_wakes(cluster, scheduler, false)?);
         self.reset_runtime_stats_for_new_stats_resets(cluster)?;
         Ok(scheduled)
     }
@@ -382,9 +383,10 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        let scheduled = self
+        let mut scheduled = self
             .trap_port
             .schedule_riscv_system_events_from_turn_parallel(scheduler, turn, event_for)?;
+        scheduled.extend(schedule_o3_writeback_wakes(cluster, scheduler, true)?);
         self.reset_runtime_stats_for_new_stats_resets(cluster)?;
         Ok(scheduled)
     }
@@ -766,4 +768,35 @@ impl RiscvSystemRunDriver {
             .stop_request()
             .copied()
     }
+}
+
+fn schedule_o3_writeback_wakes(
+    cluster: &RiscvCluster,
+    scheduler: &mut PartitionedScheduler,
+    parallel: bool,
+) -> Result<Vec<PartitionEventId>, SystemError> {
+    let mut scheduled = Vec::new();
+    for cpu in cluster.core_ids() {
+        let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+        let Some(tick) = core.requested_o3_writeback_wake_tick(scheduler.now()) else {
+            continue;
+        };
+        let fired = core.clone();
+        let event_id = if parallel {
+            scheduler.schedule_parallel_at(core.partition(), tick, move |context| {
+                fired.mark_o3_writeback_wake_fired(context.now());
+            })
+        } else {
+            scheduler.schedule_at(core.partition(), tick, move |context| {
+                fired.mark_o3_writeback_wake_fired(context.now());
+            })
+        }
+        .map_err(SystemError::Scheduler)?;
+        let event = scheduler
+            .pending_event_snapshot(event_id)
+            .expect("new O3 writeback wake is pending");
+        core.mark_o3_writeback_wake_scheduled(scheduler.instance_id(), event);
+        scheduled.push(event_id);
+    }
+    Ok(scheduled)
 }

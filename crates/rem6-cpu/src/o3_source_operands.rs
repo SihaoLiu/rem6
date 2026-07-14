@@ -200,6 +200,19 @@ pub(crate) fn o3_speculative_scalar_alu_operands(
             | RiscvInstruction::Sra { .. }
             | RiscvInstruction::Or { .. }
             | RiscvInstruction::And { .. }
+            | RiscvInstruction::Mul { .. }
+            | RiscvInstruction::Mulh { .. }
+            | RiscvInstruction::Mulhsu { .. }
+            | RiscvInstruction::Mulhu { .. }
+            | RiscvInstruction::Div { .. }
+            | RiscvInstruction::Divu { .. }
+            | RiscvInstruction::Rem { .. }
+            | RiscvInstruction::Remu { .. }
+            | RiscvInstruction::Mulw { .. }
+            | RiscvInstruction::Divw { .. }
+            | RiscvInstruction::Divuw { .. }
+            | RiscvInstruction::Remw { .. }
+            | RiscvInstruction::Remuw { .. }
             | RiscvInstruction::Addw { .. }
             | RiscvInstruction::Subw { .. }
             | RiscvInstruction::Sllw { .. }

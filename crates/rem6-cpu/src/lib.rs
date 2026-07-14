@@ -77,6 +77,7 @@ mod riscv_live_retire_gate;
 mod riscv_live_retire_window;
 mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_o3_window_policy;
+mod riscv_o3_writeback_wake;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_scalar_memory_window;
@@ -124,6 +125,14 @@ impl RiscvCore {
         let core = Self::new(core);
         core.state.lock().expect("riscv core lock").data = Some(data);
         core
+    }
+
+    pub fn pending_callback_error(&self) -> Option<RiscvCpuError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pending_callback_error
+            .clone()
     }
 
     pub fn with_data_and_store_conditional_progress_config(
@@ -413,7 +422,8 @@ impl RiscvCore {
 
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
-        state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
+        state.pending_callback_error.is_none()
+            && state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
             && state.outstanding_data.is_empty()
             && state.buffered_o3_stores.is_empty()
             && state.pending_data_translations.is_empty()
@@ -857,6 +867,8 @@ struct RiscvCoreState {
     tage_sc_l_branch_predictor: TageScLBranchPredictor,
     multiperspective_perceptron: MultiperspectivePerceptron,
     o3_runtime: o3_runtime::O3RuntimeState,
+    o3_writeback_wake: riscv_o3_writeback_wake::RiscvO3WritebackWakeState,
+    pending_callback_error: Option<RiscvCpuError>,
     live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
@@ -944,6 +956,8 @@ impl RiscvCoreState {
             tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
             multiperspective_perceptron: default_riscv_multiperspective_perceptron(),
             o3_runtime: o3_runtime::O3RuntimeState::default(),
+            o3_writeback_wake: riscv_o3_writeback_wake::RiscvO3WritebackWakeState::default(),
+            pending_callback_error: None,
             live_retire_gate: riscv_live_retire_gate::RiscvLiveRetireGateState::default(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),

@@ -733,17 +733,28 @@ mod tests {
 
         let mut completed = load.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
-        assert!(runtime.complete_live_scalar_memory_response(
-            &completed,
-            request(20),
-            41,
-            10,
-            Some(&0x2a_u32.to_le_bytes()),
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_response(
+                &completed,
+                request(20),
+                41,
+                10,
+                Some(&0x2a_u32.to_le_bytes()),
+            )
+            .unwrap());
+
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+            .is_none());
+        assert!(runtime.take_ready_live_scalar_memory_event(41).is_none());
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+            .is_none());
+        assert!(runtime.take_ready_live_scalar_memory_event(42).is_some());
 
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), dependent)
-            .expect("completed load should wake its dependent scalar ALU");
+            .expect("admitted load should wake its dependent scalar ALU");
         assert_eq!(
             candidate.forwarded_register_writes(),
             &[RegisterWrite::new(Register::new(4).unwrap(), 0x2a)]

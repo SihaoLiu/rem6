@@ -455,6 +455,24 @@ impl O3RuntimeState {
     }
 }
 
+#[cfg(test)]
+impl crate::RiscvCore {
+    pub(crate) fn reserve_test_fixed_fu_writeback(
+        &self,
+        sequence: u64,
+        raw_ready_tick: u64,
+    ) -> Result<(), O3RuntimeError> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state
+            .o3_runtime
+            .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+                sequence,
+                raw_ready_tick,
+            )])
+            .map(|_| ())
+    }
+}
+
 impl O3RuntimeStats {
     fn record_writeback_port_delta(&mut self, delta: O3WritebackPortStatsDelta) {
         self.writeback_port_cycles = self.writeback_port_cycles.saturating_add(delta.cycles);

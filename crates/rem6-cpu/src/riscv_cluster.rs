@@ -118,6 +118,15 @@ impl RiscvCluster {
             .reconcile(self.cores.iter());
     }
 
+    pub(super) fn check_pending_callback_errors(&self) -> Result<(), RiscvClusterError> {
+        self.cores
+            .iter()
+            .find_map(|(cpu, core)| core.pending_callback_error().map(|error| (*cpu, error)))
+            .map_or(Ok(()), |(cpu, error)| {
+                Err(RiscvClusterError::Core { cpu, error })
+            })
+    }
+
     pub fn core_count(&self) -> usize {
         self.cores.len()
     }
@@ -227,6 +236,7 @@ impl RiscvCluster {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         self.core(cpu)?
             .drive_next_action(
@@ -256,6 +266,7 @@ impl RiscvCluster {
         FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -290,6 +301,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
@@ -404,6 +416,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
@@ -536,6 +549,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
@@ -687,6 +701,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
@@ -847,6 +862,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = PreparedParallelActions::new();
         let mut transaction_cpus = Vec::new();
@@ -1028,6 +1044,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         for (cpu, core) in &self.cores {
@@ -1152,6 +1169,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         let mut committed_instructions = 0u64;
@@ -1316,6 +1334,7 @@ impl RiscvCluster {
         }
 
         let turn = RiscvClusterTurn::scheduler(scheduler.run_next_epoch());
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1348,6 +1367,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1389,6 +1409,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1437,6 +1458,7 @@ impl RiscvCluster {
         let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
             return Ok(None);
         };
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
     }
@@ -1480,6 +1502,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1530,6 +1553,7 @@ impl RiscvCluster {
         let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
             return Ok(None);
         };
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
     }
@@ -1573,6 +1597,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1618,6 +1643,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1661,6 +1687,7 @@ impl RiscvCluster {
         }
 
         let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
     }
@@ -1711,6 +1738,7 @@ impl RiscvCluster {
         let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
             return Ok(None);
         };
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
     }
@@ -1763,6 +1791,7 @@ impl RiscvCluster {
         let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
             return Ok(None);
         };
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
     }

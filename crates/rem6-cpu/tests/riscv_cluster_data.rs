@@ -608,10 +608,23 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
         actions[0].action(),
         RiscvCoreDriveAction::DataAccessIssued { .. }
     ));
-    scheduler.run_until_idle_parallel().unwrap();
+    while !cpu
+        .data_access_events()
+        .last()
+        .is_some_and(|event| event.kind() == RiscvDataAccessEventKind::Completed)
+    {
+        let tick_limit = scheduler.now().checked_add(1).expect("scheduler tick");
+        scheduler
+            .run_next_epoch_parallel_recorded_until(tick_limit)
+            .unwrap()
+            .expect("pending scalar-load response scheduler event");
+    }
     assert_eq!(cpu.read_register(reg(5)), 0);
+    let admitted_tick = cpu
+        .requested_o3_writeback_wake_tick(scheduler.now())
+        .expect("completed scalar load should request an O3 writeback wake");
     assert!(cpu
-        .record_ready_o3_scalar_memory_event_with_trace(false)
+        .record_ready_o3_scalar_memory_event_with_trace(admitted_tick, false)
         .is_some());
     assert_eq!(cpu.read_register(reg(5)), 41);
 

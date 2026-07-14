@@ -156,9 +156,10 @@ impl RiscvSystemRunDriver {
                 {
                     break;
                 }
-                let Some(instruction) = core
-                    .record_ready_o3_scalar_memory_event_with_trace(self.o3_runtime_trace_enabled)
-                else {
+                let Some(instruction) = core.record_ready_o3_scalar_memory_event_with_trace(
+                    tick,
+                    self.o3_runtime_trace_enabled,
+                ) else {
                     break;
                 };
                 updated_cpus.insert(cpu);

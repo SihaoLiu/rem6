@@ -41,7 +41,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence: live.sequence,
                 issue_tick: live.issue_tick,
-                admitted_writeback_tick: None,
+                admitted_writeback_tick: live.admitted_writeback_tick,
                 commit_tick,
                 occupancy: live.issue_rob_occupancy,
                 commits: 1,

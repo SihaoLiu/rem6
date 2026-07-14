@@ -65,7 +65,7 @@ fn detailed_store_store_load_forwards_from_the_youngest_store_without_transport(
     }
     assert_eq!(core.read_register(reg(6)), 0);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .is_none());
 
     scheduler.run_until_idle_conservative();
@@ -82,13 +82,13 @@ fn detailed_store_store_load_forwards_from_the_youngest_store_without_transport(
     scheduler.run_until_idle_conservative();
     for expected_pc in [0x8000, 0x8004] {
         let store = core
-            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
             .expect("stores should retire oldest-first");
         assert_eq!(store.fetch_pc(), Address::new(expected_pc));
         assert_eq!(core.read_register(reg(6)), 0);
     }
     let load = core
-        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("forwarded load should retire after both stores");
     assert_eq!(load.fetch_pc(), Address::new(0x8008));
     assert_eq!(core.read_register(reg(6)), 0x63);
@@ -133,7 +133,7 @@ fn leading_store_retry_cancels_the_younger_store_before_transport_side_effects()
 
     assert_eq!(visible_store.load(Ordering::SeqCst), 0);
     let retry = core
-        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("leading retry should retire before replay");
     assert_eq!(
         retry.data_access_event_kind(),
@@ -161,9 +161,9 @@ fn leading_store_retry_cancels_the_younger_store_before_transport_side_effects()
     scheduler.run_until_idle_conservative();
 
     assert_eq!(visible_store.load(Ordering::SeqCst), 0x63);
-    core.record_ready_o3_scalar_memory_event_with_trace(true)
+    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("replayed younger store should retire");
-    core.record_ready_o3_scalar_memory_event_with_trace(true)
+    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("replayed forwarded load should retire");
     assert_eq!(core.read_register(reg(6)), 0x63);
 }
@@ -213,11 +213,11 @@ fn middle_store_retry_cancels_the_forwarded_load_after_buffer_drain() {
     scheduler.run_until_idle_conservative();
 
     let first = core
-        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("leading store should retire before the retry");
     assert_eq!(first.fetch_pc(), Address::new(0x8000));
     let retry = core
-        .record_ready_o3_scalar_memory_event_with_trace(true)
+        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("middle retry should retire before load replay");
     assert_eq!(retry.fetch_pc(), Address::new(0x8004));
     assert_eq!(
@@ -239,7 +239,7 @@ fn middle_store_retry_cancels_the_forwarded_load_after_buffer_drain() {
     .unwrap()
     .expect("cancelled load should replay through transport");
     scheduler.run_until_idle_conservative();
-    core.record_ready_o3_scalar_memory_event_with_trace(true)
+    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
         .expect("replayed load should retire");
     assert_eq!(core.read_register(reg(6)), 0x63);
 }
@@ -313,7 +313,7 @@ fn cluster_batch_buffers_and_drains_the_younger_store_in_two_phases() {
 
     for expected_pc in [0x8000, 0x8004, 0x8008] {
         let retired = core
-            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
             .expect("cluster-batch store-store-load rows should retire in order");
         assert_eq!(retired.fetch_pc(), Address::new(expected_pc));
     }
@@ -388,7 +388,7 @@ fn ready_buffered_store_drains_before_a_younger_mmio_access() {
     scheduler.run_until_idle_parallel().unwrap();
     for expected_pc in [0x8000, 0x8004, 0x8008] {
         let retired = core
-            .record_ready_o3_scalar_memory_event_with_trace(true)
+            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
             .expect("store-store-load rows should retire after the buffer drains");
         assert_eq!(retired.fetch_pc(), Address::new(expected_pc));
     }

@@ -133,14 +133,16 @@ mod tests {
         assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
         let mut completed = load.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
-        assert!(runtime.complete_live_scalar_memory_forwarding(
-            &completed,
-            memory_request(21),
-            40,
-            8,
-            &[0x11, 0x5a, 0x33, 0x80],
-            plan,
-        ));
+        assert!(runtime
+            .complete_live_scalar_memory_forwarding(
+                &completed,
+                memory_request(21),
+                40,
+                8,
+                &[0x11, 0x5a, 0x33, 0x80],
+                plan,
+            )
+            .unwrap());
 
         let (resident, forwarded, completed_partial, younger) = runtime
             .live_scalar_memory_handoff()

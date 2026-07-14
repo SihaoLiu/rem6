@@ -149,6 +149,7 @@ impl RiscvCluster {
         let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
             return Ok(None);
         };
+        self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
     }
