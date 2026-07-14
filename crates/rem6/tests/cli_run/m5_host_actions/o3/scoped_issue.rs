@@ -73,6 +73,56 @@ fn rem6_run_o3_scoped_issue_width_one_serializes_direct_window() {
 }
 
 #[test]
+fn rem6_run_o3_scoped_issue_text_stats_expose_arbitration_counters() {
+    let path = scoped_issue_binary("o3-scoped-issue-text-stats", ScopedIssueCase::CrossResource);
+    let json = scoped_issue_json(&path, "direct", 1, 1_500);
+
+    assert_completed_scoped_issue(
+        &json,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+    let issue = scoped_issue_artifact(&json);
+    assert!(
+        issue_u64(issue, "cycles") > 0,
+        "width-one fixture should record positive issue cycles: {issue}"
+    );
+    assert_eq!(issue_u64(issue, "issued_rows"), 3);
+    assert!(
+        issue_u64(issue, "resource_blocked_row_cycles") > 0,
+        "width-one fixture should record resource-blocked row cycles: {issue}"
+    );
+    assert_eq!(issue_u64(issue, "dependency_blocked_row_cycles"), 0);
+    assert_eq!(issue_u64(issue, "max_rows_per_cycle"), 1);
+
+    let output = scoped_issue_command_with_stats_format(&path, "direct", 1, 1_500, "text")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for (json_field, stat_field, unit) in SCOPED_ISSUE_STATS {
+        let path = format!("sim.cpu0.o3.{stat_field}");
+        let value = issue_u64(issue, json_field);
+        match unit {
+            "Cycle" => assert_text_cycle_stat(&stdout, &path, value),
+            "Count" => assert_text_count_stat(&stdout, &path, value),
+            _ => panic!("unexpected scoped issue stat unit {unit} for {path}"),
+        }
+        assert_text_stat_occurs_once(&stdout, &path);
+    }
+}
+
+#[test]
 fn rem6_run_o3_scoped_issue_width_two_coissues_cross_resource_rows() {
     let path = scoped_issue_binary(
         "o3-scoped-issue-width-two-cross",
@@ -808,7 +858,24 @@ fn scoped_issue_command(
     issue_width: usize,
     max_tick: u64,
 ) -> Command {
-    scoped_issue_command_with_mode(path, memory_system, issue_width, max_tick, "detailed")
+    scoped_issue_command_with_stats_format(path, memory_system, issue_width, max_tick, "json")
+}
+
+fn scoped_issue_command_with_stats_format(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+    stats_format: &str,
+) -> Command {
+    scoped_issue_command_with_mode_and_stats_format(
+        path,
+        memory_system,
+        issue_width,
+        max_tick,
+        "detailed",
+        stats_format,
+    )
 }
 
 fn scoped_issue_command_with_mode(
@@ -817,6 +884,24 @@ fn scoped_issue_command_with_mode(
     issue_width: usize,
     max_tick: u64,
     switch_mode: &str,
+) -> Command {
+    scoped_issue_command_with_mode_and_stats_format(
+        path,
+        memory_system,
+        issue_width,
+        max_tick,
+        switch_mode,
+        "json",
+    )
+}
+
+fn scoped_issue_command_with_mode_and_stats_format(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+    switch_mode: &str,
+    stats_format: &str,
 ) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
@@ -828,10 +913,13 @@ fn scoped_issue_command_with_mode(
         "--max-tick",
         &max_tick.to_string(),
         "--stats-format",
-        "json",
+        stats_format,
         "--execute",
-        "--debug-flags",
-        "O3,Data,Fetch,Memory,HostAction",
+    ]);
+    if stats_format == "json" {
+        command.args(["--debug-flags", "O3,Data,Fetch,Memory,HostAction"]);
+    }
+    command.args([
         "--riscv-o3-scalar-memory-depth",
         "4",
         "--riscv-o3-issue-width",
