@@ -140,6 +140,44 @@ fn outer_control_validation_preserves_inner_control_chain() {
 }
 
 #[test]
+fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let outer = beq(5, 6);
+    let inner = beq(4, 0);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [(Address::new(0x8004), outer), (Address::new(0x8008), inner)],
+    );
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let inner_sequence = rob[2].sequence();
+    let outer_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), outer)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        outer_candidate,
+        &[request(11)],
+        11,
+        RiscvExecutionRecord::new(outer, 0x8004, 0x8008, Vec::new(), None),
+    );
+
+    runtime.validate_live_speculative_producer(outer_sequence);
+
+    assert!(runtime.live_control_dependencies.is_empty());
+    assert!(runtime.has_live_control_window());
+    assert!(runtime
+        .live_control_window_sequences
+        .contains(&inner_sequence));
+
+    runtime.discard_live_staged_window_from(outer_sequence);
+
+    assert!(!runtime.has_live_control_window());
+}
+
+#[test]
 fn outer_control_discard_removes_inner_branch_and_descendant() {
     let (mut runtime, outer, inner, descendant) = issued_nested_control_runtime();
     let outer_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
@@ -446,6 +484,7 @@ fn staged_window_truncation_prunes_control_dependencies() {
     runtime.discard_live_staged_window_from(load_sequence);
 
     assert!(runtime.live_control_dependencies.is_empty());
+    assert!(!runtime.has_live_control_window());
 }
 
 fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {

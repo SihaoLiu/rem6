@@ -324,6 +324,84 @@ fn rem6_run_host_switch_transfers_o3_nested_controls() {
 }
 
 #[test]
+fn rem6_run_host_switch_preserves_load_dependent_inner_control_timing() {
+    let path = nested_control_binary("o3-nested-dependent-inner-switch", false, false, true);
+    let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+    let load = event_at_pc(&baseline, LOAD_PC);
+    let switch_tick = event_u64(event_at_pc(&baseline, OUTER_BRANCH_PC), "issue_tick") + 1;
+    assert!(switch_tick < event_u64(load, "lsq_data_response_tick"));
+
+    let switch_arg = format!("{switch_tick}:cpu0:timing");
+    let switched = run_nested_control_json(
+        &path,
+        "direct",
+        2_000,
+        "detailed",
+        &["--host-switch-cpu-mode", &switch_arg],
+    );
+    let timing_switch = switched
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .and_then(|switches| {
+            switches.iter().find(|switch| {
+                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing dependent-inner timing switch: {switched}"));
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .expect("dependent-inner state transfer");
+    let runtime = transfer_o3_runtime_chunk(transfer, "cpu0");
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let handoff = transfer_live_data_handoff_chunk(transfer, "cpu0");
+    assert_eq!(
+        handoff.pointer("/younger_rows").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    for pc in [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC] {
+        let expected = event_at_pc(&baseline, pc);
+        let actual = event_at_pc(&switched, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(actual, field),
+                event_u64(expected, field),
+                "dependent-inner transfer must preserve {field} for {pc}: expected={expected} actual={actual}"
+            );
+        }
+    }
+    assert_eq!(register_value(&switched, "x13"), 18);
+    assert_eq!(register_value(&switched, "x14"), 1);
+    assert_eq!(register_value(&switched, "x15"), 2);
+    assert_eq!(register_value(&switched, "x16"), 3);
+    assert_eq!(
+        switched
+            .pointer("/cores/0/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        switched
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+}
+
+#[test]
 fn rem6_run_host_switch_preserves_inner_misprediction_rollback() {
     let path = nested_control_binary("o3-nested-inner-mispredict-switch", false, true, false);
     let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);

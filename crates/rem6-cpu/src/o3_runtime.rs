@@ -184,6 +184,7 @@ pub struct O3RuntimeState {
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     live_control_dependencies: BTreeMap<u64, u64>,
+    live_control_window_sequences: BTreeSet<u64>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
     live_scalar_memories: Vec<O3LiveScalarMemory>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
@@ -221,6 +222,7 @@ impl O3RuntimeState {
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
         self.live_control_dependencies.clear();
+        self.live_control_window_sequences.clear();
         self.deferred_scalar_memory_execution = None;
         self.live_scalar_memories.clear();
         self.live_scalar_memory_younger_sequences.clear();
@@ -542,6 +544,7 @@ impl Default for O3RuntimeState {
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
             live_control_dependencies: BTreeMap::new(),
+            live_control_window_sequences: BTreeSet::new(),
             deferred_scalar_memory_execution: None,
             live_scalar_memories: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),

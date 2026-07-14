@@ -306,7 +306,7 @@ impl RiscvCore {
             .iter()
             .any(|instruction| instruction.execute_wait_total_cycles().is_some());
         (state.live_retire_gate.detailed_policy_enabled()
-            || state.o3_runtime.has_live_control_dependencies())
+            || state.o3_runtime.has_live_control_window())
             && !draining_normal_execute_wait
     }
 

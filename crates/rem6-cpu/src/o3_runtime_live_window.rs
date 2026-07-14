@@ -32,6 +32,9 @@ impl O3RuntimeState {
         let mut control_sequence = self
             .stage_or_existing_live_instruction(current_pc, current, current_ready_tick)
             .filter(|_| o3_direct_conditional_sources(current).is_some());
+        if let Some(sequence) = control_sequence {
+            self.live_control_window_sequences.insert(sequence);
+        }
         for (pc, instruction) in younger {
             if is_deferred_o3_scalar_memory_instruction(instruction) {
                 break;
@@ -43,7 +46,11 @@ impl O3RuntimeState {
                 self.live_control_dependencies
                     .insert(sequence, control_sequence);
             }
-            if o3_direct_conditional_sources(instruction).is_some() {
+            let direct_conditional = o3_direct_conditional_sources(instruction).is_some();
+            if control_sequence.is_some() || direct_conditional {
+                self.live_control_window_sequences.insert(sequence);
+            }
+            if direct_conditional {
                 control_sequence = Some(sequence);
             }
         }
@@ -93,6 +100,15 @@ impl O3RuntimeState {
                 self.live_control_dependencies
                     .insert(sequence, control_sequence);
             }
+            if control_sequence.is_some()
+                || matches!(
+                    decision,
+                    RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+                        | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+                )
+            {
+                self.live_control_window_sequences.insert(sequence);
+            }
             self.live_scalar_memory_younger_sequences.insert(sequence);
             if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
                 control_sequence = Some(sequence);
@@ -135,6 +151,8 @@ impl O3RuntimeState {
                 .retain(|speculative| speculative.sequence < boundary_sequence);
             self.live_control_dependencies
                 .retain(|sequence, _| *sequence < boundary_sequence);
+            self.live_control_window_sequences
+                .retain(|sequence| *sequence < boundary_sequence);
             self.live_retired_instructions
                 .retain(|instruction| instruction.request != execution.fetch().request_id());
             self.stats
@@ -193,6 +211,7 @@ impl O3RuntimeState {
             .retain(|entry| !entry.is_live_staged());
         self.live_scalar_memory_younger_sequences.clear();
         self.live_control_dependencies.clear();
+        self.live_control_window_sequences.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -233,6 +252,8 @@ impl O3RuntimeState {
             .retain(|execution| execution.sequence < sequence);
         self.live_control_dependencies
             .retain(|dependent, _| *dependent < sequence);
+        self.live_control_window_sequences
+            .retain(|control| *control < sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence < sequence);
         self.stats
@@ -337,6 +358,8 @@ impl O3RuntimeState {
             .retain(|sequence| resident_sequences.contains(sequence));
         self.live_control_dependencies
             .retain(|sequence, _| resident_sequences.contains(sequence));
+        self.live_control_window_sequences
+            .retain(|sequence| resident_sequences.contains(sequence));
     }
 
     pub(super) fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {
