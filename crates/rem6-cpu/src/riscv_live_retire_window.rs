@@ -11,7 +11,8 @@ use crate::{
         RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
         O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
     },
-    CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
+    CpuFetchEvent, CpuFetchEventKind, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent,
 };
 
 pub(super) struct RiscvLiveRetireWindowRequest<'a> {
@@ -173,9 +174,23 @@ fn live_speculative_fu_ready_tick(
     let mut hart = state.hart.clone();
     hart.set_pc(window.pc.get());
     let execution = hart.execute_decoded(decoded).map_err(RiscvCpuError::Isa)?;
+    let Some(fetch) = window.fetch_events.iter().find(|event| {
+        event.kind() == CpuFetchEventKind::Completed
+            && event.request_id() == window.request
+            && event.pc() == window.pc
+    }) else {
+        return Ok(None);
+    };
+    let Some(instruction) = completed_fetch_instruction_starting_with(
+        &state.executed_fetches,
+        window.fetch_events,
+        fetch,
+    ) else {
+        return Ok(None);
+    };
     Ok(state
         .o3_runtime
-        .live_speculative_execution_ready_tick(window.request, &execution))
+        .live_speculative_execution_ready_tick(&instruction.consumed_requests, &execution))
 }
 
 fn detailed_scalar_memory_blocks_execution(
@@ -735,6 +750,66 @@ mod tests {
                 .into_iter()
                 .map(Address::new)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn split_suffix_replacement_does_not_reuse_speculative_fu_readiness() {
+        let mut state = RiscvCoreState::new(0x8004, 0);
+        let head = RiscvInstruction::Addi {
+            rd: Register::new(3).unwrap(),
+            rs1: Register::new(0).unwrap(),
+            imm: Immediate::new(1),
+        };
+        let multiply = RiscvInstruction::Mul {
+            rd: Register::new(7).unwrap(),
+            rs1: Register::new(1).unwrap(),
+            rs2: Register::new(2).unwrap(),
+        };
+        state.o3_runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            head,
+            0,
+            Some((Address::new(0x8004), multiply)),
+        );
+        let candidate = state
+            .o3_runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), multiply)
+            .unwrap();
+        state.o3_runtime.record_live_speculative_execution(
+            candidate,
+            &[request(7, 11), request(7, 12)],
+            10,
+            RiscvExecutionRecord::new(
+                multiply,
+                0x8004,
+                0x8008,
+                vec![rem6_isa_riscv::RegisterWrite::new(
+                    Register::new(7).unwrap(),
+                    42,
+                )],
+                None,
+            ),
+        );
+        state.hart.write(Register::new(1).unwrap(), 6);
+        state.hart.write(Register::new(2).unwrap(), 7);
+        let raw = 0x0220_83b3_u32;
+        let bytes = raw.to_le_bytes();
+        let events = vec![
+            completed_fetch_with_data(7, 11, Address::new(0x8004), bytes[..2].to_vec()),
+            completed_fetch_with_data(7, 13, Address::new(0x8006), bytes[2..].to_vec()),
+        ];
+        let window = RiscvLiveRetireWindowRequest::new(
+            request(7, 11),
+            Address::new(0x8004),
+            raw,
+            11,
+            &events,
+        );
+
+        assert_eq!(
+            live_speculative_fu_ready_tick(&state, &window).unwrap(),
+            None
         );
     }
 

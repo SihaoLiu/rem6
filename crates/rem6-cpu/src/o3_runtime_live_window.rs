@@ -231,6 +231,8 @@ impl O3RuntimeState {
             .retain(|younger| *younger < sequence);
         self.live_speculative_executions
             .retain(|execution| execution.sequence < sequence);
+        self.live_control_dependencies
+            .retain(|dependent, _| *dependent < sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence < sequence);
         self.stats

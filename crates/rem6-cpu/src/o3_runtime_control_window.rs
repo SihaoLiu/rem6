@@ -170,12 +170,12 @@ impl O3RuntimeState {
 
     pub(crate) fn live_speculative_execution_ready_tick(
         &self,
-        request: MemoryRequestId,
+        consumed_requests: &[MemoryRequestId],
         execution: &RiscvExecutionRecord,
     ) -> Option<u64> {
         let issued = self.live_speculative_executions.iter().find(|issued| {
             issued.producer_sequences.is_empty()
-                && issued.consumed_requests.first() == Some(&request)
+                && issued.consumed_requests.as_slice() == consumed_requests
                 && issued.execution == *execution
         })?;
         Some(

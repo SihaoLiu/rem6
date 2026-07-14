@@ -181,7 +181,7 @@ fn predicted_mul_wakes_dependent_add_candidate() {
         multiply_execution.clone(),
     );
     assert_eq!(
-        runtime.live_speculative_execution_ready_tick(request(11), &multiply_execution),
+        runtime.live_speculative_execution_ready_tick(&[request(11)], &multiply_execution),
         Some(14)
     );
 
@@ -279,6 +279,28 @@ fn discarding_control_descendants_removes_younger_rename_state() {
         runtime.live_speculative_executions[0].sequence,
         branch_sequence
     );
+}
+
+#[test]
+fn staged_window_truncation_prunes_control_dependencies() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), beq(5, 6)),
+            (Address::new(0x8008), mul(7, 1, 2)),
+            (Address::new(0x800c), addi(8, 7, 1)),
+        ],
+    );
+    assert_eq!(runtime.live_control_dependencies.len(), 2);
+    let load_sequence = runtime.snapshot().reorder_buffer()[0].sequence();
+
+    runtime.discard_live_staged_window_from(load_sequence);
+
+    assert!(runtime.live_control_dependencies.is_empty());
 }
 
 fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {
