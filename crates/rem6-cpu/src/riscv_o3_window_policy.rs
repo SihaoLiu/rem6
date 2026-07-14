@@ -7,10 +7,11 @@ use crate::{
     },
     o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_fu_latency::riscv_o3_fu_latency_class,
+    MAX_RISCV_BRANCH_LOOKAHEAD,
 };
 
 pub(crate) const O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS: usize = 4;
-const MAX_PREDICTED_CONTROL_DEPTH: usize = 2;
+const MAX_PREDICTED_CONTROL_DEPTH: usize = MAX_RISCV_BRANCH_LOOKAHEAD;
 
 const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bool {
     matches!(
@@ -481,8 +482,31 @@ mod tests {
     }
 
     #[test]
-    fn nested_control_rejects_third_branch_and_memory_descendants() {
-        for instruction in [beq(), scalar_load(), jal(), RiscvInstruction::Ecall] {
+    fn scalar_memory_prefix_opens_three_predicted_control_paths() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window.classify_younger(bne()),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(blt()),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(bgeu()),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert!(window.is_full());
+        assert_eq!(
+            window.classify_younger(beq()),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+    }
+
+    #[test]
+    fn nested_control_rejects_unsupported_rows_after_two_controls() {
+        for instruction in [scalar_load(), jal(), RiscvInstruction::Ecall] {
             let mut window = scalar_load_window(4);
 
             assert_eq!(

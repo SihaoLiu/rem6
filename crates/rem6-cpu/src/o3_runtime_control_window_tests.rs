@@ -89,6 +89,20 @@ fn nested_control_dependencies_follow_immediate_branch() {
 }
 
 #[test]
+fn three_deep_control_dependencies_follow_immediate_branch() {
+    let (runtime, _, _, _) = three_deep_control_runtime();
+    let snapshot = runtime.snapshot();
+    let rob = snapshot.reorder_buffer();
+    let outer = rob[1].sequence();
+    let middle = rob[2].sequence();
+    let inner = rob[3].sequence();
+
+    assert_eq!(runtime.live_control_dependencies.get(&middle), Some(&outer));
+    assert_eq!(runtime.live_control_dependencies.get(&inner), Some(&middle));
+    assert_eq!(runtime.live_control_window_sequences.len(), 3);
+}
+
+#[test]
 fn inner_control_waits_for_outer_execution_record() {
     let (mut runtime, outer, inner, _) = nested_control_runtime();
     assert!(runtime
@@ -220,6 +234,49 @@ fn inner_control_discard_preserves_outer_branch() {
         .collect::<Vec<_>>();
     assert_eq!(instructions, [outer, inner]);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
+}
+
+#[test]
+fn middle_control_discard_removes_only_inner_control() {
+    let (mut runtime, outer, middle, inner) = issued_three_deep_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let middle_sequence = rob[2].sequence();
+    let inner_sequence = rob[3].sequence();
+
+    runtime.discard_live_control_descendants_from(middle_sequence);
+
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [0x8000, 0x8004, 0x8008].map(Address::new)
+    );
+    assert_eq!(
+        runtime
+            .live_speculative_executions
+            .iter()
+            .map(|issued| issued.execution.instruction())
+            .collect::<Vec<_>>(),
+        [outer, middle]
+    );
+    assert!(!runtime
+        .live_speculative_executions
+        .iter()
+        .any(|issued| issued.execution.instruction() == inner));
+    assert_eq!(runtime.live_control_window_sequences.len(), 2);
+    assert!(runtime
+        .live_control_window_sequences
+        .contains(&outer_sequence));
+    assert!(runtime
+        .live_control_window_sequences
+        .contains(&middle_sequence));
+    assert!(!runtime
+        .live_control_window_sequences
+        .contains(&inner_sequence));
 }
 
 #[test]
@@ -568,6 +625,55 @@ fn issued_nested_control_runtime() -> (
     (runtime, outer, inner, descendant)
 }
 
+fn three_deep_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let outer = bne(5, 6);
+    let middle = blt(7, 8);
+    let inner = bgeu(9, 10);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), outer),
+            (Address::new(0x8008), middle),
+            (Address::new(0x800c), inner),
+        ],
+    );
+    (runtime, outer, middle, inner)
+}
+
+fn issued_three_deep_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let (mut runtime, outer, middle, inner) = three_deep_control_runtime();
+    for (pc, next_pc, instruction, sequence) in [
+        (0x8004, 0x8008, outer, 11),
+        (0x8008, 0x800c, middle, 12),
+        (0x800c, 0x8010, inner, 13),
+    ] {
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(pc), instruction)
+            .unwrap();
+        runtime.record_live_speculative_execution(
+            candidate,
+            &[request(sequence)],
+            sequence,
+            RiscvExecutionRecord::new(instruction, pc, next_pc, Vec::new(), None),
+        );
+    }
+    (runtime, outer, middle, inner)
+}
+
 fn scalar_load_event() -> RiscvCpuExecutionEvent {
     let instruction = RiscvInstruction::Load {
         rd: reg(4),
@@ -627,6 +733,30 @@ fn addi(rd: u8, rs1: u8, immediate: i64) -> RiscvInstruction {
 
 fn beq(rs1: u8, rs2: u8) -> RiscvInstruction {
     RiscvInstruction::Beq {
+        rs1: reg(rs1),
+        rs2: reg(rs2),
+        offset: Immediate::new(8),
+    }
+}
+
+fn bne(rs1: u8, rs2: u8) -> RiscvInstruction {
+    RiscvInstruction::Bne {
+        rs1: reg(rs1),
+        rs2: reg(rs2),
+        offset: Immediate::new(8),
+    }
+}
+
+fn blt(rs1: u8, rs2: u8) -> RiscvInstruction {
+    RiscvInstruction::Blt {
+        rs1: reg(rs1),
+        rs2: reg(rs2),
+        offset: Immediate::new(8),
+    }
+}
+
+fn bgeu(rs1: u8, rs2: u8) -> RiscvInstruction {
+    RiscvInstruction::Bgeu {
         rs1: reg(rs1),
         rs2: reg(rs2),
         offset: Immediate::new(8),
