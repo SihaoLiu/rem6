@@ -33,6 +33,13 @@ impl RiscvCompletedFetchInstruction {
         self.pc
     }
 
+    pub(crate) fn first_consumed_request(&self) -> MemoryRequestId {
+        *self
+            .consumed_requests
+            .first()
+            .expect("completed instruction consumes at least one fetch request")
+    }
+
     pub(crate) fn last_consumed_request(&self) -> MemoryRequestId {
         *self
             .consumed_requests
@@ -385,6 +392,7 @@ fn completed_scalar_integer_younger_window(
         if decision == RiscvScalarIntegerYoungerDecision::Reject {
             break;
         }
+        let prediction_request = instruction.first_consumed_request();
         current_request = instruction.last_consumed_request();
         let sequential_pc = Address::new(
             instruction
@@ -393,7 +401,11 @@ fn completed_scalar_integer_younger_window(
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
         let next_pc = if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
-            crate::riscv_fetch_ahead::recorded_predicted_pc(state, current_request, sequential_pc)
+            crate::riscv_fetch_ahead::recorded_predicted_pc(
+                state,
+                prediction_request,
+                sequential_pc,
+            )
         } else {
             Some(sequential_pc)
         };

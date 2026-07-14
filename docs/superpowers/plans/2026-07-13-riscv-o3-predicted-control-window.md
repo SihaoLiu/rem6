@@ -799,7 +799,7 @@ nondecreasing commit ticks.
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_o3_predicted_descendants_commit_direct -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_o3_predicted_descendants_commit_direct -- --exact --nocapture
 ```
 
 Expected: FAIL because the branch/descendant live path is not yet observable
@@ -823,6 +823,13 @@ Assert:
 6. Cache, transport, fabric, and DRAM activity are all nonzero.
 7. Final live snapshot and drained checkpoint contain no wrong-path rename row.
 
+Pair this row with a focused runtime test that records branch, MUL, and ADD
+speculative issue state before invoking branch-boundary descendant discard.
+
+Add a trained correct-taken direct row that executes the same branch twice,
+selects the taken target on the second prediction, and proves the target MUL
+and dependent ADD retain pre-response issue timing without a refetch.
+
 - [ ] **Step 4: Add the load-dependent branch suppression row**
 
 Use `beq x12, x0, target`, where `x12` is the outstanding load destination.
@@ -836,7 +843,7 @@ Run:
 
 ```bash
 cargo test -p rem6 --test cli_run rem6_run_o3_predicted -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_load_dependent_branch_suppresses_predicted_descendants -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_o3_load_dependent_branch_suppresses_predicted_descendants -- --exact --nocapture
 ```
 
 Expected: PASS.
@@ -847,6 +854,7 @@ Add these exact test names to `core_test_anchors.txt`:
 
 ```text
 rem6_run_o3_predicted_descendants_commit_direct
+rem6_run_o3_correctly_predicted_taken_descendants_commit_direct
 rem6_run_o3_predicted_descendants_squash_cache_fabric_dram
 rem6_run_o3_load_dependent_branch_suppresses_predicted_descendants
 ```
@@ -886,7 +894,7 @@ baseline.
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
 ```
 
 Expected: PASS because execution-mode transfer keeps the live runtime in place
@@ -914,9 +922,9 @@ path begins with `sim.cpu0.o3.` or the gem5 O3 alias prefixes.
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_predicted_descendant_checkpoint_boundary -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_timing_suppresses_o3_predicted_descendants -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_o3_predicted_descendant_checkpoint_boundary -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_timing_suppresses_o3_predicted_descendants -- --exact --nocapture
 ```
 
 Expected: PASS.
@@ -988,8 +996,9 @@ git commit -m "docs: record predicted control evidence"
 ```bash
 cargo test -p rem6-cpu predicted_control -- --nocapture
 cargo test -p rem6 --test cli_run rem6_run_o3_predicted -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_predicted_descendant_checkpoint_boundary -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_o3_correctly_predicted_taken_descendants_commit_direct -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_host_switch_transfers_o3_predicted_descendants -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::predicted_control::rem6_run_o3_predicted_descendant_checkpoint_boundary -- --exact --nocapture
 cargo test -p rem6 --test source_policy -- --nocapture
 cargo test -p rem6-cpu --test source_policy -- --nocapture
 cargo fmt --all -- --check
@@ -1020,6 +1029,7 @@ Review `1efbe192..HEAD` for:
 6. Timing-mode O3 leakage.
 7. Ledger score inflation or line-count drift.
 8. Missing direct/hierarchy/suppression/lifecycle matrix rows.
+9. Split-fetch prediction identity and correctly predicted taken-path retention.
 
 - [ ] **Step 4: Fix every review finding test-first**
 

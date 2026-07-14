@@ -73,6 +73,82 @@ fn scalar_load_stages_predicted_branch_and_two_descendants() {
 }
 
 #[test]
+fn predicted_descendants_wait_for_branch_record_and_invalidate_with_it() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let branch = beq(5, 6);
+    let multiply = mul(7, 1, 2);
+    let dependent = addi(8, 7, 1);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), branch),
+            (Address::new(0x8008), multiply),
+            (Address::new(0x800c), dependent),
+        ],
+    );
+
+    assert!(runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), multiply)
+        .is_none());
+
+    let branch_execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
+    let branch_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), branch)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        branch_candidate,
+        &[request(11)],
+        11,
+        branch_execution.clone(),
+    );
+
+    let multiply_execution = RiscvExecutionRecord::new(
+        multiply,
+        0x8008,
+        0x800c,
+        vec![RegisterWrite::new(reg(7), 42)],
+        None,
+    );
+    let multiply_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), multiply)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        multiply_candidate,
+        &[request(12)],
+        12,
+        multiply_execution,
+    );
+    let dependent_execution = RiscvExecutionRecord::new(
+        dependent,
+        0x800c,
+        0x8010,
+        vec![RegisterWrite::new(reg(8), 43)],
+        None,
+    );
+    let dependent_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x800c), dependent)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        dependent_candidate,
+        &[request(13)],
+        14,
+        dependent_execution,
+    );
+    assert_eq!(runtime.live_speculative_executions.len(), 3);
+
+    runtime.retire_live_staged_instruction(
+        &RiscvCpuExecutionEvent::new(fetch_event(0x8004, 99), branch, branch_execution),
+        &[request(99)],
+        40,
+    );
+
+    assert!(runtime.live_speculative_executions.is_empty());
+}
+
+#[test]
 fn predicted_mul_wakes_dependent_add_candidate() {
     let mut runtime = O3RuntimeState::default();
     let head = addi(3, 0, 1);
@@ -125,14 +201,14 @@ fn predicted_mul_wakes_dependent_add_candidate() {
 #[test]
 fn discarding_control_descendants_removes_younger_rename_state() {
     let mut runtime = O3RuntimeState::default();
-    let head = addi(3, 0, 1);
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    runtime.stage_live_retire_window(
-        Address::new(0x8000),
-        head,
-        0,
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
         [
             (Address::new(0x8004), branch),
             (Address::new(0x8008), multiply),
@@ -140,6 +216,48 @@ fn discarding_control_descendants_removes_younger_rename_state() {
         ],
     );
     let branch_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
+
+    let branch_execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
+    let branch_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), branch)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        branch_candidate,
+        &[request(11)],
+        11,
+        branch_execution.clone(),
+    );
+    let multiply_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), multiply)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        multiply_candidate,
+        &[request(12)],
+        12,
+        RiscvExecutionRecord::new(
+            multiply,
+            0x8008,
+            0x800c,
+            vec![RegisterWrite::new(reg(7), 42)],
+            None,
+        ),
+    );
+    let dependent_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x800c), dependent)
+        .unwrap();
+    runtime.record_live_speculative_execution(
+        dependent_candidate,
+        &[request(13)],
+        14,
+        RiscvExecutionRecord::new(
+            dependent,
+            0x800c,
+            0x8010,
+            vec![RegisterWrite::new(reg(8), 43)],
+            None,
+        ),
+    );
+    assert_eq!(runtime.live_speculative_executions.len(), 3);
 
     runtime.discard_live_control_descendants_from(branch_sequence);
 
@@ -156,6 +274,11 @@ fn discarding_control_descendants_removes_younger_rename_state() {
         .rename_map()
         .iter()
         .all(|entry| !matches!(entry.architectural(), 7 | 8)));
+    assert_eq!(runtime.live_speculative_executions.len(), 1);
+    assert_eq!(
+        runtime.live_speculative_executions[0].sequence,
+        branch_sequence
+    );
 }
 
 fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {

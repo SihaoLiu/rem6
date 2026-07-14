@@ -6,6 +6,10 @@ const BRANCH_PC: &str = "0x80000028";
 const MUL_PC: &str = "0x8000002c";
 const ADD_PC: &str = "0x80000030";
 const DATA_ADDRESS: &str = "0x800000c0";
+const TAKEN_LOAD_PC: &str = "0x8000002c";
+const TAKEN_BRANCH_PC: &str = "0x80000030";
+const TAKEN_MUL_PC: &str = "0x8000003c";
+const TAKEN_ADD_PC: &str = "0x80000040";
 
 #[test]
 fn rem6_run_o3_predicted_descendants_commit_direct() {
@@ -100,6 +104,71 @@ fn rem6_run_o3_predicted_descendants_commit_direct() {
         1,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_run_o3_correctly_predicted_taken_descendants_commit_direct() {
+    let path = predicted_taken_control_binary("o3-predicted-taken-control-direct");
+    let completed = run_predicted_control_json(&path, "direct", 2_500, "detailed", &[]);
+
+    assert_eq!(register_value(&completed, "x13"), 42);
+    assert_eq!(register_value(&completed, "x14"), 45);
+    assert_eq!(register_value(&completed, "x16"), 2);
+    assert_eq!(register_value(&completed, "x17"), 2);
+
+    let loads = events_at_pc(&completed, TAKEN_LOAD_PC);
+    let branches = events_at_pc(&completed, TAKEN_BRANCH_PC);
+    let multiplies = events_at_pc(&completed, TAKEN_MUL_PC);
+    let adds = events_at_pc(&completed, TAKEN_ADD_PC);
+    assert_eq!(loads.len(), 2, "expected two load iterations: {completed}");
+    assert_eq!(
+        branches.len(),
+        2,
+        "expected two branch iterations: {completed}"
+    );
+    assert_eq!(
+        multiplies.len(),
+        2,
+        "expected two multiply iterations: {completed}"
+    );
+    assert_eq!(adds.len(), 2, "expected two add iterations: {completed}");
+
+    let load = loads[1];
+    let branch = branches
+        .iter()
+        .copied()
+        .find(|event| {
+            event
+                .pointer("/branch_predicted_taken")
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .unwrap_or_else(|| panic!("missing trained taken prediction: {completed}"));
+    let multiply = multiplies[1];
+    let add = adds[1];
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    assert!(event_u64(branch, "issue_tick") < response_tick);
+    assert!(event_u64(multiply, "issue_tick") < response_tick);
+    assert!(event_u64(add, "issue_tick") < response_tick);
+    assert_eq!(
+        event_u64(add, "issue_tick"),
+        event_u64(multiply, "writeback_tick")
+    );
+    assert_eq!(
+        branch
+            .pointer("/branch_resolved_taken")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        branch
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!([load, branch, multiply, add]
+        .windows(2)
+        .all(|events| event_u64(events[0], "commit_tick") <= event_u64(events[1], "commit_tick")));
 }
 
 #[test]
@@ -472,6 +541,41 @@ fn predicted_control_binary(
     temp_binary(name, &elf)
 }
 
+fn predicted_taken_control_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 192_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(1, 0, 0x0, 5, 0x13),
+        i_type(1, 0, 0x0, 6, 0x13),
+        i_type(6, 0, 0x0, 7, 0x13),
+        i_type(7, 0, 0x0, 8, 0x13),
+        i_type(3, 0, 0x0, 9, 0x13),
+        i_type(0, 0, 0x0, 17, 0x13),
+        i_type(2, 0, 0x0, 18, 0x13),
+        i_type(0, 0, 0x0, 0, 0x13),
+        i_type(0, 10, 0b010, 12, 0x03),
+        b_type(12, 6, 5, 0b000),
+        i_type(0, 0, 0x0, 0, 0x13),
+        i_type(0, 0, 0x0, 0, 0x13),
+        r_type(0x01, 8, 7, 0x0, 13, 0x33),
+        r_type(0, 9, 13, 0x0, 14, 0x33),
+        i_type(1, 17, 0x0, 17, 0x13),
+        b_type(-28, 18, 17, 0b100),
+        i_type(2, 0, 0x0, 16, 0x13),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([42, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn predicted_control_command(
     path: &Path,
     memory_system: &str,
@@ -530,6 +634,15 @@ fn register_value(json: &Value, register: &str) -> u64 {
         .and_then(Value::as_str)
         .map(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).unwrap())
         .unwrap_or(0)
+}
+
+fn events_at_pc<'a>(json: &'a Value, pc: &str) -> Vec<&'a Value> {
+    json.pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing O3 events: {json}"))
+        .iter()
+        .filter(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        .collect()
 }
 
 fn transfer_component<'a>(transfer: &'a Value, component: &str) -> &'a Value {

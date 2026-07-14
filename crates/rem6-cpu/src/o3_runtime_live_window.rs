@@ -29,12 +29,23 @@ impl O3RuntimeState {
         if is_deferred_o3_scalar_memory_instruction(current) {
             return;
         }
-        let _ = self.stage_live_instruction(current_pc, current, current_ready_tick);
+        let mut control_sequence = self
+            .stage_live_instruction(current_pc, current, current_ready_tick)
+            .filter(|_| o3_direct_conditional_sources(current).is_some());
         for (pc, instruction) in younger {
             if is_deferred_o3_scalar_memory_instruction(instruction) {
                 break;
             }
-            let _ = self.stage_live_instruction(pc, instruction, 0);
+            let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) else {
+                break;
+            };
+            if let Some(control_sequence) = control_sequence {
+                self.live_control_dependencies
+                    .insert(sequence, control_sequence);
+            }
+            if o3_direct_conditional_sources(instruction).is_some() {
+                control_sequence = Some(sequence);
+            }
         }
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
@@ -68,6 +79,7 @@ impl O3RuntimeState {
         {
             return;
         }
+        let mut control_sequence = None;
         // Revalidate the caller-selected prefix before allocating live rows.
         for (pc, instruction) in younger {
             let decision = window.classify_younger(instruction);
@@ -77,7 +89,14 @@ impl O3RuntimeState {
             let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) else {
                 break;
             };
+            if let Some(control_sequence) = control_sequence {
+                self.live_control_dependencies
+                    .insert(sequence, control_sequence);
+            }
             self.live_scalar_memory_younger_sequences.insert(sequence);
+            if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
+                control_sequence = Some(sequence);
+            }
             if matches!(
                 decision,
                 RiscvScalarIntegerYoungerDecision::AdmitStop
@@ -114,6 +133,8 @@ impl O3RuntimeState {
                 .retain(|sequence| *sequence < boundary_sequence);
             self.live_speculative_executions
                 .retain(|speculative| speculative.sequence < boundary_sequence);
+            self.live_control_dependencies
+                .retain(|sequence, _| *sequence < boundary_sequence);
             self.live_retired_instructions
                 .retain(|instruction| instruction.request != execution.fetch().request_id());
             self.stats
@@ -171,6 +192,7 @@ impl O3RuntimeState {
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
         self.live_scalar_memory_younger_sequences.clear();
+        self.live_control_dependencies.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -295,6 +317,8 @@ impl O3RuntimeState {
             .collect::<BTreeSet<_>>();
         self.live_scalar_memory_younger_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
+        self.live_control_dependencies
+            .retain(|sequence, _| resident_sequences.contains(sequence));
     }
 
     pub(super) fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {

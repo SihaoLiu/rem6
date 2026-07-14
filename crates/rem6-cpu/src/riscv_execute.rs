@@ -238,12 +238,12 @@ impl RiscvCore {
             instruction,
             &execution,
         )?;
-        let branch_prediction_redirects = retired_branch
-            .fetch_prediction()
-            .is_some_and(branch_prediction_redirects_fetch);
+        let fetch_prediction = retired_branch.fetch_prediction();
+        let branch_prediction_redirects =
+            fetch_prediction.is_some_and(branch_prediction_redirects_fetch);
         let redirects_fetch = execution.trap().is_some()
-            || next_pc.get() != sequential_next_pc
-            || branch_prediction_redirects;
+            || branch_prediction_redirects
+            || (fetch_prediction.is_none() && next_pc.get() != sequential_next_pc);
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
@@ -272,7 +272,7 @@ impl RiscvCore {
             fetch.pc(),
             next_pc,
             instruction_is_conditional_branch(instruction),
-            retired_branch.fetch_prediction(),
+            fetch_prediction,
             direct_jump_fetch_ahead_target,
         );
         let pipeline_redirect = execution.trap().map(|trap| {

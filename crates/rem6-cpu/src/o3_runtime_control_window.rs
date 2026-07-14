@@ -94,8 +94,23 @@ impl O3RuntimeState {
             Some(_) | None => return None,
         };
 
-        let (producer_sequences, forwarded_register_writes, dependency_ready_tick) =
+        let control_sequence = self
+            .live_control_dependencies
+            .get(&entry.sequence())
+            .copied();
+        if control_sequence.is_some_and(|control_sequence| {
+            !self.live_speculative_executions.iter().any(|issued| {
+                issued.sequence == control_sequence
+                    && o3_direct_conditional_sources(issued.execution.instruction()).is_some()
+            })
+        }) {
+            return None;
+        }
+        let (mut producer_sequences, forwarded_register_writes, dependency_ready_tick) =
             self.live_speculative_source_forwarding(index, &sources)?;
+        if let Some(control_sequence) = control_sequence {
+            producer_sequences.push(control_sequence);
+        }
         Some(O3LiveSpeculativeIssueCandidate {
             sequence: entry.sequence(),
             pc,
@@ -296,6 +311,8 @@ impl O3RuntimeState {
                 .producer_sequences
                 .retain(|producer| *producer != sequence);
         }
+        self.live_control_dependencies
+            .retain(|_, control| *control != sequence);
     }
 
     pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
@@ -306,6 +323,8 @@ impl O3RuntimeState {
             .retain(|sequence| *sequence <= branch_sequence);
         self.live_speculative_executions
             .retain(|execution| execution.sequence <= branch_sequence);
+        self.live_control_dependencies
+            .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence <= branch_sequence);
         self.stats

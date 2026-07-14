@@ -273,6 +273,7 @@ fn scalar_integer_window_candidate_from(
         match window.classify_younger(younger.decoded().instruction()) {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+                let prediction_request = younger.first_consumed_request();
                 previous_request = younger.last_consumed_request();
                 let sequential_pc = Address::new(
                     younger
@@ -280,11 +281,11 @@ fn scalar_integer_window_candidate_from(
                         .get()
                         .wrapping_add(u64::from(younger.decoded().bytes())),
                 );
-                next_pc = match recorded_predicted_pc(state, previous_request, sequential_pc) {
+                next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc) {
                     Some(predicted_pc) => predicted_pc,
                     None => {
                         return DetailedFetchAheadCandidate::ReadyPredictedControl {
-                            request: previous_request,
+                            request: prediction_request,
                             pc: younger.pc(),
                             sequential_pc,
                             instruction: younger.decoded().instruction(),
@@ -400,16 +401,17 @@ fn scalar_memory_window_candidate(
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+                let prediction_request = next.first_consumed_request();
                 let previous_request = next.last_consumed_request();
                 let sequential_pc = Address::new(
                     next.pc()
                         .get()
                         .wrapping_add(u64::from(next.decoded().bytes())),
                 );
-                let Some(next_pc) = recorded_predicted_pc(state, previous_request, sequential_pc)
+                let Some(next_pc) = recorded_predicted_pc(state, prediction_request, sequential_pc)
                 else {
                     return DetailedFetchAheadCandidate::ReadyPredictedControl {
-                        request: previous_request,
+                        request: prediction_request,
                         pc: next.pc(),
                         sequential_pc,
                         instruction: next.decoded().instruction(),

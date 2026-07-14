@@ -296,16 +296,19 @@ beyond inherited authority executes in timing mode without a new O3 row.
 1. Direct correct-not-taken detailed row: `load, branch, MUL, dependent ALU`;
    four ROB rows, one LSQ row, branch and MUL issue before load response, FU
    latency visible, ordered commits, exact final registers.
-2. Cache/fabric/DRAM taken-misprediction row: wrong-path descendants become
+2. Direct trained correct-taken detailed row: a repeated branch predicts its
+   target on the second iteration; target MUL and dependent ADD retain their
+   pre-response issue/writeback timing without refetch identity drift.
+3. Cache/fabric/DRAM taken-misprediction row: wrong-path descendants become
    resident and issue, then squash; target witness executes once; wrong-path
    register and memory effects are absent; all hierarchy resources are active.
-3. Direct detailed-to-timing switch row: existing v7 transfer captures the four
+4. Direct detailed-to-timing switch row: existing v7 transfer captures the four
    rows and preserves baseline timing without schema changes.
-4. Direct checkpoint boundary row: live capture rejects; drained capture and
+5. Direct checkpoint boundary row: live capture rejects; drained capture and
    restore contain no stale authority.
-5. Direct timing-mode row: architecture matches while O3 runtime, debug rows,
+6. Direct timing-mode row: architecture matches while O3 runtime, debug rows,
    and gem5 O3 aliases remain absent.
-6. Direct load-dependent-branch suppression row: no branch early issue or
+7. Direct load-dependent-branch suppression row: no branch early issue or
    descendant admission before the load response.
 
 ## Source Policy
