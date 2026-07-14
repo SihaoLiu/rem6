@@ -305,7 +305,9 @@ impl RiscvCore {
             .in_flight()
             .iter()
             .any(|instruction| instruction.execute_wait_total_cycles().is_some());
-        state.live_retire_gate.detailed_policy_enabled() && !draining_normal_execute_wait
+        (state.live_retire_gate.detailed_policy_enabled()
+            || state.o3_runtime.has_live_control_dependencies())
+            && !draining_normal_execute_wait
     }
 
     pub(crate) fn o3_retirement_suppresses_normal_pipeline(&self) -> bool {

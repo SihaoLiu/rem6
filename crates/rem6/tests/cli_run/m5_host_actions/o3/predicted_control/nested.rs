@@ -227,6 +227,191 @@ fn rem6_run_o3_load_dependent_inner_branch_suppresses_descendant() {
     );
 }
 
+#[test]
+fn rem6_run_host_switch_transfers_o3_nested_controls() {
+    let path = nested_control_binary("o3-nested-control-switch", false, false, false);
+    let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+    let load = event_at_pc(&baseline, LOAD_PC);
+    let switch_tick = event_u64(event_at_pc(&baseline, DESCENDANT_PC), "issue_tick") + 1;
+    assert!(switch_tick < event_u64(load, "lsq_data_response_tick"));
+
+    let switch_arg = format!("{switch_tick}:cpu0:timing");
+    let switched = run_nested_control_json(
+        &path,
+        "direct",
+        2_000,
+        "detailed",
+        &["--host-switch-cpu-mode", &switch_arg],
+    );
+    let timing_switch = switched
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .and_then(|switches| {
+            switches.iter().find(|switch| {
+                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing nested-control timing switch: {switched}"));
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .expect("nested-control state transfer");
+    assert_eq!(
+        transfer.pointer("/restorable").and_then(Value::as_bool),
+        Some(false)
+    );
+    let runtime = transfer_o3_runtime_chunk(transfer, "cpu0");
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let handoff = transfer_live_data_handoff_chunk(transfer, "cpu0");
+    assert_eq!(
+        handoff.pointer("/schema_version").and_then(Value::as_u64),
+        Some(7)
+    );
+    assert_eq!(
+        handoff.pointer("/younger_rows").and_then(Value::as_u64),
+        Some(3)
+    );
+
+    for pc in [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC, DESCENDANT_PC] {
+        let expected = event_at_pc(&baseline, pc);
+        let actual = event_at_pc(&switched, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(actual, field),
+                event_u64(expected, field),
+                "nested transfer must preserve {field} for {pc}: expected={expected} actual={actual}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rem6_run_o3_nested_control_checkpoint_boundary() {
+    let path = nested_control_binary("o3-nested-control-checkpoint", false, false, false);
+    let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+    let live_tick = event_u64(event_at_pc(&baseline, DESCENDANT_PC), "issue_tick") + 1;
+    let live_arg = format!("{live_tick}:nested-control-live");
+    let mut live_command = nested_control_command(&path, "direct", 2_000, "detailed");
+    live_command.args(["--host-checkpoint", &live_arg]);
+    let output = live_command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("checkpoint component is not quiescent: cpu0"),
+        "live nested checkpoint should fail closed: {stderr}"
+    );
+
+    let drained_tick = event_u64(event_at_pc(&baseline, OUTER_TARGET_PC), "commit_tick") + 1;
+    let restore_tick = drained_tick + 1;
+    let checkpoint_arg = format!("{drained_tick}:nested-control-drained");
+    let restore_arg = format!("{restore_tick}:nested-control-drained");
+    let restored = run_nested_control_json(
+        &path,
+        "direct",
+        2_000,
+        "detailed",
+        &[
+            "--host-checkpoint",
+            &checkpoint_arg,
+            "--host-restore-checkpoint",
+            &restore_arg,
+        ],
+    );
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let checkpoint = restored
+        .pointer("/host_actions/checkpoints/0")
+        .expect("drained nested-control checkpoint");
+    let cpu0 = checkpoint_component(checkpoint, "cpu0");
+    assert!(checkpoint_component_chunks(cpu0).iter().all(|chunk| {
+        chunk.pointer("/name").and_then(Value::as_str) != Some("o3-live-data-handoff")
+    }));
+    let runtime = checkpoint_component_chunks(cpu0)
+        .iter()
+        .find(|chunk| chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state"))
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .expect("decoded drained nested O3 runtime checkpoint");
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(register_value(&restored, "x13"), 18);
+}
+
+#[test]
+fn rem6_run_timing_suppresses_o3_nested_controls() {
+    let path = nested_control_binary("o3-nested-control-timing", false, false, false);
+    let timing = run_nested_control_json(&path, "direct", 2_000, "timing", &[]);
+
+    assert_eq!(register_value(&timing, "x12"), 42);
+    assert_eq!(register_value(&timing, "x13"), 18);
+    assert_eq!(
+        timing.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a000000000000001200000000000000")
+    );
+    assert!(timing.pointer("/cores/0/o3_runtime").is_none());
+    assert!(timing
+        .pointer("/debug/o3_trace")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+    let unexpected = timing
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("timing nested-control stats")
+        .iter()
+        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
+        .filter(|path| {
+            path.starts_with("sim.cpu0.o3.")
+                || [
+                    "system.cpu.rob.",
+                    "system.cpu.lsq0.",
+                    "system.cpu.rename.",
+                    "system.cpu.iq.",
+                    "system.cpu.iew.",
+                    "system.cpu.commit.",
+                    "system.cpu.ftq.",
+                ]
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "timing mode leaked nested-control O3 stats: {unexpected:?}"
+    );
+}
+
 fn nested_control_binary(
     name: &str,
     outer_taken: bool,
