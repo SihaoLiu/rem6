@@ -194,6 +194,147 @@ fn o3_writeback_transfer_buffer_preserves_window_offsets_for_admitted_work() {
 }
 
 #[test]
+fn o3_writeback_transfer_buffer_skips_occupied_slots() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+
+    let cycle = buffer
+        .plan_cycle_with_occupied_slots([0], [O3WritebackCompletion::new(7)])
+        .unwrap();
+
+    assert_eq!(cycle.new_ready_count(), 1);
+    assert_eq!(cycle.deferred_before_count(), 0);
+    assert_eq!(
+        cycle
+            .admissions()
+            .iter()
+            .map(|admission| {
+                (
+                    admission.completion().sequence(),
+                    admission.cycle_offset(),
+                    admission.slot(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![(7, 0, 1)]
+    );
+    assert!(cycle.deferred_sequences().next().is_none());
+    assert_eq!(buffer.pending_deferred_count(), 0);
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_preserves_deferred_before_new_ready_with_occupancy() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+
+    let first = buffer
+        .plan_cycle_with_occupied_slots([0], [O3WritebackCompletion::new(1)])
+        .unwrap();
+
+    assert_eq!(first.new_ready_count(), 1);
+    assert_eq!(first.deferred_before_count(), 0);
+    assert!(first.admitted_sequences().next().is_none());
+    assert_eq!(first.deferred_sequences().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(buffer.pending_deferred_count(), 1);
+
+    let second = buffer
+        .plan_cycle_with_occupied_slots([], [O3WritebackCompletion::new(2)])
+        .unwrap();
+
+    assert_eq!(second.new_ready_count(), 1);
+    assert_eq!(second.deferred_before_count(), 1);
+    assert_eq!(second.admitted_sequences().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(second.deferred_sequences().collect::<Vec<_>>(), vec![2]);
+    assert_eq!(buffer.pending_deferred_count(), 1);
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_uses_future_policy_slots_after_occupied_current_cycle() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 1).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+
+    let cycle = buffer
+        .plan_cycle_with_occupied_slots([0], [O3WritebackCompletion::new(7)])
+        .unwrap();
+
+    assert_eq!(cycle.new_ready_count(), 1);
+    assert_eq!(cycle.deferred_before_count(), 0);
+    assert_eq!(
+        cycle
+            .admissions()
+            .iter()
+            .map(|admission| {
+                (
+                    admission.completion().sequence(),
+                    admission.cycle_offset(),
+                    admission.slot(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![(7, 1, 0)]
+    );
+    assert!(cycle.deferred_sequences().next().is_none());
+    assert_eq!(buffer.pending_deferred_count(), 0);
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_rejects_duplicate_occupied_slots() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+    buffer.plan_cycle([O3WritebackCompletion::new(1), O3WritebackCompletion::new(2)]);
+
+    let error = buffer
+        .plan_cycle_with_occupied_slots([0, 0], [O3WritebackCompletion::new(3)])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3PipelineError::DuplicateWritebackOccupiedSlot {
+            source: O3PipelineStage::Iew,
+            slot: 0,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "O3 IEW writeback occupied slot 0 appears more than once"
+    );
+    assert_eq!(buffer.pending_deferred_count(), 1);
+    let next = buffer.plan_cycle([]);
+    assert_eq!(next.admitted_sequences().collect::<Vec<_>>(), vec![2]);
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_rejects_out_of_range_occupied_slots() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+    buffer.plan_cycle([
+        O3WritebackCompletion::new(1),
+        O3WritebackCompletion::new(2),
+        O3WritebackCompletion::new(3),
+    ]);
+
+    let error = buffer
+        .plan_cycle_with_occupied_slots([2], [O3WritebackCompletion::new(4)])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3PipelineError::WritebackOccupiedSlotOutOfRange {
+            source: O3PipelineStage::Iew,
+            slot: 2,
+            writeback_width: 2,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "O3 IEW writeback occupied slot 2 is out of range for width 2"
+    );
+    assert_eq!(buffer.pending_deferred_count(), 1);
+    let next = buffer.plan_cycle([]);
+    assert_eq!(next.admitted_sequences().collect::<Vec<_>>(), vec![3]);
+}
+
+#[test]
 fn o3_writeback_transfer_checkpoint_payload_round_trips_deferred_state() {
     let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
     let mut buffer = O3WritebackTransferBuffer::new(policy.clone());

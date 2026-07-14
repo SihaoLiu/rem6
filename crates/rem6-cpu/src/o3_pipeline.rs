@@ -683,6 +683,15 @@ pub enum O3PipelineError {
         writeback_width: usize,
         future_cycles: u64,
     },
+    DuplicateWritebackOccupiedSlot {
+        source: O3PipelineStage,
+        slot: usize,
+    },
+    WritebackOccupiedSlotOutOfRange {
+        source: O3PipelineStage,
+        slot: usize,
+        writeback_width: usize,
+    },
     DuplicateDependencyProducer {
         scope: O3DependencyScopeId,
     },
@@ -748,6 +757,18 @@ impl fmt::Display for O3PipelineError {
             } => write!(
                 formatter,
                 "O3 {source} writeback window overflows for width {writeback_width} and future {future_cycles}"
+            ),
+            Self::DuplicateWritebackOccupiedSlot { source, slot } => write!(
+                formatter,
+                "O3 {source} writeback occupied slot {slot} appears more than once"
+            ),
+            Self::WritebackOccupiedSlotOutOfRange {
+                source,
+                slot,
+                writeback_width,
+            } => write!(
+                formatter,
+                "O3 {source} writeback occupied slot {slot} is out of range for width {writeback_width}"
             ),
             Self::DuplicateDependencyProducer { scope } => write!(
                 formatter,
@@ -1415,6 +1436,42 @@ impl O3WritebackTransferBuffer {
     where
         I: IntoIterator<Item = O3WritebackCompletion>,
     {
+        self.plan_cycle_with_occupied_slots(std::iter::empty::<usize>(), ready)
+            .expect("empty writeback occupied slot set is valid")
+    }
+
+    pub fn plan_cycle_with_occupied_slots<I, O>(
+        &mut self,
+        occupied_slots: O,
+        ready: I,
+    ) -> Result<O3WritebackTransferCycle, O3PipelineError>
+    where
+        I: IntoIterator<Item = O3WritebackCompletion>,
+        O: IntoIterator<Item = usize>,
+    {
+        let source = self.policy.source();
+        let writeback_width = self.policy.writeback_width();
+        let mut occupied_slots = occupied_slots.into_iter().collect::<Vec<_>>();
+        occupied_slots.sort_unstable();
+
+        for slots in occupied_slots.windows(2) {
+            if slots[0] == slots[1] {
+                return Err(O3PipelineError::DuplicateWritebackOccupiedSlot {
+                    source,
+                    slot: slots[0],
+                });
+            }
+        }
+        for slot in &occupied_slots {
+            if *slot >= writeback_width {
+                return Err(O3PipelineError::WritebackOccupiedSlotOutOfRange {
+                    source,
+                    slot: *slot,
+                    writeback_width,
+                });
+            }
+        }
+
         let deferred_before_count = self.deferred.len();
         let new_ready = ready.into_iter().collect::<Vec<_>>();
         let new_ready_count = new_ready.len();
@@ -1425,28 +1482,37 @@ impl O3WritebackTransferBuffer {
         }
         ordered.extend(new_ready);
 
-        let plan = self.policy.plan_ready_count(ordered.len());
-        let mut admissions = Vec::with_capacity(plan.admitted_count());
-        for admission in plan.admissions() {
-            admissions.push(O3WritebackCompletionAdmission {
-                completion: ordered[admission.ready_index()],
-                cycle_offset: admission.cycle_offset(),
-                slot: admission.slot(),
-            });
+        let available_count = self.policy.capacity_entries() - occupied_slots.len();
+        let admitted_count = ordered.len().min(available_count);
+        let mut admissions = Vec::with_capacity(admitted_count);
+        let mut ready_index = 0;
+
+        'window: for cycle_offset in 0..=self.policy.future_cycles() {
+            for slot in 0..writeback_width {
+                if ready_index == admitted_count {
+                    break 'window;
+                }
+                if cycle_offset == 0 && occupied_slots.binary_search(&slot).is_ok() {
+                    continue;
+                }
+                admissions.push(O3WritebackCompletionAdmission {
+                    completion: ordered[ready_index],
+                    cycle_offset,
+                    slot,
+                });
+                ready_index += 1;
+            }
         }
 
-        let deferred = ordered
-            .into_iter()
-            .skip(plan.admitted_count())
-            .collect::<Vec<_>>();
+        let deferred = ordered.into_iter().skip(admitted_count).collect::<Vec<_>>();
         self.deferred.extend(deferred.iter().copied());
 
-        O3WritebackTransferCycle {
+        Ok(O3WritebackTransferCycle {
             new_ready_count,
             deferred_before_count,
             admissions,
             deferred,
-        }
+        })
     }
 }
 
