@@ -1,4 +1,7 @@
-use rem6_cpu::{MAX_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH};
+use rem6_cpu::{
+    MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_WRITEBACK_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+    MIN_RISCV_O3_WRITEBACK_WIDTH,
+};
 
 use crate::Rem6CliError;
 
@@ -49,12 +52,59 @@ pub(crate) fn parse_riscv_o3_issue_width(value: &str) -> Result<usize, Rem6CliEr
     validate_riscv_o3_issue_width(width, value.to_string())
 }
 
+pub(crate) fn parse_riscv_o3_writeback_width(value: &str) -> Result<usize, Rem6CliError> {
+    let width = value
+        .parse()
+        .map_err(|_| Rem6CliError::InvalidRiscvO3WritebackWidth {
+            value: value.to_string(),
+        })?;
+    validate_riscv_o3_writeback_width(width, value.to_string())
+}
+
 pub(crate) fn validate_optional_riscv_o3_issue_width(
     width: Option<usize>,
 ) -> Result<Option<usize>, Rem6CliError> {
     width
         .map(|width| validate_riscv_o3_issue_width(width, width.to_string()))
         .transpose()
+}
+
+pub(crate) fn validate_optional_riscv_o3_writeback_width(
+    width: Option<usize>,
+) -> Result<Option<usize>, Rem6CliError> {
+    width
+        .map(|width| validate_riscv_o3_writeback_width(width, width.to_string()))
+        .transpose()
+}
+
+pub(crate) fn validate_optional_riscv_o3_widths(
+    issue: Option<usize>,
+    writeback: Option<usize>,
+) -> Result<(Option<usize>, Option<usize>), Rem6CliError> {
+    Ok((
+        validate_optional_riscv_o3_issue_width(issue)?,
+        validate_optional_riscv_o3_writeback_width(writeback)?,
+    ))
+}
+
+pub(crate) fn apply_riscv_o3_width_flag(
+    flag: &str,
+    value: &str,
+    issue: &mut Option<usize>,
+    writeback: &mut Option<usize>,
+) -> Result<(), Rem6CliError> {
+    match flag {
+        "--riscv-o3-issue-width" => *issue = Some(parse_riscv_o3_issue_width(value)?),
+        "--riscv-o3-writeback-width" => {
+            *writeback = Some(parse_riscv_o3_writeback_width(value)?);
+        }
+        _ => {
+            return Err(Rem6CliError::UnknownFlag {
+                flag: flag.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_riscv_o3_scalar_memory_depth(depth: usize) -> Result<usize, Rem6CliError> {
@@ -69,6 +119,13 @@ fn validate_riscv_o3_scalar_memory_depth(depth: usize) -> Result<usize, Rem6CliE
 fn validate_riscv_o3_issue_width(width: usize, value: String) -> Result<usize, Rem6CliError> {
     if !(MIN_RISCV_O3_ISSUE_WIDTH..=MAX_RISCV_O3_ISSUE_WIDTH).contains(&width) {
         return Err(Rem6CliError::InvalidRiscvO3IssueWidth { value });
+    }
+    Ok(width)
+}
+
+fn validate_riscv_o3_writeback_width(width: usize, value: String) -> Result<usize, Rem6CliError> {
+    if !(MIN_RISCV_O3_WRITEBACK_WIDTH..=MAX_RISCV_O3_WRITEBACK_WIDTH).contains(&width) {
+        return Err(Rem6CliError::InvalidRiscvO3WritebackWidth { value });
     }
     Ok(width)
 }

@@ -762,6 +762,14 @@ impl RiscvCore {
         );
     }
 
+    pub fn set_o3_writeback_width(&self, writeback_width: usize) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        assert!(
+            state.o3_runtime.set_writeback_width(writeback_width),
+            "RISC-V O3 writeback width must be between {MIN_RISCV_O3_WRITEBACK_WIDTH} and {MAX_RISCV_O3_WRITEBACK_WIDTH}"
+        );
+    }
+
     pub fn set_branch_predictor_kind(&self, kind: RiscvBranchPredictorKind) {
         self.state
             .lock()

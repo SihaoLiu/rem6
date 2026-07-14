@@ -95,6 +95,9 @@ pub enum Rem6CliError {
     InvalidRiscvO3IssueWidth {
         value: String,
     },
+    InvalidRiscvO3WritebackWidth {
+        value: String,
+    },
     InvalidRiscvBranchPredictor {
         value: String,
     },
@@ -345,6 +348,7 @@ pub enum Rem6CliError {
     RiscvBranchLookaheadRequiresExecution,
     RiscvO3ScalarMemoryDepthRequiresExecution,
     RiscvO3IssueWidthRequiresExecution,
+    RiscvO3WritebackWidthRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
     RiscvInOrderWidthRequiresExecution,
     RiscvExecutionModeRequiresExecution,
@@ -386,6 +390,7 @@ pub enum Rem6CliError {
     RiscvBranchLookaheadRequiresRiscv,
     RiscvO3ScalarMemoryDepthRequiresRiscv,
     RiscvO3IssueWidthRequiresRiscv,
+    RiscvO3WritebackWidthRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
     RiscvInOrderWidthRequiresRiscv,
     RiscvExecutionModeRequiresRiscv,
@@ -586,6 +591,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvO3IssueWidth { value } => {
                 write!(formatter, "invalid RISC-V O3 issue width {value}")
+            }
+            Self::InvalidRiscvO3WritebackWidth { value } => {
+                write!(formatter, "invalid RISC-V O3 writeback width {value}")
             }
             Self::InvalidRiscvBranchPredictor { value } => {
                 write!(formatter, "invalid RISC-V branch predictor {value}")
@@ -938,6 +946,12 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvO3IssueWidthRequiresExecution => {
                 write!(formatter, "--riscv-o3-issue-width requires --execute")
             }
+            Self::RiscvO3WritebackWidthRequiresExecution => {
+                write!(
+                    formatter,
+                    "--riscv-o3-writeback-width requires --execute"
+                )
+            }
             Self::RiscvBranchPredictorRequiresExecution => {
                 write!(formatter, "--riscv-branch-predictor requires --execute")
             }
@@ -1064,6 +1078,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvO3IssueWidthRequiresRiscv => {
                 write!(formatter, "--riscv-o3-issue-width requires --isa riscv")
+            }
+            Self::RiscvO3WritebackWidthRequiresRiscv => {
+                write!(
+                    formatter,
+                    "--riscv-o3-writeback-width requires --isa riscv"
+                )
             }
             Self::RiscvBranchPredictorRequiresRiscv => {
                 write!(formatter, "--riscv-branch-predictor requires --isa riscv")

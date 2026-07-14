@@ -71,8 +71,8 @@ use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub(crate) use riscv_timing::DEFAULT_RISCV_IN_ORDER_WIDTH;
 use riscv_timing::{
-    parse_riscv_in_order_width, parse_riscv_o3_issue_width, parse_riscv_o3_scalar_memory_depth,
-    validate_optional_riscv_o3_issue_width, validate_optional_riscv_o3_scalar_memory_depth,
+    apply_riscv_o3_width_flag, parse_riscv_in_order_width, parse_riscv_o3_scalar_memory_depth,
+    validate_optional_riscv_o3_scalar_memory_depth, validate_optional_riscv_o3_widths,
     validate_riscv_in_order_width,
 };
 pub use trace_replay::{TraceReplayExternalAdapterKind, TraceReplayFabricRouterStageConfig};
@@ -104,6 +104,7 @@ pub struct Rem6RunConfig {
     riscv_branch_lookahead: usize,
     riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_o3_issue_width: Option<usize>,
+    riscv_o3_writeback_width: Option<usize>,
     riscv_branch_predictor: RiscvBranchPredictorKind,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<ExecutionMode>,
@@ -230,6 +231,7 @@ struct Rem6RunFileConfig {
     riscv_branch_lookahead: Option<usize>,
     riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_o3_issue_width: Option<usize>,
+    riscv_o3_writeback_width: Option<usize>,
     riscv_branch_predictor: Option<String>,
     riscv_in_order_width: Option<usize>,
     riscv_execution_mode: Option<String>,
@@ -536,8 +538,11 @@ impl Rem6RunConfig {
         let mut riscv_o3_scalar_memory_depth = validate_optional_riscv_o3_scalar_memory_depth(
             file_config.riscv_o3_scalar_memory_depth,
         )?;
-        let mut riscv_o3_issue_width =
-            validate_optional_riscv_o3_issue_width(file_config.riscv_o3_issue_width)?;
+        let (mut riscv_o3_issue_width, mut riscv_o3_writeback_width) =
+            validate_optional_riscv_o3_widths(
+                file_config.riscv_o3_issue_width,
+                file_config.riscv_o3_writeback_width,
+            )?;
         let mut riscv_branch_predictor = file_config
             .riscv_branch_predictor
             .as_deref()
@@ -956,11 +961,14 @@ impl Rem6RunConfig {
                         &required_value(&flag, args.next())?,
                     )?);
                 }
-                "--riscv-o3-issue-width" => {
-                    riscv_o3_issue_width = Some(parse_riscv_o3_issue_width(&required_value(
+                "--riscv-o3-issue-width" | "--riscv-o3-writeback-width" => {
+                    let value = required_value(&flag, args.next())?;
+                    apply_riscv_o3_width_flag(
                         &flag,
-                        args.next(),
-                    )?)?);
+                        &value,
+                        &mut riscv_o3_issue_width,
+                        &mut riscv_o3_writeback_width,
+                    )?;
                 }
                 "--riscv-branch-predictor" => {
                     let value = required_value(&flag, args.next())?;
@@ -1397,6 +1405,7 @@ impl Rem6RunConfig {
             riscv_branch_lookahead,
             riscv_o3_scalar_memory_depth,
             riscv_o3_issue_width,
+            riscv_o3_writeback_width,
             riscv_branch_predictor,
             riscv_in_order_width,
             riscv_execution_mode,

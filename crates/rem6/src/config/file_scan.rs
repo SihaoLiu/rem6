@@ -29,6 +29,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--riscv-branch-lookahead",
             "--riscv-o3-scalar-memory-depth",
             "--riscv-o3-issue-width",
+            "--riscv-o3-writeback-width",
             "--riscv-branch-predictor",
             "--riscv-in-order-width",
             "--riscv-execution-mode",

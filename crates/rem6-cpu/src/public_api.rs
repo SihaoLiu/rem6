@@ -110,7 +110,8 @@ pub use crate::riscv_data_access::{
     RiscvLoadReservation,
 };
 pub use crate::riscv_defaults::{
-    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, DEFAULT_RISCV_O3_WRITEBACK_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH,
+    MAX_RISCV_O3_WRITEBACK_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
 };
 pub use crate::riscv_execution_event::{
     RiscvBiModeBranchUpdate, RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
