@@ -110,6 +110,24 @@ fn detailed_scalar_window_follows_two_recorded_control_paths() {
 }
 
 #[test]
+fn detailed_nested_control_respects_branch_lookahead_one() {
+    let core = detailed_nested_control_core(false);
+    core.set_branch_lookahead(1);
+    core.set_o3_scalar_memory_depth(4);
+
+    let outer = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(
+        outer.branch_speculation().unwrap().pc(),
+        Address::new(0x8004)
+    );
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&outer).unwrap(),
+    );
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_split_inner_control_keys_prediction_to_prefix_request() {
     let core = detailed_nested_control_core(true);
     let outer = core.next_fetch_ahead_before_retire().unwrap();

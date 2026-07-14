@@ -416,13 +416,16 @@ fn completed_scalar_integer_younger_window(
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
         let next_pc = if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
-            crate::riscv_fetch_ahead::recorded_predicted_pc(
+            let Some(next_pc) = crate::riscv_fetch_ahead::recorded_predicted_pc(
                 state,
                 prediction_request,
                 sequential_pc,
-            )
+            ) else {
+                break;
+            };
+            next_pc
         } else {
-            Some(sequential_pc)
+            sequential_pc
         };
         instructions.push(instruction);
         if matches!(
@@ -432,9 +435,6 @@ fn completed_scalar_integer_younger_window(
         ) {
             break;
         }
-        let Some(next_pc) = next_pc else {
-            break;
-        };
         pc = next_pc;
     }
     instructions
@@ -750,6 +750,58 @@ mod tests {
                 .into_iter()
                 .map(Address::new)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn scalar_load_head_staging_stops_before_unpredicted_nested_control() {
+        let execution = scalar_load_execution(7, 10, 12, 2, 0x9000);
+        let events = vec![
+            completed_fetch_with_data(
+                7,
+                11,
+                Address::new(0x8004),
+                0x0062_8c63_u32.to_le_bytes().to_vec(),
+            ),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x0083_8863_u32.to_le_bytes().to_vec(),
+            ),
+            completed_fetch_with_data(
+                7,
+                13,
+                Address::new(0x800c),
+                0x0010_0313_u32.to_le_bytes().to_vec(),
+            ),
+        ];
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .live_retire_gate
+            .set_policy(RiscvLiveRetireGatePolicy::detailed());
+        state.o3_runtime.set_scalar_memory_window_limit(4);
+        let prediction = state.branch_predictor.predict_speculative_with_prediction(
+            Address::new(0x8004),
+            false,
+            None,
+        );
+        state.branch_speculations.insert(11, prediction.id());
+        assert!(state
+            .o3_runtime
+            .stage_live_scalar_memory_issue(&execution, request(7, 20), 31));
+
+        stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
+
+        assert_eq!(
+            state
+                .o3_runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [Address::new(0x8000), Address::new(0x8004)]
         );
     }
 

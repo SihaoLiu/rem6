@@ -228,6 +228,32 @@ fn rem6_run_o3_load_dependent_inner_branch_suppresses_descendant() {
 }
 
 #[test]
+fn rem6_run_o3_nested_control_requires_branch_lookahead_two() {
+    let path = nested_control_binary("o3-nested-lookahead-one", false, false, false);
+    let completed =
+        run_nested_control_json_with_lookahead(&path, "direct", 2_000, "detailed", 1, &[]);
+    let load = event_at_pc(&completed, LOAD_PC);
+    let outer = event_at_pc(&completed, OUTER_BRANCH_PC);
+    event_at_pc(&completed, INNER_BRANCH_PC);
+    event_at_pc(&completed, DESCENDANT_PC);
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+
+    assert!(event_u64(outer, "issue_tick") < response_tick);
+
+    let live_tick = event_u64(outer, "issue_tick") + 1;
+    assert!(live_tick < response_tick);
+    let resident =
+        run_nested_control_json_with_lookahead(&path, "direct", live_tick, "detailed", 1, &[]);
+    assert_eq!(resident_rob_pcs(&resident), [LOAD_PC, OUTER_BRANCH_PC]);
+    assert_eq!(
+        resident
+            .pointer("/cores/0/branch_predictor/lookups/direct_conditional")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+}
+
+#[test]
 fn rem6_run_host_switch_transfers_o3_nested_controls() {
     let path = nested_control_binary("o3-nested-control-switch", false, false, false);
     let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
@@ -295,6 +321,103 @@ fn rem6_run_host_switch_transfers_o3_nested_controls() {
             );
         }
     }
+}
+
+#[test]
+fn rem6_run_host_switch_preserves_inner_misprediction_rollback() {
+    let path = nested_control_binary("o3-nested-inner-mispredict-switch", false, true, false);
+    let baseline = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+    let load = event_at_pc(&baseline, LOAD_PC);
+    let switch_tick = event_u64(event_at_pc(&baseline, INNER_BRANCH_PC), "issue_tick") + 1;
+    assert!(switch_tick < event_u64(load, "lsq_data_response_tick"));
+
+    let switch_arg = format!("{switch_tick}:cpu0:timing");
+    let switched = run_nested_control_json(
+        &path,
+        "direct",
+        2_000,
+        "detailed",
+        &["--host-switch-cpu-mode", &switch_arg],
+    );
+    let timing_switch = switched
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .and_then(|switches| {
+            switches.iter().find(|switch| {
+                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing nested-misprediction timing switch: {switched}"));
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .expect("nested-misprediction state transfer");
+    assert_eq!(
+        transfer.pointer("/restorable").and_then(Value::as_bool),
+        Some(false)
+    );
+    let runtime = transfer_o3_runtime_chunk(transfer, "cpu0");
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let handoff = transfer_live_data_handoff_chunk(transfer, "cpu0");
+    assert_eq!(
+        handoff.pointer("/younger_rows").and_then(Value::as_u64),
+        Some(3)
+    );
+
+    for pc in [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC] {
+        let expected = event_at_pc(&baseline, pc);
+        let actual = event_at_pc(&switched, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(actual, field),
+                event_u64(expected, field),
+                "switched rollback must preserve {field} for {pc}: expected={expected} actual={actual}"
+            );
+        }
+    }
+    assert_eq!(
+        event_at_pc(&switched, OUTER_BRANCH_PC)
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        event_at_pc(&switched, INNER_BRANCH_PC)
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(event_at_pc_if_present(&switched, DESCENDANT_PC).is_none());
+    assert!(event_at_pc_if_present(&switched, WRONG_STORE_PC).is_none());
+    assert_eq!(register_value(&switched, "x13"), 0);
+    assert_eq!(register_value(&switched, "x14"), 0);
+    assert_eq!(register_value(&switched, "x15"), 2);
+    assert_eq!(register_value(&switched, "x16"), 3);
+    assert_no_data_address(&switched, WRONG_STORE_ADDRESS);
+    assert_eq!(
+        switched
+            .pointer("/cores/0/o3_runtime/snapshot/rob/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        switched
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
 }
 
 #[test]
@@ -459,6 +582,16 @@ fn nested_control_command(
     max_tick: u64,
     execution_mode: &str,
 ) -> Command {
+    nested_control_command_with_lookahead(path, memory_system, max_tick, execution_mode, 2)
+}
+
+fn nested_control_command_with_lookahead(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    execution_mode: &str,
+    branch_lookahead: usize,
+) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
         "run",
@@ -474,7 +607,7 @@ fn nested_control_command(
         "--debug-flags",
         "O3,Data,Fetch,Memory,HostAction",
         "--riscv-branch-lookahead",
-        "2",
+        &branch_lookahead.to_string(),
         "--riscv-o3-scalar-memory-depth",
         "4",
         "--memory-system",
@@ -502,6 +635,32 @@ fn run_nested_control_json(
     assert!(
         output.status.success(),
         "{memory_system} {execution_mode}; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid nested-control JSON: {error}"))
+}
+
+fn run_nested_control_json_with_lookahead(
+    path: &Path,
+    memory_system: &str,
+    max_tick: u64,
+    execution_mode: &str,
+    branch_lookahead: usize,
+    extra_args: &[&str],
+) -> Value {
+    let mut command = nested_control_command_with_lookahead(
+        path,
+        memory_system,
+        max_tick,
+        execution_mode,
+        branch_lookahead,
+    );
+    command.args(extra_args);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{memory_system} {execution_mode} lookahead={branch_lookahead}; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)

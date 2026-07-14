@@ -283,7 +283,7 @@ fn scalar_integer_window_candidate_from(
                 );
                 next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc) {
                     Some(predicted_pc) => predicted_pc,
-                    None => {
+                    None if state.branch_speculations.len() < state.branch_lookahead => {
                         return DetailedFetchAheadCandidate::ReadyPredictedControl {
                             request: prediction_request,
                             pc: younger.pc(),
@@ -291,6 +291,7 @@ fn scalar_integer_window_candidate_from(
                             instruction: younger.decoded().instruction(),
                         };
                     }
+                    None => return DetailedFetchAheadCandidate::Blocked,
                 };
                 continue;
             }
@@ -408,14 +409,18 @@ fn scalar_memory_window_candidate(
                         .get()
                         .wrapping_add(u64::from(next.decoded().bytes())),
                 );
-                let Some(next_pc) = recorded_predicted_pc(state, prediction_request, sequential_pc)
-                else {
-                    return DetailedFetchAheadCandidate::ReadyPredictedControl {
-                        request: prediction_request,
-                        pc: next.pc(),
-                        sequential_pc,
-                        instruction: next.decoded().instruction(),
-                    };
+                let next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc)
+                {
+                    Some(predicted_pc) => predicted_pc,
+                    None if state.branch_speculations.len() < state.branch_lookahead => {
+                        return DetailedFetchAheadCandidate::ReadyPredictedControl {
+                            request: prediction_request,
+                            pc: next.pc(),
+                            sequential_pc,
+                            instruction: next.decoded().instruction(),
+                        };
+                    }
+                    None => return DetailedFetchAheadCandidate::Blocked,
                 };
                 return scalar_integer_window_candidate_from(
                     state,
