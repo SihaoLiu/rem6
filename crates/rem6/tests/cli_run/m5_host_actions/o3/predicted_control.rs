@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "predicted_control/nested.rs"]
 mod nested;
+#[path = "predicted_control/window_support.rs"]
+mod window_support;
 
 const LOAD_PC: &str = "0x80000024";
 const BRANCH_PC: &str = "0x80000028";

@@ -1,3 +1,6 @@
+use super::window_support::{
+    assert_no_data_address, control_window_command, resident_rob_pcs, run_control_window_json,
+};
 use super::*;
 
 const LOAD_PC: &str = "0x80000024";
@@ -670,34 +673,15 @@ fn nested_control_command_with_lookahead(
     execution_mode: &str,
     branch_lookahead: usize,
 ) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
-    command.args([
-        "run",
-        "--isa",
-        "riscv",
-        "--binary",
-        path.to_str().unwrap(),
-        "--max-tick",
-        &max_tick.to_string(),
-        "--stats-format",
-        "json",
-        "--execute",
-        "--debug-flags",
-        "O3,Data,Fetch,Memory,HostAction",
-        "--riscv-branch-lookahead",
-        &branch_lookahead.to_string(),
-        "--riscv-o3-scalar-memory-depth",
-        "4",
-        "--memory-system",
+    control_window_command(
+        path,
         memory_system,
-        "--memory-route-delay",
-        "16",
-        "--m5-switch-cpu-mode",
+        max_tick,
         execution_mode,
-        "--dump-memory",
-        &format!("{DATA_ADDRESS}:16"),
-    ]);
-    command
+        branch_lookahead,
+        DATA_ADDRESS,
+        16,
+    )
 }
 
 fn run_nested_control_json(
@@ -707,16 +691,14 @@ fn run_nested_control_json(
     execution_mode: &str,
     extra_args: &[&str],
 ) -> Value {
-    let mut command = nested_control_command(path, memory_system, max_tick, execution_mode);
-    command.args(extra_args);
-    let output = command.output().unwrap();
-    assert!(
-        output.status.success(),
-        "{memory_system} {execution_mode}; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid nested-control JSON: {error}"))
+    run_nested_control_json_with_lookahead(
+        path,
+        memory_system,
+        max_tick,
+        execution_mode,
+        2,
+        extra_args,
+    )
 }
 
 fn run_nested_control_json_with_lookahead(
@@ -727,48 +709,14 @@ fn run_nested_control_json_with_lookahead(
     branch_lookahead: usize,
     extra_args: &[&str],
 ) -> Value {
-    let mut command = nested_control_command_with_lookahead(
+    run_control_window_json(
         path,
         memory_system,
         max_tick,
         execution_mode,
         branch_lookahead,
-    );
-    command.args(extra_args);
-    let output = command.output().unwrap();
-    assert!(
-        output.status.success(),
-        "{memory_system} {execution_mode} lookahead={branch_lookahead}; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("invalid nested-control JSON: {error}"))
-}
-
-fn resident_rob_pcs(json: &Value) -> Vec<&str> {
-    json.pointer("/cores/0/o3_runtime/snapshot/rob/entries")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing resident nested-control ROB: {json}"))
-        .iter()
-        .map(|entry| entry.pointer("/pc").and_then(Value::as_str).unwrap())
-        .collect()
-}
-
-fn assert_no_data_address(json: &Value, address: &str) {
-    assert!(
-        json.pointer("/debug/data_trace")
-            .and_then(Value::as_array)
-            .is_some_and(|records| records.iter().all(|record| {
-                record.pointer("/address").and_then(Value::as_str) != Some(address)
-            })),
-        "unexpected data access at {address}: {json}"
-    );
-    assert!(
-        json.pointer("/debug/memory_trace")
-            .and_then(Value::as_array)
-            .is_some_and(|records| records.iter().all(|record| {
-                record.pointer("/address").and_then(Value::as_str) != Some(address)
-            })),
-        "unexpected memory access at {address}: {json}"
-    );
+        DATA_ADDRESS,
+        16,
+        extra_args,
+    )
 }
