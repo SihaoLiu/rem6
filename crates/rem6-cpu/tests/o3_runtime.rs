@@ -19,6 +19,7 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 const O3_RUNTIME_CHECKPOINT_MAGIC_BYTES: usize = 4;
 const O3_RUNTIME_CHECKPOINT_VERSION_BYTES: usize = 1;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS: u8 = 22;
 const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
@@ -69,6 +70,7 @@ const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES: usize =
     BranchTargetKind::COUNT * 4 * 8;
 const O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES: usize = BranchTargetKind::COUNT * 16 * 8;
 const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * 8;
+const O3_RUNTIME_CHECKPOINT_ISSUE_ARBITRATION_STATS_BYTES: usize = 5 * 8;
 const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + 4 + 8 + 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
     (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
@@ -86,12 +88,12 @@ const O3_RUNTIME_CHECKPOINT_STATS_BYTES: usize =
         + O3_RUNTIME_CHECKPOINT_LSQ_OPERATION_BYTE_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
         + O3_RUNTIME_CHECKPOINT_LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
-const O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES: usize = O3_RUNTIME_CHECKPOINT_STATS_BYTES
+const O3_RUNTIME_CHECKPOINT_V21_STATS_BYTES: usize = O3_RUNTIME_CHECKPOINT_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES
     + O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize =
-    O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES
+    O3_RUNTIME_CHECKPOINT_V21_STATS_BYTES
         - O3_RUNTIME_CHECKPOINT_FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
         - O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON: usize =
@@ -173,7 +175,7 @@ fn o3_runtime_checkpoint_decodes_v1_payloads_without_stats() {
     let mut encoded = strip_current_live_retire_gate(&payload.encode());
     let v1_len = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_V21_STATS_BYTES)
         .unwrap();
     encoded.truncate(v1_len);
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 1;
@@ -202,7 +204,7 @@ fn o3_runtime_checkpoint_decodes_v2_scalar_fu_stats_into_class_arrays() {
     let mut encoded = strip_current_live_retire_gate(&payload.encode());
     let stats_offset = encoded
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_V21_STATS_BYTES)
         .unwrap();
     encoded.truncate(stats_offset);
     encoded[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES] = 2;
@@ -1398,9 +1400,26 @@ fn strip_current_live_retire_gate(payload: &[u8]) -> Vec<u8> {
     .concat()
 }
 
+fn strip_current_issue_arbitration_stats(payload: &[u8]) -> Vec<u8> {
+    if payload[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES]
+        < O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
+    {
+        return payload.to_vec();
+    }
+    let trailer_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    let issue_offset = trailer_offset
+        .checked_sub(O3_RUNTIME_CHECKPOINT_ISSUE_ARBITRATION_STATS_BYTES)
+        .unwrap();
+    [&payload[..issue_offset], &payload[trailer_offset..]].concat()
+}
+
 fn strip_current_live_staged_rob_bytes(payload: &[u8]) -> Vec<u8> {
-    let pending_len = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
-    let rob_count = checkpoint_u32(payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
+    let payload = strip_current_issue_arbitration_stats(payload);
+    let pending_len = checkpoint_u32(&payload, O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET) as usize;
+    let rob_count = checkpoint_u32(&payload, O3_RUNTIME_CHECKPOINT_ROB_COUNT_OFFSET) as usize;
     let rob_offset = O3_RUNTIME_CHECKPOINT_HEADER_BYTES + pending_len;
     let mut offset = rob_offset;
     let live_metadata_bytes = O3_RUNTIME_CHECKPOINT_ROB_ENTRY_BYTES
@@ -1533,7 +1552,7 @@ fn strip_current_branch_mismatch_stats(payload: &[u8]) -> Vec<u8> {
 fn strip_current_fu_latency_class_extrema_stats(payload: &[u8]) -> Vec<u8> {
     let stats_offset = payload
         .len()
-        .checked_sub(O3_RUNTIME_CHECKPOINT_CURRENT_STATS_BYTES)
+        .checked_sub(O3_RUNTIME_CHECKPOINT_V21_STATS_BYTES)
         .unwrap();
     let extrema_offset = stats_offset + O3_RUNTIME_CHECKPOINT_CURRENT_BASE_AND_FU_STATS_BYTES;
     [
