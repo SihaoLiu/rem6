@@ -16,6 +16,8 @@ use crate::execution_mode_lanes::execution_mode_name;
 use live_data_handoff::decode_o3_live_data_handoff_chunk;
 pub(crate) use live_data_handoff::Rem6HostO3LiveDataHandoffChunkSummary;
 
+const O3_RUNTIME_CHECKPOINT_VERSION_OFFSET: usize = 4;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
     pub(crate) total_action_count: u64,
@@ -688,6 +690,7 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) decode_error: bool,
+    pub(crate) checkpoint_version: Option<u64>,
     pub(crate) live_retire_gate_request_agent: Option<u64>,
     pub(crate) live_retire_gate_request_sequence: Option<u64>,
     pub(crate) live_retire_gate_ready_tick: Option<u64>,
@@ -697,6 +700,11 @@ pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) stats_max_rob_occupancy: Option<u64>,
     pub(crate) stats_max_lsq_occupancy: Option<u64>,
     pub(crate) stats_rename_map_entries: Option<u64>,
+    pub(crate) stats_issue_cycles: Option<u64>,
+    pub(crate) stats_issued_rows: Option<u64>,
+    pub(crate) stats_resource_blocked_row_cycles: Option<u64>,
+    pub(crate) stats_dependency_blocked_row_cycles: Option<u64>,
+    pub(crate) stats_max_rows_per_cycle: Option<u64>,
     pub(crate) stats_lsq_operation_load: Option<u64>,
     pub(crate) stats_lsq_operation_store: Option<u64>,
     pub(crate) stats_lsq_data_latency_samples: Option<u64>,
@@ -793,6 +801,7 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
     fn decode_error() -> Self {
         Self {
             decode_error: true,
+            checkpoint_version: None,
             live_retire_gate_request_agent: None,
             live_retire_gate_request_sequence: None,
             live_retire_gate_ready_tick: None,
@@ -802,6 +811,11 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
             stats_max_rob_occupancy: None,
             stats_max_lsq_occupancy: None,
             stats_rename_map_entries: None,
+            stats_issue_cycles: None,
+            stats_issued_rows: None,
+            stats_resource_blocked_row_cycles: None,
+            stats_dependency_blocked_row_cycles: None,
+            stats_max_rows_per_cycle: None,
             stats_lsq_operation_load: None,
             stats_lsq_operation_store: None,
             stats_lsq_data_latency_samples: None,
@@ -835,6 +849,7 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
 
     pub(crate) fn numeric_fields(&self) -> Vec<(&'static str, Option<u64>)> {
         vec![
+            ("checkpoint_version", self.checkpoint_version),
             (
                 "live_retire_gate_request_agent",
                 self.live_retire_gate_request_agent,
@@ -856,6 +871,17 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
             ("stats_max_rob_occupancy", self.stats_max_rob_occupancy),
             ("stats_max_lsq_occupancy", self.stats_max_lsq_occupancy),
             ("stats_rename_map_entries", self.stats_rename_map_entries),
+            ("stats_issue_cycles", self.stats_issue_cycles),
+            ("stats_issued_rows", self.stats_issued_rows),
+            (
+                "stats_resource_blocked_row_cycles",
+                self.stats_resource_blocked_row_cycles,
+            ),
+            (
+                "stats_dependency_blocked_row_cycles",
+                self.stats_dependency_blocked_row_cycles,
+            ),
+            ("stats_max_rows_per_cycle", self.stats_max_rows_per_cycle),
             ("stats_lsq_operation_load", self.stats_lsq_operation_load),
             ("stats_lsq_operation_store", self.stats_lsq_operation_store),
             (
@@ -983,7 +1009,9 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
 fn o3_runtime_checkpoint_stat_aggregation(
     name: &str,
 ) -> Option<Rem6HostO3RuntimeCheckpointStatAggregation> {
-    if matches!(
+    if name == "stats_max_rows_per_cycle" {
+        None
+    } else if matches!(
         name,
         "stats_lsq_operation_load"
             | "stats_lsq_operation_store"
@@ -1062,6 +1090,10 @@ fn decode_o3_runtime_checkpoint_chunk(
     let float_misc = O3RuntimeFuLatencyClass::ScalarFloatMisc;
     Some(Rem6HostO3RuntimeCheckpointChunkSummary {
         decode_error: false,
+        checkpoint_version: payload
+            .get(O3_RUNTIME_CHECKPOINT_VERSION_OFFSET)
+            .copied()
+            .map(u64::from),
         live_retire_gate_request_agent: live_retire_gate_request
             .map(|request| u64::from(request.agent().get())),
         live_retire_gate_request_sequence: live_retire_gate_request
@@ -1073,6 +1105,11 @@ fn decode_o3_runtime_checkpoint_chunk(
         stats_max_rob_occupancy: Some(stats.max_rob_occupancy()),
         stats_max_lsq_occupancy: Some(stats.max_lsq_occupancy()),
         stats_rename_map_entries: Some(stats.rename_map_entries()),
+        stats_issue_cycles: Some(stats.issue_cycles()),
+        stats_issued_rows: Some(stats.issued_rows()),
+        stats_resource_blocked_row_cycles: Some(stats.resource_blocked_row_cycles()),
+        stats_dependency_blocked_row_cycles: Some(stats.dependency_blocked_row_cycles()),
+        stats_max_rows_per_cycle: Some(stats.max_rows_per_cycle()),
         stats_lsq_operation_load: Some(stats.lsq_operation_count(O3RuntimeLsqOperation::Load)),
         stats_lsq_operation_store: Some(stats.lsq_operation_count(O3RuntimeLsqOperation::Store)),
         stats_lsq_data_latency_samples: Some(stats.lsq_data_latency_samples()),

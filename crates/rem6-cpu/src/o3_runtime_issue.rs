@@ -162,10 +162,20 @@ impl O3RuntimeState {
 
             let reservations = self.live_issue_reservations_at(head, tick);
             if reservations.width >= self.issue_width {
-                if candidates
+                let resource_blocked_rows = candidates
                     .iter()
-                    .any(|(_, candidate, _)| candidate.issue_tick(tick) == tick)
-                {
+                    .filter(|(_, candidate, _)| candidate.issue_tick(tick) == tick)
+                    .count();
+                let dependency_blocked_rows =
+                    candidates.len().saturating_sub(resource_blocked_rows);
+                self.record_live_issue_decision(
+                    tick,
+                    0,
+                    resource_blocked_rows,
+                    dependency_blocked_rows,
+                    reservations.width,
+                );
+                if resource_blocked_rows != 0 {
                     let next_tick = tick.saturating_add(1);
                     if next_tick == tick {
                         break;
@@ -223,7 +233,8 @@ impl O3RuntimeState {
                 .try_plan(resolved_scopes, ready)
                 .expect("live O3 issue candidates have unique producer scopes");
             let issued_sequences = plan.issued_sequences().collect::<BTreeSet<_>>();
-            let resource_blocked = !plan.resource_blocked().is_empty();
+            let resource_blocked_rows = plan.resource_blocked().len();
+            let dependency_blocked_rows = plan.dependency_blocked().len();
             let dependency_blocked_sequences = plan
                 .dependency_blocked()
                 .iter()
@@ -257,11 +268,19 @@ impl O3RuntimeState {
                     recorded_sequences.insert(sequence);
                 }
             }
+            let recorded_rows = recorded_sequences.len();
+            self.record_live_issue_decision(
+                tick,
+                recorded_rows,
+                resource_blocked_rows,
+                dependency_blocked_rows,
+                reservations.width.saturating_add(recorded_rows),
+            );
             if recorded_sequences != issued_sequences {
                 break;
             }
 
-            if resource_blocked {
+            if resource_blocked_rows != 0 {
                 let next_tick = tick.saturating_add(1);
                 if next_tick == tick {
                     break;
@@ -302,6 +321,24 @@ impl O3RuntimeState {
                 && issued.execution.pc() == request.pc.get()
                 && issued.execution.instruction() == request.instruction()
         })
+    }
+
+    fn record_live_issue_decision(
+        &mut self,
+        tick: u64,
+        issued_rows: usize,
+        resource_blocked_rows: usize,
+        dependency_blocked_rows: usize,
+        total_rows_at_tick: usize,
+    ) {
+        let new_cycle = self.live_issue_cycle_ticks.insert(tick);
+        self.stats.record_issue_cycle(
+            new_cycle,
+            issued_rows,
+            resource_blocked_rows,
+            dependency_blocked_rows,
+            total_rows_at_tick,
+        );
     }
 
     fn live_issue_reservations_at(

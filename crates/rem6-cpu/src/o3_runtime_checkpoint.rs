@@ -20,6 +20,7 @@ use super::{
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS: u8 = 22;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB: u8 = 21;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE: u8 = 20;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS: u8 = 19;
@@ -29,7 +30,8 @@ const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 =
+    O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -156,6 +158,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -254,6 +257,7 @@ impl O3RuntimeCheckpointPayload {
                     >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE,
             )?
         };
@@ -628,6 +632,15 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
         );
     }
     write_o3_runtime_branch_mismatch_stats(payload, stats);
+    for value in [
+        stats.issue_cycles(),
+        stats.issued_rows(),
+        stats.resource_blocked_row_cycles(),
+        stats.dependency_blocked_row_cycles(),
+        stats.max_rows_per_cycle(),
+    ] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
 }
 
 fn write_live_retire_gate_checkpoint(
@@ -751,6 +764,7 @@ fn read_o3_runtime_stats(
     has_lsq_forwarding_suppression_reason_stats: bool,
     has_branch_mismatch_stats: bool,
     has_fu_latency_class_extrema_stats: bool,
+    has_issue_arbitration_stats: bool,
     has_live_retire_gate_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
@@ -990,6 +1004,23 @@ fn read_o3_runtime_stats(
     } else {
         O3RuntimeBranchMismatchCheckpointStats::default()
     };
+    let (
+        issue_cycles,
+        issued_rows,
+        resource_blocked_row_cycles,
+        dependency_blocked_row_cycles,
+        max_rows_per_cycle,
+    ) = if has_issue_arbitration_stats {
+        (
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+        )
+    } else {
+        (0, 0, 0, 0, 0)
+    };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -1082,6 +1113,11 @@ fn read_o3_runtime_stats(
         fu_latency_class_max_cycles,
         fu_latency_class_min_cycles,
         iq_branch_insts_issued,
+        issue_cycles,
+        issued_rows,
+        resource_blocked_row_cycles,
+        dependency_blocked_row_cycles,
+        max_rows_per_cycle,
         live_retire_gate_scheduled_waits,
         live_retire_gate_wait_ticks,
         live_retire_gate_max_wait_ticks,

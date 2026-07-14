@@ -63,6 +63,46 @@ fn scoped_issue_waits_for_register_producer_ready_tick() {
 }
 
 #[test]
+fn issue_arbitration_width_one_records_scheduler_decisions() {
+    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+
+    fixture.schedule_all(20);
+
+    let stats = fixture.runtime.stats();
+    assert_eq!(stats.issued_rows(), 3);
+    assert!(stats.issue_cycles() >= 3);
+    assert!(stats.resource_blocked_row_cycles() > 0);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 0);
+    assert_eq!(stats.max_rows_per_cycle(), 1);
+}
+
+#[test]
+fn issue_arbitration_records_dependency_blocked_row_cycles() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
+
+    fixture.schedule_all(20);
+
+    assert!(fixture.runtime.stats().dependency_blocked_row_cycles() > 0);
+}
+
+#[test]
+fn issue_arbitration_reset_stats_clears_scheduler_counters() {
+    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+    fixture.schedule_all(20);
+    assert!(!fixture.runtime.live_issue_cycle_ticks.is_empty());
+
+    fixture.runtime.reset_stats();
+
+    let stats = fixture.runtime.stats();
+    assert_eq!(stats.issue_cycles(), 0);
+    assert_eq!(stats.issued_rows(), 0);
+    assert_eq!(stats.resource_blocked_row_cycles(), 0);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 0);
+    assert_eq!(stats.max_rows_per_cycle(), 0);
+    assert!(fixture.runtime.live_issue_cycle_ticks.is_empty());
+}
+
+#[test]
 fn scoped_issue_tracks_long_fu_head_dependency() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_issue_width(1);

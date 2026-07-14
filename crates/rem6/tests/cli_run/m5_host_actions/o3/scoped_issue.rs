@@ -144,6 +144,163 @@ fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
     );
 }
 
+#[test]
+fn rem6_run_o3_scoped_issue_checkpoint_boundary() {
+    let path = scoped_issue_binary("o3-scoped-issue-checkpoint", ScopedIssueCase::CrossResource);
+    let baseline = scoped_issue_json(&path, "direct", 1, 1_500);
+    let live_tick = event_u64(event_at_pc(&baseline, THIRD_ROW_PC), "issue_tick") + 1;
+    let live_arg = format!("{live_tick}:scoped-issue-live");
+    let mut live_command = scoped_issue_command(&path, "direct", 1, 1_500);
+    live_command.args(["--host-checkpoint", &live_arg]);
+    let output = live_command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("checkpoint component is not quiescent: cpu0"),
+        "live scoped-issue checkpoint should fail closed: {stderr}"
+    );
+
+    let checkpoint_tick = event_u64(event_at_pc(&baseline, THIRD_ROW_PC), "commit_tick") + 1;
+    let restore_tick = checkpoint_tick + 1;
+    let checkpoint_arg = format!("{checkpoint_tick}:scoped-issue-drained");
+    let restore_arg = format!("{restore_tick}:scoped-issue-drained");
+    let restored = scoped_issue_json_with_args(
+        &path,
+        "direct",
+        1,
+        1_500,
+        &[
+            "--host-checkpoint",
+            &checkpoint_arg,
+            "--host-restore-checkpoint",
+            &restore_arg,
+        ],
+    );
+    assert_completed_scoped_issue(
+        &restored,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let checkpoint = restored
+        .pointer("/host_actions/checkpoints/0")
+        .expect("drained scoped-issue checkpoint");
+    let restore = restored
+        .pointer("/host_actions/checkpoint_restores/0")
+        .expect("restored scoped-issue checkpoint");
+    let captured_runtime = scoped_issue_checkpoint_runtime(checkpoint);
+    let restored_runtime = scoped_issue_checkpoint_runtime(restore);
+    assert_eq!(
+        captured_runtime
+            .pointer("/checkpoint_version")
+            .and_then(Value::as_u64),
+        Some(22)
+    );
+    for field in ["snapshot_rob_entries", "snapshot_lsq_entries"] {
+        assert_eq!(
+            captured_runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64),
+            Some(0),
+            "drained scoped-issue checkpoint should expose zero {field}: {captured_runtime}"
+        );
+    }
+    assert_eq!(
+        captured_runtime
+            .pointer("/stats_issued_rows")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert!(captured_runtime
+        .pointer("/stats_issue_cycles")
+        .and_then(Value::as_u64)
+        .is_some_and(|cycles| cycles >= 3));
+    assert!(captured_runtime
+        .pointer("/stats_resource_blocked_row_cycles")
+        .and_then(Value::as_u64)
+        .is_some_and(|rows| rows > 0));
+    assert_eq!(
+        captured_runtime
+            .pointer("/stats_dependency_blocked_row_cycles")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        captured_runtime
+            .pointer("/stats_max_rows_per_cycle")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    for field in [
+        "checkpoint_version",
+        "snapshot_rob_entries",
+        "snapshot_lsq_entries",
+        "stats_issue_cycles",
+        "stats_issued_rows",
+        "stats_resource_blocked_row_cycles",
+        "stats_dependency_blocked_row_cycles",
+        "stats_max_rows_per_cycle",
+    ] {
+        assert_eq!(
+            restored_runtime.pointer(&format!("/{field}")),
+            captured_runtime.pointer(&format!("/{field}")),
+            "restored scoped-issue checkpoint must preserve {field}"
+        );
+    }
+}
+
+fn scoped_issue_checkpoint_runtime(checkpoint: &Value) -> &Value {
+    let cpu0 = scoped_issue_checkpoint_component(checkpoint, "cpu0");
+    assert!(scoped_issue_checkpoint_component_chunks(cpu0)
+        .iter()
+        .all(|chunk| {
+            chunk.pointer("/name").and_then(Value::as_str) != Some("o3-live-data-handoff")
+        }));
+    scoped_issue_checkpoint_component_chunks(cpu0)
+        .iter()
+        .find(|chunk| chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state"))
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .unwrap_or_else(|| panic!("missing decoded scoped-issue O3 runtime checkpoint: {cpu0}"))
+}
+
+fn scoped_issue_checkpoint_component<'a>(checkpoint: &'a Value, component: &str) -> &'a Value {
+    checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|entry| {
+                entry.pointer("/component").and_then(Value::as_str) == Some(component)
+            })
+        })
+        .unwrap_or_else(|| panic!("missing checkpoint component {component}: {checkpoint}"))
+}
+
+fn scoped_issue_checkpoint_component_chunks(component: &Value) -> &[Value] {
+    component
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| panic!("missing checkpoint chunks: {component}"))
+}
+
 fn assert_completed_scoped_issue(
     json: &Value,
     expected_memory: &str,
@@ -215,35 +372,19 @@ fn assert_memory_hierarchy_activity(json: &Value) {
 }
 
 fn scoped_issue_json(path: &Path, memory_system: &str, issue_width: usize, max_tick: u64) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            &max_tick.to_string(),
-            "--stats-format",
-            "json",
-            "--execute",
-            "--debug-flags",
-            "O3,Data,Fetch,Memory,HostAction",
-            "--riscv-o3-scalar-memory-depth",
-            "4",
-            "--riscv-o3-issue-width",
-            &issue_width.to_string(),
-            "--memory-system",
-            memory_system,
-            "--memory-route-delay",
-            "16",
-            "--m5-switch-cpu-mode",
-            "detailed",
-            "--dump-memory",
-            "0x800000a0:16",
-        ])
-        .output()
-        .unwrap();
+    scoped_issue_json_with_args(path, memory_system, issue_width, max_tick, &[])
+}
+
+fn scoped_issue_json_with_args(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+    extra_args: &[&str],
+) -> Value {
+    let mut command = scoped_issue_command(path, memory_system, issue_width, max_tick);
+    command.args(extra_args);
+    let output = command.output().unwrap();
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -251,6 +392,42 @@ fn scoped_issue_json(path: &Path, memory_system: &str, issue_width: usize, max_t
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+fn scoped_issue_command(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        &max_tick.to_string(),
+        "--stats-format",
+        "json",
+        "--execute",
+        "--debug-flags",
+        "O3,Data,Fetch,Memory,HostAction",
+        "--riscv-o3-scalar-memory-depth",
+        "4",
+        "--riscv-o3-issue-width",
+        &issue_width.to_string(),
+        "--memory-system",
+        memory_system,
+        "--memory-route-delay",
+        "16",
+        "--m5-switch-cpu-mode",
+        "detailed",
+        "--dump-memory",
+        "0x800000a0:16",
+    ]);
+    command
 }
 
 fn scoped_issue_fu_json(

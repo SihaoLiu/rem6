@@ -104,6 +104,11 @@ pub struct O3RuntimeStats {
     pub(crate) fu_latency_class_max_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) fu_latency_class_min_cycles: [u64; O3RuntimeFuLatencyClass::COUNT],
     pub(crate) iq_branch_insts_issued: u64,
+    pub(crate) issue_cycles: u64,
+    pub(crate) issued_rows: u64,
+    pub(crate) resource_blocked_row_cycles: u64,
+    pub(crate) dependency_blocked_row_cycles: u64,
+    pub(crate) max_rows_per_cycle: u64,
     pub(crate) live_retire_gate_scheduled_waits: u64,
     pub(crate) live_retire_gate_wait_ticks: u64,
     pub(crate) live_retire_gate_max_wait_ticks: u64,
@@ -705,6 +710,26 @@ impl O3RuntimeStats {
         self.iq_branch_insts_issued
     }
 
+    pub const fn issue_cycles(self) -> u64 {
+        self.issue_cycles
+    }
+
+    pub const fn issued_rows(self) -> u64 {
+        self.issued_rows
+    }
+
+    pub const fn resource_blocked_row_cycles(self) -> u64 {
+        self.resource_blocked_row_cycles
+    }
+
+    pub const fn dependency_blocked_row_cycles(self) -> u64 {
+        self.dependency_blocked_row_cycles
+    }
+
+    pub const fn max_rows_per_cycle(self) -> u64 {
+        self.max_rows_per_cycle
+    }
+
     pub const fn live_retire_gate_scheduled_waits(self) -> u64 {
         self.live_retire_gate_scheduled_waits
     }
@@ -758,6 +783,11 @@ impl O3RuntimeStats {
             || self.fu_latency_instructions != 0
             || self.fu_latency_cycles != 0
             || self.iq_branch_insts_issued != 0
+            || self.issue_cycles != 0
+            || self.issued_rows != 0
+            || self.resource_blocked_row_cycles != 0
+            || self.dependency_blocked_row_cycles != 0
+            || self.max_rows_per_cycle != 0
             || self.live_retire_gate_scheduled_waits != 0
             || self.live_retire_gate_wait_ticks != 0
             || self.live_retire_gate_max_wait_ticks != 0
@@ -1027,6 +1057,27 @@ impl O3RuntimeStats {
 
     pub(super) fn record_iew_dependency_consumer(&mut self) {
         self.iew_consumer_insts = self.iew_consumer_insts.saturating_add(1);
+    }
+
+    pub(super) fn record_issue_cycle(
+        &mut self,
+        new_cycle: bool,
+        issued_rows: usize,
+        resource_blocked_rows: usize,
+        dependency_blocked_rows: usize,
+        total_rows_at_tick: usize,
+    ) {
+        self.issue_cycles = self
+            .issue_cycles
+            .saturating_add(if new_cycle { 1 } else { 0 });
+        self.issued_rows = self.issued_rows.saturating_add(issued_rows as u64);
+        self.resource_blocked_row_cycles = self
+            .resource_blocked_row_cycles
+            .saturating_add(resource_blocked_rows as u64);
+        self.dependency_blocked_row_cycles = self
+            .dependency_blocked_row_cycles
+            .saturating_add(dependency_blocked_rows as u64);
+        self.max_rows_per_cycle = self.max_rows_per_cycle.max(total_rows_at_tick as u64);
     }
 
     pub(crate) fn record_live_retire_gate_wait(&mut self, wait_ticks: u64) {

@@ -24,6 +24,7 @@ const BRANCH_EVENT_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 6 * U64
 const BRANCH_EVENT_PREDICTION_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 4 * U64_BYTES;
 const BRANCH_MISMATCH_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 16 * U64_BYTES;
 const LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * U64_BYTES;
+const ISSUE_ARBITRATION_STATS_BYTES: usize = 5 * U64_BYTES;
 const LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + U32_BYTES + 2 * U64_BYTES;
 const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
     + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
@@ -41,9 +42,13 @@ const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U
     + IQ_BRANCH_ISSUED_STATS_BYTES
     + BRANCH_EVENT_STATS_BYTES
     + BRANCH_EVENT_PREDICTION_STATS_BYTES
-    + BRANCH_MISMATCH_STATS_BYTES;
-const STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize =
-    CURRENT_STATS_BYTES - FU_LATENCY_CLASS_EXTREMA_STATS_BYTES - BRANCH_MISMATCH_STATS_BYTES;
+    + BRANCH_MISMATCH_STATS_BYTES
+    + ISSUE_ARBITRATION_STATS_BYTES;
+const STATS_BYTES_WITHOUT_ISSUE_ARBITRATION: usize =
+    CURRENT_STATS_BYTES - ISSUE_ARBITRATION_STATS_BYTES;
+const STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize = STATS_BYTES_WITHOUT_ISSUE_ARBITRATION
+    - FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
+    - BRANCH_MISMATCH_STATS_BYTES;
 const STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION: usize = STATS_BYTES_WITHOUT_BRANCH_MISMATCH
     - BRANCH_EVENT_PREDICTION_STATS_BYTES
     - LSQ_OPERATION_BYTE_STATS_BYTES;
@@ -56,10 +61,112 @@ const PRE_BRANCH_EVENT_STATS_BYTES: usize = STATS_BYTES_WITHOUT_BRANCH_MISMATCH
     - LSQ_FORWARDING_SUPPRESSION_STATS_BYTES
     - LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
 
+fn issue_stats_checkpoint_payload() -> O3RuntimeCheckpointPayload {
+    O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+        super::super::default_o3_runtime_snapshot(),
+        O3RuntimeStats {
+            issue_cycles: 3,
+            issued_rows: 3,
+            resource_blocked_row_cycles: 6,
+            dependency_blocked_row_cycles: 1,
+            max_rows_per_cycle: 2,
+            ..O3RuntimeStats::default()
+        },
+    )
+    .unwrap()
+}
+
+fn encoded_without_issue_arbitration_stats(encoded: &[u8]) -> Vec<u8> {
+    if encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()]
+        < O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
+    {
+        return encoded.to_vec();
+    }
+    let trailer_offset = encoded
+        .len()
+        .checked_sub(LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    assert_eq!(
+        encoded[trailer_offset], 0,
+        "test payload has no live retire gate"
+    );
+    let issue_offset = trailer_offset
+        .checked_sub(ISSUE_ARBITRATION_STATS_BYTES)
+        .unwrap();
+    let mut downgraded = [&encoded[..issue_offset], &encoded[trailer_offset..]].concat();
+    downgraded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB;
+    downgraded
+}
+
+fn legacy_zero_stats_payload(version: u8) -> Vec<u8> {
+    let encoded =
+        O3RuntimeCheckpointPayload::from_snapshot(super::super::default_o3_runtime_snapshot())
+            .unwrap()
+            .encode();
+    let current_stats_offset = encoded
+        .len()
+        .checked_sub(
+            CURRENT_STATS_BYTES + LIVE_RETIRE_GATE_STATS_BYTES + LIVE_RETIRE_GATE_PAYLOAD_BYTES,
+        )
+        .unwrap();
+    let mut legacy = encoded[..current_stats_offset].to_vec();
+    legacy[O3_RUNTIME_CHECKPOINT_MAGIC.len()] = version;
+    legacy.extend(vec![0; legacy_stats_bytes(version)]);
+    if version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE {
+        legacy.extend(vec![0; LIVE_RETIRE_GATE_PAYLOAD_BYTES]);
+    }
+    legacy
+}
+
+fn legacy_stats_bytes(version: u8) -> usize {
+    let v3 = BASE_AND_FU_STATS_BYTES + MAX_OCCUPANCY_STATS_BYTES;
+    let v4 = v3 + LSQ_OPERATION_STATS_BYTES + LSQ_ORDERING_STATS_BYTES;
+    let v5 = v4 + BRANCH_REPAIR_STATS_BYTES;
+    let v6 = v5 + LSQ_OPERATION_LATENCY_STATS_BYTES;
+    let v7 = v6 + LSQ_DATA_LATENCY_STATS_BYTES;
+    let v8 = v7 + IEW_BRANCH_MISPREDICT_SPLIT_STATS_BYTES;
+    let v9 = v8 + IEW_DEPENDENCY_STATS_BYTES;
+    let v10 = v9 + IQ_BRANCH_ISSUED_STATS_BYTES;
+    let v11 = v10 + LSQ_OPERATION_FORWARDING_STATS_BYTES;
+    let v12 = v11 + BRANCH_EVENT_STATS_BYTES;
+    let v13 = v12 + LSQ_FORWARDING_SUPPRESSION_STATS_BYTES;
+    let v14 = v13 + LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES;
+    let v15 = v14 + BRANCH_EVENT_PREDICTION_STATS_BYTES;
+    let v16 = v15 + LSQ_OPERATION_BYTE_STATS_BYTES;
+    let v17 = v16 + BRANCH_MISMATCH_STATS_BYTES;
+    let v18 = v17 + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES;
+    match version {
+        O3_RUNTIME_CHECKPOINT_VERSION_WITHOUT_STATS => 0,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_SCALAR_FU_STATS => 19 * U64_BYTES,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_STATS => v3,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_MATRIX_STATS => v4,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_REPAIR_STATS => v5,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_LATENCY_STATS => v6,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_DATA_LATENCY_STATS => v7,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_BRANCH_MISPREDICT_SPLIT_STATS => v8,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_IEW_DEPENDENCY_STATS => v9,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS => v10,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS => v11,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS => v12,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS => v13,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS => v14,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS => v15,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS => v16,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS => v17,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS
+        | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS => v18,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE
+        | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB => v18 + LIVE_RETIRE_GATE_STATS_BYTES,
+        _ => panic!("unsupported legacy checkpoint version {version}"),
+    }
+}
+
 fn encoded_without_lsq_operation_byte_stats(
     encoded: &[u8],
     stats_bytes_with_lsq_operation_byte_stats: usize,
 ) -> Vec<u8> {
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
     let stats_offset = encoded
         .len()
         .checked_sub(stats_bytes_with_lsq_operation_byte_stats)
@@ -74,6 +181,7 @@ fn encoded_without_lsq_operation_byte_stats(
 }
 
 fn encoded_without_live_retire_gate(encoded: &[u8]) -> Vec<u8> {
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
     let trailer_offset = encoded
         .len()
         .checked_sub(LIVE_RETIRE_GATE_PAYLOAD_BYTES)
@@ -92,8 +200,12 @@ fn encoded_without_live_retire_gate(encoded: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_without_fu_latency_class_extrema_stats(encoded: &[u8]) -> Vec<u8> {
-    let encoded = encoded_without_live_retire_gate(encoded);
-    let stats_offset = encoded.len().checked_sub(CURRENT_STATS_BYTES).unwrap();
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
+    let encoded = encoded_without_live_retire_gate(&encoded);
+    let stats_offset = encoded
+        .len()
+        .checked_sub(STATS_BYTES_WITHOUT_ISSUE_ARBITRATION)
+        .unwrap();
     let extrema_offset = stats_offset + CURRENT_BASE_AND_FU_STATS_BYTES;
     [
         &encoded[..extrema_offset],
@@ -103,7 +215,8 @@ fn encoded_without_fu_latency_class_extrema_stats(encoded: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_without_branch_mismatch_stats(encoded: &[u8]) -> Vec<u8> {
-    let encoded = encoded_without_fu_latency_class_extrema_stats(encoded);
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
+    let encoded = encoded_without_fu_latency_class_extrema_stats(&encoded);
     let mismatch_offset = encoded
         .len()
         .checked_sub(BRANCH_MISMATCH_STATS_BYTES)
@@ -112,7 +225,8 @@ fn encoded_without_branch_mismatch_stats(encoded: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_without_branch_event_prediction_stats(encoded: &[u8]) -> Vec<u8> {
-    let encoded = encoded_without_branch_mismatch_stats(encoded);
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
+    let encoded = encoded_without_branch_mismatch_stats(&encoded);
     let prediction_offset = encoded
         .len()
         .checked_sub(BRANCH_EVENT_PREDICTION_STATS_BYTES)
@@ -124,12 +238,14 @@ fn encoded_without_branch_event_prediction_stats(encoded: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_without_branch_event_stats(encoded: &[u8]) -> Vec<u8> {
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
     let branch_event_offset = encoded.len().checked_sub(BRANCH_EVENT_STATS_BYTES).unwrap();
     encoded[..branch_event_offset].to_vec()
 }
 
 fn encoded_without_lsq_forwarding_suppression_stats(encoded: &[u8]) -> Vec<u8> {
-    let encoded = encoded_without_lsq_forwarding_suppression_reason_stats(encoded);
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
+    let encoded = encoded_without_lsq_forwarding_suppression_reason_stats(&encoded);
     let stats_offset = encoded
         .len()
         .checked_sub(STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION_REASON)
@@ -153,7 +269,8 @@ fn encoded_without_lsq_forwarding_suppression_stats(encoded: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_without_lsq_forwarding_suppression_reason_stats(encoded: &[u8]) -> Vec<u8> {
-    let encoded = encoded_without_branch_event_prediction_stats(encoded);
+    let encoded = encoded_without_issue_arbitration_stats(encoded);
+    let encoded = encoded_without_branch_event_prediction_stats(&encoded);
     let stats_offset = encoded
         .len()
         .checked_sub(STATS_BYTES_WITHOUT_BRANCH_EVENT_PREDICTION)
@@ -169,6 +286,62 @@ fn encoded_without_lsq_forwarding_suppression_reason_stats(encoded: &[u8]) -> Ve
         &encoded[reason_offset + LSQ_FORWARDING_SUPPRESSION_REASON_STATS_BYTES..],
     ]
     .concat()
+}
+
+#[test]
+fn checkpoint_v22_payloads_round_trip_issue_arbitration_stats() {
+    let payload = issue_stats_checkpoint_payload();
+    let encoded = payload.encode();
+    assert_eq!(
+        encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()],
+        22,
+        "current O3 runtime checkpoints must use version 22"
+    );
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    assert_eq!(decoded.stats().issue_cycles(), 3);
+    assert_eq!(decoded.stats().issued_rows(), 3);
+    assert_eq!(decoded.stats().resource_blocked_row_cycles(), 6);
+    assert_eq!(decoded.stats().dependency_blocked_row_cycles(), 1);
+    assert_eq!(decoded.stats().max_rows_per_cycle(), 2);
+}
+
+#[test]
+fn checkpoint_v21_payloads_decode_without_issue_arbitration_stats() {
+    let mut encoded =
+        encoded_without_issue_arbitration_stats(&issue_stats_checkpoint_payload().encode());
+    encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] = 21;
+
+    let stats = O3RuntimeCheckpointPayload::decode(&encoded)
+        .unwrap()
+        .stats();
+    assert_eq!(stats.issue_cycles(), 0);
+    assert_eq!(stats.issued_rows(), 0);
+    assert_eq!(stats.resource_blocked_row_cycles(), 0);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 0);
+    assert_eq!(stats.max_rows_per_cycle(), 0);
+}
+
+#[test]
+fn checkpoint_v21_downgrade_keeps_every_legacy_version_decodable() {
+    for version in 1..=21 {
+        let decoded = O3RuntimeCheckpointPayload::decode(&legacy_zero_stats_payload(version))
+            .unwrap_or_else(|error| panic!("checkpoint v{version} must remain decodable: {error}"));
+        let stats = decoded.stats();
+        assert_eq!(stats.issue_cycles(), 0, "checkpoint v{version}");
+        assert_eq!(stats.issued_rows(), 0, "checkpoint v{version}");
+        assert_eq!(
+            stats.resource_blocked_row_cycles(),
+            0,
+            "checkpoint v{version}"
+        );
+        assert_eq!(
+            stats.dependency_blocked_row_cycles(),
+            0,
+            "checkpoint v{version}"
+        );
+        assert_eq!(stats.max_rows_per_cycle(), 0, "checkpoint v{version}");
+    }
 }
 
 #[test]

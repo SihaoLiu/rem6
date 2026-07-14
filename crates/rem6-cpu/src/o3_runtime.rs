@@ -195,6 +195,7 @@ pub struct O3RuntimeState {
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
+    live_issue_cycle_ticks: BTreeSet<u64>,
     live_control_dependencies: BTreeMap<u64, u64>,
     live_control_window_sequences: BTreeSet<u64>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
@@ -234,6 +235,7 @@ impl O3RuntimeState {
         self.dependency_producers_with_consumers.clear();
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
+        self.live_issue_cycle_ticks.clear();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
         self.deferred_scalar_memory_execution = None;
@@ -344,6 +346,7 @@ impl O3RuntimeState {
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
+        self.live_issue_cycle_ticks.clear();
         let live_rob_occupancy = self
             .live_retired_instructions
             .iter()
@@ -569,6 +572,7 @@ impl Default for O3RuntimeState {
             dependency_producers_with_consumers: BTreeSet::new(),
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
+            live_issue_cycle_ticks: BTreeSet::new(),
             live_control_dependencies: BTreeMap::new(),
             live_control_window_sequences: BTreeSet::new(),
             deferred_scalar_memory_execution: None,
