@@ -88,6 +88,16 @@ impl O3RuntimeState {
             || !self.live_scalar_memory_younger_sequences.is_empty()
     }
 
+    pub(crate) fn live_scalar_memory_head_reservation(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<O3LiveIssueHeadReservation> {
+        self.live_scalar_memories
+            .iter()
+            .find(|live| live.fetch_request == fetch_request)
+            .map(|live| O3LiveIssueHeadReservation::memory(live.sequence, live.issue_tick))
+    }
+
     pub(crate) fn has_ready_live_scalar_memory_event(&self) -> bool {
         self.live_scalar_memories.first().is_some_and(|live| {
             live.outcome != O3LiveScalarMemoryOutcome::Resident && !live.event_taken

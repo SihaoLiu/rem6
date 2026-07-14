@@ -48,6 +48,8 @@ mod restore;
 mod rob_live;
 #[path = "o3/runtime.rs"]
 mod runtime;
+#[path = "o3/scoped_issue.rs"]
+mod scoped_issue;
 #[path = "o3/switch.rs"]
 mod switch;
 

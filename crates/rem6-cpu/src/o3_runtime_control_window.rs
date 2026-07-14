@@ -19,14 +19,20 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
     instruction: RiscvInstruction,
     kind: O3LiveSpeculativeIssueKind,
     producer_sequences: Vec<u64>,
+    data_dependencies: Vec<O3LiveIssueDependency>,
     forwarded_register_writes: Vec<RegisterWrite>,
-    dependency_ready_tick: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
     Scalar { destination: O3RenameMapEntry },
     DirectConditional,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct O3LiveIssueDependency {
+    pub(super) sequence: u64,
+    pub(super) ready_tick: u64,
 }
 
 impl O3LiveSpeculativeIssueCandidate {
@@ -38,12 +44,42 @@ impl O3LiveSpeculativeIssueCandidate {
         }
     }
 
-    pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
+    pub(super) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
         &self.forwarded_register_writes
     }
 
+    pub(super) const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(super) const fn instruction(&self) -> RiscvInstruction {
+        self.instruction
+    }
+
+    pub(super) fn data_dependencies(&self) -> &[O3LiveIssueDependency] {
+        &self.data_dependencies
+    }
+
+    #[cfg(test)]
+    pub(crate) fn producer_sequences(&self) -> &[u64] {
+        &self.producer_sequences
+    }
+
     pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
-        earliest_tick.max(self.dependency_ready_tick)
+        self.data_dependencies
+            .iter()
+            .fold(earliest_tick, |tick, producer| {
+                tick.max(producer.ready_tick)
+            })
+    }
+}
+
+impl O3LiveIssueDependency {
+    pub(super) const fn new(sequence: u64, ready_tick: u64) -> Self {
+        Self {
+            sequence,
+            ready_tick,
+        }
     }
 }
 
@@ -98,15 +134,7 @@ impl O3RuntimeState {
             .live_control_dependencies
             .get(&entry.sequence())
             .copied();
-        if control_sequence.is_some_and(|control_sequence| {
-            !self.live_speculative_executions.iter().any(|issued| {
-                issued.sequence == control_sequence
-                    && o3_direct_conditional_sources(issued.execution.instruction()).is_some()
-            })
-        }) {
-            return None;
-        }
-        let (mut producer_sequences, forwarded_register_writes, dependency_ready_tick) =
+        let (mut producer_sequences, data_dependencies, forwarded_register_writes) =
             self.live_speculative_source_forwarding(index, &sources)?;
         if let Some(control_sequence) = control_sequence {
             producer_sequences.push(control_sequence);
@@ -117,8 +145,8 @@ impl O3RuntimeState {
             instruction,
             kind,
             producer_sequences,
+            data_dependencies,
             forwarded_register_writes,
-            dependency_ready_tick,
         })
     }
 
@@ -191,10 +219,10 @@ impl O3RuntimeState {
         &self,
         consumer_index: usize,
         sources: &[rem6_isa_riscv::Register],
-    ) -> Option<(Vec<u64>, Vec<RegisterWrite>, u64)> {
+    ) -> Option<(Vec<u64>, Vec<O3LiveIssueDependency>, Vec<RegisterWrite>)> {
         let mut producer_sequences = Vec::new();
+        let mut data_dependencies = Vec::new();
         let mut forwarded_register_writes = Vec::new();
-        let mut dependency_ready_tick = 0;
         for source in sources.iter().copied().filter(|source| !source.is_zero()) {
             let producer = self.snapshot.reorder_buffer[..consumer_index]
                 .iter()
@@ -229,9 +257,19 @@ impl O3RuntimeState {
                 });
             let (write, producer_ready_tick) = speculative
                 .or_else(|| self.completed_live_scalar_load_source(producer.sequence(), source))?;
-            dependency_ready_tick = dependency_ready_tick.max(producer_ready_tick);
             if !producer_sequences.contains(&producer.sequence()) {
                 producer_sequences.push(producer.sequence());
+            }
+            if !data_dependencies
+                .iter()
+                .any(|dependency: &O3LiveIssueDependency| {
+                    dependency.sequence == producer.sequence()
+                })
+            {
+                data_dependencies.push(O3LiveIssueDependency::new(
+                    producer.sequence(),
+                    producer_ready_tick,
+                ));
             }
             if !forwarded_register_writes
                 .iter()
@@ -242,8 +280,8 @@ impl O3RuntimeState {
         }
         Some((
             producer_sequences,
+            data_dependencies,
             forwarded_register_writes,
-            dependency_ready_tick,
         ))
     }
 

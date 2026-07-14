@@ -5,6 +5,7 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
+    o3_runtime::{O3LiveIssueHeadReservation, O3LiveIssueRequest},
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
     riscv_o3_window_policy::{
@@ -229,21 +230,32 @@ fn stage_o3_live_retire_window(
     let younger = RiscvScalarIntegerLiveWindow::from_fu_head(decoded.instruction())
         .map(|window| accepted_scalar_integer_younger_window(window, younger))
         .unwrap_or_default();
-    state.o3_runtime.stage_live_retire_window(
+    let Some(head_sequence) = state.o3_runtime.stage_live_retire_window(
         pc,
         decoded.instruction(),
         ready_tick,
         younger
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
-    );
+    ) else {
+        return Ok(());
+    };
     if younger.is_empty() {
         return Ok(());
     }
     if !state.live_retire_gate.detailed_policy_enabled() {
         return Ok(());
     }
-    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+    schedule_o3_live_speculative_younger_executions(
+        state,
+        O3LiveIssueHeadReservation::for_instruction(
+            head_sequence,
+            issue_tick,
+            decoded.instruction(),
+        ),
+        &younger,
+        issue_tick,
+    );
     Ok(())
 }
 
@@ -284,7 +296,13 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
-    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+    let Some(head) = state
+        .o3_runtime
+        .live_scalar_memory_head_reservation(execution.fetch().request_id())
+    else {
+        return;
+    };
+    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick);
 }
 
 pub(crate) fn wake_o3_scalar_memory_younger_window(
@@ -308,7 +326,13 @@ pub(crate) fn wake_o3_scalar_memory_younger_window(
         current_request = instruction.last_consumed_request();
         younger.push(instruction);
     }
-    record_o3_live_speculative_younger_executions(state, &younger, issue_tick);
+    let Some(head) = state
+        .o3_runtime
+        .live_scalar_memory_head_reservation(tail_request)
+    else {
+        return;
+    };
+    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick);
 }
 
 fn accepted_scalar_integer_younger_window(
@@ -331,34 +355,26 @@ fn accepted_scalar_integer_younger_window(
     accepted
 }
 
-fn record_o3_live_speculative_younger_executions(
+fn schedule_o3_live_speculative_younger_executions(
     state: &mut RiscvCoreState,
+    head: O3LiveIssueHeadReservation,
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
 ) {
-    for younger in younger {
-        let Some(candidate) = state
-            .o3_runtime
-            .live_speculative_issue_candidate(younger.pc, younger.decoded.instruction())
-        else {
-            continue;
-        };
-
-        let mut speculative_hart = state.hart.clone();
-        for write in candidate.forwarded_register_writes() {
-            speculative_hart.write(write.register(), write.value());
-        }
-        speculative_hart.set_pc(younger.pc.get());
-        let Ok(speculative_execution) = speculative_hart.execute_decoded(younger.decoded) else {
-            continue;
-        };
-        state.o3_runtime.record_live_speculative_execution(
-            candidate,
-            &younger.consumed_requests,
-            issue_tick,
-            speculative_execution,
-        );
-    }
+    let requests = younger
+        .iter()
+        .map(|younger| {
+            O3LiveIssueRequest::new(
+                younger.pc,
+                younger.consumed_requests.clone(),
+                younger.decoded,
+            )
+        })
+        .collect::<Vec<_>>();
+    let hart = state.hart.clone();
+    state
+        .o3_runtime
+        .schedule_live_speculative_issues(&hart, head, issue_tick, &requests);
 }
 
 fn completed_fetch_instruction_window(

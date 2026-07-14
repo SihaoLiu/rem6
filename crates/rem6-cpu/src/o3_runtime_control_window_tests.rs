@@ -103,11 +103,15 @@ fn three_deep_control_dependencies_follow_immediate_branch() {
 }
 
 #[test]
-fn inner_control_waits_for_outer_execution_record() {
+fn inner_control_uses_staged_outer_ownership_before_execution_record() {
     let (mut runtime, outer, inner, _) = nested_control_runtime();
-    assert!(runtime
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let inner_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), inner)
-        .is_none());
+        .expect("staged predicted-path ownership should not be a data wait");
+    assert_eq!(inner_candidate.issue_tick(11), 11);
+    assert_eq!(inner_candidate.producer_sequences(), &[outer_sequence]);
 
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
@@ -313,7 +317,7 @@ fn split_inner_branch_suffix_replacement_prunes_nested_chain() {
 }
 
 #[test]
-fn predicted_descendants_wait_for_branch_record_and_invalidate_with_it() {
+fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
@@ -330,9 +334,12 @@ fn predicted_descendants_wait_for_branch_record_and_invalidate_with_it() {
         ],
     );
 
-    assert!(runtime
+    let branch_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
+    let multiply_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), multiply)
-        .is_none());
+        .expect("predicted descendant should use staged branch ownership");
+    assert_eq!(multiply_candidate.issue_tick(11), 11);
+    assert_eq!(multiply_candidate.producer_sequences(), &[branch_sequence]);
 
     let branch_execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
     let branch_candidate = runtime
@@ -352,9 +359,6 @@ fn predicted_descendants_wait_for_branch_record_and_invalidate_with_it() {
         vec![RegisterWrite::new(reg(7), 42)],
         None,
     );
-    let multiply_candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x8008), multiply)
-        .unwrap();
     runtime.record_live_speculative_execution(
         multiply_candidate,
         &[request(12)],

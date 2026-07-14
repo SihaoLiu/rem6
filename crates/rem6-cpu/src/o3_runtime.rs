@@ -32,6 +32,11 @@ mod o3_runtime_control_window_tests;
 mod o3_runtime_handoff;
 #[path = "o3_runtime_helpers.rs"]
 mod o3_runtime_helpers;
+#[path = "o3_runtime_issue.rs"]
+mod o3_runtime_issue;
+#[cfg(test)]
+#[path = "o3_runtime_issue_tests.rs"]
+mod o3_runtime_issue_tests;
 #[path = "o3_runtime_live_window.rs"]
 mod o3_runtime_live_window;
 #[path = "o3_runtime_memory.rs"]
@@ -51,12 +56,16 @@ mod o3_store_forwarding;
 
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
-use o3_runtime_control_window::{execution_writes_rename_destination, O3LiveSpeculativeExecution};
+use o3_runtime_control_window::{
+    execution_writes_rename_destination, O3LiveSpeculativeExecution,
+    O3LiveSpeculativeIssueCandidate,
+};
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
+pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
 use o3_runtime_live_window::{staged_rename_entry, O3LiveRetiredInstruction};
 use o3_runtime_memory::{
     is_deferred_o3_scalar_memory_access, is_deferred_o3_scalar_memory_instruction,

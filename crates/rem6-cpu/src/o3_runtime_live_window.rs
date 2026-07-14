@@ -25,13 +25,14 @@ impl O3RuntimeState {
         current: RiscvInstruction,
         current_ready_tick: u64,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
-    ) {
+    ) -> Option<u64> {
         if is_deferred_o3_scalar_memory_instruction(current) {
-            return;
+            return None;
         }
-        let mut control_sequence = self
-            .stage_or_existing_live_instruction(current_pc, current, current_ready_tick)
-            .filter(|_| o3_direct_conditional_sources(current).is_some());
+        let head_sequence =
+            self.stage_or_existing_live_instruction(current_pc, current, current_ready_tick);
+        let mut control_sequence =
+            head_sequence.filter(|_| o3_direct_conditional_sources(current).is_some());
         if let Some(sequence) = control_sequence {
             self.live_control_window_sequences.insert(sequence);
         }
@@ -58,6 +59,7 @@ impl O3RuntimeState {
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+        head_sequence
     }
 
     pub(crate) fn stage_live_scalar_memory_younger_window(
