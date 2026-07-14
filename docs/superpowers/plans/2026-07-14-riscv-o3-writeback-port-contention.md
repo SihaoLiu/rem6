@@ -20,7 +20,7 @@
 - Modify `crates/rem6-cpu/tests/o3_pipeline.rs`: prove occupied-slot validation and deferred-before-new ordering.
 - Modify `crates/rem6-cpu/src/o3_runtime.rs`: declare the focused writeback module and retain the transient calendar/stat-dedup state.
 - Create `crates/rem6-cpu/src/o3_runtime_writeback.rs`: own completion classification, reservation calendar, absolute-cycle planning, admitted ticks, cleanup, and counter recording.
-- Create `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`: focused calendar, mixed-ready-tick, re-entry, reset, and cleanup tests.
+- Modify `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`: extend the focused width tests with calendar, mixed-ready-tick, re-entry, reset, and cleanup coverage.
 - Modify `crates/rem6-cpu/src/o3_runtime_control_window.rs`: store raw/admitted FU ticks and consume admitted dependency timing.
 - Modify `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`: update fallible live-execution fixtures and assert admitted timing.
 - Modify `crates/rem6-cpu/src/o3_runtime_issue.rs`: reserve each fixed completion as it is recorded and schedule descendants from admitted producer ticks.
@@ -537,7 +537,7 @@ git commit -m "cpu: plan occupied O3 writeback slots"
 - Modify: `crates/rem6-cpu/src/error.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime.rs`
 - Create: `crates/rem6-cpu/src/o3_runtime_writeback.rs`
-- Create: `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_stats.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`
