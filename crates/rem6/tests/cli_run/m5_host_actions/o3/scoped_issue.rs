@@ -4,6 +4,7 @@ const LOAD_PC: &str = "0x80000030";
 const BRANCH_PC: &str = "0x80000034";
 const SECOND_ROW_PC: &str = "0x80000038";
 const THIRD_ROW_PC: &str = "0x8000003c";
+const DUMP_STATS_PC: &str = "0x80000054";
 
 const CROSS_RESOURCE_RESULTS: &str = "2a000000070000004d00000012000000";
 const SAME_MULTIPLY_RESULTS: &str = "2a000000070000004d00000022000000";
@@ -11,6 +12,22 @@ const FU_HEAD_PC: &str = "0x8000000c";
 const FU_INDEPENDENT_PC: &str = "0x80000010";
 const FU_DEPENDENT_PC: &str = "0x80000014";
 const FU_DEPENDENT_RESULTS: &str = "0c000000050000000100000000000000";
+
+const SCOPED_ISSUE_STATS: [(&str, &str, &str); 5] = [
+    ("cycles", "issue_cycles", "Cycle"),
+    ("issued_rows", "issued_rows", "Count"),
+    (
+        "resource_blocked_row_cycles",
+        "resource_blocked_row_cycles",
+        "Cycle",
+    ),
+    (
+        "dependency_blocked_row_cycles",
+        "dependency_blocked_row_cycles",
+        "Cycle",
+    ),
+    ("max_rows_per_cycle", "max_rows_per_cycle", "Count"),
+];
 
 #[test]
 fn rem6_run_o3_scoped_issue_width_one_serializes_direct_window() {
@@ -40,6 +57,19 @@ fn rem6_run_o3_scoped_issue_width_one_serializes_direct_window() {
         event_u64(event_at_pc(&json, THIRD_ROW_PC), "issue_tick"),
         load_issue + 3
     );
+    let issue = scoped_issue_artifact(&json);
+    assert!(
+        issue_u64(issue, "cycles") > 0,
+        "width-one fixture should record issue arbitration cycles: {issue}"
+    );
+    assert_eq!(issue_u64(issue, "issued_rows"), 3);
+    assert!(
+        issue_u64(issue, "resource_blocked_row_cycles") > 0,
+        "width-one fixture should record width/resource pressure: {issue}"
+    );
+    assert_eq!(issue_u64(issue, "dependency_blocked_row_cycles"), 0);
+    assert_eq!(issue_u64(issue, "max_rows_per_cycle"), 1);
+    assert_scoped_issue_native_stats(&json, issue);
 }
 
 #[test]
@@ -73,6 +103,15 @@ fn rem6_run_o3_scoped_issue_width_two_coissues_cross_resource_rows() {
         event_u64(event_at_pc(&json, THIRD_ROW_PC), "issue_tick"),
         load_issue + 1
     );
+    let issue = scoped_issue_artifact(&json);
+    assert_eq!(issue_u64(issue, "issued_rows"), 3);
+    assert_eq!(issue_u64(issue, "dependency_blocked_row_cycles"), 0);
+    assert_eq!(issue_u64(issue, "max_rows_per_cycle"), 2);
+    assert!(
+        issue_u64(issue, "cycles") >= 2,
+        "width-two cross-resource fixture should still span multiple issue cycles: {issue}"
+    );
+    assert_scoped_issue_native_stats(&json, issue);
 }
 
 #[test]
@@ -107,6 +146,18 @@ fn rem6_run_o3_scoped_issue_serializes_same_multiply_resource() {
         load_issue + 2
     );
     assert_memory_hierarchy_activity(&json);
+    let issue = scoped_issue_artifact(&json);
+    assert_eq!(issue_u64(issue, "issued_rows"), 3);
+    assert_eq!(issue_u64(issue, "dependency_blocked_row_cycles"), 0);
+    assert!(
+        issue_u64(issue, "resource_blocked_row_cycles") > 0,
+        "same-MUL fixture should expose resource contention: {issue}"
+    );
+    assert!(
+        issue_u64(issue, "max_rows_per_cycle") <= 2,
+        "configured width two must bound same-MUL issue rows: {issue}"
+    );
+    assert_scoped_issue_native_stats(&json, issue);
 }
 
 #[test]
@@ -142,6 +193,63 @@ fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
         event_u64(independent, "issue_tick") < event_u64(dependent, "issue_tick"),
         "independent branch should issue before the blocked dependent row: independent={independent}, dependent={dependent}"
     );
+}
+
+#[test]
+fn rem6_run_o3_scoped_issue_stats_dump_exposes_arbitration_counters() {
+    let path = scoped_issue_stats_dump_binary("o3-scoped-issue-stats-dump");
+    let json = scoped_issue_json(&path, "direct", 1, 1_500);
+
+    assert_completed_scoped_issue(
+        &json,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+    let dump_event = event_at_pc(&json, DUMP_STATS_PC);
+    assert_eq!(
+        dump_event.pointer("/system_event").and_then(Value::as_bool),
+        Some(true),
+        "fixture should execute a real m5_dump_stats row: {dump_event}"
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "scoped-issue dump fixture should deliver one m5_dump_stats action: {host_actions}"
+    );
+    let dump = host_actions
+        .pointer("/stats_dumps/0")
+        .unwrap_or_else(|| panic!("missing scoped-issue stats dump action: {host_actions}"));
+    assert_stats_dump_after_scoped_issue_activity(&json, dump, dump_event);
+    let issue = scoped_issue_artifact(&json);
+    assert_scoped_issue_stats_dump(dump, issue);
+}
+
+#[test]
+fn rem6_run_timing_suppresses_o3_scoped_issue_surface() {
+    let path = scoped_issue_binary("o3-scoped-issue-timing", ScopedIssueCase::CrossResource);
+    let json = scoped_issue_json_with_mode(&path, "direct", 1, 1_500, "timing");
+
+    assert_final_witness(
+        &json,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+    assert_scoped_issue_surface_absent(&json);
 }
 
 #[test]
@@ -371,6 +479,81 @@ fn assert_memory_hierarchy_activity(json: &Value) {
     }
 }
 
+fn scoped_issue_artifact(json: &Value) -> &Value {
+    json.pointer("/cores/0/o3_runtime/issue")
+        .unwrap_or_else(|| panic!("missing scoped issue arbitration JSON: {json}"))
+}
+
+fn issue_u64(issue: &Value, field: &str) -> u64 {
+    issue
+        .pointer(&format!("/{field}"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("scoped issue JSON should expose {field}: {issue}"))
+}
+
+fn assert_scoped_issue_native_stats(json: &Value, issue: &Value) {
+    for (json_field, stat_field, unit) in SCOPED_ISSUE_STATS {
+        assert_json_stat(
+            json,
+            &format!("sim.cpu0.o3.{stat_field}"),
+            unit,
+            issue_u64(issue, json_field),
+            "monotonic",
+        );
+    }
+}
+
+fn assert_scoped_issue_stats_dump(dump: &Value, issue: &Value) {
+    for (json_field, stat_field, unit) in SCOPED_ISSUE_STATS {
+        assert_stats_dump_sample(
+            dump,
+            &format!("sim.host_actions.stats_dump.cpu0.o3.{stat_field}"),
+            "counter",
+            unit,
+            issue_u64(issue, json_field),
+            "resettable",
+        );
+    }
+}
+
+fn assert_stats_dump_after_scoped_issue_activity(json: &Value, dump: &Value, dump_event: &Value) {
+    let dump_issue_tick = event_u64(dump_event, "issue_tick");
+    let dump_action_tick = dump
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("stats dump action should expose tick: {dump}"));
+    assert!(
+        dump_action_tick >= dump_issue_tick,
+        "stats dump action must not precede its O3 issue boundary: dump={dump}, event={dump_event}"
+    );
+    for pc in [LOAD_PC, BRANCH_PC, SECOND_ROW_PC, THIRD_ROW_PC] {
+        let event = event_at_pc(json, pc);
+        assert!(
+            event_u64(event, "issue_tick") < dump_issue_tick,
+            "scoped issue row {pc} must issue before m5_dump_stats: row={event}, dump={dump_event}"
+        );
+    }
+    for event in o3_trace_events(json)
+        .iter()
+        .filter(|event| event.pointer("/system_event").and_then(Value::as_bool) != Some(true))
+    {
+        assert!(
+            event_u64(event, "issue_tick") < dump_issue_tick,
+            "no non-system O3 row may issue at or after m5_dump_stats before comparing dump samples to final issue stats: row={event}, dump={dump_event}"
+        );
+    }
+}
+
+fn assert_scoped_issue_surface_absent(json: &Value) {
+    assert!(
+        json.pointer("/cores/0/o3_runtime/issue").is_none(),
+        "timing mode should not expose detailed O3 scoped issue JSON: {json}"
+    );
+    for (_, stat_field, _) in SCOPED_ISSUE_STATS {
+        assert_json_stat_absent(json, &format!("sim.cpu0.o3.{stat_field}"));
+    }
+}
+
 fn scoped_issue_json(path: &Path, memory_system: &str, issue_width: usize, max_tick: u64) -> Value {
     scoped_issue_json_with_args(path, memory_system, issue_width, max_tick, &[])
 }
@@ -394,11 +577,41 @@ fn scoped_issue_json_with_args(
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
+fn scoped_issue_json_with_mode(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+    switch_mode: &str,
+) -> Value {
+    let output =
+        scoped_issue_command_with_mode(path, memory_system, issue_width, max_tick, switch_mode)
+            .output()
+            .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
 fn scoped_issue_command(
     path: &Path,
     memory_system: &str,
     issue_width: usize,
     max_tick: u64,
+) -> Command {
+    scoped_issue_command_with_mode(path, memory_system, issue_width, max_tick, "detailed")
+}
+
+fn scoped_issue_command_with_mode(
+    path: &Path,
+    memory_system: &str,
+    issue_width: usize,
+    max_tick: u64,
+    switch_mode: &str,
 ) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
@@ -423,7 +636,7 @@ fn scoped_issue_command(
         "--memory-route-delay",
         "16",
         "--m5-switch-cpu-mode",
-        "detailed",
+        switch_mode,
         "--dump-memory",
         "0x800000a0:16",
     ]);
@@ -470,14 +683,17 @@ fn scoped_issue_fu_json(
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
-fn event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
+fn o3_trace_events(json: &Value) -> &[Value] {
     json.pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
-        .and_then(|events| {
-            events
-                .iter()
-                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
-        })
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| panic!("O3 trace should expose events: {json}"))
+}
+
+fn event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
+    o3_trace_events(json)
+        .iter()
+        .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
         .unwrap_or_else(|| panic!("O3 trace should include event at {pc}: {json}"))
 }
 
@@ -495,6 +711,18 @@ enum ScopedIssueCase {
 }
 
 fn scoped_issue_binary(name: &str, case: ScopedIssueCase) -> std::path::PathBuf {
+    scoped_issue_binary_with_dump(name, case, false)
+}
+
+fn scoped_issue_stats_dump_binary(name: &str) -> std::path::PathBuf {
+    scoped_issue_binary_with_dump(name, ScopedIssueCase::CrossResource, true)
+}
+
+fn scoped_issue_binary_with_dump(
+    name: &str,
+    case: ScopedIssueCase,
+    dump_stats: bool,
+) -> std::path::PathBuf {
     let data_start = 160_i32;
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;
@@ -527,6 +755,10 @@ fn scoped_issue_binary(name: &str, case: ScopedIssueCase) -> std::path::PathBuf 
         s_type(8, 14, 10, 0b010),
         s_type(12, 15, 10, 0b010),
     ]);
+    if dump_stats {
+        words.extend([i_type(0, 0, 0x0, 10, 0x13), i_type(0, 0, 0x0, 11, 0x13)]);
+        words.push(m5op(M5_DUMP_STATS));
+    }
     append_host_stop(&mut words);
     while words.len() * 4 < data_start as usize {
         words.push(0);

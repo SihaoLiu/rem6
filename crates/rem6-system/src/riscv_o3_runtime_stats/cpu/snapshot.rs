@@ -156,6 +156,17 @@ impl RiscvO3RuntimeCpuStats {
                 self.live_retire_gate_max_wait_ticks,
                 snapshot.live_retire_gate_max_wait_ticks(),
             ),
+            (self.issue_cycles, snapshot.issue_cycles()),
+            (self.issued_rows, snapshot.issued_rows()),
+            (
+                self.resource_blocked_row_cycles,
+                snapshot.resource_blocked_row_cycles(),
+            ),
+            (
+                self.dependency_blocked_row_cycles,
+                snapshot.dependency_blocked_row_cycles(),
+            ),
+            (self.max_rows_per_cycle, snapshot.max_rows_per_cycle()),
             (self.iq_insts_issued, snapshot.instructions()),
             (
                 self.iq_mem_insts_issued,

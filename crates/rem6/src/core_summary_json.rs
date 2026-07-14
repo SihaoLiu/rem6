@@ -1,7 +1,7 @@
 use rem6_cpu::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetProvider, BranchTargetProviderCounts,
     O3LoadStoreQueueKind, O3PhysicalRegisterId, O3RegisterClass, O3RuntimeFuLatencyClass,
-    O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+    O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats, O3RuntimeTraceRecord,
 };
 use rem6_memory::Address;
 
@@ -190,6 +190,17 @@ fn o3_runtime_iq_json(summary: &Rem6CoreSummary) -> String {
             .lsq_loads()
             .saturating_add(summary.o3_runtime.lsq_stores()),
         summary.o3_runtime.iq_branch_insts_issued(),
+    )
+}
+
+fn o3_runtime_issue_json(stats: O3RuntimeStats) -> String {
+    format!(
+        "{{\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{}}}",
+        stats.issue_cycles(),
+        stats.issued_rows(),
+        stats.resource_blocked_row_cycles(),
+        stats.dependency_blocked_row_cycles(),
+        stats.max_rows_per_cycle()
     )
 }
 
@@ -821,6 +832,7 @@ impl Rem6CoreSummary {
             let branch_direction_mismatch = o3_runtime_branch_direction_mismatch_json(self);
             let branch_target_mismatch = o3_runtime_branch_target_mismatch_json(self);
             let iq = o3_runtime_iq_json(self);
+            let issue = o3_runtime_issue_json(self.o3_runtime);
             let iew = o3_runtime_iew_json(self);
             let commit = o3_runtime_commit_json(self);
             let rob = o3_runtime_rob_json(self);
@@ -830,7 +842,7 @@ impl Rem6CoreSummary {
             let event_window = o3_runtime_event_window_json(self);
             let event_summary = o3_runtime_event_summary_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"issue\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
@@ -861,6 +873,7 @@ impl Rem6CoreSummary {
                 rename,
                 lsq,
                 iq,
+                issue,
                 iew,
                 commit,
                 branch_event,

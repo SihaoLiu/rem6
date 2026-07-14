@@ -16,6 +16,9 @@ mod o3_runtime_branch_mismatch;
 #[path = "o3_runtime_gem5_lsq.rs"]
 mod o3_runtime_gem5_lsq;
 
+#[path = "o3_runtime_issue.rs"]
+mod o3_runtime_issue;
+
 use super::{increment_stat, stat_path_segment};
 use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{Rem6CliError, Rem6CoreSummary};
@@ -24,6 +27,7 @@ use o3_runtime_branch_mismatch::{
 };
 use o3_runtime_event_summary_branch::emit_o3_runtime_event_summary_branch_event_stats;
 use o3_runtime_gem5_lsq::emit_gem5_o3_lsq_alias_stats;
+use o3_runtime_issue::emit_o3_runtime_issue_stats;
 use o3_runtime_snapshot_restore::{
     emit_o3_runtime_checkpoint_restore_stats, emit_o3_runtime_snapshot_stats,
 };
@@ -936,6 +940,7 @@ pub(super) fn emit_o3_runtime_stats(
         core.o3_runtime_stats_reset_tick,
     )?;
     emit_o3_execution_mode_stats(stats, core.cpu, core.o3_runtime_execution_mode)?;
+    emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;
 
     for (name, value) in [
         ("instructions", o3.instructions()),
