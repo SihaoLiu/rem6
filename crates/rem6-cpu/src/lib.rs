@@ -735,8 +735,11 @@ impl RiscvCore {
     }
 
     pub fn set_branch_lookahead(&self, lookahead: usize) {
+        assert!(
+            (MIN_RISCV_BRANCH_LOOKAHEAD..=MAX_RISCV_BRANCH_LOOKAHEAD).contains(&lookahead),
+            "RISC-V branch lookahead must be between {MIN_RISCV_BRANCH_LOOKAHEAD} and {MAX_RISCV_BRANCH_LOOKAHEAD}"
+        );
         let mut state = self.state.lock().expect("riscv core lock");
-        let lookahead = lookahead.max(1);
         state.branch_lookahead = lookahead;
         state
             .o3_runtime
@@ -898,7 +901,7 @@ impl RiscvCoreState {
             selected_multiperspective_perceptron_rollbacks: 0,
             branch_target_predictions: BTreeMap::new(),
             branch_speculation_summary: RiscvBranchSpeculationSummary::default(),
-            branch_lookahead: 1,
+            branch_lookahead: DEFAULT_RISCV_BRANCH_LOOKAHEAD,
             branch_predictor_kind: RiscvBranchPredictorKind::default(),
             gshare_branch_predictor: GShareBranchPredictor::new(
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)

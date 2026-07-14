@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rem6_cpu::RiscvBranchPredictorKind;
+use rem6_cpu::{RiscvBranchPredictorKind, DEFAULT_RISCV_BRANCH_LOOKAHEAD};
 use rem6_fabric::QosPriority;
 use rem6_stats::PcCountPair;
 use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
@@ -520,8 +520,11 @@ impl Rem6RunConfig {
                 value: "0".to_string(),
             });
         }
-        let mut riscv_branch_lookahead =
-            validate_riscv_branch_lookahead(file_config.riscv_branch_lookahead.unwrap_or(1))?;
+        let mut riscv_branch_lookahead = validate_riscv_branch_lookahead(
+            file_config
+                .riscv_branch_lookahead
+                .unwrap_or(DEFAULT_RISCV_BRANCH_LOOKAHEAD),
+        )?;
         let riscv_data_translation = file_config
             .riscv_data_translation
             .as_ref()

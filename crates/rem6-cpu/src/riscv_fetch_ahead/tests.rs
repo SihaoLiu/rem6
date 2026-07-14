@@ -159,6 +159,13 @@ fn core_with_completed_fetches(
     core_with_completed_fetches_at(0x8000, fetches)
 }
 
+#[test]
+#[should_panic(expected = "RISC-V branch lookahead must be between 1 and 3")]
+fn riscv_core_rejects_branch_lookahead_above_supported_maximum() {
+    let core = core_with_completed_fetches([]);
+    core.set_branch_lookahead(4);
+}
+
 fn core_with_completed_fetches_at(
     entry: u64,
     fetches: impl IntoIterator<Item = (u64, u64, Vec<u8>)>,

@@ -798,7 +798,7 @@ fn rem6_run_rejects_invalid_riscv_branch_lookahead_values() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv-branch-lookahead-invalid", &elf);
 
-    for value in ["0", "3"] {
+    for value in ["0", "4"] {
         let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
             .args([
                 "run",
@@ -825,6 +825,35 @@ fn rem6_run_rejects_invalid_riscv_branch_lookahead_values() {
             "{value}: {stderr}"
         );
     }
+}
+
+#[test]
+fn rem6_run_accepts_riscv_branch_lookahead_three() {
+    let program = riscv64_program(&[0x0000_0013; 64]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-branch-lookahead-three", &elf);
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--riscv-branch-lookahead",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

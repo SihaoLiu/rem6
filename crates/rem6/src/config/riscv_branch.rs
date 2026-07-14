@@ -1,4 +1,4 @@
-use rem6_cpu::RiscvBranchPredictorKind;
+use rem6_cpu::{RiscvBranchPredictorKind, MAX_RISCV_BRANCH_LOOKAHEAD, MIN_RISCV_BRANCH_LOOKAHEAD};
 use rem6_stats::PcCountPair;
 
 use crate::Rem6CliError;
@@ -25,7 +25,7 @@ pub(super) fn parse_riscv_branch_lookahead(value: &str) -> Result<usize, Rem6Cli
 }
 
 pub(super) fn validate_riscv_branch_lookahead(value: usize) -> Result<usize, Rem6CliError> {
-    if !matches!(value, 1 | 2) {
+    if !(MIN_RISCV_BRANCH_LOOKAHEAD..=MAX_RISCV_BRANCH_LOOKAHEAD).contains(&value) {
         return Err(Rem6CliError::InvalidRiscvBranchLookahead {
             value: value.to_string(),
         });
