@@ -536,6 +536,7 @@ git commit -m "cpu: plan occupied O3 writeback slots"
 **Files:**
 - Modify: `crates/rem6-cpu/src/error.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_checkpoint.rs`
 - Create: `crates/rem6-cpu/src/o3_runtime_writeback.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_stats.rs`
@@ -698,7 +699,9 @@ fn writeback_fu_collision_binary(name: &str) -> PathBuf {
 ```
 
 Define the focused command and trace helpers in the new module rather than
-reaching into the private sibling module:
+reaching into the private sibling module. Use a route delay of one tick so the
+dependent fetch is ready at the two-cycle integer MUL completion; larger route
+delays test front-end arrival instead of writeback-port contention:
 
 ```rust
 fn writeback_json(path: &Path, memory_system: &str, width: usize, max_tick: u64) -> Value {
@@ -723,7 +726,7 @@ fn writeback_json(path: &Path, memory_system: &str, width: usize, max_tick: u64)
             "--memory-system",
             memory_system,
             "--memory-route-delay",
-            "16",
+            "1",
             "--m5-switch-cpu-mode",
             "detailed",
         ])
