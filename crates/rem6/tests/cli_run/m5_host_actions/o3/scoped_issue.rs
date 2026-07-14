@@ -375,6 +375,211 @@ fn rem6_run_o3_scoped_issue_checkpoint_boundary() {
     }
 }
 
+#[test]
+fn rem6_run_host_switch_preserves_o3_scoped_issue_ticks() {
+    let path = scoped_issue_binary(
+        "o3-scoped-issue-host-switch",
+        ScopedIssueCase::CrossResource,
+    );
+    let baseline = scoped_issue_json(&path, "direct", 2, 1_500);
+    assert_completed_scoped_issue(
+        &baseline,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+
+    let baseline_load = event_at_pc(&baseline, LOAD_PC);
+    let baseline_first_younger = event_at_pc(&baseline, BRANCH_PC);
+    let first_younger_issue = event_u64(baseline_first_younger, "issue_tick");
+    let requested_switch_tick = first_younger_issue + 1;
+
+    let switch_arg = format!("{requested_switch_tick}:cpu0:timing");
+    let switched = scoped_issue_json_with_args(
+        &path,
+        "direct",
+        2,
+        1_500,
+        &["--host-switch-cpu-mode", &switch_arg],
+    );
+    assert_completed_scoped_issue(
+        &switched,
+        CROSS_RESOURCE_RESULTS,
+        [
+            ("x12", "0x2a"),
+            ("x13", "0x7"),
+            ("x14", "0x4d"),
+            ("x15", "0x12"),
+        ],
+    );
+
+    for pc in [LOAD_PC, BRANCH_PC, SECOND_ROW_PC, THIRD_ROW_PC] {
+        let expected = event_at_pc(&baseline, pc);
+        let actual = event_at_pc(&switched, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64(actual, field),
+                event_u64(expected, field),
+                "host switch must preserve {field} for scoped row {pc}: expected={expected} actual={actual}"
+            );
+        }
+    }
+
+    let timing_switch = switched
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .and_then(|switches| {
+            switches.iter().find(|switch| {
+                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing scoped-issue detailed-to-timing switch: {switched}"));
+    let switch_tick = timing_switch
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("timing switch should expose its real tick: {timing_switch}"));
+    assert!(
+        switch_tick >= requested_switch_tick,
+        "real host switch tick must not precede the requested scoped-issue tick: requested={requested_switch_tick}, switch={timing_switch}"
+    );
+    assert!(
+        switch_tick > first_younger_issue,
+        "host switch must occur after the first younger row issues: switch_tick={switch_tick}, row={baseline_first_younger}"
+    );
+    assert!(
+        switch_tick < event_u64(baseline_load, "lsq_data_response_tick"),
+        "host switch must precede the delayed load response: switch_tick={switch_tick}, load={baseline_load}"
+    );
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing scoped-issue timing switch transfer: {timing_switch}"));
+    let runtime = scoped_issue_transfer_o3_runtime_chunk(transfer, "cpu0");
+    assert_eq!(
+        runtime.pointer("/decode_error").and_then(Value::as_bool),
+        Some(false),
+        "scoped-issue transfer runtime chunk should decode cleanly: {runtime}"
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_rob_entries")
+            .and_then(Value::as_u64),
+        Some(4),
+        "scoped-issue switch must capture the load and three younger rows: {runtime}"
+    );
+    assert_eq!(
+        runtime
+            .pointer("/snapshot_lsq_entries")
+            .and_then(Value::as_u64),
+        Some(1),
+        "scoped-issue switch must capture the outstanding load: {runtime}"
+    );
+    let handoff = scoped_issue_transfer_live_data_handoff_chunk(transfer, "cpu0");
+    assert_eq!(
+        handoff.pointer("/schema_version").and_then(Value::as_u64),
+        Some(7),
+        "scoped-issue live-data handoff schema should remain unchanged: {handoff}"
+    );
+    assert_eq!(
+        handoff.pointer("/younger_rows").and_then(Value::as_u64),
+        Some(3),
+        "scoped-issue live-data handoff should retain the three younger rows: {handoff}"
+    );
+
+    let transfer_oracle = scoped_issue_json(&path, "direct", 2, switch_tick);
+    let source_issue = scoped_issue_artifact(&transfer_oracle);
+    for (json_field, chunk_field, unit) in [
+        ("cycles", "stats_issue_cycles", "Cycle"),
+        ("issued_rows", "stats_issued_rows", "Count"),
+        (
+            "resource_blocked_row_cycles",
+            "stats_resource_blocked_row_cycles",
+            "Cycle",
+        ),
+        (
+            "dependency_blocked_row_cycles",
+            "stats_dependency_blocked_row_cycles",
+            "Cycle",
+        ),
+        ("max_rows_per_cycle", "stats_max_rows_per_cycle", "Count"),
+    ] {
+        let value = issue_u64(source_issue, json_field);
+        assert_eq!(
+            runtime
+                .pointer(&format!("/{chunk_field}"))
+                .and_then(Value::as_u64),
+            Some(value),
+            "decoded scoped-issue transfer field {chunk_field} must match source detailed O3RuntimeStats field {json_field}: runtime={runtime}, source={source_issue}"
+        );
+        assert_json_stat(
+            &switched,
+            &format!(
+                "sim.host_actions.execution_mode_switch_state_transfer.target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{chunk_field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
+        assert_json_stat(
+            &switched,
+            &format!(
+                "sim.debug.host_action_trace.execution_mode_switch.state_transfer.target.cpu0.component.cpu0.chunk.o3_runtime_state.o3_runtime.{chunk_field}"
+            ),
+            unit,
+            value,
+            "monotonic",
+        );
+    }
+}
+
+fn scoped_issue_transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+    scoped_issue_transfer_component(transfer, component)
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
+            })
+        })
+        .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        .unwrap_or_else(|| panic!("missing decoded scoped-issue O3 runtime transfer: {transfer}"))
+}
+
+fn scoped_issue_transfer_live_data_handoff_chunk<'a>(
+    transfer: &'a Value,
+    component: &str,
+) -> &'a Value {
+    scoped_issue_transfer_component(transfer, component)
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .and_then(|chunks| {
+            chunks.iter().find(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-live-data-handoff")
+            })
+        })
+        .and_then(|chunk| chunk.pointer("/o3_live_data_handoff"))
+        .unwrap_or_else(|| {
+            panic!("missing decoded scoped-issue live-data handoff transfer: {transfer}")
+        })
+}
+
+fn scoped_issue_transfer_component<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+    transfer
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|entry| {
+                entry.pointer("/component").and_then(Value::as_str) == Some(component)
+            })
+        })
+        .unwrap_or_else(|| panic!("missing transfer component {component}: {transfer}"))
+}
+
 fn scoped_issue_checkpoint_runtime(checkpoint: &Value) -> &Value {
     let cpu0 = scoped_issue_checkpoint_component(checkpoint, "cpu0");
     assert!(scoped_issue_checkpoint_component_chunks(cpu0)

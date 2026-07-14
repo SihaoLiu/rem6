@@ -1009,8 +1009,16 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
 fn o3_runtime_checkpoint_stat_aggregation(
     name: &str,
 ) -> Option<Rem6HostO3RuntimeCheckpointStatAggregation> {
-    if name == "stats_max_rows_per_cycle" {
-        None
+    if matches!(
+        name,
+        "stats_issue_cycles"
+            | "stats_issued_rows"
+            | "stats_resource_blocked_row_cycles"
+            | "stats_dependency_blocked_row_cycles"
+    ) {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::Sum)
+    } else if name == "stats_max_rows_per_cycle" {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::Max)
     } else if matches!(
         name,
         "stats_lsq_operation_load"
@@ -1044,7 +1052,9 @@ fn o3_runtime_checkpoint_stat_aggregation(
 }
 
 fn o3_runtime_checkpoint_unit(name: &str) -> &'static str {
-    if name.ends_with("_cycles") {
+    if name == "stats_max_rows_per_cycle" {
+        "Count"
+    } else if name.ends_with("_cycles") {
         "Cycle"
     } else if name.ends_with("_ticks") {
         "Tick"
