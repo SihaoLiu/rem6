@@ -107,13 +107,22 @@ impl RiscvCore {
         if live_speculative_ready_tick.is_some_and(|ready_tick| ready_tick <= now) {
             return Ok(Some(now));
         }
-        let ready_base_tick = now.max(window.fetch_tick);
-        match state.live_retire_gate.before_retire(
-            window.request,
-            window.raw,
-            now,
-            ready_base_tick,
-        )? {
+        let decision = if let Some(ready_tick) = live_speculative_ready_tick {
+            state.live_retire_gate.before_retire_at_known_ready_tick(
+                window.request,
+                now,
+                ready_tick,
+            )
+        } else {
+            let ready_base_tick = now.max(window.fetch_tick);
+            state.live_retire_gate.before_retire(
+                window.request,
+                window.raw,
+                now,
+                ready_base_tick,
+            )?
+        };
+        match decision {
             RiscvLiveRetireGateDecision::Ready => Ok(Some(now)),
             RiscvLiveRetireGateDecision::Blocked => {
                 let ready_tick = state
@@ -322,7 +331,7 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         window,
         row_limit.saturating_sub(1),
     );
-    state.o3_runtime.stage_live_scalar_memory_younger_window(
+    let staged_rows = state.o3_runtime.stage_live_scalar_memory_younger_window(
         execution.fetch().request_id(),
         younger
             .iter()
@@ -334,7 +343,12 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     else {
         return;
     };
-    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick);
+    schedule_o3_live_speculative_younger_executions(
+        state,
+        head,
+        &younger[..staged_rows.min(younger.len())],
+        issue_tick,
+    );
 }
 
 pub(crate) fn wake_o3_scalar_memory_younger_window(

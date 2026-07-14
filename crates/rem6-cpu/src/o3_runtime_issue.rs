@@ -142,6 +142,7 @@ impl O3RuntimeState {
                 break;
             }
 
+            let mut candidate_sequences = BTreeSet::new();
             let candidates = requests
                 .iter()
                 .enumerate()
@@ -153,12 +154,13 @@ impl O3RuntimeState {
                             (index, candidate, op_class)
                         })
                 })
+                .filter(|(_, candidate, _)| candidate_sequences.insert(candidate.sequence()))
                 .collect::<Vec<_>>();
             if candidates.is_empty() {
                 break;
             }
 
-            let reservations = self.live_issue_reservations_at(requests, head, tick);
+            let reservations = self.live_issue_reservations_at(head, tick);
             if reservations.width >= self.issue_width {
                 if candidates
                     .iter()
@@ -304,7 +306,6 @@ impl O3RuntimeState {
 
     fn live_issue_reservations_at(
         &self,
-        requests: &[O3LiveIssueRequest],
         head: O3LiveIssueHeadReservation,
         tick: u64,
     ) -> O3LiveIssueReservations {
@@ -314,10 +315,12 @@ impl O3RuntimeState {
         }
         for issued in self.live_speculative_executions.iter().filter(|issued| {
             issued.issue_tick == tick
-                && requests.iter().any(|request| {
-                    issued.consumed_requests == request.consumed_requests
-                        && issued.execution.pc() == request.pc.get()
-                })
+                && issued.sequence != head.sequence
+                && self
+                    .snapshot
+                    .reorder_buffer
+                    .iter()
+                    .any(|entry| entry.is_live_staged() && entry.sequence() == issued.sequence)
         }) {
             reservations.reserve(live_issue_op_class(issued.execution.instruction()));
         }

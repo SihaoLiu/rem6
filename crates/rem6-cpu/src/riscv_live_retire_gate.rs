@@ -192,29 +192,8 @@ impl RiscvLiveRetireGateState {
         ready_base_tick: Tick,
     ) -> Result<RiscvLiveRetireGateDecision, RiscvCpuError> {
         self.prune_detached_scheduler_wakes(now);
-        if let Some(mut pending) = self.pending {
-            if pending.request() != request {
-                if !pending.rebind_on_next_request {
-                    return Ok(RiscvLiveRetireGateDecision::Blocked);
-                }
-                pending.rebind(request);
-            } else if pending.rebind_on_next_request {
-                pending.rebind(request);
-            }
-            if now >= pending.ready_tick() {
-                self.remember_detached_scheduler_wake(pending.scheduler_wake());
-                self.pending = None;
-                return Ok(RiscvLiveRetireGateDecision::Ready);
-            }
-            self.pending = Some(pending);
-            return Ok(if pending.is_scheduled() {
-                RiscvLiveRetireGateDecision::Blocked
-            } else {
-                RiscvLiveRetireGateDecision::Schedule {
-                    ready_tick: pending.ready_tick(),
-                    created_wait_ticks: None,
-                }
-            });
+        if let Some(decision) = self.pending_before_retire(request, now) {
+            return Ok(decision);
         }
 
         if !self.policy.creates_gates() {
@@ -237,6 +216,58 @@ impl RiscvLiveRetireGateState {
             ready_tick,
             created_wait_ticks: Some(wait_ticks),
         })
+    }
+
+    pub(crate) fn before_retire_at_known_ready_tick(
+        &mut self,
+        request: MemoryRequestId,
+        now: Tick,
+        ready_tick: Tick,
+    ) -> RiscvLiveRetireGateDecision {
+        self.prune_detached_scheduler_wakes(now);
+        if let Some(decision) = self.pending_before_retire(request, now) {
+            return decision;
+        }
+        if now >= ready_tick {
+            return RiscvLiveRetireGateDecision::Ready;
+        }
+        self.pending = Some(RiscvLiveRetireGatePending::new(request, ready_tick));
+        RiscvLiveRetireGateDecision::Schedule {
+            ready_tick,
+            created_wait_ticks: Some(ready_tick - now),
+        }
+    }
+
+    fn pending_before_retire(
+        &mut self,
+        request: MemoryRequestId,
+        now: Tick,
+    ) -> Option<RiscvLiveRetireGateDecision> {
+        if let Some(mut pending) = self.pending {
+            if pending.request() != request {
+                if !pending.rebind_on_next_request {
+                    return Some(RiscvLiveRetireGateDecision::Blocked);
+                }
+                pending.rebind(request);
+            } else if pending.rebind_on_next_request {
+                pending.rebind(request);
+            }
+            if now >= pending.ready_tick() {
+                self.remember_detached_scheduler_wake(pending.scheduler_wake());
+                self.pending = None;
+                return Some(RiscvLiveRetireGateDecision::Ready);
+            }
+            self.pending = Some(pending);
+            return Some(if pending.is_scheduled() {
+                RiscvLiveRetireGateDecision::Blocked
+            } else {
+                RiscvLiveRetireGateDecision::Schedule {
+                    ready_tick: pending.ready_tick(),
+                    created_wait_ticks: None,
+                }
+            });
+        }
+        None
     }
 
     pub(crate) fn blocks_without_scheduler(&self) -> bool {
@@ -416,6 +447,30 @@ mod tests {
         assert_eq!(
             gate.before_retire(refetched_request, div_raw(), 99, 99),
             Ok(RiscvLiveRetireGateDecision::Ready)
+        );
+    }
+
+    #[test]
+    fn known_speculative_ready_tick_arms_only_the_remaining_wait() {
+        let mut gate = RiscvLiveRetireGateState::default();
+        gate.set_policy(RiscvLiveRetireGatePolicy::detailed());
+        let request = MemoryRequestId::new(AgentId::new(7), 11);
+
+        assert_eq!(
+            gate.before_retire_at_known_ready_tick(request, 10, 12),
+            RiscvLiveRetireGateDecision::Schedule {
+                ready_tick: 12,
+                created_wait_ticks: Some(2),
+            }
+        );
+        gate.mark_scheduled(request, wake(12));
+        assert_eq!(
+            gate.before_retire_at_known_ready_tick(request, 11, 12),
+            RiscvLiveRetireGateDecision::Blocked
+        );
+        assert_eq!(
+            gate.before_retire_at_known_ready_tick(request, 12, 12),
+            RiscvLiveRetireGateDecision::Ready
         );
     }
 

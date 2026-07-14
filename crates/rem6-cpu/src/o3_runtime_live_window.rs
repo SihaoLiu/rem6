@@ -66,9 +66,9 @@ impl O3RuntimeState {
         &mut self,
         fetch_request: MemoryRequestId,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
-    ) {
+    ) -> usize {
         let Some(mut window) = self.scalar_memory_integer_window(fetch_request) else {
-            return;
+            return 0;
         };
         let live_sequence = self
             .live_scalar_memories
@@ -86,9 +86,10 @@ impl O3RuntimeState {
                 .iter()
                 .any(|entry| entry.is_live_staged() && entry.sequence() > live_sequence)
         {
-            return;
+            return 0;
         }
         let mut control_sequence = None;
+        let mut staged_rows = 0;
         // Revalidate the caller-selected prefix before allocating live rows.
         for (pc, instruction) in younger {
             let decision = window.classify_younger(instruction);
@@ -98,6 +99,7 @@ impl O3RuntimeState {
             let Some(sequence) = self.stage_live_instruction(pc, instruction, 0) else {
                 break;
             };
+            staged_rows += 1;
             if let Some(control_sequence) = control_sequence {
                 self.live_control_dependencies
                     .insert(sequence, control_sequence);
@@ -127,6 +129,7 @@ impl O3RuntimeState {
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+        staged_rows
     }
 
     pub(crate) fn retire_live_staged_instruction(
@@ -528,6 +531,32 @@ mod tests {
             runtime.snapshot().reorder_buffer()[3].pc(),
             Address::new(0x800c)
         );
+    }
+
+    #[test]
+    fn scalar_load_backedge_stages_only_the_unique_prefix() {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        let load = scalar_load_event();
+        let repeated = addi(5, 0);
+        let branch = RiscvInstruction::Beq {
+            rs1: Register::new(1).unwrap(),
+            rs2: Register::new(2).unwrap(),
+            offset: Immediate::new(-4),
+        };
+        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+
+        let staged = runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), repeated),
+                (Address::new(0x8008), branch),
+                (Address::new(0x8004), repeated),
+            ],
+        );
+
+        assert_eq!(staged, 2);
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
     }
 
     #[test]

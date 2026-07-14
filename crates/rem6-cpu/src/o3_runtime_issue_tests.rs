@@ -120,22 +120,73 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
             .issue_tick,
         31
     );
+
+    runtime.validate_live_speculative_producer(head_sequence);
+    let dependent_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|execution| execution.execution.pc() == MUL_PC)
+        .unwrap()
+        .execution
+        .clone();
+    let dependent_event =
+        RiscvCpuExecutionEvent::new(fetch_event(MUL_PC, 12), dependent, dependent_execution);
+    let dependent_entry = runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .copied()
+        .find(|entry| entry.pc() == Address::new(MUL_PC))
+        .unwrap();
+    assert_eq!(
+        runtime.take_live_speculative_issue_tick(dependent_entry, &dependent_event, &[request(12)]),
+        Some(31),
+        "exact fetch identity must consume the scheduler-owned issue tick"
+    );
 }
 
 #[test]
 fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
-    let branch = fixture.requests[0].clone();
+    let branch_request = fixture.requests[0].clone();
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[branch]);
-    fixture.schedule_all(20);
+    fixture.runtime.schedule_live_speculative_issues(
+        &fixture.hart,
+        fixture.head,
+        20,
+        &[branch_request],
+    );
+    fixture.runtime.schedule_live_speculative_issues(
+        &fixture.hart,
+        fixture.head,
+        20,
+        &fixture.requests[1..],
+    );
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(MUL_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
+}
+
+#[test]
+fn scoped_issue_deduplicates_repeated_request_for_one_rob_row() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let branch_request = fixture.requests[0].clone();
+    let duplicate = O3LiveIssueRequest::new(
+        Address::new(BRANCH_PC),
+        vec![request(99)],
+        decoded(branch()),
+    );
+
+    fixture.runtime.schedule_live_speculative_issues(
+        &fixture.hart,
+        fixture.head,
+        20,
+        &[branch_request, duplicate],
+    );
+
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
 }
 
 #[test]
