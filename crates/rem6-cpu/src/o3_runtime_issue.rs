@@ -68,6 +68,16 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn live_scalar_memory_head_reservation(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<O3LiveIssueHeadReservation> {
+        self.live_scalar_memories
+            .iter()
+            .find(|live| live.fetch_request == fetch_request)
+            .map(|live| O3LiveIssueHeadReservation::memory(live.sequence, live.issue_tick))
+    }
+
     pub(crate) fn record_live_issue_head_execution(
         &mut self,
         head: O3LiveIssueHeadReservation,
