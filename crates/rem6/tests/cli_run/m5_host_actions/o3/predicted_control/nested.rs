@@ -85,6 +85,132 @@ fn rem6_run_o3_nested_controls_commit_direct() {
     );
 }
 
+#[test]
+fn rem6_run_o3_outer_misprediction_discards_nested_control_cache_fabric_dram() {
+    let path = nested_control_binary("o3-nested-outer-mispredict", true, false, false);
+    let completed = run_nested_control_json(
+        &path,
+        "cache-fabric-dram",
+        2_500,
+        "detailed",
+        &[],
+    );
+    let load = event_at_pc(&completed, LOAD_PC);
+    let outer = event_at_pc(&completed, OUTER_BRANCH_PC);
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    assert!(event_u64(outer, "issue_tick") < response_tick);
+    assert_eq!(
+        outer
+            .pointer("/branch_predicted_taken")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        outer
+            .pointer("/branch_resolved_taken")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        outer
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(event_at_pc_if_present(&completed, INNER_BRANCH_PC).is_none());
+    assert!(event_at_pc_if_present(&completed, DESCENDANT_PC).is_none());
+    assert!(event_at_pc_if_present(&completed, WRONG_STORE_PC).is_none());
+    assert!(event_at_pc_if_present(&completed, INNER_TARGET_PC).is_none());
+    event_at_pc(&completed, OUTER_TARGET_PC);
+    assert_eq!(register_value(&completed, "x13"), 0);
+    assert_eq!(register_value(&completed, "x14"), 0);
+    assert_eq!(register_value(&completed, "x15"), 0);
+    assert_eq!(register_value(&completed, "x16"), 3);
+    assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
+
+    let live_tick = event_u64(outer, "issue_tick") + 1;
+    assert!(live_tick < response_tick);
+    let resident = run_nested_control_json(
+        &path,
+        "cache-fabric-dram",
+        live_tick,
+        "detailed",
+        &[],
+    );
+    assert_eq!(
+        resident_rob_pcs(&resident),
+        [LOAD_PC, OUTER_BRANCH_PC, INNER_BRANCH_PC, DESCENDANT_PC]
+    );
+
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/transport/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert!(
+            completed
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "hierarchy-backed nested control should expose {pointer}: {completed}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_o3_inner_misprediction_preserves_outer_control_direct() {
+    let path = nested_control_binary("o3-nested-inner-mispredict", false, true, false);
+    let completed = run_nested_control_json(&path, "direct", 2_000, "detailed", &[]);
+
+    let load = event_at_pc(&completed, LOAD_PC);
+    let outer = event_at_pc(&completed, OUTER_BRANCH_PC);
+    let inner = event_at_pc(&completed, INNER_BRANCH_PC);
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    assert!(event_u64(outer, "issue_tick") < response_tick);
+    assert!(event_u64(inner, "issue_tick") < response_tick);
+    assert_eq!(
+        outer
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        inner
+            .pointer("/branch_predicted_taken")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        inner
+            .pointer("/branch_resolved_taken")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        inner
+            .pointer("/branch_mispredicted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(event_at_pc_if_present(&completed, DESCENDANT_PC).is_none());
+    assert!(event_at_pc_if_present(&completed, WRONG_STORE_PC).is_none());
+    event_at_pc(&completed, INNER_TARGET_PC);
+    event_at_pc(&completed, OUTER_TARGET_PC);
+    assert_eq!(register_value(&completed, "x13"), 0);
+    assert_eq!(register_value(&completed, "x14"), 0);
+    assert_eq!(register_value(&completed, "x15"), 2);
+    assert_eq!(register_value(&completed, "x16"), 3);
+    assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
+    assert_json_stat(
+        &completed,
+        "sim.cpu0.o3.branch_event.squashes",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
 fn nested_control_binary(
     name: &str,
     outer_taken: bool,
@@ -179,4 +305,32 @@ fn run_nested_control_json(
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid nested-control JSON: {error}"))
+}
+
+fn resident_rob_pcs(json: &Value) -> Vec<&str> {
+    json.pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing resident nested-control ROB: {json}"))
+        .iter()
+        .map(|entry| entry.pointer("/pc").and_then(Value::as_str).unwrap())
+        .collect()
+}
+
+fn assert_no_data_address(json: &Value, address: &str) {
+    assert!(
+        json.pointer("/debug/data_trace")
+            .and_then(Value::as_array)
+            .is_some_and(|records| records.iter().all(|record| {
+                record.pointer("/address").and_then(Value::as_str) != Some(address)
+            })),
+        "unexpected data access at {address}: {json}"
+    );
+    assert!(
+        json.pointer("/debug/memory_trace")
+            .and_then(Value::as_array)
+            .is_some_and(|records| records.iter().all(|record| {
+                record.pointer("/address").and_then(Value::as_str) != Some(address)
+            })),
+        "unexpected memory access at {address}: {json}"
+    );
 }
