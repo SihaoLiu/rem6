@@ -76,7 +76,9 @@ use o3_runtime_helpers::{
     O3RuntimeUniqueKey,
 };
 pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
-use o3_runtime_live_window::{staged_rename_entry, O3LiveRetiredInstruction};
+use o3_runtime_live_window::{
+    staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
+};
 use o3_runtime_memory::{
     is_deferred_o3_scalar_memory_access, is_deferred_o3_scalar_memory_instruction,
     is_terminal_o3_scalar_memory_event, O3LiveScalarMemory, O3LiveScalarMemoryOutcome,
@@ -214,6 +216,8 @@ pub struct O3RuntimeState {
     live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
     live_control_dependencies: BTreeMap<u64, u64>,
     live_control_window_sequences: BTreeSet<u64>,
+    live_serializing_control_sequences: BTreeSet<u64>,
+    live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
     live_scalar_memories: Vec<O3LiveScalarMemory>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
@@ -255,6 +259,8 @@ impl O3RuntimeState {
         self.clear_live_writeback_state();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
+        self.live_serializing_control_sequences.clear();
+        self.live_staged_fetch_identities.clear();
         self.deferred_scalar_memory_execution = None;
         self.live_scalar_memories.clear();
         self.live_scalar_memory_younger_sequences.clear();
@@ -619,6 +625,8 @@ impl Default for O3RuntimeState {
             live_writeback_ready_rows_by_tick: BTreeMap::new(),
             live_control_dependencies: BTreeMap::new(),
             live_control_window_sequences: BTreeSet::new(),
+            live_serializing_control_sequences: BTreeSet::new(),
+            live_staged_fetch_identities: BTreeMap::new(),
             deferred_scalar_memory_execution: None,
             live_scalar_memories: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),

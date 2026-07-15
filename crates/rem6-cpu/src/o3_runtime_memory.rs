@@ -231,6 +231,10 @@ impl O3RuntimeState {
             )
             .with_live_staged_rename_destination(rename_destination),
         );
+        self.live_staged_fetch_identities.insert(
+            sequence,
+            O3LiveStagedFetchIdentity::new(execution.instruction()),
+        );
         self.snapshot
             .load_store_queue
             .extend(o3_lsq_entries(sequence, access));
@@ -540,6 +544,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| entry.sequence() != sequence);
+        self.live_staged_fetch_identities.remove(&sequence);
         self.snapshot
             .load_store_queue
             .retain(|entry| entry.sequence() != sequence);

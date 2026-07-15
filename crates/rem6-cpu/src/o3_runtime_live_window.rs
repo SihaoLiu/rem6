@@ -19,6 +19,45 @@ pub(super) struct O3LiveRetiredInstruction {
     pub(super) rename_destination: Option<O3RenameMapEntry>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct O3LiveStagedFetchIdentity {
+    instruction: RiscvInstruction,
+    consumed_requests: Option<Vec<MemoryRequestId>>,
+}
+
+impl O3LiveStagedFetchIdentity {
+    pub(super) const fn new(instruction: RiscvInstruction) -> Self {
+        Self {
+            instruction,
+            consumed_requests: None,
+        }
+    }
+
+    fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
+        if !valid_live_speculative_fetch_identity(consumed_requests) {
+            return false;
+        }
+        if let Some(bound) = &self.consumed_requests {
+            return bound == consumed_requests;
+        }
+        self.consumed_requests = Some(consumed_requests.to_vec());
+        true
+    }
+
+    fn matches(
+        &self,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.instruction == instruction
+            && valid_live_speculative_fetch_identity(consumed_requests)
+            && self
+                .consumed_requests
+                .as_deref()
+                .is_none_or(|bound| bound == consumed_requests)
+    }
+}
+
 impl O3RuntimeState {
     pub(crate) fn stage_live_retire_window(
         &mut self,
@@ -115,6 +154,9 @@ impl O3RuntimeState {
             {
                 self.live_control_window_sequences.insert(sequence);
             }
+            if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
+                self.live_serializing_control_sequences.insert(sequence);
+            }
             self.live_scalar_memory_younger_sequences.insert(sequence);
             if matches!(
                 decision,
@@ -167,6 +209,10 @@ impl O3RuntimeState {
                 .retain(|sequence, _| *sequence < boundary_sequence);
             self.live_control_window_sequences
                 .retain(|sequence| *sequence < boundary_sequence);
+            self.live_serializing_control_sequences
+                .retain(|sequence| *sequence < boundary_sequence);
+            self.live_staged_fetch_identities
+                .retain(|sequence, _| *sequence < boundary_sequence);
             self.live_retired_instructions
                 .retain(|instruction| instruction.request != execution.fetch().request_id());
             self.stats
@@ -235,6 +281,8 @@ impl O3RuntimeState {
         self.live_scalar_memory_younger_sequences.clear();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
+        self.live_serializing_control_sequences.clear();
+        self.live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -248,6 +296,8 @@ impl O3RuntimeState {
         self.live_scalar_memory_younger_sequences.clear();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
+        self.live_serializing_control_sequences.clear();
+        self.live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions_at(now);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -312,6 +362,10 @@ impl O3RuntimeState {
             .retain(|dependent, _| *dependent < sequence);
         self.live_control_window_sequences
             .retain(|control| *control < sequence);
+        self.live_serializing_control_sequences
+            .retain(|control| *control < sequence);
+        self.live_staged_fetch_identities
+            .retain(|staged, _| *staged < sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence < sequence);
         self.stats
@@ -362,6 +416,48 @@ impl O3RuntimeState {
         snapshot.with_committed_rename_map(committed_rename_map)
     }
 
+    pub(crate) fn bind_live_staged_fetch_identity(
+        &mut self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        let Some(sequence) = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.is_live_staged() && entry.pc() == pc)
+            .map(|entry| entry.sequence())
+        else {
+            return false;
+        };
+        let Some(identity) = self.live_staged_fetch_identities.get_mut(&sequence) else {
+            return false;
+        };
+        identity.instruction == instruction && identity.bind_consumed_requests(consumed_requests)
+    }
+
+    pub(super) fn live_staged_instruction_matches(
+        &self,
+        sequence: u64,
+        instruction: RiscvInstruction,
+    ) -> bool {
+        self.live_staged_fetch_identities
+            .get(&sequence)
+            .is_some_and(|identity| identity.instruction == instruction)
+    }
+
+    pub(super) fn live_staged_fetch_identity_matches(
+        &self,
+        sequence: u64,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.live_staged_fetch_identities
+            .get(&sequence)
+            .is_some_and(|identity| identity.matches(instruction, consumed_requests))
+    }
+
     fn stage_live_instruction(
         &mut self,
         pc: Address,
@@ -386,6 +482,8 @@ impl O3RuntimeState {
                 .with_ready_tick(ready_tick)
                 .with_live_staged_rename_destination(rename_destination),
         );
+        self.live_staged_fetch_identities
+            .insert(sequence, O3LiveStagedFetchIdentity::new(instruction));
         Some(sequence)
     }
 
@@ -401,7 +499,11 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .iter()
-            .find(|entry| entry.is_live_staged() && entry.pc() == pc)
+            .find(|entry| {
+                entry.is_live_staged()
+                    && entry.pc() == pc
+                    && self.live_staged_instruction_matches(entry.sequence(), instruction)
+            })
             .map(|entry| entry.sequence())
     }
 
@@ -418,6 +520,10 @@ impl O3RuntimeState {
             .retain(|sequence, _| resident_sequences.contains(sequence));
         self.live_control_window_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
+        self.live_serializing_control_sequences
+            .retain(|sequence| resident_sequences.contains(sequence));
+        self.live_staged_fetch_identities
+            .retain(|sequence, _| resident_sequences.contains(sequence));
     }
 
     pub(super) fn publish_live_rename_entry(&mut self, entry: O3RenameMapEntry) {
@@ -1339,220 +1445,7 @@ mod tests {
         assert_eq!(trace.commit_tick(), 31);
     }
 
-    #[test]
-    fn mismatched_live_speculative_record_does_not_claim_early_issue() {
-        let mut runtime = O3RuntimeState::default();
-        let younger_instruction = addi(4, 0);
-        runtime.stage_live_retire_window(
-            Address::new(0x8000),
-            div_x3(),
-            29,
-            Some((Address::new(0x8004), younger_instruction)),
-        );
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-            .unwrap();
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[request(2)],
-                10,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            )
-            .unwrap();
-
-        let divide = execution_event(div_x3(), 0x8000, 1, 3);
-        retire_live(&mut runtime, &divide, 29);
-        runtime.record_retired_instruction_with_trace(&divide, true);
-        let younger = RiscvCpuExecutionEvent::new(
-            fetch_event(0x8004, 2),
-            younger_instruction,
-            RiscvExecutionRecord::new(
-                younger_instruction,
-                0x8004,
-                0x8008,
-                vec![RegisterWrite::new(Register::new(4).unwrap(), 2)],
-                None,
-            ),
-        );
-        retire_live(&mut runtime, &younger, 30);
-        runtime.record_retired_instruction_with_trace(&younger, true);
-
-        let trace = runtime.trace_records().last().copied().unwrap();
-        assert_eq!(trace.issue_tick(), 30);
-        assert_eq!(trace.commit_tick(), 30);
-    }
-
-    #[test]
-    fn mismatched_split_fetch_suffix_does_not_claim_early_issue() {
-        let mut runtime = O3RuntimeState::default();
-        let younger_instruction = addi(4, 0);
-        runtime.stage_live_retire_window(
-            Address::new(0x8000),
-            div_x3(),
-            29,
-            Some((Address::new(0x8004), younger_instruction)),
-        );
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-            .unwrap();
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[request(2), request(3)],
-                10,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            )
-            .unwrap();
-        let speculative_sequence = runtime.live_speculative_executions[0].sequence;
-
-        let divide = execution_event(div_x3(), 0x8000, 1, 3);
-        retire_live(&mut runtime, &divide, 29);
-        runtime.record_retired_instruction_with_trace(&divide, true);
-        let younger = execution_event(younger_instruction, 0x8004, 2, 4);
-        runtime.retire_live_staged_instruction(&younger, &[request(2), request(4)], 30);
-        assert_eq!(
-            runtime
-                .writeback_reservation(speculative_sequence)
-                .map(O3WritebackReservation::admitted_tick),
-            Some(10),
-            "rebinding after the admitted tick must preserve historical occupancy"
-        );
-        runtime.record_retired_instruction_with_trace(&younger, true);
-
-        let trace = runtime.trace_records().last().copied().unwrap();
-        assert_eq!(trace.issue_tick(), 30);
-        assert_eq!(trace.commit_tick(), 30);
-    }
-
-    #[test]
-    fn malformed_live_speculative_fetch_identity_does_not_occupy_candidate() {
-        let younger_instruction = addi(4, 0);
-        let malformed_identities = [
-            Vec::new(),
-            vec![request(2), request(2)],
-            vec![request(3), request(2)],
-            vec![request(2), MemoryRequestId::new(AgentId::new(8), 3)],
-            vec![request(2), request(3), request(4)],
-        ];
-
-        for consumed_requests in malformed_identities {
-            let mut runtime = O3RuntimeState::default();
-            runtime.stage_live_retire_window(
-                Address::new(0x8000),
-                div_x3(),
-                29,
-                Some((Address::new(0x8004), younger_instruction)),
-            );
-            let candidate = runtime
-                .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-                .unwrap();
-            runtime
-                .record_live_speculative_execution(
-                    candidate,
-                    &consumed_requests,
-                    10,
-                    RiscvExecutionRecord::new(
-                        younger_instruction,
-                        0x8004,
-                        0x8008,
-                        vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                        None,
-                    ),
-                )
-                .unwrap();
-
-            assert!(runtime.live_speculative_executions.is_empty());
-            assert!(runtime
-                .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-                .is_some());
-        }
-    }
-
-    #[test]
-    fn live_speculative_execution_is_transient_across_discard_and_restore() {
-        let mut runtime = O3RuntimeState::default();
-        let younger_instruction = addi(4, 0);
-        runtime.stage_live_retire_window(
-            Address::new(0x8000),
-            div_x3(),
-            29,
-            Some((Address::new(0x8004), younger_instruction)),
-        );
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-            .unwrap();
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[request(2)],
-                10,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            )
-            .unwrap();
-        assert_eq!(runtime.live_speculative_executions.len(), 1);
-
-        let checkpoint = runtime.checkpoint_payload();
-        runtime.restore_checkpoint_payload(checkpoint).unwrap();
-        assert!(runtime.live_speculative_executions.is_empty());
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-            .unwrap();
-
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[request(3)],
-                20,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            )
-            .unwrap();
-        runtime.discard_live_speculative_executions();
-        assert!(runtime.live_speculative_executions.is_empty());
-        let candidate = runtime
-            .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
-            .unwrap();
-        runtime
-            .record_live_speculative_execution(
-                candidate,
-                &[request(4)],
-                21,
-                RiscvExecutionRecord::new(
-                    younger_instruction,
-                    0x8004,
-                    0x8008,
-                    vec![RegisterWrite::new(Register::new(4).unwrap(), 1)],
-                    None,
-                ),
-            )
-            .unwrap();
-        runtime.discard_live_staged_instructions();
-        assert!(runtime.live_speculative_executions.is_empty());
-    }
+    include!("o3_runtime_live_window_identity_tests.rs");
 
     #[test]
     fn public_snapshot_checkpoint_preserves_committed_rename_rollback() {

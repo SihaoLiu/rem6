@@ -334,6 +334,13 @@ fn stage_o3_live_retire_window(
     if head_instruction.decoded != decoded {
         return Ok(None);
     }
+    if !state.o3_runtime.bind_live_staged_fetch_identity(
+        pc,
+        decoded.instruction(),
+        &head_instruction.consumed_requests,
+    ) {
+        return Ok(None);
+    }
     let mut head_hart = state.hart.clone();
     head_hart.set_pc(pc.get());
     let head_execution = head_hart
@@ -471,6 +478,15 @@ fn schedule_o3_live_speculative_younger_executions(
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
 ) -> Result<(), RiscvCpuError> {
+    for younger in younger {
+        if !state.o3_runtime.bind_live_staged_fetch_identity(
+            younger.pc,
+            younger.decoded.instruction(),
+            &younger.consumed_requests,
+        ) {
+            return Ok(());
+        }
+    }
     let requests = younger
         .iter()
         .map(|younger| {

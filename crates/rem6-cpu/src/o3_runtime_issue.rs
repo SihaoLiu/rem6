@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_isa_riscv::{
     RiscvDecodedInstruction, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
@@ -84,6 +84,13 @@ impl O3RuntimeState {
         consumed_requests: &[MemoryRequestId],
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
+        if !self.live_staged_fetch_identity_matches(
+            head.sequence,
+            execution.instruction(),
+            consumed_requests,
+        ) {
+            return Ok(false);
+        }
         if let Some(recorded) = self
             .live_speculative_executions
             .iter()
@@ -102,8 +109,7 @@ impl O3RuntimeState {
         else {
             return Ok(false);
         };
-        if !valid_live_speculative_fetch_identity(consumed_requests)
-            || entry.pc() != Address::new(execution.pc())
+        if entry.pc() != Address::new(execution.pc())
             || live_issue_op_class(execution.instruction()) != head.op_class
             || execution.trap().is_some()
             || execution.system_event().is_some()
@@ -169,42 +175,34 @@ impl O3RuntimeState {
             return Ok(());
         }
         let mut tick = earliest_tick;
+        let mut tick_decision = O3LiveIssueTickDecision::default();
         loop {
             if requests
                 .iter()
                 .all(|request| self.live_issue_request_is_recorded(request))
             {
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
 
-            let mut candidate_sequences = BTreeSet::new();
-            let candidates = requests
-                .iter()
-                .enumerate()
-                .filter(|(_, request)| !self.live_issue_request_is_recorded(request))
-                .filter_map(|(index, request)| {
-                    self.live_speculative_issue_candidate(request.pc, request.instruction())
-                        .map(|candidate| {
-                            let op_class = live_issue_op_class(candidate.instruction());
-                            (index, candidate, op_class)
-                        })
-                })
-                .filter(|(_, candidate, _)| candidate_sequences.insert(candidate.sequence()))
-                .collect::<Vec<_>>();
+            let candidates = self.live_issue_candidates(requests);
             if candidates.is_empty() {
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
+            let serializing_controls = self.live_issue_serializing_controls(&candidates)?;
 
             let reservations = self.live_issue_reservations_at(head, tick);
             if reservations.width >= self.issue_width {
                 let resource_blocked_rows = candidates
                     .iter()
-                    .filter(|(_, candidate, _)| candidate.issue_tick(tick) == tick)
+                    .filter(|(_, candidate, _)| {
+                        live_issue_dependencies_ready_at(candidate, &serializing_controls, tick)
+                    })
                     .count();
                 let dependency_blocked_rows =
                     candidates.len().saturating_sub(resource_blocked_rows);
-                self.record_live_issue_decision(
-                    tick,
+                tick_decision.observe(
                     0,
                     resource_blocked_rows,
                     dependency_blocked_rows,
@@ -212,13 +210,18 @@ impl O3RuntimeState {
                 );
                 if resource_blocked_rows != 0 {
                     let next_tick = tick.saturating_add(1);
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
                     if next_tick == tick {
                         break;
                     }
                     tick = next_tick;
-                } else if let Some(next_tick) = earliest_dependency_tick(&candidates, tick) {
+                } else if let Some(next_tick) =
+                    earliest_dependency_tick(&candidates, &serializing_controls, tick)
+                {
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
                     tick = next_tick;
                 } else {
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
                     break;
                 }
                 continue;
@@ -251,15 +254,15 @@ impl O3RuntimeState {
             .expect("configured live O3 issue width is nonzero");
             let resolved_scopes = candidates
                 .iter()
-                .flat_map(|(_, candidate, _)| candidate.data_dependencies())
-                .filter(|dependency| dependency.ready_tick <= tick)
+                .flat_map(|(_, candidate, _)| {
+                    live_issue_scheduling_dependencies(candidate, &serializing_controls)
+                })
+                .filter(|dependency| dependency.readiness.is_ready_at(tick))
                 .map(|dependency| O3DependencyScopeId::new(dependency.sequence));
             let ready = candidates.iter().map(|(_, candidate, op_class)| {
                 O3ScopedReadyInstruction::new(candidate.sequence(), LIVE_ISSUE_QUEUE, *op_class)
                     .with_waits_on(
-                        candidate
-                            .data_dependencies()
-                            .iter()
+                        live_issue_scheduling_dependencies(candidate, &serializing_controls)
                             .map(|dependency| O3DependencyScopeId::new(dependency.sequence)),
                     )
                     .with_produces([O3DependencyScopeId::new(candidate.sequence())])
@@ -304,51 +307,136 @@ impl O3RuntimeState {
                 }
             }
             let recorded_rows = recorded_sequences.len();
-            self.record_live_issue_decision(
-                tick,
+            tick_decision.observe(
                 recorded_rows,
                 resource_blocked_rows,
                 dependency_blocked_rows,
                 reservations.width.saturating_add(recorded_rows),
             );
             if recorded_sequences != issued_sequences {
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
 
             if resource_blocked_rows != 0 {
                 let next_tick = tick.saturating_add(1);
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 if next_tick == tick {
                     break;
                 }
                 tick = next_tick;
             } else if !dependency_blocked_sequences.is_empty() {
-                let next_tick = requests
+                let remaining_candidates = self.live_issue_candidates(requests);
+                let remaining_serializing_controls =
+                    self.live_issue_serializing_controls(&remaining_candidates)?;
+                if remaining_candidates.iter().any(|(_, candidate, _)| {
+                    !dependency_blocked_sequences.contains(&candidate.sequence())
+                        && live_issue_dependencies_ready_at(
+                            candidate,
+                            &remaining_serializing_controls,
+                            tick,
+                        )
+                }) {
+                    continue;
+                }
+                let next_tick = remaining_candidates
                     .iter()
-                    .filter(|request| !self.live_issue_request_is_recorded(request))
-                    .filter_map(|request| {
-                        self.live_speculative_issue_candidate(request.pc, request.instruction())
-                    })
-                    .filter(|candidate| {
+                    .filter(|(_, candidate, _)| {
                         dependency_blocked_sequences.contains(&candidate.sequence())
                     })
-                    .flat_map(|candidate| {
-                        candidate
-                            .data_dependencies()
-                            .iter()
-                            .map(|dependency| dependency.ready_tick)
-                            .collect::<Vec<_>>()
+                    .flat_map(|(_, candidate, _)| {
+                        live_issue_scheduling_dependencies(
+                            candidate,
+                            &remaining_serializing_controls,
+                        )
                     })
+                    .filter_map(|dependency| dependency.readiness.ready_tick())
                     .filter(|ready_tick| *ready_tick > tick)
                     .min();
                 let Some(next_tick) = next_tick else {
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
                     break;
                 };
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 tick = next_tick;
             } else if issued_sequences.is_empty() {
+                self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
         }
         Ok(())
+    }
+
+    fn live_issue_candidates(
+        &self,
+        requests: &[O3LiveIssueRequest],
+    ) -> Vec<(usize, O3LiveSpeculativeIssueCandidate, O3IssueOpClass)> {
+        let mut candidate_sequences = BTreeSet::new();
+        requests
+            .iter()
+            .enumerate()
+            .filter(|(_, request)| !self.live_issue_request_is_recorded(request))
+            .filter_map(|(index, request)| {
+                self.live_speculative_issue_candidate(request.pc, request.instruction())
+                    .map(|candidate| {
+                        let op_class = live_issue_op_class(candidate.instruction());
+                        (index, candidate, op_class)
+                    })
+            })
+            .filter(|(index, candidate, _)| {
+                let request = &requests[*index];
+                self.live_staged_fetch_identity_matches(
+                    candidate.sequence(),
+                    candidate.instruction(),
+                    &request.consumed_requests,
+                )
+            })
+            .filter(|(_, candidate, _)| candidate_sequences.insert(candidate.sequence()))
+            .collect()
+    }
+
+    fn live_issue_serializing_controls(
+        &self,
+        candidates: &[(usize, O3LiveSpeculativeIssueCandidate, O3IssueOpClass)],
+    ) -> Result<BTreeMap<u64, O3LiveIssueDependencyReadiness>, O3RuntimeError> {
+        let mut controls = BTreeMap::new();
+        for sequence in &self.live_serializing_control_sequences {
+            let readiness = if let Some(execution) = self
+                .live_speculative_executions
+                .iter()
+                .find(|execution| execution.sequence == *sequence)
+            {
+                let ready_tick = execution.admitted_writeback_tick.checked_add(1).ok_or(
+                    O3RuntimeError::WritebackTickOverflow {
+                        tick: execution.admitted_writeback_tick,
+                    },
+                )?;
+                O3LiveIssueDependencyReadiness::ReadyAt(ready_tick)
+            } else {
+                O3LiveIssueDependencyReadiness::Unresolved
+            };
+            controls.insert(*sequence, readiness);
+        }
+        let known_sequences = self
+            .live_speculative_executions
+            .iter()
+            .map(|execution| execution.sequence)
+            .chain(
+                candidates
+                    .iter()
+                    .map(|(_, candidate, _)| candidate.sequence()),
+            )
+            .collect::<BTreeSet<_>>();
+        for (_, candidate, _) in candidates {
+            if let Some(control_sequence) = candidate.control_dependency() {
+                if !known_sequences.contains(&control_sequence) {
+                    controls
+                        .entry(control_sequence)
+                        .or_insert(O3LiveIssueDependencyReadiness::Unresolved);
+                }
+            }
+        }
+        Ok(controls)
     }
 
     fn live_issue_request_is_recorded(&self, request: &O3LiveIssueRequest) -> bool {
@@ -374,6 +462,20 @@ impl O3RuntimeState {
             resource_blocked_rows,
             dependency_blocked_rows,
             total_rows_at_tick,
+        );
+    }
+
+    fn flush_live_issue_decision(&mut self, tick: u64, decision: &mut O3LiveIssueTickDecision) {
+        if !decision.observed {
+            return;
+        }
+        let decision = std::mem::take(decision);
+        self.record_live_issue_decision(
+            tick,
+            decision.issued_rows,
+            decision.resource_blocked_rows,
+            decision.dependency_blocked_rows,
+            decision.max_rows_at_tick,
         );
     }
 
@@ -409,6 +511,56 @@ struct O3LiveIssueReservations {
     branch: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct O3LiveIssueTickDecision {
+    issued_rows: usize,
+    resource_blocked_rows: usize,
+    dependency_blocked_rows: usize,
+    max_rows_at_tick: usize,
+    observed: bool,
+}
+
+impl O3LiveIssueTickDecision {
+    fn observe(
+        &mut self,
+        issued_rows: usize,
+        resource_blocked_rows: usize,
+        dependency_blocked_rows: usize,
+        total_rows_at_tick: usize,
+    ) {
+        self.issued_rows = self.issued_rows.saturating_add(issued_rows);
+        self.resource_blocked_rows = resource_blocked_rows;
+        self.dependency_blocked_rows = dependency_blocked_rows;
+        self.max_rows_at_tick = self.max_rows_at_tick.max(total_rows_at_tick);
+        self.observed = true;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3LiveIssueSchedulingDependency {
+    sequence: u64,
+    readiness: O3LiveIssueDependencyReadiness,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum O3LiveIssueDependencyReadiness {
+    Unresolved,
+    ReadyAt(u64),
+}
+
+impl O3LiveIssueDependencyReadiness {
+    const fn is_ready_at(self, tick: u64) -> bool {
+        matches!(self, Self::ReadyAt(ready_tick) if ready_tick <= tick)
+    }
+
+    const fn ready_tick(self) -> Option<u64> {
+        match self {
+            Self::Unresolved => None,
+            Self::ReadyAt(ready_tick) => Some(ready_tick),
+        }
+    }
+}
+
 impl O3LiveIssueReservations {
     fn reserve(&mut self, op_class: O3IssueOpClass) {
         self.width = self.width.saturating_add(1);
@@ -423,14 +575,58 @@ impl O3LiveIssueReservations {
 
 fn earliest_dependency_tick(
     candidates: &[(usize, O3LiveSpeculativeIssueCandidate, O3IssueOpClass)],
+    serializing_controls: &BTreeMap<u64, O3LiveIssueDependencyReadiness>,
     tick: u64,
 ) -> Option<u64> {
     candidates
         .iter()
-        .flat_map(|(_, candidate, _)| candidate.data_dependencies())
-        .map(|dependency| dependency.ready_tick)
+        .flat_map(|(_, candidate, _)| {
+            live_issue_scheduling_dependencies(candidate, serializing_controls)
+        })
+        .filter_map(|dependency| dependency.readiness.ready_tick())
         .filter(|ready_tick| *ready_tick > tick)
         .min()
+}
+
+fn live_issue_dependencies_ready_at(
+    candidate: &O3LiveSpeculativeIssueCandidate,
+    serializing_controls: &BTreeMap<u64, O3LiveIssueDependencyReadiness>,
+    tick: u64,
+) -> bool {
+    live_issue_scheduling_dependencies(candidate, serializing_controls)
+        .all(|dependency| dependency.readiness.is_ready_at(tick))
+}
+
+fn live_issue_scheduling_dependencies<'a>(
+    candidate: &'a O3LiveSpeculativeIssueCandidate,
+    serializing_controls: &'a BTreeMap<u64, O3LiveIssueDependencyReadiness>,
+) -> impl Iterator<Item = O3LiveIssueSchedulingDependency> + 'a {
+    let data_dependencies =
+        candidate
+            .data_dependencies()
+            .iter()
+            .map(|dependency| O3LiveIssueSchedulingDependency {
+                sequence: dependency.sequence,
+                readiness: O3LiveIssueDependencyReadiness::ReadyAt(dependency.ready_tick),
+            });
+    let control_dependency = candidate
+        .control_dependency()
+        .filter(|control_sequence| {
+            !candidate
+                .data_dependencies()
+                .iter()
+                .any(|dependency| dependency.sequence == *control_sequence)
+        })
+        .and_then(|control_sequence| {
+            serializing_controls
+                .get(&control_sequence)
+                .copied()
+                .map(|readiness| O3LiveIssueSchedulingDependency {
+                    sequence: control_sequence,
+                    readiness,
+                })
+        });
+    data_dependencies.chain(control_dependency)
 }
 
 fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {

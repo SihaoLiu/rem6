@@ -456,6 +456,69 @@ fn scalar_and_linked_control_candidates_expose_destinations() {
 }
 
 #[test]
+fn same_window_return_candidate_uses_link_call_forwarding() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let call = jal_link(1, 8);
+    let return_jump = jalr_return(1);
+    let descendant = addi(8, 0, 7);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert_eq!(
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), call),
+                (Address::new(0x800c), return_jump),
+                (Address::new(0x8008), descendant),
+            ],
+        ),
+        3
+    );
+    let return_sequence = runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .find(|entry| entry.pc() == Address::new(0x800c))
+        .expect("same-window return row")
+        .sequence();
+    assert_eq!(
+        runtime.live_serializing_control_sequences,
+        BTreeSet::from([return_sequence])
+    );
+
+    let call_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), call)
+        .expect("linked call candidate");
+    let call_sequence = call_candidate.sequence();
+    assert!(runtime
+        .record_live_speculative_execution(
+            call_candidate,
+            &[request(11)],
+            20,
+            RiscvExecutionRecord::new(
+                call,
+                0x8004,
+                0x800c,
+                vec![RegisterWrite::new(reg(1), 0x8008)],
+                None,
+            ),
+        )
+        .unwrap());
+
+    let return_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x800c), return_jump)
+        .expect("same-window return candidate");
+    assert!(return_candidate
+        .producer_sequences()
+        .contains(&call_sequence));
+    assert_eq!(
+        return_candidate.forwarded_register_writes(),
+        &[RegisterWrite::new(reg(1), 0x8008)]
+    );
+}
+
+#[test]
 fn linked_control_candidate_rejects_mismatched_staged_destination() {
     let mut runtime = scalar_load_runtime_with_branch(jal_link(1, 4));
     let call_row = runtime.snapshot.reorder_buffer[1];
@@ -1572,6 +1635,10 @@ fn jalr(rs1: u8) -> RiscvInstruction {
         rs1: reg(rs1),
         offset: Immediate::new(0),
     }
+}
+
+fn jalr_return(rs1: u8) -> RiscvInstruction {
+    jalr(rs1)
 }
 
 fn jalr_link(rd: u8, rs1: u8) -> RiscvInstruction {

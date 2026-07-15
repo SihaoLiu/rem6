@@ -79,6 +79,37 @@ fn scoped_issue_linked_controls_reserve_writeback_and_serialize_return() {
 }
 
 #[test]
+fn scoped_issue_orders_same_window_call_return_and_descendant() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    assert!(fixture.runtime.set_writeback_width(1));
+
+    fixture.schedule_all(20);
+
+    let call = fixture.execution_at(BRANCH_PC);
+    let return_control = fixture.execution_at(SECOND_PC);
+    let descendant = fixture.execution_at(THIRD_PC);
+    assert_eq!(call.issue_tick, 20);
+    assert_eq!(call.admitted_writeback_tick, 20);
+    assert_eq!(call.writeback_slot, Some(0));
+    assert_eq!(return_control.issue_tick, call.admitted_writeback_tick + 1);
+    assert_eq!(return_control.writeback_slot, None);
+    assert_eq!(
+        descendant.issue_tick,
+        return_control.admitted_writeback_tick + 1
+    );
+    assert!(return_control.producer_sequences.contains(&call.sequence));
+    assert!(descendant
+        .producer_sequences
+        .contains(&return_control.sequence));
+    let stats = fixture.runtime.stats();
+    assert_eq!(stats.issue_cycles(), 3);
+    assert_eq!(stats.issued_rows(), 3);
+    assert_eq!(stats.resource_blocked_row_cycles(), 1);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 2);
+    assert_eq!(stats.max_rows_per_cycle(), 2);
+}
+
+#[test]
 fn scoped_issue_waits_for_register_producer_ready_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
 
@@ -280,12 +311,119 @@ fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
 }
 
 #[test]
+fn scoped_issue_partial_reentry_keeps_unknown_return_owner_unresolved() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    assert!(fixture.runtime.set_writeback_width(1));
+    let call_request = fixture.requests[0].clone();
+    let return_request = fixture.requests[1].clone();
+    let descendant_request = fixture.requests[2].clone();
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call_request])
+        .unwrap();
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(
+            &fixture.hart,
+            fixture.head,
+            20,
+            &[descendant_request.clone()],
+        )
+        .unwrap();
+
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 0);
+    assert_eq!(fixture.executions_at(THIRD_PC), 0);
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(
+            &fixture.hart,
+            fixture.head,
+            20,
+            &[return_request, descendant_request],
+        )
+        .unwrap();
+
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 1);
+    assert_eq!(fixture.executions_at(THIRD_PC), 1);
+    assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
+    assert_eq!(fixture.issue_tick(THIRD_PC), 22);
+}
+
+#[test]
+fn scoped_issue_partial_reentry_rejects_wrong_no_destination_control_at_return_pc() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    assert!(fixture.runtime.set_writeback_width(1));
+    let call_request = fixture.requests[0].clone();
+    let descendant_request = fixture.requests[2].clone();
+    let wrong_return_request =
+        O3LiveIssueRequest::new(Address::new(SECOND_PC), vec![request(12)], decoded(jal()));
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call_request])
+        .unwrap();
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(
+            &fixture.hart,
+            fixture.head,
+            20,
+            &[wrong_return_request, descendant_request],
+        )
+        .unwrap();
+
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 0);
+    assert_eq!(fixture.executions_at(THIRD_PC), 0);
+}
+
+#[test]
+fn scoped_issue_reversed_return_duplicate_uses_bound_fetch_identity() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    assert!(fixture.runtime.set_writeback_width(1));
+    let real_return_request = fixture.requests[1].clone();
+    let real_return_identity = vec![request(12)];
+    let wrong_return_request = O3LiveIssueRequest::new(
+        Address::new(SECOND_PC),
+        vec![request(99)],
+        decoded(jalr_return(1)),
+    );
+    let requests = [
+        fixture.requests[0].clone(),
+        wrong_return_request,
+        real_return_request.clone(),
+        fixture.requests[2].clone(),
+    ];
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &requests)
+        .unwrap();
+
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 1);
+    assert_eq!(fixture.executions_at(THIRD_PC), 1);
+    assert_eq!(
+        fixture.execution_at(SECOND_PC).consumed_requests,
+        real_return_identity
+    );
+    assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
+    assert_eq!(fixture.issue_tick(THIRD_PC), 22);
+}
+
+#[test]
 fn scoped_issue_deduplicates_repeated_request_for_one_rob_row() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
     let branch_request = fixture.requests[0].clone();
     let duplicate = O3LiveIssueRequest::new(
         Address::new(BRANCH_PC),
-        vec![request(99)],
+        vec![request(11)],
         decoded(branch()),
     );
 
@@ -373,6 +511,7 @@ enum ScalarIssueCase {
     Dependent,
     MixedControls,
     LinkedControls,
+    SameWindowLinkReturn,
 }
 
 struct ScalarIssueFixture {
@@ -395,6 +534,7 @@ impl ScalarIssueFixture {
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
             ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],
+            ScalarIssueCase::SameWindowLinkReturn => [jal_link(1), jalr_return(1), addi(14, 0, 7)],
         };
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -418,6 +558,17 @@ impl ScalarIssueFixture {
                 )
             })
             .collect::<Vec<_>>();
+        for (index, (pc, instruction)) in [BRANCH_PC, SECOND_PC, THIRD_PC]
+            .into_iter()
+            .zip(younger)
+            .enumerate()
+        {
+            assert!(runtime.bind_live_staged_fetch_identity(
+                Address::new(pc),
+                instruction,
+                &[request(11 + index as u64)],
+            ));
+        }
         let mut hart = RiscvHartState::new(LOAD_PC);
         for (register, value) in [
             (2, 7),

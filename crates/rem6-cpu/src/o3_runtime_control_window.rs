@@ -21,6 +21,7 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
     pc: Address,
     instruction: RiscvInstruction,
     kind: O3LiveSpeculativeIssueKind,
+    control_dependency: Option<u64>,
     producer_sequences: Vec<u64>,
     data_dependencies: Vec<O3LiveIssueDependency>,
     forwarded_register_writes: Vec<RegisterWrite>,
@@ -62,6 +63,10 @@ impl O3LiveSpeculativeIssueCandidate {
 
     pub(super) const fn instruction(&self) -> RiscvInstruction {
         self.instruction
+    }
+
+    pub(super) const fn control_dependency(&self) -> Option<u64> {
+        self.control_dependency
     }
 
     pub(super) fn data_dependencies(&self) -> &[O3LiveIssueDependency] {
@@ -116,7 +121,8 @@ impl O3RuntimeState {
         else {
             return None;
         };
-        if index == 0
+        if !self.live_staged_instruction_matches(entry.sequence(), instruction)
+            || index == 0
             || self
                 .live_speculative_executions
                 .iter()
@@ -174,6 +180,7 @@ impl O3RuntimeState {
             pc,
             instruction,
             kind,
+            control_dependency: control_sequence,
             producer_sequences,
             data_dependencies,
             forwarded_register_writes,
@@ -188,8 +195,11 @@ impl O3RuntimeState {
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
         let issue_tick = candidate.issue_tick(issue_tick);
-        if !valid_live_speculative_fetch_identity(consumed_requests)
-            || Address::new(execution.pc()) != candidate.pc
+        if !self.live_staged_fetch_identity_matches(
+            candidate.sequence,
+            candidate.instruction,
+            consumed_requests,
+        ) || Address::new(execution.pc()) != candidate.pc
             || execution.instruction() != candidate.instruction
             || execution.trap().is_some()
             || execution.system_event().is_some()
@@ -402,6 +412,7 @@ impl O3RuntimeState {
         }
         self.live_control_dependencies
             .retain(|_, control| *control != sequence);
+        self.live_serializing_control_sequences.remove(&sequence);
     }
 
     pub(crate) fn has_live_control_descendants(&self, branch_sequence: u64) -> bool {
@@ -439,6 +450,10 @@ impl O3RuntimeState {
             .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_control_window_sequences
             .retain(|sequence| *sequence <= branch_sequence);
+        self.live_serializing_control_sequences
+            .retain(|sequence| *sequence <= branch_sequence);
+        self.live_staged_fetch_identities
+            .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence <= branch_sequence);
         self.stats
@@ -469,6 +484,8 @@ impl O3RuntimeState {
             !invalidated.contains(dependent) && !invalidated.contains(control)
         });
         self.live_control_window_sequences
+            .retain(|sequence| !invalidated.contains(sequence));
+        self.live_serializing_control_sequences
             .retain(|sequence| !invalidated.contains(sequence));
     }
 }
