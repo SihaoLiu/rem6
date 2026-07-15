@@ -117,7 +117,13 @@ impl RiscvScalarIntegerLiveWindow {
                 .sources()
                 .iter()
                 .any(|source| self.unresolved_destinations.contains(source));
-            let indirect_target_is_live = control.kind() == BranchTargetKind::IndirectUnconditional
+            let frontend_sensitive_indirect_target = matches!(
+                control.kind(),
+                BranchTargetKind::IndirectUnconditional
+                    | BranchTargetKind::CallIndirect
+                    | BranchTargetKind::Return
+            );
+            let indirect_target_is_live = frontend_sensitive_indirect_target
                 && control
                     .sources()
                     .iter()
@@ -125,6 +131,12 @@ impl RiscvScalarIntegerLiveWindow {
             if depends_on_unresolved || indirect_target_is_live {
                 self.control_closed = true;
                 return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
+            }
+            if let Some(destination) = control
+                .destination()
+                .filter(|destination| !destination.is_zero())
+            {
+                self.record_shadowing_destination(destination);
             }
             self.control_depth += 1;
             return RiscvScalarIntegerYoungerDecision::AdmitPredictedControl;
@@ -149,9 +161,7 @@ impl RiscvScalarIntegerLiveWindow {
                 return RiscvScalarIntegerYoungerDecision::Reject;
             }
             self.rows += 1;
-            self.unresolved_destinations
-                .retain(|unresolved| *unresolved != destination);
-            self.record_live_destination(destination);
+            self.record_shadowing_destination(destination);
             return RiscvScalarIntegerYoungerDecision::AdmitContinue;
         }
         let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
@@ -168,10 +178,14 @@ impl RiscvScalarIntegerLiveWindow {
             self.record_live_destination(destination);
             return RiscvScalarIntegerYoungerDecision::AdmitStop;
         }
+        self.record_shadowing_destination(destination);
+        RiscvScalarIntegerYoungerDecision::AdmitContinue
+    }
+
+    fn record_shadowing_destination(&mut self, destination: Register) {
         self.unresolved_destinations
             .retain(|unresolved| *unresolved != destination);
         self.record_live_destination(destination);
-        RiscvScalarIntegerYoungerDecision::AdmitContinue
     }
 
     fn record_live_destination(&mut self, destination: Register) {
@@ -577,14 +591,141 @@ mod tests {
     }
 
     #[test]
-    fn scalar_memory_prefix_rejects_link_writing_and_return_controls() {
+    fn scalar_memory_prefix_admits_linked_controls_with_committed_targets() {
         for instruction in [
             jal_with_destination(1),
-            jal_with_destination(2),
+            jal_with_destination(5),
             jalr_with_registers(1, 9),
-            jalr_with_registers(2, 9),
+            jalr_with_registers(5, 9),
             jalr_with_registers(0, 1),
             jalr_with_registers(0, 5),
+        ] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl,
+                "{instruction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn linked_control_destination_shadows_unresolved_load_for_descendants() {
+        for (destination, instruction) in [
+            (1, jal_with_destination(1)),
+            (5, jal_with_destination(5)),
+            (1, jalr_with_registers(1, 9)),
+            (5, jalr_with_registers(5, 9)),
+        ] {
+            let mut window = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+                [Register::new(destination).unwrap()],
+                1,
+                4,
+            )
+            .unwrap();
+
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl,
+                "{instruction:?}"
+            );
+            assert_eq!(
+                window.classify_younger(addi(8, destination)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue,
+                "{instruction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn frontend_sensitive_indirect_controls_remain_terminal_when_target_is_unresolved() {
+        for instruction in [jalr_with_registers(0, 4), jalr_with_registers(1, 4)] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl,
+                "{instruction:?}"
+            );
+        }
+
+        let mut return_window = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(1).unwrap()],
+            1,
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            return_window.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+    }
+
+    #[test]
+    fn frontend_sensitive_indirect_controls_remain_terminal_when_target_is_live() {
+        for instruction in [jalr_with_registers(0, 9), jalr_with_registers(1, 9)] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(addi(9, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert_eq!(
+                window.classify_younger(instruction),
+                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl,
+                "{instruction:?}"
+            );
+        }
+
+        let mut return_window = scalar_load_window(4);
+        assert_eq!(
+            return_window.classify_younger(addi(1, 0)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            return_window.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+    }
+
+    #[test]
+    fn same_window_call_followed_by_return_is_terminal() {
+        let mut direct_call = scalar_load_window(4);
+        assert_eq!(
+            direct_call.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            direct_call.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert_eq!(
+            direct_call.classify_younger(addi(8, 0)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+
+        let mut indirect_call = scalar_load_window(4);
+        assert_eq!(
+            indirect_call.classify_younger(jalr_with_registers(5, 9)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            indirect_call.classify_younger(jalr_with_registers(0, 5)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+    }
+
+    #[test]
+    fn scalar_memory_prefix_rejects_unsupported_link_forms() {
+        for instruction in [
+            jal_with_destination(2),
+            jalr_with_registers(2, 9),
+            jalr_with_registers(2, 1),
+            jalr_with_registers(1, 1),
+            jalr_with_registers(5, 5),
+            jalr_with_registers(1, 5),
+            jalr_with_registers(5, 1),
         ] {
             let mut window = scalar_load_window(4);
 
@@ -600,7 +741,7 @@ mod tests {
     fn nested_control_rejects_unsupported_rows_after_two_controls() {
         for instruction in [
             scalar_load(),
-            jal_with_destination(1),
+            jal_with_destination(2),
             RiscvInstruction::Ecall,
         ] {
             let mut window = scalar_load_window(4);
@@ -633,7 +774,7 @@ mod tests {
     #[test]
     fn scalar_memory_prefix_rejects_unsupported_control_and_memory_rows() {
         for instruction in [
-            jal_with_destination(1),
+            jal_with_destination(2),
             jalr_with_registers(1, 5),
             RiscvInstruction::Ecall,
             scalar_load(),

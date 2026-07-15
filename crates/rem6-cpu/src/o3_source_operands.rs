@@ -9,6 +9,7 @@ use crate::{
 pub(crate) struct O3LiveControlOperands {
     kind: BranchTargetKind,
     sources: Vec<Register>,
+    destination: Option<Register>,
 }
 
 impl O3LiveControlOperands {
@@ -18,6 +19,10 @@ impl O3LiveControlOperands {
 
     pub(crate) fn sources(&self) -> &[Register] {
         &self.sources
+    }
+
+    pub(crate) const fn destination(&self) -> Option<Register> {
+        self.destination
     }
 }
 
@@ -252,20 +257,27 @@ pub(crate) fn o3_speculative_scalar_alu_operands(
 pub(crate) fn o3_live_control_operands(
     instruction: RiscvInstruction,
 ) -> Option<O3LiveControlOperands> {
-    let supported = match instruction {
+    let supported_destination = match instruction {
         RiscvInstruction::Beq { .. }
         | RiscvInstruction::Bne { .. }
         | RiscvInstruction::Blt { .. }
         | RiscvInstruction::Bge { .. }
         | RiscvInstruction::Bltu { .. }
-        | RiscvInstruction::Bgeu { .. } => true,
-        RiscvInstruction::Jal { rd, .. } => rd.is_zero(),
-        RiscvInstruction::Jalr { rd, rs1, .. } => rd.is_zero() && !is_riscv_link_register(rs1),
-        _ => false,
+        | RiscvInstruction::Bgeu { .. } => Some(None),
+        RiscvInstruction::Jal { rd, .. } if rd.is_zero() => Some(None),
+        RiscvInstruction::Jal { rd, .. } if is_riscv_link_register(rd) => Some(Some(rd)),
+        RiscvInstruction::Jalr { rd, .. } if rd.is_zero() => Some(None),
+        RiscvInstruction::Jalr { rd, rs1, .. }
+            if is_riscv_link_register(rd) && !is_riscv_link_register(rs1) =>
+        {
+            Some(Some(rd))
+        }
+        _ => None,
     };
-    supported.then(|| O3LiveControlOperands {
+    supported_destination.map(|control_destination| O3LiveControlOperands {
         kind: riscv_branch_target_kind(instruction),
         sources: o3_scalar_integer_source_registers(&instruction),
+        destination: control_destination,
     })
 }
 
@@ -294,5 +306,102 @@ fn csr_operand_register(operand: RiscvCsrOperand) -> Option<Register> {
     match operand {
         RiscvCsrOperand::Register(register) => Some(register),
         RiscvCsrOperand::Immediate(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::Immediate;
+
+    use super::*;
+
+    fn register(index: u8) -> Register {
+        Register::new(index).unwrap()
+    }
+
+    fn jal(rd: u8) -> RiscvInstruction {
+        RiscvInstruction::Jal {
+            rd: register(rd),
+            offset: Immediate::new(8),
+        }
+    }
+
+    fn jalr(rd: u8, rs1: u8) -> RiscvInstruction {
+        RiscvInstruction::Jalr {
+            rd: register(rd),
+            rs1: register(rs1),
+            offset: Immediate::new(0),
+        }
+    }
+
+    fn assert_live_control(
+        instruction: RiscvInstruction,
+        kind: BranchTargetKind,
+        sources: &[Register],
+        destination: Option<Register>,
+    ) {
+        let control = o3_live_control_operands(instruction).expect("supported live control");
+
+        assert_eq!(control.kind(), kind);
+        assert_eq!(control.sources(), sources);
+        assert_eq!(control.destination(), destination);
+    }
+
+    #[test]
+    fn live_control_descriptor_classifies_supported_jal_forms() {
+        assert_live_control(jal(0), BranchTargetKind::DirectUnconditional, &[], None);
+
+        for link in [1, 5] {
+            assert_live_control(
+                jal(link),
+                BranchTargetKind::CallDirect,
+                &[],
+                Some(register(link)),
+            );
+        }
+    }
+
+    #[test]
+    fn live_control_descriptor_classifies_supported_jalr_forms() {
+        assert_live_control(
+            jalr(0, 9),
+            BranchTargetKind::IndirectUnconditional,
+            &[register(9)],
+            None,
+        );
+
+        for link in [1, 5] {
+            assert_live_control(
+                jalr(link, 9),
+                BranchTargetKind::CallIndirect,
+                &[register(9)],
+                Some(register(link)),
+            );
+            assert_live_control(
+                jalr(0, link),
+                BranchTargetKind::Return,
+                &[register(link)],
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn live_control_descriptor_rejects_unsupported_link_forms() {
+        for instruction in [
+            jal(2),
+            jalr(2, 9),
+            jalr(2, 1),
+            jalr(1, 1),
+            jalr(5, 5),
+            jalr(1, 5),
+            jalr(5, 1),
+        ] {
+            assert_eq!(
+                o3_live_control_operands(instruction),
+                None,
+                "{instruction:?}"
+            );
+        }
     }
 }

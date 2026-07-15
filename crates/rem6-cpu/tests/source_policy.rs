@@ -644,6 +644,8 @@ fn o3_live_control_operands_have_one_typed_owner() {
         "pub(crate) fn o3_live_control_operands(",
         "kind: BranchTargetKind",
         "sources: Vec<Register>",
+        "destination: Option<Register>",
+        "pub(crate) const fn destination(&self) -> Option<Register>",
     ] {
         assert!(
             owner.contains(anchor),
