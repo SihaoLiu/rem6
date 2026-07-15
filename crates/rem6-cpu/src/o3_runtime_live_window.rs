@@ -195,8 +195,20 @@ impl O3RuntimeState {
         else {
             return;
         };
+        let entry = self.snapshot.reorder_buffer[index];
+        let identity_matches = self
+            .live_staged_fetch_identities
+            .get_mut(&entry.sequence())
+            .is_some_and(|identity| {
+                identity.instruction == execution.instruction()
+                    && identity.bind_consumed_requests(consumed_requests)
+            });
+        if !identity_matches {
+            self.invalidate_live_speculative_retirement_at(entry.sequence(), retire_tick);
+            return;
+        }
         if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
-            let boundary_sequence = self.snapshot.reorder_buffer[index].sequence();
+            let boundary_sequence = entry.sequence();
             self.snapshot.reorder_buffer.drain(index..);
             self.discard_future_writeback_from_sequence(boundary_sequence, retire_tick);
             self.live_scalar_memory_younger_sequences
@@ -219,7 +231,6 @@ impl O3RuntimeState {
                 .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
             return;
         }
-        let entry = self.snapshot.reorder_buffer[index];
         let speculative_timing = self.take_live_speculative_issue_timing_at(
             entry,
             execution,
@@ -560,6 +571,42 @@ impl O3RuntimeState {
             }
         }
         self.live_speculative_executions = retained;
+    }
+
+    fn invalidate_live_speculative_retirement_at(&mut self, sequence: u64, now: u64) {
+        if !self
+            .live_speculative_executions
+            .iter()
+            .any(|execution| execution.sequence == sequence)
+        {
+            return;
+        }
+        let mut invalidated = BTreeSet::new();
+        let mut pending = vec![sequence];
+        while let Some(producer) = pending.pop() {
+            let mut index = 0;
+            while index < self.live_speculative_executions.len() {
+                let execution = &self.live_speculative_executions[index];
+                if execution.sequence == producer
+                    || execution.producer_sequences.contains(&producer)
+                {
+                    let removed = self.live_speculative_executions.remove(index).sequence;
+                    self.discard_future_writeback_sequence(removed, now);
+                    if invalidated.insert(removed) {
+                        pending.push(removed);
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.live_control_dependencies.retain(|dependent, control| {
+            !invalidated.contains(dependent) && !invalidated.contains(control)
+        });
+        self.live_control_window_sequences
+            .retain(|sequence| !invalidated.contains(sequence));
+        self.live_serializing_control_sequences
+            .retain(|sequence| !invalidated.contains(sequence));
     }
 }
 

@@ -225,3 +225,78 @@
         assert!(runtime.live_speculative_executions.is_empty());
         assert!(runtime.live_staged_fetch_identities.is_empty());
     }
+
+    #[test]
+    fn wrong_same_pc_retirement_does_not_claim_bound_live_staged_row() {
+        let mut runtime = O3RuntimeState::default();
+        let younger_instruction = addi(4, 0);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), younger_instruction)),
+        );
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(0x8000),
+            div_x3(),
+            &[request(1)],
+        ));
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(0x8004),
+            younger_instruction,
+            &[request(2)],
+        ));
+
+        let divide = execution_event(div_x3(), 0x8000, 1, 3);
+        runtime.retire_live_staged_instruction(&divide, &[request(1)], 29);
+        let staged_row = runtime.snapshot.reorder_buffer[0];
+        let retired_before = runtime.live_retired_instructions.clone();
+        let committed_rename_before = runtime.snapshot.rename_map.clone();
+
+        let wrong_instruction = addi(4, 1);
+        let wrong = execution_event(wrong_instruction, 0x8004, 2, 4);
+        runtime.retire_live_staged_instruction(&wrong, &[request(2)], 30);
+
+        assert_eq!(runtime.snapshot.reorder_buffer, vec![staged_row]);
+        assert!(staged_row.is_live_staged() && !staged_row.is_ready());
+        assert_eq!(runtime.live_retired_instructions, retired_before);
+        assert_eq!(runtime.snapshot.rename_map, committed_rename_before);
+    }
+
+    #[test]
+    fn restored_live_staged_row_without_transient_identity_fails_closed() {
+        let mut runtime = O3RuntimeState::default();
+        let younger_instruction = addi(4, 0);
+        runtime.stage_live_retire_window(
+            Address::new(0x8000),
+            div_x3(),
+            29,
+            Some((Address::new(0x8004), younger_instruction)),
+        );
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(0x8000),
+            div_x3(),
+            &[request(1)],
+        ));
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(0x8004),
+            younger_instruction,
+            &[request(2)],
+        ));
+
+        let checkpoint = runtime.checkpoint_payload();
+        runtime.restore_checkpoint_payload(checkpoint).unwrap();
+        assert!(runtime.live_staged_fetch_identities.is_empty());
+        let staged_rows_before = runtime.snapshot.reorder_buffer.clone();
+        let retired_before = runtime.live_retired_instructions.clone();
+        let committed_rename_before = runtime.snapshot.rename_map.clone();
+
+        let younger = execution_event(younger_instruction, 0x8004, 2, 4);
+        runtime.retire_live_staged_instruction(&younger, &[request(2)], 30);
+
+        assert_eq!(runtime.snapshot.reorder_buffer, staged_rows_before);
+        assert!(runtime.snapshot.reorder_buffer[1].is_live_staged());
+        assert!(!runtime.snapshot.reorder_buffer[1].is_ready());
+        assert_eq!(runtime.live_retired_instructions, retired_before);
+        assert_eq!(runtime.snapshot.rename_map, committed_rename_before);
+    }
