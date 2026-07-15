@@ -391,7 +391,11 @@ Run the exact positive test until the four live PCs, branch kinds, issue timing,
 
 At a tick before the load response, assert the ROB contains exactly load, `JAL`, and conditional branch, with no `JALR` row.
 
-- [ ] **Step 3: Add the hierarchy-backed rollback row**
+- [ ] **Step 3: Add the hierarchy-backed positive row**
+
+Run the same correct mixed-control path through `cache-fabric-dram`. Assert matching registers, memory bytes, no-link behavior, ordered commit, and nonzero cache, transport, fabric, and DRAM activity.
+
+- [ ] **Step 4: Add the hierarchy-backed rollback row**
 
 Make the middle conditional branch taken under the deterministic initial predictor. Assert:
 
@@ -402,19 +406,23 @@ assert_no_data_address(&completed, WRONG_JALR_STORE_ADDRESS);
 
 Assert the older `JAL` event remains, the conditional records one repair/squash, and cache, transport, fabric, and DRAM activity are nonzero.
 
-- [ ] **Step 4: Add the producer-dependent JALR terminal row**
+- [ ] **Step 5: Add the producer-dependent JALR terminal row**
 
 Build a variant where `JALR rs1` is the load destination or a live ALU destination. At the resident tick, assert the JALR row may be present but no predicted target descendant is resident or fetched before normal resolution.
 
-- [ ] **Step 5: Add mode-transfer evidence**
+- [ ] **Step 6: Add mode-transfer evidence**
 
 Schedule detailed-to-timing transfer after the four rows are resident and before the load response. Compare baseline and switched issue/writeback/commit ticks for every live row and assert the transfer remains non-restorable with four ROB rows, one LSQ row, and three younger rows.
 
-- [ ] **Step 6: Add timing-mode suppression**
+- [ ] **Step 7: Add checkpoint boundary evidence**
+
+Reject a checkpoint while all four mixed-control rows are live. After the window drains, capture and restore a checkpoint, assert no live-data handoff chunk, and assert the decoded O3 runtime has zero ROB and LSQ rows.
+
+- [ ] **Step 8: Add timing-mode suppression**
 
 Assert architectural and memory results match, while `/debug/o3_trace` is empty and no `sim.cpu0.o3.*` or `system.cpu.*` O3 aliases are present.
 
-- [ ] **Step 7: Run the focused and complete predicted-control matrix**
+- [ ] **Step 9: Run the focused and complete predicted-control matrix**
 
 Run:
 

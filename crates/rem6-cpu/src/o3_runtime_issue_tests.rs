@@ -44,6 +44,17 @@ fn scoped_issue_serializes_same_multiply_class() {
 }
 
 #[test]
+fn scoped_issue_serializes_mixed_control_kinds_on_branch_port() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::MixedControls);
+
+    fixture.schedule_all(20);
+
+    assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
+    assert_eq!(fixture.issue_tick(MUL_PC), 21);
+    assert_eq!(fixture.issue_tick(THIRD_PC), 22);
+}
+
+#[test]
 fn scoped_issue_waits_for_register_producer_ready_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
 
@@ -332,6 +343,7 @@ enum ScalarIssueCase {
     CrossResource,
     SameMultiply,
     Dependent,
+    MixedControls,
 }
 
 struct ScalarIssueFixture {
@@ -352,6 +364,7 @@ impl ScalarIssueFixture {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
+            ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
         };
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -376,7 +389,15 @@ impl ScalarIssueFixture {
             })
             .collect::<Vec<_>>();
         let mut hart = RiscvHartState::new(LOAD_PC);
-        for (register, value) in [(2, 7), (3, 11), (4, 17), (5, 2), (6, 1), (7, 2)] {
+        for (register, value) in [
+            (2, 7),
+            (3, 11),
+            (4, 17),
+            (5, 2),
+            (6, 1),
+            (7, 2),
+            (9, THIRD_PC + 4),
+        ] {
             hart.write(reg(register), value);
         }
         Self {
@@ -473,6 +494,10 @@ fn raw(instruction: RiscvInstruction) -> u32 {
         RiscvInstruction::Div { rd, rs1, rs2 } => {
             r_type(1, rs2.index(), rs1.index(), 0x4, rd.index(), 0x33)
         }
+        RiscvInstruction::Jal { rd, offset } => j_type(offset.value(), rd.index()),
+        RiscvInstruction::Jalr { rd, rs1, offset } => {
+            i_type(offset.value(), rs1.index(), 0x0, rd.index(), 0x67)
+        }
         _ => panic!("unsupported test instruction: {instruction:?}"),
     }
 }
@@ -498,6 +523,21 @@ fn branch() -> RiscvInstruction {
         rs1: reg(6),
         rs2: reg(7),
         offset: Immediate::new(8),
+    }
+}
+
+fn jal() -> RiscvInstruction {
+    RiscvInstruction::Jal {
+        rd: reg(0),
+        offset: Immediate::new(4),
+    }
+}
+
+fn jalr() -> RiscvInstruction {
+    RiscvInstruction::Jalr {
+        rd: reg(0),
+        rs1: reg(9),
+        offset: Immediate::new(0),
     }
 }
 
@@ -544,4 +584,14 @@ fn b_type(imm: i64, rs2: u8, rs1: u8, funct3: u32) -> u32 {
         | ((imm >> 1) & 0xf) << 8
         | ((imm >> 11) & 0x1) << 7
         | 0x63
+}
+
+fn j_type(imm: i64, rd: u8) -> u32 {
+    let imm = imm as u32;
+    ((imm >> 20) & 0x1) << 31
+        | ((imm >> 1) & 0x3ff) << 21
+        | ((imm >> 11) & 0x1) << 20
+        | ((imm >> 12) & 0xff) << 12
+        | (u32::from(rd) << 7)
+        | 0x6f
 }

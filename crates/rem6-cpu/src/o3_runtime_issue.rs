@@ -434,7 +434,7 @@ fn earliest_dependency_tick(
 }
 
 fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {
-    if o3_direct_conditional_sources(instruction).is_some() {
+    if o3_live_control_operands(instruction).is_some() {
         return O3IssueOpClass::Branch;
     }
     if matches!(

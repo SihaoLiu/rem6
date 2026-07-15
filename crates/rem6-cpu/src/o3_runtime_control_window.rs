@@ -29,7 +29,7 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
     Scalar { destination: O3RenameMapEntry },
-    DirectConditional,
+    Control { kind: BranchTargetKind },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,7 +43,7 @@ impl O3LiveSpeculativeIssueCandidate {
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
-            O3LiveSpeculativeIssueKind::DirectConditional => None,
+            O3LiveSpeculativeIssueKind::Control { .. } => None,
         }
     }
 
@@ -92,12 +92,13 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let (destination, sources) = if let Some((destination, sources)) =
+        let (destination, control_kind, sources) = if let Some((destination, sources)) =
             o3_predicted_scalar_descendant_operands(instruction)
         {
-            (Some(destination), sources)
+            (Some(destination), None, sources)
         } else {
-            (None, o3_direct_conditional_sources(instruction)?)
+            let control = o3_live_control_operands(instruction)?;
+            (None, Some(control.kind()), control.sources().to_vec())
         };
         let Some((index, entry)) = self
             .snapshot
@@ -128,7 +129,9 @@ impl O3RuntimeState {
                 }
             }
             None if entry.destination().is_none() && entry.rename_destination().is_none() => {
-                O3LiveSpeculativeIssueKind::DirectConditional
+                O3LiveSpeculativeIssueKind::Control {
+                    kind: control_kind.expect("control candidate has a branch kind"),
+                }
             }
             Some(_) | None => return None,
         };
@@ -180,9 +183,10 @@ impl O3RuntimeState {
                     && execution.register_writes().len() == 1
                     && execution_writes_rename_destination(&execution, destination)
             }
-            O3LiveSpeculativeIssueKind::DirectConditional => {
+            O3LiveSpeculativeIssueKind::Control { kind } => {
                 execution.register_writes().is_empty()
-                    && o3_direct_conditional_sources(execution.instruction()).is_some()
+                    && o3_live_control_operands(execution.instruction())
+                        .is_some_and(|control| control.kind() == kind)
             }
         };
         if !valid_kind {

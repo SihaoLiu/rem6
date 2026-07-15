@@ -634,6 +634,101 @@ fn o3_runtime_control_window_lives_in_focused_module() {
 }
 
 #[test]
+fn o3_live_control_operands_have_one_typed_owner() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let owner_path = crate_dir.join("src/o3_source_operands.rs");
+    let owner = production_rust_source(&fs::read_to_string(&owner_path).unwrap());
+
+    for anchor in [
+        "pub(crate) struct O3LiveControlOperands",
+        "pub(crate) fn o3_live_control_operands(",
+        "kind: BranchTargetKind",
+        "sources: Vec<Register>",
+    ] {
+        assert!(
+            owner.contains(anchor),
+            "src/o3_source_operands.rs is missing live-control authority `{anchor}`"
+        );
+    }
+    assert_eq!(
+        owner
+            .matches("pub(crate) fn o3_live_control_operands(")
+            .count(),
+        1,
+        "src/o3_source_operands.rs must define one live-control classifier"
+    );
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        assert!(
+            !source.contains("o3_direct_conditional_sources"),
+            "{} retains the obsolete conditional-only control helper",
+            relative.display()
+        );
+        if relative != Path::new("src/o3_source_operands.rs") {
+            assert!(
+                !source.contains("struct O3LiveControlOperands"),
+                "{} duplicates typed live-control operand ownership",
+                relative.display()
+            );
+        }
+    }
+
+    let consumers = [
+        "src/riscv_o3_window_policy.rs",
+        "src/o3_runtime_control_window.rs",
+        "src/o3_runtime_issue.rs",
+        "src/o3_runtime_live_window.rs",
+    ];
+    let opcode_inventory = [
+        "RiscvInstruction::Beq",
+        "RiscvInstruction::Bne",
+        "RiscvInstruction::Blt",
+        "RiscvInstruction::Bge",
+        "RiscvInstruction::Bltu",
+        "RiscvInstruction::Bgeu",
+        "RiscvInstruction::Jal {",
+        "RiscvInstruction::Jalr {",
+    ];
+    for relative in consumers {
+        let source = production_rust_source(&fs::read_to_string(crate_dir.join(relative)).unwrap());
+        assert!(
+            source.contains("o3_live_control_operands"),
+            "{relative} must consume the typed live-control authority"
+        );
+        for opcode in opcode_inventory {
+            assert!(
+                !source.contains(opcode),
+                "{relative} duplicates live-control opcode inventory `{opcode}`"
+            );
+        }
+    }
+
+    let execute = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_execute.rs")).unwrap(),
+    );
+    let retire = source_section(
+        &execute,
+        "    fn retire_completed_fetch(",
+        "fn next_completed_fetch_suffix<'a>(",
+    );
+    assert!(
+        retire.contains("o3_live_control_operands(instruction)"),
+        "RISC-V retirement must derive live-control cleanup from the typed authority"
+    );
+    for opcode in opcode_inventory {
+        assert!(
+            !retire.contains(opcode),
+            "RISC-V retirement duplicates live-control opcode inventory `{opcode}`"
+        );
+    }
+}
+
+#[test]
 fn o3_runtime_error_lives_in_focused_module_with_stable_public_exports() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root =

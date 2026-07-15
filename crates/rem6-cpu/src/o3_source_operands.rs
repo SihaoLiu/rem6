@@ -1,5 +1,26 @@
 use rem6_isa_riscv::{Register, RiscvCsrOperand, RiscvInstruction};
 
+use crate::{
+    riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind},
+    BranchTargetKind,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct O3LiveControlOperands {
+    kind: BranchTargetKind,
+    sources: Vec<Register>,
+}
+
+impl O3LiveControlOperands {
+    pub(crate) const fn kind(&self) -> BranchTargetKind {
+        self.kind
+    }
+
+    pub(crate) fn sources(&self) -> &[Register] {
+        &self.sources
+    }
+}
+
 pub(crate) fn o3_scalar_integer_source_registers(instruction: &RiscvInstruction) -> Vec<Register> {
     match instruction {
         RiscvInstruction::Addi { rs1, .. }
@@ -228,19 +249,24 @@ pub(crate) fn o3_speculative_scalar_alu_operands(
     ))
 }
 
-pub(crate) fn o3_direct_conditional_sources(
+pub(crate) fn o3_live_control_operands(
     instruction: RiscvInstruction,
-) -> Option<Vec<Register>> {
-    matches!(
-        instruction,
+) -> Option<O3LiveControlOperands> {
+    let supported = match instruction {
         RiscvInstruction::Beq { .. }
-            | RiscvInstruction::Bne { .. }
-            | RiscvInstruction::Blt { .. }
-            | RiscvInstruction::Bge { .. }
-            | RiscvInstruction::Bltu { .. }
-            | RiscvInstruction::Bgeu { .. }
-    )
-    .then(|| o3_scalar_integer_source_registers(&instruction))
+        | RiscvInstruction::Bne { .. }
+        | RiscvInstruction::Blt { .. }
+        | RiscvInstruction::Bge { .. }
+        | RiscvInstruction::Bltu { .. }
+        | RiscvInstruction::Bgeu { .. } => true,
+        RiscvInstruction::Jal { rd, .. } => rd.is_zero(),
+        RiscvInstruction::Jalr { rd, rs1, .. } => rd.is_zero() && !is_riscv_link_register(rs1),
+        _ => false,
+    };
+    supported.then(|| O3LiveControlOperands {
+        kind: riscv_branch_target_kind(instruction),
+        sources: o3_scalar_integer_source_registers(&instruction),
+    })
 }
 
 pub(crate) fn o3_predicted_scalar_descendant_operands(

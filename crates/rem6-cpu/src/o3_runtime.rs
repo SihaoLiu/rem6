@@ -90,7 +90,7 @@ pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
 pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
 pub use o3_runtime_writeback::{O3RuntimeWritebackReservation, RiscvO3WritebackDebugState};
 pub(crate) use o3_source_operands::{
-    o3_direct_conditional_sources, o3_predicted_scalar_descendant_operands,
+    o3_live_control_operands, o3_predicted_scalar_descendant_operands,
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };

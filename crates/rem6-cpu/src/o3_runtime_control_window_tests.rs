@@ -361,6 +361,43 @@ fn three_deep_control_dependencies_follow_immediate_branch() {
 }
 
 #[test]
+fn mixed_control_dependencies_follow_immediate_control() {
+    let (runtime, _, _, _) = mixed_control_runtime();
+    let snapshot = runtime.snapshot();
+    let rob = snapshot.reorder_buffer();
+    assert_eq!(rob.len(), 4, "mixed controls must occupy the bounded ROB");
+    let direct_jump = rob[1].sequence();
+    let conditional = rob[2].sequence();
+    let indirect_jump = rob[3].sequence();
+
+    assert_eq!(
+        runtime.live_control_dependencies.get(&conditional),
+        Some(&direct_jump)
+    );
+    assert_eq!(
+        runtime.live_control_dependencies.get(&indirect_jump),
+        Some(&conditional)
+    );
+    assert_eq!(runtime.live_control_window_sequences.len(), 3);
+}
+
+#[test]
+fn mixed_no_link_control_candidates_have_no_destination() {
+    let (runtime, direct_jump, conditional, indirect_jump) = mixed_control_runtime();
+
+    for (pc, instruction) in [
+        (0x8004, direct_jump),
+        (0x8008, conditional),
+        (0x800c, indirect_jump),
+    ] {
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(pc), instruction)
+            .unwrap_or_else(|| panic!("missing mixed control candidate at {pc:#x}"));
+        assert_eq!(candidate.destination(), None);
+    }
+}
+
+#[test]
 fn inner_control_uses_staged_outer_ownership_before_execution_record() {
     let (mut runtime, outer, inner, _) = nested_control_runtime();
     let rob = runtime.snapshot().reorder_buffer().to_vec();
@@ -585,6 +622,48 @@ fn middle_control_discard_removes_only_inner_control() {
     assert!(!runtime
         .live_control_window_sequences
         .contains(&inner_sequence));
+}
+
+#[test]
+fn mixed_middle_control_discard_removes_only_indirect_jump() {
+    let (mut runtime, direct_jump, conditional, indirect_jump) = issued_mixed_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let direct_jump_sequence = rob[1].sequence();
+    let conditional_sequence = rob[2].sequence();
+    let indirect_jump_sequence = rob[3].sequence();
+
+    runtime.discard_live_control_descendants_from_at(conditional_sequence, 0);
+
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [0x8000, 0x8004, 0x8008].map(Address::new)
+    );
+    assert_eq!(
+        runtime
+            .live_speculative_executions
+            .iter()
+            .map(|issued| issued.execution.instruction())
+            .collect::<Vec<_>>(),
+        [direct_jump, conditional]
+    );
+    assert!(!runtime
+        .live_speculative_executions
+        .iter()
+        .any(|issued| issued.execution.instruction() == indirect_jump));
+    assert!(runtime
+        .live_control_window_sequences
+        .contains(&direct_jump_sequence));
+    assert!(runtime
+        .live_control_window_sequences
+        .contains(&conditional_sequence));
+    assert!(!runtime
+        .live_control_window_sequences
+        .contains(&indirect_jump_sequence));
 }
 
 #[test]
@@ -1004,6 +1083,57 @@ fn issued_three_deep_control_runtime() -> (
     (runtime, outer, middle, inner)
 }
 
+fn mixed_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let direct_jump = jal(4);
+    let conditional = beq(5, 6);
+    let indirect_jump = jalr(9);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    runtime.stage_live_scalar_memory_younger_window(
+        load.fetch().request_id(),
+        [
+            (Address::new(0x8004), direct_jump),
+            (Address::new(0x8008), conditional),
+            (Address::new(0x800c), indirect_jump),
+        ],
+    );
+    (runtime, direct_jump, conditional, indirect_jump)
+}
+
+fn issued_mixed_control_runtime() -> (
+    O3RuntimeState,
+    RiscvInstruction,
+    RiscvInstruction,
+    RiscvInstruction,
+) {
+    let (mut runtime, direct_jump, conditional, indirect_jump) = mixed_control_runtime();
+    for (pc, next_pc, instruction, sequence) in [
+        (0x8004, 0x8008, direct_jump, 11),
+        (0x8008, 0x800c, conditional, 12),
+        (0x800c, 0x8010, indirect_jump, 13),
+    ] {
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(pc), instruction)
+            .unwrap();
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(sequence)],
+                sequence,
+                RiscvExecutionRecord::new(instruction, pc, next_pc, Vec::new(), None),
+            )
+            .unwrap();
+    }
+    (runtime, direct_jump, conditional, indirect_jump)
+}
+
 fn scalar_load_event() -> RiscvCpuExecutionEvent {
     let instruction = RiscvInstruction::Load {
         rd: reg(4),
@@ -1066,6 +1196,21 @@ fn beq(rs1: u8, rs2: u8) -> RiscvInstruction {
         rs1: reg(rs1),
         rs2: reg(rs2),
         offset: Immediate::new(8),
+    }
+}
+
+fn jal(offset: i64) -> RiscvInstruction {
+    RiscvInstruction::Jal {
+        rd: reg(0),
+        offset: Immediate::new(offset),
+    }
+}
+
+fn jalr(rs1: u8) -> RiscvInstruction {
+    RiscvInstruction::Jalr {
+        rd: reg(0),
+        rs1: reg(rs1),
+        offset: Immediate::new(0),
     }
 }
 

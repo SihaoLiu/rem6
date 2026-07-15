@@ -33,7 +33,7 @@ impl O3RuntimeState {
         let head_sequence =
             self.stage_or_existing_live_instruction(current_pc, current, current_ready_tick);
         let mut control_sequence =
-            head_sequence.filter(|_| o3_direct_conditional_sources(current).is_some());
+            head_sequence.filter(|_| o3_live_control_operands(current).is_some());
         if let Some(sequence) = control_sequence {
             self.live_control_window_sequences.insert(sequence);
         }
@@ -48,11 +48,11 @@ impl O3RuntimeState {
                 self.live_control_dependencies
                     .insert(sequence, control_sequence);
             }
-            let direct_conditional = o3_direct_conditional_sources(instruction).is_some();
-            if control_sequence.is_some() || direct_conditional {
+            let live_control = o3_live_control_operands(instruction).is_some();
+            if control_sequence.is_some() || live_control {
                 self.live_control_window_sequences.insert(sequence);
             }
-            if direct_conditional {
+            if live_control {
                 control_sequence = Some(sequence);
             }
         }

@@ -1,6 +1,8 @@
 use super::lsq_fu_branch::{event_at_pc, event_at_pc_if_present, event_u64};
 use super::*;
 
+#[path = "predicted_control/mixed_kind.rs"]
+mod mixed_kind;
 #[path = "predicted_control/nested.rs"]
 mod nested;
 #[path = "predicted_control/three_deep.rs"]

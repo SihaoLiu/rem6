@@ -5,8 +5,8 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
-    riscv_fu_latency::riscv_execute_wait_cycles,
+    o3_runtime::o3_live_control_operands, riscv_branch_kind::riscv_branch_target_kind,
+    riscv_execution_event::RiscvRetiredBranchUpdates, riscv_fu_latency::riscv_execute_wait_cycles,
     riscv_live_retire_window::RiscvLiveRetireWindowRequest, BranchTargetKind, CpuFetchEvent,
     CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
     InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
@@ -220,7 +220,8 @@ impl RiscvCore {
             .pc()
             .get()
             .wrapping_add(u64::from(execution.instruction_bytes()));
-        let live_control_sequence = instruction_is_conditional_branch(instruction)
+        let live_control_sequence = o3_live_control_operands(instruction)
+            .is_some()
             .then(|| {
                 state
                     .o3_runtime
@@ -332,20 +333,19 @@ impl RiscvCore {
                 .defer_scalar_memory_if_detailed(detailed, &event));
         }
         if redirects_fetch {
-            if instruction_is_conditional_branch(instruction) && event.execution().trap().is_none()
-            {
-                if branch_prediction_redirects {
-                    if let Some(sequence) = live_control_sequence {
+            if event.execution().trap().is_none() {
+                if let Some(sequence) = live_control_sequence {
+                    if branch_prediction_redirects {
                         state
                             .o3_runtime
                             .discard_live_control_descendants_from_at(sequence, retire_tick);
                         state.refresh_o3_writeback_wake(retire_tick);
-                    } else {
-                        state
-                            .o3_runtime
-                            .discard_live_staged_instructions_at(retire_tick);
-                        state.refresh_o3_writeback_wake(retire_tick);
                     }
+                } else {
+                    state
+                        .o3_runtime
+                        .discard_live_staged_instructions_at(retire_tick);
+                    state.refresh_o3_writeback_wake(retire_tick);
                 }
             } else {
                 state.o3_runtime.discard_live_staged_instructions();
