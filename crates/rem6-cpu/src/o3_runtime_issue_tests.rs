@@ -17,7 +17,7 @@ fn scoped_issue_reserves_head_width() {
     fixture.schedule_all(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 21);
-    assert_eq!(fixture.issue_tick(MUL_PC), 22);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 22);
     assert_eq!(fixture.issue_tick(THIRD_PC), 23);
 }
 
@@ -28,7 +28,7 @@ fn scoped_issue_allows_cross_resource_peer() {
     fixture.schedule_all(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
-    assert_eq!(fixture.issue_tick(MUL_PC), 21);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
 }
 
@@ -39,7 +39,7 @@ fn scoped_issue_serializes_same_multiply_class() {
     fixture.schedule_all(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
-    assert_eq!(fixture.issue_tick(MUL_PC), 21);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 22);
 }
 
@@ -50,8 +50,32 @@ fn scoped_issue_serializes_mixed_control_kinds_on_branch_port() {
     fixture.schedule_all(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
-    assert_eq!(fixture.issue_tick(MUL_PC), 21);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 22);
+}
+
+#[test]
+fn scoped_issue_linked_controls_reserve_writeback_and_serialize_return() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::LinkedControls);
+    assert!(fixture.runtime.set_writeback_width(1));
+
+    fixture.schedule_all(20);
+
+    let call = fixture.execution_at(BRANCH_PC);
+    let addi = fixture.execution_at(SECOND_PC);
+    let return_control = fixture.execution_at(THIRD_PC);
+    assert_eq!(call.issue_tick, 20);
+    assert_eq!(addi.issue_tick, 20);
+    assert_eq!(return_control.issue_tick, 21);
+    assert_eq!(call.raw_ready_tick, 20);
+    assert_eq!(call.admitted_writeback_tick, 20);
+    assert_eq!(call.writeback_slot, Some(0));
+    assert_eq!(addi.raw_ready_tick, 20);
+    assert_eq!(addi.admitted_writeback_tick, 21);
+    assert_eq!(addi.writeback_slot, Some(0));
+    assert_eq!(return_control.raw_ready_tick, 21);
+    assert_eq!(return_control.admitted_writeback_tick, 21);
+    assert_eq!(return_control.writeback_slot, None);
 }
 
 #[test]
@@ -60,7 +84,7 @@ fn scoped_issue_waits_for_register_producer_ready_tick() {
 
     fixture.schedule_all(20);
 
-    let multiply = fixture.execution_at(MUL_PC);
+    let multiply = fixture.execution_at(SECOND_PC);
     let dependent = fixture.execution_at(THIRD_PC);
     assert_eq!(multiply.issue_tick, 21);
     assert_eq!(
@@ -80,7 +104,7 @@ fn scoped_issue_waits_for_admitted_writeback_tick() {
 
     fixture.schedule_all(20);
 
-    let multiply = fixture.execution_at(MUL_PC);
+    let multiply = fixture.execution_at(SECOND_PC);
     let dependent = fixture.execution_at(THIRD_PC);
     assert_eq!(
         dependent.issue_tick, multiply.admitted_writeback_tick,
@@ -153,7 +177,7 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
             31,
             [
                 (Address::new(BRANCH_PC), independent),
-                (Address::new(MUL_PC), dependent),
+                (Address::new(SECOND_PC), dependent),
             ],
         )
         .unwrap();
@@ -175,7 +199,11 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
             vec![request(11)],
             decoded(independent),
         ),
-        O3LiveIssueRequest::new(Address::new(MUL_PC), vec![request(12)], decoded(dependent)),
+        O3LiveIssueRequest::new(
+            Address::new(SECOND_PC),
+            vec![request(12)],
+            decoded(dependent),
+        ),
     ];
 
     runtime
@@ -196,7 +224,7 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
         runtime
             .live_speculative_executions
             .iter()
-            .find(|execution| execution.execution.pc() == MUL_PC)
+            .find(|execution| execution.execution.pc() == SECOND_PC)
             .unwrap()
             .issue_tick,
         31
@@ -206,18 +234,18 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
     let dependent_execution = runtime
         .live_speculative_executions
         .iter()
-        .find(|execution| execution.execution.pc() == MUL_PC)
+        .find(|execution| execution.execution.pc() == SECOND_PC)
         .unwrap()
         .execution
         .clone();
     let dependent_event =
-        RiscvCpuExecutionEvent::new(fetch_event(MUL_PC, 12), dependent, dependent_execution);
+        RiscvCpuExecutionEvent::new(fetch_event(SECOND_PC, 12), dependent, dependent_execution);
     let dependent_entry = runtime
         .snapshot()
         .reorder_buffer()
         .iter()
         .copied()
-        .find(|entry| entry.pc() == Address::new(MUL_PC))
+        .find(|entry| entry.pc() == Address::new(SECOND_PC))
         .unwrap();
     assert_eq!(
         runtime.take_live_speculative_issue_timing_at(
@@ -247,7 +275,7 @@ fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
-    assert_eq!(fixture.issue_tick(MUL_PC), 21);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
 }
 
@@ -303,7 +331,7 @@ fn scoped_issue_rollback_uses_existing_producer_chain() {
     let multiply_sequence = rob[2].sequence();
     let dependent_sequence = rob[3].sequence();
 
-    let multiply = fixture.execution_at(MUL_PC);
+    let multiply = fixture.execution_at(SECOND_PC);
     assert!(
         multiply.producer_sequences.contains(&branch_sequence),
         "control owner must remain in the producer chain for rollback"
@@ -335,7 +363,7 @@ fn scoped_issue_rollback_uses_existing_producer_chain() {
 
 const LOAD_PC: u64 = 0x8000;
 const BRANCH_PC: u64 = 0x8004;
-const MUL_PC: u64 = 0x8008;
+const SECOND_PC: u64 = 0x8008;
 const THIRD_PC: u64 = 0x800c;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -344,6 +372,7 @@ enum ScalarIssueCase {
     SameMultiply,
     Dependent,
     MixedControls,
+    LinkedControls,
 }
 
 struct ScalarIssueFixture {
@@ -365,10 +394,11 @@ impl ScalarIssueFixture {
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
+            ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],
         };
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
-            [BRANCH_PC, MUL_PC, THIRD_PC]
+            [BRANCH_PC, SECOND_PC, THIRD_PC]
                 .into_iter()
                 .zip(younger)
                 .map(|(pc, instruction)| (Address::new(pc), instruction)),
@@ -376,7 +406,7 @@ impl ScalarIssueFixture {
         let head = runtime
             .live_scalar_memory_head_reservation(load.fetch().request_id())
             .expect("scalar load head reservation");
-        let requests = [BRANCH_PC, MUL_PC, THIRD_PC]
+        let requests = [BRANCH_PC, SECOND_PC, THIRD_PC]
             .into_iter()
             .zip(younger)
             .enumerate()
@@ -533,10 +563,25 @@ fn jal() -> RiscvInstruction {
     }
 }
 
+fn jal_link(rd: u8) -> RiscvInstruction {
+    RiscvInstruction::Jal {
+        rd: reg(rd),
+        offset: Immediate::new(4),
+    }
+}
+
 fn jalr() -> RiscvInstruction {
     RiscvInstruction::Jalr {
         rd: reg(0),
         rs1: reg(9),
+        offset: Immediate::new(0),
+    }
+}
+
+fn jalr_return(rs1: u8) -> RiscvInstruction {
+    RiscvInstruction::Jalr {
+        rd: reg(0),
+        rs1: reg(rs1),
         offset: Immediate::new(0),
     }
 }

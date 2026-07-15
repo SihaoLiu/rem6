@@ -28,8 +28,13 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
-    Scalar { destination: O3RenameMapEntry },
-    Control { kind: BranchTargetKind },
+    Scalar {
+        destination: O3RenameMapEntry,
+    },
+    Control {
+        kind: BranchTargetKind,
+        destination: Option<O3RenameMapEntry>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,7 +48,7 @@ impl O3LiveSpeculativeIssueCandidate {
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
-            O3LiveSpeculativeIssueKind::Control { .. } => None,
+            O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
         }
     }
 
@@ -92,13 +97,14 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let (destination, control_kind, sources) = if let Some((destination, sources)) =
+        let (scalar_destination, control, sources) = if let Some((destination, sources)) =
             o3_predicted_scalar_descendant_operands(instruction)
         {
             (Some(destination), None, sources)
         } else {
             let control = o3_live_control_operands(instruction)?;
-            (None, Some(control.kind()), control.sources().to_vec())
+            let sources = control.sources().to_vec();
+            (None, Some(control), sources)
         };
         let Some((index, entry)) = self
             .snapshot
@@ -118,22 +124,40 @@ impl O3RuntimeState {
         {
             return None;
         }
-        let kind = match destination {
-            Some(destination)
-                if entry.rename_destination()
-                    == Some((O3RegisterClass::Integer, u32::from(destination.index()))) =>
+        let staged_destination = staged_rename_entry(entry);
+        let kind = if let Some(destination) = scalar_destination {
+            let Some(staged_destination) = staged_destination else {
+                return None;
+            };
+            if staged_destination.register_class() != O3RegisterClass::Integer
+                || staged_destination.architectural() != u32::from(destination.index())
             {
-                O3LiveSpeculativeIssueKind::Scalar {
-                    destination: staged_rename_entry(entry)
-                        .expect("eligible scalar execution has a rename destination"),
-                }
+                return None;
             }
-            None if entry.destination().is_none() && entry.rename_destination().is_none() => {
-                O3LiveSpeculativeIssueKind::Control {
-                    kind: control_kind.expect("control candidate has a branch kind"),
-                }
+            O3LiveSpeculativeIssueKind::Scalar {
+                destination: staged_destination,
             }
-            Some(_) | None => return None,
+        } else {
+            let control = control.expect("control candidate has control operands");
+            let destination = match control.destination() {
+                Some(destination) => {
+                    let staged_destination = staged_destination?;
+                    if staged_destination.register_class() != O3RegisterClass::Integer
+                        || staged_destination.architectural() != u32::from(destination.index())
+                    {
+                        return None;
+                    }
+                    Some(staged_destination)
+                }
+                None if entry.destination().is_none() && entry.rename_destination().is_none() => {
+                    None
+                }
+                None => return None,
+            };
+            O3LiveSpeculativeIssueKind::Control {
+                kind: control.kind(),
+                destination,
+            }
         };
 
         let control_sequence = self
@@ -183,10 +207,20 @@ impl O3RuntimeState {
                     && execution.register_writes().len() == 1
                     && execution_writes_rename_destination(&execution, destination)
             }
-            O3LiveSpeculativeIssueKind::Control { kind } => {
-                execution.register_writes().is_empty()
-                    && o3_live_control_operands(execution.instruction())
-                        .is_some_and(|control| control.kind() == kind)
+            O3LiveSpeculativeIssueKind::Control { kind, destination } => {
+                o3_live_control_operands(execution.instruction()).is_some_and(|control| {
+                    control.kind() == kind
+                        && control_destination_matches_rename_entry(
+                            control.destination(),
+                            destination,
+                        )
+                }) && match destination {
+                    Some(destination) => {
+                        execution.register_writes().len() == 1
+                            && execution_writes_rename_destination(&execution, destination)
+                    }
+                    None => execution.register_writes().is_empty(),
+                }
             }
         };
         if !valid_kind {
@@ -197,8 +231,14 @@ impl O3RuntimeState {
                 execution.instruction(),
             ))
             .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
-        let consumes_writeback_slot =
-            matches!(candidate.kind, O3LiveSpeculativeIssueKind::Scalar { .. });
+        let consumes_writeback_slot = matches!(
+            candidate.kind,
+            O3LiveSpeculativeIssueKind::Scalar { .. }
+                | O3LiveSpeculativeIssueKind::Control {
+                    destination: Some(_),
+                    ..
+                }
+        );
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
             candidate.sequence,
             raw_ready_tick,
@@ -444,6 +484,20 @@ pub(super) fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryR
         && consumed_requests
             .windows(2)
             .all(|requests| requests[0].sequence() < requests[1].sequence())
+}
+
+fn control_destination_matches_rename_entry(
+    destination: Option<rem6_isa_riscv::Register>,
+    rename: Option<O3RenameMapEntry>,
+) -> bool {
+    match (destination, rename) {
+        (Some(destination), Some(rename)) => {
+            rename.register_class() == O3RegisterClass::Integer
+                && rename.architectural() == u32::from(destination.index())
+        }
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
 }
 
 pub(super) fn execution_writes_rename_destination(
