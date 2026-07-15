@@ -258,7 +258,6 @@ impl O3LiveWritebackReady {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) const fn scalar_load(sequence: u64, raw_ready_tick: u64) -> Self {
         Self {
             sequence,
@@ -283,7 +282,6 @@ impl O3LiveWritebackReady {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveWritebackReadySource {
     FixedFu,
-    #[allow(dead_code)]
     ScalarLoad,
 }
 
