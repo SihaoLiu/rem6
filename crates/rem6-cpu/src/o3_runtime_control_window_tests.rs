@@ -462,7 +462,7 @@ fn outer_control_discard_removes_inner_branch_and_descendant() {
     let (mut runtime, outer, inner, descendant) = issued_nested_control_runtime();
     let outer_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
 
-    runtime.discard_live_control_descendants_from(outer_sequence);
+    runtime.discard_live_control_descendants_from_at(outer_sequence, 0);
 
     assert_eq!(
         runtime
@@ -533,7 +533,7 @@ fn inner_control_discard_preserves_outer_branch() {
     let (mut runtime, outer, inner, _) = issued_nested_control_runtime();
     let inner_sequence = runtime.snapshot().reorder_buffer()[2].sequence();
 
-    runtime.discard_live_control_descendants_from(inner_sequence);
+    runtime.discard_live_control_descendants_from_at(inner_sequence, 0);
 
     let instructions = runtime
         .live_speculative_executions
@@ -552,7 +552,7 @@ fn middle_control_discard_removes_only_inner_control() {
     let middle_sequence = rob[2].sequence();
     let inner_sequence = rob[3].sequence();
 
-    runtime.discard_live_control_descendants_from(middle_sequence);
+    runtime.discard_live_control_descendants_from_at(middle_sequence, 0);
 
     assert_eq!(
         runtime
@@ -821,7 +821,7 @@ fn discarding_control_descendants_removes_younger_rename_state() {
         .unwrap();
     assert_eq!(runtime.live_speculative_executions.len(), 3);
 
-    runtime.discard_live_control_descendants_from(branch_sequence);
+    runtime.discard_live_control_descendants_from_at(branch_sequence, 0);
 
     let snapshot = runtime.snapshot();
     assert_eq!(

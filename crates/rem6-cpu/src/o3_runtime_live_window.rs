@@ -432,25 +432,6 @@ impl O3RuntimeState {
         });
     }
 
-    pub(super) fn retain_live_speculative_executions<F>(&mut self, mut keep: F)
-    where
-        F: FnMut(&O3LiveSpeculativeExecution) -> bool,
-    {
-        let mut retained = Vec::with_capacity(self.live_speculative_executions.len());
-        for execution in self
-            .live_speculative_executions
-            .drain(..)
-            .collect::<Vec<_>>()
-        {
-            if keep(&execution) {
-                retained.push(execution);
-            } else {
-                self.remove_live_writeback_sequence(execution.sequence);
-            }
-        }
-        self.live_speculative_executions = retained;
-    }
-
     pub(super) fn retain_live_speculative_executions_at<F>(&mut self, mut keep: F, now: u64)
     where
         F: FnMut(&O3LiveSpeculativeExecution) -> bool,

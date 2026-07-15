@@ -324,21 +324,6 @@ impl O3RuntimeState {
         ))
     }
 
-    #[allow(dead_code)]
-    pub(super) fn take_live_speculative_issue_timing(
-        &mut self,
-        entry: O3ReorderBufferEntry,
-        execution: &RiscvCpuExecutionEvent,
-        consumed_requests: &[MemoryRequestId],
-    ) -> Option<(u64, u64)> {
-        let timing =
-            self.take_live_speculative_issue_timing_at(entry, execution, consumed_requests, 0);
-        if timing.is_none() {
-            self.discard_all_writeback_reservations();
-        }
-        timing
-    }
-
     pub(super) fn take_live_speculative_issue_timing_at(
         &mut self,
         entry: O3ReorderBufferEntry,
@@ -385,12 +370,6 @@ impl O3RuntimeState {
         !self.live_control_window_sequences.is_empty()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
-        self.discard_all_writeback_reservations();
-        self.discard_live_control_descendant_rows_from(branch_sequence);
-    }
-
     pub(crate) fn discard_live_control_descendants_from_at(
         &mut self,
         branch_sequence: u64,
@@ -400,24 +379,6 @@ impl O3RuntimeState {
             self.discard_future_writeback_from_sequence(descendant_sequence, now);
         }
         self.discard_live_control_descendant_rows_from_at(branch_sequence, now);
-    }
-
-    #[allow(dead_code)]
-    fn discard_live_control_descendant_rows_from(&mut self, branch_sequence: u64) {
-        self.snapshot
-            .reorder_buffer
-            .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
-        self.live_scalar_memory_younger_sequences
-            .retain(|sequence| *sequence <= branch_sequence);
-        self.retain_live_speculative_executions(|execution| execution.sequence <= branch_sequence);
-        self.live_control_dependencies
-            .retain(|sequence, _| *sequence <= branch_sequence);
-        self.live_control_window_sequences
-            .retain(|sequence| *sequence <= branch_sequence);
-        self.live_retired_instructions
-            .retain(|instruction| instruction.sequence <= branch_sequence);
-        self.stats
-            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }
 
     fn discard_live_control_descendant_rows_from_at(&mut self, branch_sequence: u64, now: u64) {

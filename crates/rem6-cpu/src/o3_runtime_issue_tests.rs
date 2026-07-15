@@ -209,10 +209,11 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
         .find(|entry| entry.pc() == Address::new(MUL_PC))
         .unwrap();
     assert_eq!(
-        runtime.take_live_speculative_issue_timing(
+        runtime.take_live_speculative_issue_timing_at(
             dependent_entry,
             &dependent_event,
-            &[request(12)]
+            &[request(12)],
+            0
         ),
         Some((31, 32)),
         "exact fetch identity must consume scheduler-owned issue and admitted writeback ticks"

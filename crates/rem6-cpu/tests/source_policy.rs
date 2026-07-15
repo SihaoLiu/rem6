@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
-const MAX_O3_RUNTIME_ROOT_LINES: usize = 1700;
+const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -634,6 +634,164 @@ fn o3_runtime_control_window_lives_in_focused_module() {
 }
 
 #[test]
+fn o3_runtime_error_lives_in_focused_module_with_stable_public_exports() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root =
+        production_rust_source(&fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap());
+    let public_api =
+        production_rust_source(&fs::read_to_string(crate_dir.join("src/public_api.rs")).unwrap());
+    let module_path = crate_dir.join("src/o3_runtime_error.rs");
+
+    assert!(
+        root.contains("mod o3_runtime_error;"),
+        "src/o3_runtime.rs must privately own the focused O3 runtime error module"
+    );
+    assert!(
+        !root.contains("pub mod o3_runtime_error;"),
+        "src/o3_runtime_error.rs must stay private behind the existing o3_runtime public path"
+    );
+    assert!(
+        root.contains("pub use o3_runtime_error::O3RuntimeError;"),
+        "src/o3_runtime.rs must preserve the public o3_runtime::O3RuntimeError path"
+    );
+    assert!(
+        public_api.contains("O3RuntimeError"),
+        "crate public API must continue re-exporting O3RuntimeError"
+    );
+    assert!(
+        module_path.exists(),
+        "O3 runtime error ownership belongs in src/o3_runtime_error.rs"
+    );
+
+    let module = production_rust_source(&fs::read_to_string(&module_path).unwrap());
+    for anchor in [
+        "pub enum O3RuntimeError",
+        "impl fmt::Display for O3RuntimeError",
+        "impl Error for O3RuntimeError",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_error.rs is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "src/o3_runtime.rs still owns `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn o3_runtime_tests_live_in_sibling_test_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
+    let module_path = crate_dir.join("src/o3_runtime_tests.rs");
+
+    assert!(
+        root.contains("#[cfg(test)]\n#[path = \"o3_runtime_tests.rs\"]\nmod o3_runtime_tests;"),
+        "src/o3_runtime.rs must declare its sibling test-only module"
+    );
+    assert!(
+        !root.contains("mod tests {"),
+        "src/o3_runtime.rs must not keep the former inline cfg(test) tests body"
+    );
+    assert!(
+        module_path.exists(),
+        "former inline O3 runtime tests belong in src/o3_runtime_tests.rs"
+    );
+
+    let module = fs::read_to_string(&module_path).unwrap();
+    for anchor in [
+        "mod pending_data;",
+        "fn o3_issue_width_defaults_to_shared_cpu_default(",
+        "fn failed_store_conditional_stats_count_failed_operation(",
+        "fn branch_repair_stats_checkpoint_round_trips_current_payload(",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_tests.rs is missing former inline test body anchor `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn production_rust_source_has_no_dead_code_allowances() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut offenders = Vec::new();
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        if production_allows_dead_code(&source) {
+            offenders.push(relative.display().to_string());
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "production Rust source must not use #[allow(dead_code)]: {}",
+        offenders.join(", ")
+    );
+}
+
+#[test]
+fn o3_control_window_has_no_obsolete_zero_tick_wrappers() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut offenders = Vec::new();
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        for name in [
+            "take_live_speculative_issue_timing",
+            "discard_live_control_descendants_from",
+            "discard_live_control_descendant_rows_from",
+            "retain_live_speculative_executions",
+            "remove_live_writeback_sequence",
+        ] {
+            if production_defines_exact_function(&source, name) {
+                offenders.push(format!("{} defines {name}(", relative.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "obsolete non-time-aware O3 control-window wrappers remain: {}",
+        offenders.join(", ")
+    );
+}
+
+fn production_defines_exact_function(source: &str, name: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "fn" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((function_name, name_end)) = rust_identifier_at(&chars, name_start) {
+                if function_name == name {
+                    let after_name = skip_rust_whitespace(&chars, name_end);
+                    if matches!(chars.get(after_name), Some('(' | '<')) {
+                        return true;
+                    }
+                }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+#[test]
 fn o3_store_forwarding_policy_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
@@ -775,6 +933,211 @@ fn production_after_tests() {}
     }
 }
 
+#[test]
+fn source_policy_helper_detects_dead_code_allowance_variants() {
+    for source in [
+        "#[allow(dead_code)]\nfn production_owner() {}\n",
+        "#![allow(dead_code)]\nfn production_owner() {}\n",
+        "#[allow( dead_code , unused )]\nfn production_owner() {}\n",
+        "#[allow(unused, dead_code, reason = \"legacy\")]\nfn production_owner() {}\n",
+        "#[cfg_attr(feature = \"x\", allow(dead_code))]\nfn production_owner() {}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_allows_dead_code(&production),
+            "failed to detect dead_code allowance in:\n{source}"
+        );
+    }
+
+    for source in [
+        "// #[allow(dead_code)]\nfn production_owner() {}\n",
+        "/* #[allow(dead_code)] */\nfn production_owner() {}\n",
+        "const TEXT: &str = \"#[allow(dead_code)]\";\nfn production_owner() {}\n",
+        "const RAW: &str = r#\"#[allow(dead_code)]\"#;\nfn production_owner() {}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            !production_allows_dead_code(&production),
+            "comment or literal should not count as dead_code allowance:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn source_policy_helper_detects_exact_function_definitions() {
+    for source in [
+        "fn obsolete_name() {}\n",
+        "fn\nobsolete_name() {}\n",
+        "fn obsolete_name<T>() {}\n",
+        "fn\nobsolete_name\n<T>() {}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_defines_exact_function(&production, "obsolete_name"),
+            "failed to detect obsolete function definition in:\n{source}"
+        );
+    }
+
+    let production = production_rust_source(
+        r#"
+obsolete_name();
+let obsolete_name = 1;
+let text = "fn obsolete_name() {}";
+// fn obsolete_name() {}
+/* fn obsolete_name() {} */
+fn obsolete_name_extra() {}
+fn not_obsolete_name() {}
+"#,
+    );
+    assert!(
+        !production_defines_exact_function(&production, "obsolete_name"),
+        "unrelated identifiers, calls, comments, literals, or longer names must not count"
+    );
+}
+
+#[test]
+fn source_policy_helper_classifies_test_only_paths() {
+    for path in [
+        Path::new("src/o3_runtime/tests/pending_data.rs"),
+        Path::new("src/o3_runtime_tests.rs"),
+        Path::new("src/foo_tests.rs"),
+    ] {
+        assert!(
+            is_test_only_rust_source(path),
+            "{} should be test-only",
+            path.display()
+        );
+    }
+
+    for path in [
+        Path::new("src/o3_runtime.rs"),
+        Path::new("src/o3_runtime/test_support.rs"),
+        Path::new("src/foo_test_helpers.rs"),
+    ] {
+        assert!(
+            !is_test_only_rust_source(path),
+            "{} should be production source",
+            path.display()
+        );
+    }
+}
+
+fn production_allows_dead_code(source: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '#' {
+            index += 1;
+            continue;
+        }
+        let mut attribute_start = skip_rust_whitespace(&chars, index + 1);
+        if chars.get(attribute_start) == Some(&'!') {
+            attribute_start = skip_rust_whitespace(&chars, attribute_start + 1);
+        }
+        if chars.get(attribute_start) != Some(&'[') {
+            index += 1;
+            continue;
+        }
+        let Some(attribute_end) = matching_delimiter(&chars, attribute_start, '[', ']') else {
+            index += 1;
+            continue;
+        };
+        if attribute_allows_dead_code(&chars[attribute_start + 1..attribute_end]) {
+            return true;
+        }
+        index = attribute_end + 1;
+    }
+    false
+}
+
+fn attribute_allows_dead_code(chars: &[char]) -> bool {
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "allow" {
+            let open = skip_rust_whitespace(chars, end);
+            if chars.get(open) == Some(&'(') {
+                if let Some(close) = matching_delimiter(chars, open, '(', ')') {
+                    if contains_rust_identifier(&chars[open + 1..close], "dead_code") {
+                        return true;
+                    }
+                    index = close + 1;
+                    continue;
+                }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn contains_rust_identifier(chars: &[char], needle: &str) -> bool {
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == needle {
+            return true;
+        }
+        index = end;
+    }
+    false
+}
+
+fn rust_identifier_at(chars: &[char], index: usize) -> Option<(String, usize)> {
+    let first = *chars.get(index)?;
+    if !is_rust_identifier_start(first) {
+        return None;
+    }
+    let mut end = index + 1;
+    while chars
+        .get(end)
+        .is_some_and(|character| is_rust_identifier_continue(*character))
+    {
+        end += 1;
+    }
+    Some((chars[index..end].iter().collect(), end))
+}
+
+fn is_rust_identifier_start(character: char) -> bool {
+    character == '_' || character.is_ascii_alphabetic()
+}
+
+fn is_rust_identifier_continue(character: char) -> bool {
+    is_rust_identifier_start(character) || character.is_ascii_digit()
+}
+
+fn skip_rust_whitespace(chars: &[char], mut index: usize) -> usize {
+    while chars
+        .get(index)
+        .is_some_and(|character| character.is_whitespace())
+    {
+        index += 1;
+    }
+    index
+}
+
+fn matching_delimiter(chars: &[char], open: usize, left: char, right: char) -> Option<usize> {
+    debug_assert_eq!(chars.get(open), Some(&left));
+    let mut depth = 0;
+    for (index, character) in chars.iter().copied().enumerate().skip(open) {
+        if character == left {
+            depth += 1;
+        } else if character == right {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
 fn production_rust_source(source: &str) -> String {
     let code = rust_code_without_comments_and_literals(source);
     let lines = code.lines().collect::<Vec<_>>();
@@ -907,6 +1270,12 @@ fn push_rust_blank(output: &mut String, character: char) {
 }
 
 fn is_test_only_rust_source(path: &Path) -> bool {
+    if path
+        .components()
+        .any(|component| component.as_os_str() == "tests")
+    {
+        return true;
+    }
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| stem == "tests" || stem.ends_with("_tests"))

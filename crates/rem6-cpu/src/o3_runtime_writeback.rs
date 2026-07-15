@@ -551,10 +551,6 @@ impl O3RuntimeState {
         self.writeback_calendar.prune_before(tick);
     }
 
-    pub(super) fn remove_live_writeback_sequence(&mut self, sequence: u64) {
-        self.writeback_calendar.remove_sequence(sequence);
-    }
-
     pub(super) fn clear_live_writeback_state(&mut self) {
         self.discard_all_writeback_reservations();
     }
