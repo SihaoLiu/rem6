@@ -1113,42 +1113,42 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "--data-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::DataCacheL2ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
                     "--data-cache-l2-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::DataCacheL3ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
                     "--data-cache-l3-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::InstructionCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
                     "--instruction-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::InstructionCacheL2ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
                     "--instruction-cache-l2-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::InstructionCacheL3ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
                     "--instruction-cache-l3-protocol with --cores > 3 requires msi, got {} with {cores} cores",
-                    riscv_data_cache_protocol_name(*protocol)
+                    protocol.as_str()
                 )
             }
             Self::RiscvSeRequiresRiscv => {
@@ -1271,15 +1271,6 @@ impl fmt::Display for Rem6CliError {
                 write!(formatter, "failed to write {}: {error}", path.display())
             }
         }
-    }
-}
-
-const fn riscv_data_cache_protocol_name(protocol: RiscvDataCacheProtocol) -> &'static str {
-    match protocol {
-        RiscvDataCacheProtocol::Msi => "msi",
-        RiscvDataCacheProtocol::Mesi => "mesi",
-        RiscvDataCacheProtocol::Moesi => "moesi",
-        RiscvDataCacheProtocol::Chi => "chi",
     }
 }
 

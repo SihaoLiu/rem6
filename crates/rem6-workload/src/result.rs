@@ -63,6 +63,14 @@ pub enum WorkloadDataCacheProtocol {
 }
 
 impl WorkloadDataCacheProtocol {
+    pub const ALL: [Self; 4] = [Self::Msi, Self::Mesi, Self::Moesi, Self::Chi];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|protocol| protocol.as_str() == value)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Msi => "msi",

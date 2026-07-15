@@ -30,7 +30,6 @@ mod riscv_timing;
 mod trace_replay;
 
 pub use cache::CliCachePrefetcher;
-use cache::{parse_data_cache_protocol, parse_run_data_cache_protocol};
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 use dram::{
@@ -636,7 +635,7 @@ impl Rem6RunConfig {
             .data_cache_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunDataCacheProtocol {
                         value: value.to_string(),
                     }
@@ -647,7 +646,7 @@ impl Rem6RunConfig {
             .data_cache_l2_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunDataCacheL2Protocol {
                         value: value.to_string(),
                     }
@@ -658,7 +657,7 @@ impl Rem6RunConfig {
             .data_cache_l3_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunDataCacheL3Protocol {
                         value: value.to_string(),
                     }
@@ -674,7 +673,7 @@ impl Rem6RunConfig {
             .instruction_cache_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunInstructionCacheProtocol {
                         value: value.to_string(),
                     }
@@ -685,7 +684,7 @@ impl Rem6RunConfig {
             .instruction_cache_l2_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunInstructionCacheL2Protocol {
                         value: value.to_string(),
                     }
@@ -696,7 +695,7 @@ impl Rem6RunConfig {
             .instruction_cache_l3_protocol
             .as_deref()
             .map(|value| {
-                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunInstructionCacheL3Protocol {
                         value: value.to_string(),
                     }
@@ -1039,7 +1038,7 @@ impl Rem6RunConfig {
                 "--data-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunDataCacheProtocol {
                                 value: value.clone(),
                             }
@@ -1048,7 +1047,7 @@ impl Rem6RunConfig {
                 "--data-cache-l2-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_l2_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunDataCacheL2Protocol {
                                 value: value.clone(),
                             }
@@ -1057,7 +1056,7 @@ impl Rem6RunConfig {
                 "--data-cache-l3-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_l3_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunDataCacheL3Protocol {
                                 value: value.clone(),
                             }
@@ -1071,7 +1070,7 @@ impl Rem6RunConfig {
                 "--instruction-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     instruction_cache_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunInstructionCacheProtocol {
                                 value: value.clone(),
                             }
@@ -1080,7 +1079,7 @@ impl Rem6RunConfig {
                 "--instruction-cache-l2-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     instruction_cache_l2_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunInstructionCacheL2Protocol {
                                 value: value.clone(),
                             }
@@ -1089,7 +1088,7 @@ impl Rem6RunConfig {
                 "--instruction-cache-l3-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     instruction_cache_l3_protocol =
-                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunInstructionCacheL3Protocol {
                                 value: value.clone(),
                             }

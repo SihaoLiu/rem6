@@ -66,12 +66,7 @@ impl RiscvTopologySystem {
         &self,
     ) -> BTreeMap<RiscvDataCacheProtocol, ParallelCoherenceRunHistory> {
         let mut histories = BTreeMap::new();
-        for protocol in [
-            RiscvDataCacheProtocol::Msi,
-            RiscvDataCacheProtocol::Mesi,
-            RiscvDataCacheProtocol::Moesi,
-            RiscvDataCacheProtocol::Chi,
-        ] {
+        for protocol in RiscvDataCacheProtocol::ALL {
             let history = self.data_cache_parallel_run_history_for_protocol(protocol);
             if !history.is_empty() {
                 histories.insert(protocol, history);

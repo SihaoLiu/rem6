@@ -216,7 +216,7 @@ impl Rem6GpuRunConfig {
             .data_cache_protocol
             .as_deref()
             .map(|value| {
-                parse_data_cache_protocol(value).ok_or_else(|| {
+                RiscvDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunDataCacheProtocol {
                         value: value.to_string(),
                     }
@@ -352,7 +352,7 @@ impl Rem6GpuRunConfig {
                 "--data-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_protocol =
-                        Some(parse_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(RiscvDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidRunDataCacheProtocol {
                                 value: value.clone(),
                             }
@@ -1320,7 +1320,7 @@ impl Rem6GpuRunArtifact {
         let data_cache_protocol = self
             .config
             .data_cache_protocol()
-            .map(|protocol| format!("\"{}\"", data_cache_protocol_name(protocol)))
+            .map(|protocol| format!("\"{}\"", protocol.as_str()))
             .unwrap_or_else(|| "null".to_string());
         let data_cache_prefetcher = self
             .config
@@ -1590,23 +1590,4 @@ fn validate_positive_u32(name: &str, value: u32) -> Result<u32, Rem6CliError> {
 fn parse_positive_u32(name: &str, value: String) -> Result<u32, Rem6CliError> {
     let parsed = parse_positive_u64(name, value.clone())?;
     u32::try_from(parsed).map_err(|_| execute_error(format!("{name} is too large: {value}")))
-}
-
-fn parse_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> {
-    match value {
-        "msi" => Some(RiscvDataCacheProtocol::Msi),
-        "mesi" => Some(RiscvDataCacheProtocol::Mesi),
-        "moesi" => Some(RiscvDataCacheProtocol::Moesi),
-        "chi" => Some(RiscvDataCacheProtocol::Chi),
-        _ => None,
-    }
-}
-
-fn data_cache_protocol_name(protocol: RiscvDataCacheProtocol) -> &'static str {
-    match protocol {
-        RiscvDataCacheProtocol::Msi => "msi",
-        RiscvDataCacheProtocol::Mesi => "mesi",
-        RiscvDataCacheProtocol::Moesi => "moesi",
-        RiscvDataCacheProtocol::Chi => "chi",
-    }
 }

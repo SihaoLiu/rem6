@@ -1152,17 +1152,8 @@ fn riscv_input_source_json(source: &crate::config::RiscvSeInputSource) -> String
 
 fn optional_riscv_cache_protocol_json(value: Option<RiscvDataCacheProtocol>) -> String {
     value
-        .map(|protocol| format!("\"{}\"", riscv_cache_protocol_name(protocol)))
+        .map(|protocol| format!("\"{}\"", protocol.as_str()))
         .unwrap_or_else(|| "null".to_string())
-}
-
-const fn riscv_cache_protocol_name(protocol: RiscvDataCacheProtocol) -> &'static str {
-    match protocol {
-        RiscvDataCacheProtocol::Msi => "msi",
-        RiscvDataCacheProtocol::Mesi => "mesi",
-        RiscvDataCacheProtocol::Moesi => "moesi",
-        RiscvDataCacheProtocol::Chi => "chi",
-    }
 }
 
 fn optional_cache_prefetcher_json(value: Option<CliCachePrefetcher>) -> String {

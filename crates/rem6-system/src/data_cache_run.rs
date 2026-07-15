@@ -18,6 +18,25 @@ pub enum RiscvDataCacheProtocol {
     Chi,
 }
 
+impl RiscvDataCacheProtocol {
+    pub const ALL: [Self; 4] = [Self::Msi, Self::Mesi, Self::Moesi, Self::Chi];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|protocol| protocol.as_str() == value)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Msi => "msi",
+            Self::Mesi => "mesi",
+            Self::Moesi => "moesi",
+            Self::Chi => "chi",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvDataCacheRunRecord {
     protocol: Option<RiscvDataCacheProtocol>,
@@ -279,12 +298,7 @@ impl RiscvSystemRun {
         &self,
     ) -> BTreeMap<RiscvDataCacheProtocol, ParallelCoherenceRunHistory> {
         let mut histories = BTreeMap::new();
-        for protocol in [
-            RiscvDataCacheProtocol::Msi,
-            RiscvDataCacheProtocol::Mesi,
-            RiscvDataCacheProtocol::Moesi,
-            RiscvDataCacheProtocol::Chi,
-        ] {
+        for protocol in RiscvDataCacheProtocol::ALL {
             let history = self.data_cache_parallel_run_history_for_protocol(protocol);
             if !history.is_empty() {
                 histories.insert(protocol, history);

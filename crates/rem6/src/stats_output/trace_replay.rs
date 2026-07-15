@@ -469,12 +469,7 @@ pub(super) fn emit_trace_replay_data_cache_stats(
         "sim.trace_replay.data_cache.directory_decisions",
         data_cache.directory_decisions,
     )?;
-    for protocol in [
-        WorkloadDataCacheProtocol::Msi,
-        WorkloadDataCacheProtocol::Mesi,
-        WorkloadDataCacheProtocol::Moesi,
-        WorkloadDataCacheProtocol::Chi,
-    ] {
+    for protocol in WorkloadDataCacheProtocol::ALL {
         emit_trace_count(
             stats,
             &format!("sim.trace_replay.data_cache.{}.runs", protocol.as_str()),

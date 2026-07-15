@@ -6,9 +6,8 @@ use rem6_workload::WorkloadDataCacheProtocol;
 use super::{
     load_trace_replay_file_config,
     parse::{parse_number, parse_positive_u64, required_value},
-    parse_data_cache_protocol, trace_replay_file_config_from_args, CliDramMemoryProfile,
-    PowerAnalysisFormat, Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
-    TraceReplayHostEventSpec,
+    trace_replay_file_config_from_args, CliDramMemoryProfile, PowerAnalysisFormat,
+    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector, TraceReplayHostEventSpec,
 };
 use crate::Rem6CliError;
 
@@ -179,7 +178,7 @@ impl Rem6TraceReplayConfig {
             .data_cache_protocol
             .as_deref()
             .map(|value| {
-                parse_data_cache_protocol(value).ok_or_else(|| {
+                WorkloadDataCacheProtocol::parse(value).ok_or_else(|| {
                     Rem6CliError::InvalidTraceReplayDataCacheProtocol {
                         value: value.to_string(),
                     }
@@ -348,7 +347,7 @@ impl Rem6TraceReplayConfig {
                 "--data-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_protocol =
-                        Some(parse_data_cache_protocol(&value).ok_or_else(|| {
+                        Some(WorkloadDataCacheProtocol::parse(&value).ok_or_else(|| {
                             Rem6CliError::InvalidTraceReplayDataCacheProtocol {
                                 value: value.clone(),
                             }
