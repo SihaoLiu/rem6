@@ -287,6 +287,9 @@ pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) payload_bytes: u64,
     pub(crate) restorable: bool,
     pub(crate) live_data_handoff: bool,
+    pub(crate) writeback_width: Option<u64>,
+    pub(crate) reserved_future_completions: Option<u64>,
+    pub(crate) earliest_unpublished_writeback_tick: Option<u64>,
     pub(crate) quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary,
     pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
 }
@@ -309,6 +312,7 @@ pub(crate) struct Rem6ExecutionModeSwitchCheckerSummary {
 
 impl Rem6ExecutionModeStateTransferSummary {
     fn from_transfer(transfer: &ExecutionModeSwitchStateTransfer) -> Self {
+        let o3_writeback = transfer.o3_writeback();
         let components = transfer
             .components()
             .iter()
@@ -322,6 +326,13 @@ impl Rem6ExecutionModeStateTransferSummary {
             payload_bytes: transfer.payload_bytes(),
             restorable: transfer.restorable(),
             live_data_handoff: transfer.live_data_handoff(),
+            writeback_width: o3_writeback
+                .map(|state| u64::try_from(state.width()).unwrap_or(u64::MAX)),
+            reserved_future_completions: o3_writeback.map(|state| {
+                u64::try_from(state.reserved_future_completions()).unwrap_or(u64::MAX)
+            }),
+            earliest_unpublished_writeback_tick: o3_writeback
+                .and_then(|state| state.earliest_unpublished_tick()),
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary::from_gate(
                 transfer.quiescence_gate(),
             ),
@@ -496,6 +507,7 @@ mod tests {
             .as_ref()
             .expect("o3-runtime-state chunk should have O3 decode summary");
         assert!(o3_runtime.decode_error);
+        assert_eq!(o3_runtime.writeback_width, None);
         assert_eq!(o3_runtime.live_retire_gate_request_agent, None);
         assert_eq!(o3_runtime.live_retire_gate_request_sequence, None);
         assert_eq!(o3_runtime.live_retire_gate_ready_tick, None);
@@ -520,6 +532,10 @@ mod tests {
         }
         assert_eq!(
             json.pointer("/components/0/chunks/0/o3_runtime/snapshot_rob_entries"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            json.pointer("/components/0/chunks/0/o3_runtime/writeback_width"),
             Some(&Value::Null)
         );
         assert_eq!(
@@ -689,6 +705,7 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
 pub(crate) struct Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) decode_error: bool,
     pub(crate) checkpoint_version: Option<u64>,
+    pub(crate) writeback_width: Option<u64>,
     pub(crate) live_retire_gate_request_agent: Option<u64>,
     pub(crate) live_retire_gate_request_sequence: Option<u64>,
     pub(crate) live_retire_gate_ready_tick: Option<u64>,
@@ -806,6 +823,7 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
         Self {
             decode_error: true,
             checkpoint_version: None,
+            writeback_width: None,
             live_retire_gate_request_agent: None,
             live_retire_gate_request_sequence: None,
             live_retire_gate_ready_tick: None,
@@ -860,6 +878,7 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
     pub(crate) fn numeric_fields(&self) -> Vec<(&'static str, Option<u64>)> {
         vec![
             ("checkpoint_version", self.checkpoint_version),
+            ("writeback_width", self.writeback_width),
             (
                 "live_retire_gate_request_agent",
                 self.live_retire_gate_request_agent,
@@ -1043,7 +1062,9 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
 fn o3_runtime_checkpoint_stat_aggregation(
     name: &str,
 ) -> Option<Rem6HostO3RuntimeCheckpointStatAggregation> {
-    if matches!(
+    if name == "writeback_width" {
+        Some(Rem6HostO3RuntimeCheckpointStatAggregation::Max)
+    } else if matches!(
         name,
         "stats_issue_cycles"
             | "stats_issued_rows"

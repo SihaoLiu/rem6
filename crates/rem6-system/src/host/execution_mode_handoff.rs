@@ -14,8 +14,9 @@ impl ExecutionModeSwitchStateTransfer {
         manifest: &rem6_checkpoint::CheckpointManifest,
         target: &ExecutionModeTarget,
         checker: Option<crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary>,
+        o3_writeback: Option<rem6_cpu::RiscvO3WritebackDebugState>,
     ) -> Self {
-        let mut transfer = Self::from_manifest(manifest, target, checker);
+        let mut transfer = Self::from_manifest(manifest, target, checker, o3_writeback);
         transfer.restorable = false;
         transfer.live_data_handoff = true;
         transfer.quiescence_gate.validated = false;
@@ -28,6 +29,10 @@ impl ExecutionModeSwitchStateTransfer {
 
     pub const fn live_data_handoff(&self) -> bool {
         self.live_data_handoff
+    }
+
+    pub const fn o3_writeback(&self) -> Option<rem6_cpu::RiscvO3WritebackDebugState> {
+        self.o3_writeback
     }
 }
 

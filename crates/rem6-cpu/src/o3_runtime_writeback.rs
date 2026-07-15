@@ -42,6 +42,39 @@ impl O3RuntimeWritebackReservation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvO3WritebackDebugState {
+    width: usize,
+    reserved_future_completions: usize,
+    earliest_unpublished_tick: Option<u64>,
+}
+
+impl RiscvO3WritebackDebugState {
+    const fn new(
+        width: usize,
+        reserved_future_completions: usize,
+        earliest_unpublished_tick: Option<u64>,
+    ) -> Self {
+        Self {
+            width,
+            reserved_future_completions,
+            earliest_unpublished_tick,
+        }
+    }
+
+    pub const fn width(self) -> usize {
+        self.width
+    }
+
+    pub const fn reserved_future_completions(self) -> usize {
+        self.reserved_future_completions
+    }
+
+    pub const fn earliest_unpublished_tick(self) -> Option<u64> {
+        self.earliest_unpublished_tick
+    }
+}
+
 impl From<O3WritebackReservation> for O3RuntimeWritebackReservation {
     fn from(reservation: O3WritebackReservation) -> Self {
         Self {
@@ -192,18 +225,16 @@ impl O3WritebackReservationCalendar {
             .retain(|admitted_tick, _| *admitted_tick >= tick);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn reserved_future_count(&self, now: u64) -> usize {
         self.by_tick
             .iter()
-            .filter(|(tick, _)| **tick >= now)
+            .filter(|(tick, _)| **tick > now)
             .map(|(_, reservations)| reservations.len())
             .sum()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn earliest_unpublished_tick(&self, now: u64) -> Option<u64> {
-        self.by_tick.keys().copied().find(|tick| *tick >= now)
+        self.by_tick.keys().copied().find(|tick| *tick > now)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -267,6 +298,18 @@ struct O3WritebackPortStatsDelta {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn writeback_debug_state(&self, now: u64) -> RiscvO3WritebackDebugState {
+        RiscvO3WritebackDebugState::new(
+            self.snapshot
+                .pending_state()
+                .writeback()
+                .policy()
+                .writeback_width(),
+            self.writeback_calendar.reserved_future_count(now),
+            self.writeback_calendar.earliest_unpublished_tick(now),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn writeback_reservation(&self, sequence: u64) -> Option<O3WritebackReservation> {
         self.writeback_calendar.reservation(sequence)

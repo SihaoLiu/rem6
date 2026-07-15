@@ -546,6 +546,235 @@ fn rem6_run_o3_writeback_port_checkpoint_boundary() {
     }
 }
 
+#[test]
+fn rem6_run_host_switch_preserves_o3_writeback_port_ticks() {
+    use super::switch::{
+        event_u64_field, live_mode_transfer_event, live_mode_transfer_event_if_present,
+        live_o3_mode_transfer_binary, run_live_o3_mode_transfer_with_args,
+        LIVE_O3_MODE_TRANSFER_INHERITED_PCS,
+    };
+
+    let path = live_o3_mode_transfer_binary("host-switch-o3-writeback-port");
+    let writeback_args = ["--riscv-o3-writeback-width", "1"];
+    let baseline = run_live_o3_mode_transfer_with_args(&path, &[], &writeback_args);
+    let baseline_div = live_mode_transfer_event(&baseline, LIVE_O3_MODE_TRANSFER_INHERITED_PCS[0]);
+    let delayed_writeback_tick = event_u64_field(baseline_div, "writeback_tick");
+    let switch_tick = delayed_writeback_tick
+        .checked_sub(4)
+        .expect("delayed writeback tick is positive");
+    assert!(switch_tick > event_u64_field(baseline_div, "issue_tick"));
+    assert!(switch_tick < delayed_writeback_tick);
+    let baseline_ticks = LIVE_O3_MODE_TRANSFER_INHERITED_PCS.map(|pc| {
+        let event = live_mode_transfer_event(&baseline, pc);
+        (
+            pc,
+            event_u64_field(event, "issue_tick"),
+            event_u64_field(event, "writeback_tick"),
+            event_u64_field(event, "commit_tick"),
+        )
+    });
+    assert!(
+        baseline_ticks
+            .iter()
+            .all(|(_, issue_tick, _, _)| *issue_tick <= switch_tick),
+        "all inherited rows must issue before the switch at {switch_tick}: {baseline_ticks:?}"
+    );
+    let baseline_post_window = live_mode_transfer_event(&baseline, "0x8000001c");
+    let post_window_issue_tick = event_u64_field(baseline_post_window, "issue_tick");
+    let switched_max_tick = post_window_issue_tick.saturating_add(5);
+    assert!(
+        switched_max_tick > post_window_issue_tick,
+        "switched timing run must extend beyond the baseline post-window issue boundary: \
+         max tick {switched_max_tick}, issue tick {post_window_issue_tick}"
+    );
+    let switched_max_tick_arg = switched_max_tick.to_string();
+    let switched_args = [
+        "--riscv-o3-writeback-width",
+        "1",
+        "--max-tick",
+        switched_max_tick_arg.as_str(),
+    ];
+    let switched =
+        run_live_o3_mode_transfer_with_args(&path, &[(switch_tick, "timing")], &switched_args);
+    let switched_final_tick = switched
+        .pointer("/simulation/final_tick")
+        .and_then(Value::as_u64)
+        .expect("switched final tick");
+    assert_eq!(switched_final_tick, switched_max_tick);
+    assert!(switched_final_tick > post_window_issue_tick);
+    assert_eq!(
+        switched
+            .pointer("/cores/0/registers/x7")
+            .and_then(Value::as_str),
+        Some("0xa"),
+        "the post-window instruction must retire in timing mode: {switched}"
+    );
+    assert_eq!(
+        switched
+            .pointer("/host_actions/execution_modes/0/mode")
+            .and_then(Value::as_str),
+        Some("timing"),
+        "the run must stop before the later guest mode transition: {switched}"
+    );
+    let switches = switched
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution-mode switches: {switched}"));
+    assert_eq!(
+        switches.len(),
+        2,
+        "the run must include only the initial detailed switch and scheduled timing switch: \
+         {switches:?}"
+    );
+    let timing_switch = switches
+        .iter()
+        .find(|switch| {
+            switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+        })
+        .unwrap_or_else(|| panic!("missing detailed-to-timing switch: {switched}"));
+    let timing_action_tick = timing_switch
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .expect("detailed-to-timing switch tick");
+    assert!(timing_action_tick > event_u64_field(baseline_div, "issue_tick"));
+    assert!(timing_action_tick < delayed_writeback_tick);
+    let transfer = timing_switch
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing detailed-to-timing transfer: {timing_switch}"));
+    assert_eq!(
+        transfer.pointer("/restorable").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        transfer
+            .pointer("/live_data_handoff")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        transfer.pointer("/writeback_width").and_then(Value::as_u64),
+        Some(1),
+        "transfer should expose the resident width-one writeback policy: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/reserved_future_completions")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0),
+        "transfer should expose future resident writeback reservations: {transfer}"
+    );
+    assert_eq!(
+        transfer
+            .pointer("/earliest_unpublished_writeback_tick")
+            .and_then(Value::as_u64),
+        Some(delayed_writeback_tick),
+        "the first future resident reservation should be the delayed DIV row: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/components")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|component| {
+                component
+                    .pointer("/chunks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .all(|chunk| {
+                chunk.pointer("/name").and_then(Value::as_str)
+                    != Some(rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
+            }),
+        "pure-FU transfer must keep resident calendar authority without a live-data chunk: {transfer}"
+    );
+
+    let reserved_future_completions = transfer
+        .pointer("/reserved_future_completions")
+        .and_then(Value::as_u64)
+        .expect("reserved future completions");
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_writeback_width",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_reserved_future_completions",
+            "Count",
+            reserved_future_completions,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_earliest_unpublished_writeback_tick",
+            "Tick",
+            delayed_writeback_tick,
+        ),
+        (
+            "sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_writeback_width",
+            "Count",
+            1,
+        ),
+        (
+            "sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_reserved_future_completions",
+            "Count",
+            reserved_future_completions,
+        ),
+        (
+            "sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_earliest_unpublished_writeback_tick",
+            "Tick",
+            delayed_writeback_tick,
+        ),
+    ] {
+        assert_json_stat(&switched, path, unit, value, "monotonic");
+    }
+
+    let runtime = checkpoint_runtime(transfer);
+    assert_eq!(
+        runtime.pointer("/decode_error").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        runtime.pointer("/writeback_width").and_then(Value::as_u64),
+        Some(1),
+        "decoded O3 runtime checkpoint should expose writeback width: {runtime}"
+    );
+    for field in [
+        "stats_writeback_port_cycles",
+        "stats_writeback_port_admitted_rows",
+        "stats_writeback_port_deferred_rows",
+        "stats_writeback_port_deferred_row_cycles",
+        "stats_writeback_port_max_ready_rows_per_cycle",
+        "stats_writeback_port_max_deferred_rows",
+    ] {
+        assert!(
+            runtime
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_u64)
+                .is_some(),
+            "decoded transfer checkpoint should expose {field}: {runtime}"
+        );
+    }
+
+    for pc in LIVE_O3_MODE_TRANSFER_INHERITED_PCS {
+        let baseline_event = live_mode_transfer_event(&baseline, pc);
+        let switched_event = live_mode_transfer_event(&switched, pc);
+        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
+            assert_eq!(
+                event_u64_field(switched_event, field),
+                event_u64_field(baseline_event, field),
+                "field {field} diverged for inherited row {pc}"
+            );
+        }
+    }
+    assert!(
+        live_mode_transfer_event_if_present(&switched, "0x8000001c").is_none(),
+        "timing mode must not add the first instruction beyond inherited detailed O3 authority"
+    );
+}
+
 fn writeback_json(writeback_width: usize) -> Value {
     let path = writeback_binary();
     writeback_json_for_path(&path, writeback_width, 1, 600, &[])

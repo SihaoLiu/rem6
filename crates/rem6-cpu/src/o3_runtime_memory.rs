@@ -438,12 +438,8 @@ impl O3RuntimeState {
                 .iter_mut()
                 .find(|entry| entry.sequence() == live.sequence)?;
             rob.mark_ready_at(publication_tick);
-            live.commit_tick = Some(
-                publication_tick.max(
-                    self.last_scalar_memory_commit_tick
-                        .unwrap_or(publication_tick),
-                ),
-            );
+            live.commit_tick =
+                Some(publication_tick.max(self.last_live_commit_tick.unwrap_or(publication_tick)));
         }
         live.event_taken = true;
         Some(event)
@@ -478,7 +474,7 @@ impl O3RuntimeState {
         self.pending_data_accesses.remove(&fetch_request);
         let live = self.live_scalar_memories.remove(0);
         if live.outcome == O3LiveScalarMemoryOutcome::Completed {
-            self.last_scalar_memory_commit_tick = live.commit_tick;
+            self.last_live_commit_tick = live.commit_tick;
         }
         Some(live)
     }

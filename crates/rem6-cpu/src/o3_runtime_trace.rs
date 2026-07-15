@@ -387,6 +387,15 @@ impl O3RuntimeTraceRecord {
         self.commit_tick
     }
 
+    pub(crate) fn set_commit_tick(&mut self, tick: u64) -> bool {
+        let commit_tick = tick.max(self.writeback_tick());
+        if commit_tick <= self.commit_tick {
+            return false;
+        }
+        self.commit_tick = commit_tick;
+        true
+    }
+
     pub fn issue_to_writeback_ticks(self) -> u64 {
         self.writeback_tick().saturating_sub(self.issue_tick())
     }

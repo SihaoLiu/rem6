@@ -10,7 +10,8 @@ use rem6_cpu::{
     InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError, O3PipelineError,
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats, RiscvCore,
-    RiscvHartRunState, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
+    RiscvHartRunState, RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
+    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
     RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
@@ -706,6 +707,18 @@ impl RiscvCoreCheckpointBank {
             })
     }
 
+    pub(crate) fn o3_writeback_debug_state_for_target(
+        &self,
+        target: &ExecutionModeTarget,
+        now: u64,
+    ) -> Option<RiscvO3WritebackDebugState> {
+        Some(
+            self.port_for_execution_mode_target(target)?
+                .core()
+                .o3_writeback_debug_state(now),
+        )
+    }
+
     pub(crate) fn o3_runtime_snapshots(
         &self,
     ) -> Vec<(CpuId, O3RuntimeStats, O3RuntimeSnapshot, u64)> {
@@ -777,19 +790,41 @@ impl RiscvCoreCheckpointBank {
         registry: &mut CheckpointRegistry,
         target: &ExecutionModeTarget,
     ) -> Result<bool, CheckpointError> {
-        self.capture_target_for_execution_mode_handoff_into(registry, target)
+        self.capture_target_for_execution_mode_handoff_into_impl(registry, target, false)
     }
 
     pub(crate) fn capture_target_for_execution_mode_handoff_into(
         &self,
         registry: &mut CheckpointRegistry,
         target: &ExecutionModeTarget,
+        now: u64,
+    ) -> Result<bool, CheckpointError> {
+        let has_resident_writeback = self
+            .o3_writeback_debug_state_for_target(target, now)
+            .is_some_and(|state| state.reserved_future_completions() > 0);
+        self.capture_target_for_execution_mode_handoff_into_impl(
+            registry,
+            target,
+            has_resident_writeback,
+        )
+    }
+
+    fn capture_target_for_execution_mode_handoff_into_impl(
+        &self,
+        registry: &mut CheckpointRegistry,
+        target: &ExecutionModeTarget,
+        allow_without_data_handoff: bool,
     ) -> Result<bool, CheckpointError> {
         let Some(target_port) = self.port_for_execution_mode_target(target) else {
             return Ok(false);
         };
-        let Some(handoff) = target_port.core.capture_o3_live_data_handoff() else {
-            return Ok(false);
+        let handoff = match target_port.core.capture_o3_live_data_handoff_status() {
+            RiscvO3LiveDataHandoffCapture::Captured(handoff) => Some(handoff),
+            RiscvO3LiveDataHandoffCapture::NoLiveDataAuthority if allow_without_data_handoff => {
+                None
+            }
+            RiscvO3LiveDataHandoffCapture::NoLiveDataAuthority
+            | RiscvO3LiveDataHandoffCapture::Rejected => return Ok(false),
         };
 
         let record = target_port.capture_record();
@@ -799,11 +834,13 @@ impl RiscvCoreCheckpointBank {
         }
         target_port.register(&mut staged)?;
         target_port.write_record(&mut staged, &record)?;
-        staged.write_chunk(
-            &target_port.component,
-            RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
-            handoff.encode(),
-        )?;
+        if let Some(handoff) = handoff {
+            staged.write_chunk(
+                &target_port.component,
+                RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+                handoff.encode(),
+            )?;
+        }
         *registry = staged;
         Ok(true)
     }

@@ -21,6 +21,9 @@ mod translated_multicore_scalar_load;
 #[path = "switch/translated_scalar_load.rs"]
 mod translated_scalar_load;
 
+pub(super) const LIVE_O3_MODE_TRANSFER_INHERITED_PCS: [&str; 4] =
+    ["0x8000000c", "0x80000010", "0x80000014", "0x80000018"];
+
 #[test]
 fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {
     let path = live_o3_mode_transfer_binary("host-switch-live-o3-fu-authority");
@@ -118,12 +121,12 @@ fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {
         "the inherited gate must drain before detailed admission resumes: {resumed_runtime}"
     );
 
-    for (pc, baseline_event) in [
-        ("0x8000000c", baseline_div),
-        ("0x80000010", baseline_first),
-        ("0x80000014", baseline_second),
-        ("0x80000018", baseline_third),
-    ] {
+    for (pc, baseline_event) in LIVE_O3_MODE_TRANSFER_INHERITED_PCS.into_iter().zip([
+        baseline_div,
+        baseline_first,
+        baseline_second,
+        baseline_third,
+    ]) {
         let transferred = live_mode_transfer_event(&json, pc);
         assert_eq!(
             event_u64_field(transferred, "issue_tick"),
@@ -141,12 +144,8 @@ fn rem6_run_host_switch_transfers_live_o3_fu_authority_until_retirement() {
             "mode transfer must preserve the original O3 commit tick for {pc}: {transferred}"
         );
     }
-    let transferred_events = [
-        live_mode_transfer_event(&json, "0x8000000c"),
-        live_mode_transfer_event(&json, "0x80000010"),
-        live_mode_transfer_event(&json, "0x80000014"),
-        live_mode_transfer_event(&json, "0x80000018"),
-    ];
+    let transferred_events =
+        LIVE_O3_MODE_TRANSFER_INHERITED_PCS.map(|pc| live_mode_transfer_event(&json, pc));
     assert!(transferred_events.windows(2).all(|events| {
         event_u64_field(events[0], "commit_tick") <= event_u64_field(events[1], "commit_tick")
     }));
@@ -1083,7 +1082,15 @@ fn assert_trace_switch_component_chunk(switch: &Value, component: &str, chunk: &
     );
 }
 
-fn run_live_o3_mode_transfer(path: &Path, switches: &[(u64, &str)]) -> Value {
+pub(super) fn run_live_o3_mode_transfer(path: &Path, switches: &[(u64, &str)]) -> Value {
+    run_live_o3_mode_transfer_with_args(path, switches, &[])
+}
+
+pub(super) fn run_live_o3_mode_transfer_with_args(
+    path: &Path,
+    switches: &[(u64, &str)],
+    extra_args: &[&str],
+) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
     command.args([
         "run",
@@ -1105,6 +1112,7 @@ fn run_live_o3_mode_transfer(path: &Path, switches: &[(u64, &str)]) -> Value {
         "--dump-memory",
         "0x80000080:12",
     ]);
+    command.args(extra_args);
     for (tick, mode) in switches {
         command.args(["--host-switch-cpu-mode", &format!("{tick}:cpu0:{mode}")]);
     }
@@ -1118,7 +1126,7 @@ fn run_live_o3_mode_transfer(path: &Path, switches: &[(u64, &str)]) -> Value {
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
-fn live_o3_mode_transfer_binary(name: &str) -> std::path::PathBuf {
+pub(super) fn live_o3_mode_transfer_binary(name: &str) -> std::path::PathBuf {
     let data_start = 128_i32;
     let mut words = vec![
         m5op(M5_SWITCH_CPU),
@@ -1149,12 +1157,15 @@ fn live_o3_mode_transfer_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
-fn live_mode_transfer_event<'a>(json: &'a Value, pc: &str) -> &'a Value {
+pub(super) fn live_mode_transfer_event<'a>(json: &'a Value, pc: &str) -> &'a Value {
     live_mode_transfer_event_if_present(json, pc)
         .unwrap_or_else(|| panic!("missing O3 event at {pc}: {json}"))
 }
 
-fn live_mode_transfer_event_if_present<'a>(json: &'a Value, pc: &str) -> Option<&'a Value> {
+pub(super) fn live_mode_transfer_event_if_present<'a>(
+    json: &'a Value,
+    pc: &str,
+) -> Option<&'a Value> {
     json.pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
         .and_then(|events| {
@@ -1164,7 +1175,7 @@ fn live_mode_transfer_event_if_present<'a>(json: &'a Value, pc: &str) -> Option<
         })
 }
 
-fn event_u64_field(event: &Value, field: &str) -> u64 {
+pub(super) fn event_u64_field(event: &Value, field: &str) -> u64 {
     event
         .pointer(&format!("/{field}"))
         .and_then(Value::as_u64)

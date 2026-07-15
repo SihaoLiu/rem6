@@ -1,4 +1,7 @@
-use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
+use rem6_checkpoint::{
+    CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
+};
+use rem6_cpu::RiscvO3WritebackDebugState;
 use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 
 use crate::scheduler_checkpoint::{
@@ -11,14 +14,50 @@ use crate::{
 
 use super::{
     execution_mode_handoff::supports_live_data_handoff, BorrowedSchedulerRestoreMode,
-    ExecutionModeSwitchStateTransfer, SystemActionExecutor,
-    EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
+    ExecutionModeSwitchCheckerGate, ExecutionModeSwitchQuiescenceGate,
+    ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
+    SystemActionExecutor, EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct AttachedCheckpointCapture {
     borrowed_scheduler: bool,
     live_data_handoff: bool,
+}
+
+impl ExecutionModeSwitchStateTransfer {
+    pub(super) fn from_manifest(
+        manifest: &CheckpointManifest,
+        target: &ExecutionModeTarget,
+        checker: Option<crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary>,
+        o3_writeback: Option<RiscvO3WritebackDebugState>,
+    ) -> Self {
+        let summary = manifest.summary();
+        let components = manifest
+            .states()
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::from_state)
+            .collect();
+        Self {
+            manifest_label: manifest.label().to_string(),
+            manifest_tick: manifest.tick(),
+            component_count: summary.component_count() as u64,
+            chunk_count: summary.chunk_count() as u64,
+            payload_bytes: summary.payload_bytes() as u64,
+            restorable: true,
+            live_data_handoff: false,
+            o3_writeback,
+            quiescence_gate: ExecutionModeSwitchQuiescenceGate {
+                validated: true,
+                target: target.clone(),
+                captured_component_count: summary.component_count() as u64,
+                captured_chunk_count: summary.chunk_count() as u64,
+                captured_payload_bytes: summary.payload_bytes() as u64,
+                checker: checker.map(ExecutionModeSwitchCheckerGate::from_summary),
+            },
+            components,
+        }
+    }
 }
 
 impl SystemActionExecutor {
@@ -96,10 +135,16 @@ impl SystemActionExecutor {
             .riscv_checkpoints
             .as_ref()
             .and_then(|checkpoints| checkpoints.checker_summary_for_target(target));
+        let o3_writeback = self.riscv_checkpoints.as_ref().and_then(|checkpoints| {
+            checkpoints.o3_writeback_debug_state_for_target(target, record.tick())
+        });
         if capture.live_data_handoff {
             Ok(Some(
                 ExecutionModeSwitchStateTransfer::from_live_data_handoff_manifest(
-                    &manifest, target, checker,
+                    &manifest,
+                    target,
+                    checker,
+                    o3_writeback,
                 ),
             ))
         } else {
@@ -107,7 +152,10 @@ impl SystemActionExecutor {
             self.captured_manifests
                 .insert(manifest.label().to_string(), manifest.clone());
             Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
-                &manifest, target, checker,
+                &manifest,
+                target,
+                checker,
+                o3_writeback,
             )))
         }
     }
@@ -135,7 +183,7 @@ impl SystemActionExecutor {
         }
         let live_data_handoff = match (self.riscv_checkpoints.as_ref(), live_data_handoff_target) {
             (Some(bank), Some(target)) => bank
-                .capture_target_for_execution_mode_handoff_into(staged_checkpoints, target)
+                .capture_target_for_execution_mode_handoff_into(staged_checkpoints, target, tick)
                 .map_err(SystemError::Checkpoint)?,
             _ => false,
         };

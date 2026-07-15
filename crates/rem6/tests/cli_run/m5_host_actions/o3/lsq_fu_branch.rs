@@ -306,6 +306,9 @@ pub(super) fn assert_completed_mixed_branch_window(json: &Value) {
     assert!(ordered
         .windows(2)
         .all(|events| event_u64(events[0], "commit_tick") <= event_u64(events[1], "commit_tick")));
+    for event in ordered {
+        assert!(event_u64(event, "commit_tick") >= event_u64(event, "writeback_tick"));
+    }
     assert!(event_at_pc_if_present(json, WRONG_STORE_PC).is_none());
 
     let data = json

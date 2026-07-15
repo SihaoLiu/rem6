@@ -509,6 +509,33 @@ pub(crate) fn host_action_trace_execution_mode_switch_stats(
             latest_target_stats,
         );
     }
+    if let Some(transfer) = execution_mode_switches
+        .iter()
+        .rev()
+        .find_map(|switch| switch.state_transfer.as_ref())
+    {
+        for (path, unit, value) in [
+            (
+                "execution_mode_switch.state_transfer.latest_writeback_width",
+                "Count",
+                transfer.writeback_width,
+            ),
+            (
+                "execution_mode_switch.state_transfer.latest_reserved_future_completions",
+                "Count",
+                transfer.reserved_future_completions,
+            ),
+            (
+                "execution_mode_switch.state_transfer.latest_earliest_unpublished_writeback_tick",
+                "Tick",
+                transfer.earliest_unpublished_writeback_tick,
+            ),
+        ] {
+            if let Some(value) = value {
+                stats.push(Rem6HostActionTraceStat::new(path.to_string(), unit, value));
+            }
+        }
+    }
     stats.push(Rem6HostActionTraceStat::count(
         "execution_mode_switch.quiescence.validated".to_string(),
         quiescence_validated,
@@ -795,8 +822,12 @@ fn execution_mode_switch_record(
 }
 
 fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> String {
+    let writeback_width = optional_u64_json(transfer.writeback_width);
+    let reserved_future_completions = optional_u64_json(transfer.reserved_future_completions);
+    let earliest_unpublished_writeback_tick =
+        optional_u64_json(transfer.earliest_unpublished_writeback_tick);
     format!(
-        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"quiescence_gate\":{},\"components\":{}}}",
+        "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"writeback_width\":{},\"reserved_future_completions\":{},\"earliest_unpublished_writeback_tick\":{},\"quiescence_gate\":{},\"components\":{}}}",
         json_escape(&transfer.manifest_label),
         transfer.manifest_tick,
         transfer.component_count,
@@ -804,9 +835,18 @@ fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> Stri
         transfer.payload_bytes,
         transfer.restorable,
         transfer.live_data_handoff,
+        writeback_width,
+        reserved_future_completions,
+        earliest_unpublished_writeback_tick,
         quiescence_gate_json(&transfer.quiescence_gate),
         checkpoint_components_to_json(&transfer.components),
     )
+}
+
+fn optional_u64_json(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn quiescence_gate_json(gate: &Rem6ExecutionModeQuiescenceGateSummary) -> String {
@@ -881,6 +921,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn execution_mode_switch_latest_writeback_stats_preserve_units_and_optional_suppression() {
+        let stats = host_action_trace_execution_mode_switch_stats(
+            &[writeback_switch_summary(Some((1, 3, 29)))],
+            |segment| segment.to_string(),
+        );
+        for (path, unit, value) in [
+            (
+                "execution_mode_switch.state_transfer.latest_writeback_width",
+                "Count",
+                1,
+            ),
+            (
+                "execution_mode_switch.state_transfer.latest_reserved_future_completions",
+                "Count",
+                3,
+            ),
+            (
+                "execution_mode_switch.state_transfer.latest_earliest_unpublished_writeback_tick",
+                "Tick",
+                29,
+            ),
+        ] {
+            let stat = stats
+                .iter()
+                .find(|stat| stat.path() == path)
+                .unwrap_or_else(|| panic!("missing {path}: {stats:?}"));
+            assert_eq!(stat.unit(), unit);
+            assert_eq!(stat.value(), value);
+        }
+
+        let suppressed = host_action_trace_execution_mode_switch_stats(
+            &[writeback_switch_summary(None)],
+            |segment| segment.to_string(),
+        );
+        assert!(suppressed.iter().all(|stat| {
+            !stat
+                .path()
+                .starts_with("execution_mode_switch.state_transfer.latest_writeback_")
+                && !stat.path().starts_with(
+                    "execution_mode_switch.state_transfer.latest_reserved_future_completions",
+                )
+                && !stat.path().starts_with(
+                    "execution_mode_switch.state_transfer.latest_earliest_unpublished_writeback_tick",
+                )
+        }));
+    }
+
+    #[test]
     fn checkpoint_restore_latest_target_zeros_historical_targets() {
         let stats = host_action_trace_checkpoint_restore_stats(
             &[restore_summary("cpu0"), restore_summary("cpu1")],
@@ -946,6 +1034,46 @@ mod tests {
                     o3_live_data_handoff: None,
                 }],
             }],
+        }
+    }
+
+    fn writeback_switch_summary(
+        writeback: Option<(u64, u64, u64)>,
+    ) -> Rem6HostExecutionModeSwitchSummary {
+        let (writeback_width, reserved_future_completions, earliest_unpublished_writeback_tick) =
+            writeback
+                .map(|(width, reserved, tick)| (Some(width), Some(reserved), Some(tick)))
+                .unwrap_or((None, None, None));
+        Rem6HostExecutionModeSwitchSummary {
+            tick: 29,
+            event: 1,
+            source: 0,
+            target: "cpu0".to_string(),
+            previous_mode: Some("detailed"),
+            mode: "timing",
+            stats_epoch: 0,
+            stats_reset_tick: 0,
+            state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
+                manifest_label: "switch-cpu0-29".to_string(),
+                manifest_tick: 29,
+                component_count: 1,
+                chunk_count: 1,
+                payload_bytes: 1,
+                restorable: false,
+                live_data_handoff: true,
+                writeback_width,
+                reserved_future_completions,
+                earliest_unpublished_writeback_tick,
+                quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
+                    validated: false,
+                    target: "cpu0".to_string(),
+                    captured_component_count: 1,
+                    captured_chunk_count: 1,
+                    captured_payload_bytes: 1,
+                    checker: None,
+                },
+                components: Vec::new(),
+            }),
         }
     }
 

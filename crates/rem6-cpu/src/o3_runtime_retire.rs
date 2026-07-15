@@ -229,13 +229,16 @@ impl O3RuntimeState {
         }
 
         if observation.drains_runtime_rob {
-            self.snapshot.reorder_buffer.drain(0..observation.commits);
-            self.retain_live_scalar_memory_younger_sequences_in_rob();
+            let commit_tick =
+                self.commit_live_rob_prefix(observation.commits, observation.commit_tick);
+            trace_record.set_commit_tick(commit_tick);
         }
         let lsq_commits = self
             .snapshot
             .load_store_queue
-            .partition_point(|entry| entry.is_completed());
+            .iter()
+            .take_while(|entry| entry.is_completed())
+            .count();
         self.snapshot.load_store_queue.drain(0..lsq_commits);
         let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
         self.stats.set_rename_map_entries(rename_map_entries);
@@ -287,24 +290,63 @@ impl O3RuntimeState {
         &mut self,
         instruction: &rem6_isa_riscv::RiscvInstruction,
     ) -> O3ScalarIntegerDependencyObservation {
+        let source_physical_registers = o3_scalar_integer_source_registers(instruction)
+            .into_iter()
+            .filter(|register| !register.is_zero())
+            .filter_map(|register| {
+                self.snapshot
+                    .rename_map
+                    .iter()
+                    .find(|entry| {
+                        entry.register_class() == O3RegisterClass::Integer
+                            && entry.architectural() == u32::from(register.index())
+                    })
+                    .map(|entry| entry.physical())
+            })
+            .collect::<Vec<_>>();
+        self.record_scalar_integer_dependency_sources(source_physical_registers)
+    }
+
+    pub(super) fn record_live_staged_scalar_integer_dependencies(
+        &mut self,
+        instruction: &rem6_isa_riscv::RiscvInstruction,
+        rob_index: usize,
+    ) -> O3ScalarIntegerDependencyObservation {
+        let source_physical_registers = o3_scalar_integer_source_registers(instruction)
+            .into_iter()
+            .filter(|register| !register.is_zero())
+            .filter_map(|register| {
+                let architectural = u32::from(register.index());
+                self.snapshot.reorder_buffer[..rob_index]
+                    .iter()
+                    .rev()
+                    .filter_map(|entry| staged_rename_entry(*entry))
+                    .find(|entry| {
+                        entry.register_class() == O3RegisterClass::Integer
+                            && entry.architectural() == architectural
+                    })
+                    .or_else(|| {
+                        self.snapshot.rename_map.iter().copied().find(|entry| {
+                            entry.register_class() == O3RegisterClass::Integer
+                                && entry.architectural() == architectural
+                        })
+                    })
+                    .map(|entry| entry.physical())
+            })
+            .collect::<Vec<_>>();
+        self.record_scalar_integer_dependency_sources(source_physical_registers)
+    }
+
+    fn record_scalar_integer_dependency_sources(
+        &mut self,
+        source_physical_registers: impl IntoIterator<Item = O3PhysicalRegisterId>,
+    ) -> O3ScalarIntegerDependencyObservation {
         let mut producer_physical_registers = BTreeSet::new();
         let mut newly_observed_producers = 0_u64;
         let mut consumers = 0_u64;
-        for register in o3_scalar_integer_source_registers(instruction) {
-            if register.is_zero() {
-                continue;
-            }
-            let Some(source) = self.snapshot.rename_map.iter().find(|entry| {
-                entry.register_class() == O3RegisterClass::Integer
-                    && entry.architectural() == u32::from(register.index())
-            }) else {
-                continue;
-            };
-            producer_physical_registers.insert(source.physical());
-            if self
-                .dependency_producers_with_consumers
-                .insert(source.physical())
-            {
+        for physical in source_physical_registers {
+            producer_physical_registers.insert(physical);
+            if self.dependency_producers_with_consumers.insert(physical) {
                 newly_observed_producers = newly_observed_producers.saturating_add(1);
                 self.stats.record_iew_dependency_producer();
             }
@@ -356,6 +398,40 @@ impl O3RuntimeState {
                 .physical();
         }
         self.install_rename_map_entry(register_class, architectural)
+    }
+
+    pub(super) fn commit_live_rob_prefix(&mut self, commits: usize, commit_tick: u64) -> u64 {
+        if commits == 0 {
+            return commit_tick;
+        }
+        let commit_tick = commit_tick.max(self.last_live_commit_tick.unwrap_or(commit_tick));
+        let committed = self.snapshot.reorder_buffer[..commits].to_vec();
+        for entry in &committed {
+            if let Some(destination) = staged_rename_entry(*entry) {
+                self.publish_live_rename_entry(destination);
+            }
+        }
+        for instruction in &mut self.live_retired_instructions {
+            if committed
+                .iter()
+                .any(|entry| entry.sequence() == instruction.sequence)
+            {
+                instruction.commit_tick = instruction.commit_tick.max(commit_tick);
+            }
+        }
+        for (index, record) in self.trace_records.iter_mut().enumerate() {
+            if committed
+                .iter()
+                .any(|entry| entry.sequence() == record.sequence())
+                && record.set_commit_tick(commit_tick)
+            {
+                self.dirty_trace_record_indices.insert(index);
+            }
+        }
+        self.snapshot.reorder_buffer.drain(0..commits);
+        self.retain_live_scalar_memory_younger_sequences_in_rob();
+        self.last_live_commit_tick = Some(commit_tick);
+        commit_tick
     }
 
     pub(super) fn allocate_sequence(&mut self) -> u64 {

@@ -7,7 +7,7 @@ use rem6_memory::{Address, AgentId, MemoryRequestId};
 use rem6_mmio::MmioRoute;
 use rem6_transport::MemoryRouteId;
 
-use crate::RiscvCore;
+use crate::{RiscvCore, RiscvCoreState};
 
 mod codec;
 #[cfg(test)]
@@ -45,6 +45,13 @@ pub use partial_overlay::{
 pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 
 const MAX_ROWS: usize = 4;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvO3LiveDataHandoffCapture {
+    NoLiveDataAuthority,
+    Captured(RiscvO3LiveDataHandoff),
+    Rejected,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvO3LiveDataHandoffOperation {
@@ -784,7 +791,44 @@ fn build_completed_partial_overlay_handoff(
 
 impl RiscvCore {
     pub fn capture_o3_live_data_handoff(&self) -> Option<RiscvO3LiveDataHandoff> {
+        match self.capture_o3_live_data_handoff_status() {
+            RiscvO3LiveDataHandoffCapture::Captured(handoff) => Some(handoff),
+            RiscvO3LiveDataHandoffCapture::NoLiveDataAuthority
+            | RiscvO3LiveDataHandoffCapture::Rejected => None,
+        }
+    }
+
+    pub fn capture_o3_live_data_handoff_status(&self) -> RiscvO3LiveDataHandoffCapture {
         let state = self.state.lock().expect("riscv core lock");
+        if !Self::has_o3_live_data_authority(&state) {
+            return RiscvO3LiveDataHandoffCapture::NoLiveDataAuthority;
+        }
+        Self::capture_o3_live_data_handoff_from_state(&state)
+            .map(RiscvO3LiveDataHandoffCapture::Captured)
+            .unwrap_or(RiscvO3LiveDataHandoffCapture::Rejected)
+    }
+
+    fn has_o3_live_data_authority(state: &RiscvCoreState) -> bool {
+        !state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
+            || !state.outstanding_data.is_empty()
+            || !state.buffered_o3_stores.is_empty()
+            || !state.pending_data_translations.is_empty()
+            || !state.ready_translated_data.is_empty()
+            || state
+                .data_translation
+                .as_ref()
+                .is_some_and(|frontend| !frontend.is_empty())
+            || state.events.iter().any(|event| {
+                event.execution().memory_access().is_some()
+                    && !state
+                        .issued_data_for_fetches
+                        .contains(&event.fetch().request_id())
+            })
+    }
+
+    fn capture_o3_live_data_handoff_from_state(
+        state: &RiscvCoreState,
+    ) -> Option<RiscvO3LiveDataHandoff> {
         if state
             .data_translation
             .as_ref()

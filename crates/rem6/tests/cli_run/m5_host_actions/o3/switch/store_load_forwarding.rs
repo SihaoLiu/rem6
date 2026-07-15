@@ -751,6 +751,42 @@ fn rem6_run_host_switch_rejects_partial_forwarded_store_load_with_younger_row() 
 }
 
 #[test]
+fn rem6_run_host_switch_rejects_ineligible_data_with_future_fu_row() {
+    const ROUTE_DELAY: u64 = 32;
+    let path = partial_forwarded_store_load_with_future_fu_binary(
+        "host-switch-partial-forwarded-store-load-future-fu-row",
+    );
+    let baseline = run_store_load_handoff_with_delay(&path, "direct", None, 3, ROUTE_DELAY);
+    let store = event_at_pc(&baseline, OLDER_STORE_PC);
+    let load = event_at_pc(&baseline, YOUNGER_LOAD_PC);
+    let future_fu = event_at_pc(&baseline, INDEPENDENT_YOUNGER_ALU_PC);
+    let issue_tick = event_u64(future_fu, "issue_tick");
+    let writeback_tick = event_u64(future_fu, "writeback_tick");
+    let first_response =
+        event_u64(load, "lsq_data_response_tick").min(event_u64(store, "lsq_data_response_tick"));
+    let switch_tick = issue_tick.saturating_add(1);
+    assert!(
+        switch_tick.saturating_add(1) < writeback_tick
+            && switch_tick.saturating_add(1) < first_response,
+        "switch action must see both rejected data authority and a future FU reservation: issue={issue_tick}, switch={switch_tick}, writeback={writeback_tick}, response={first_response}"
+    );
+
+    let output =
+        store_load_handoff_command_with_delay(&path, "direct", Some(switch_tick), 3, ROUTE_DELAY)
+            .output()
+            .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("checkpoint component is not quiescent: cpu0"),
+        "mixed rejected-data and future-FU handoff must fail closed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn rem6_run_host_switch_rejects_multi_source_partial_forwarded_store_load_with_younger_row() {
     const ROUTE_DELAY: u64 = 32;
     let path = multi_source_partial_forwarded_store_load_with_younger_binary(
@@ -1477,6 +1513,28 @@ fn partial_forwarded_store_load_with_younger_binary(name: &str) -> std::path::Pa
         s_type(1, 11, 10, 0b000),
         i_type(0, 10, 0b010, 12, 0x03),
         i_type(7, 0, 0x0, 14, 0x13),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([0x8033_2211, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn partial_forwarded_store_load_with_future_fu_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 256_i32;
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0x5a, 0, 0x0, 11, 0x13),
+        s_type(1, 11, 10, 0b000),
+        i_type(0, 10, 0b010, 12, 0x03),
+        r_type(1, 0, 0, 0b100, 14, 0x33),
     ]);
     append_host_stop(&mut words);
     while words.len() * 4 < data_start as usize {

@@ -365,6 +365,9 @@ fn host_action_live_data_handoff_stats_mark_non_restorable_transfer() {
     let transfer = switch.state_transfer.as_mut().unwrap();
     transfer.restorable = false;
     transfer.live_data_handoff = true;
+    transfer.writeback_width = Some(1);
+    transfer.reserved_future_completions = Some(3);
+    transfer.earliest_unpublished_writeback_tick = Some(29);
     let summary = Rem6HostActionSummary {
         total_action_count: 1,
         execution_mode_switch_count: 1,
@@ -397,6 +400,31 @@ fn host_action_live_data_handoff_stats_mark_non_restorable_transfer() {
         ),
     ] {
         assert_snapshot_stat(&snapshot, path, "Count", StatResetPolicy::Monotonic, value);
+    }
+    for (path, unit, value) in [
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_writeback_width",
+            "Count",
+            1,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_reserved_future_completions",
+            "Count",
+            3,
+        ),
+        (
+            "sim.host_actions.execution_mode_switch_state_transfer.latest_earliest_unpublished_writeback_tick",
+            "Tick",
+            29,
+        ),
+    ] {
+        assert_snapshot_stat(
+            &snapshot,
+            path,
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        );
     }
 }
 
@@ -494,6 +522,9 @@ fn switch_with_transfer_component_chunk(
             payload_bytes,
             restorable: true,
             live_data_handoff: false,
+            writeback_width: None,
+            reserved_future_completions: None,
+            earliest_unpublished_writeback_tick: None,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: "cpu0".to_string(),
@@ -536,6 +567,9 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
             payload_bytes: 24,
             restorable: true,
             live_data_handoff: false,
+            writeback_width: None,
+            reserved_future_completions: None,
+            earliest_unpublished_writeback_tick: None,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: "cpu0".to_string(),
@@ -583,6 +617,9 @@ fn switch_with_uncaptured_quiescence(target: &str) -> Rem6HostExecutionModeSwitc
             payload_bytes: 0,
             restorable: true,
             live_data_handoff: false,
+            writeback_width: None,
+            reserved_future_completions: None,
+            earliest_unpublished_writeback_tick: None,
             quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary {
                 validated: true,
                 target: target.to_string(),

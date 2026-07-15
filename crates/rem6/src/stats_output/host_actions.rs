@@ -660,6 +660,29 @@ pub(super) fn emit_run_host_action_stats(
                 0
             },
         )?;
+        for (name, unit, value) in [
+            ("latest_writeback_width", "Count", transfer.writeback_width),
+            (
+                "latest_reserved_future_completions",
+                "Count",
+                transfer.reserved_future_completions,
+            ),
+            (
+                "latest_earliest_unpublished_writeback_tick",
+                "Tick",
+                transfer.earliest_unpublished_writeback_tick,
+            ),
+        ] {
+            if let Some(value) = value {
+                increment_stat(
+                    stats,
+                    &format!("sim.host_actions.execution_mode_switch_state_transfer.{name}"),
+                    unit,
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
+        }
         let latest_transfer_target = stat_path_segment(&switch.target);
         for target_path in switch_state_transfer_target_stats.transfers.keys() {
             let is_latest = target_path == &latest_transfer_target;

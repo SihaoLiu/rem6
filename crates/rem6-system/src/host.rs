@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_checkpoint::{
     CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
 };
+use rem6_cpu::RiscvO3WritebackDebugState;
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
@@ -57,6 +58,7 @@ pub struct ExecutionModeSwitchStateTransfer {
     payload_bytes: u64,
     restorable: bool,
     live_data_handoff: bool,
+    o3_writeback: Option<RiscvO3WritebackDebugState>,
     quiescence_gate: ExecutionModeSwitchQuiescenceGate,
     components: Vec<ExecutionModeSwitchStateTransferComponent>,
 }
@@ -95,37 +97,6 @@ pub struct ExecutionModeSwitchStateTransferChunk {
 }
 
 impl ExecutionModeSwitchStateTransfer {
-    fn from_manifest(
-        manifest: &CheckpointManifest,
-        target: &ExecutionModeTarget,
-        checker: Option<RiscvCoreCheckerSnapshotSummary>,
-    ) -> Self {
-        let summary = manifest.summary();
-        let components = manifest
-            .states()
-            .iter()
-            .map(ExecutionModeSwitchStateTransferComponent::from_state)
-            .collect();
-        Self {
-            manifest_label: manifest.label().to_string(),
-            manifest_tick: manifest.tick(),
-            component_count: summary.component_count() as u64,
-            chunk_count: summary.chunk_count() as u64,
-            payload_bytes: summary.payload_bytes() as u64,
-            restorable: true,
-            live_data_handoff: false,
-            quiescence_gate: ExecutionModeSwitchQuiescenceGate {
-                validated: true,
-                target: target.clone(),
-                captured_component_count: summary.component_count() as u64,
-                captured_chunk_count: summary.chunk_count() as u64,
-                captured_payload_bytes: summary.payload_bytes() as u64,
-                checker: checker.map(ExecutionModeSwitchCheckerGate::from_summary),
-            },
-            components,
-        }
-    }
-
     pub fn manifest_label(&self) -> &str {
         &self.manifest_label
     }

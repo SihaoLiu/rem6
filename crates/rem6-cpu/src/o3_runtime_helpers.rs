@@ -100,7 +100,9 @@ pub(super) fn validate_live_staged_rob_metadata(
 pub(super) fn rob_commit_boundary(snapshot: &O3RuntimeSnapshot) -> (usize, bool) {
     let commits = snapshot
         .reorder_buffer
-        .partition_point(|entry| entry.is_ready());
+        .iter()
+        .take_while(|entry| entry.is_ready())
+        .count();
     (commits, commits < snapshot.reorder_buffer.len())
 }
 

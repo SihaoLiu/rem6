@@ -175,12 +175,13 @@ impl O3RuntimeState {
             consumed_requests,
             retire_tick,
         );
-        let dependencies = self.record_scalar_integer_dependencies(&execution.instruction());
+        let dependencies =
+            self.record_live_staged_scalar_integer_dependencies(&execution.instruction(), index);
         let rename_destination = staged_rename_entry(entry).filter(|destination| {
             execution_writes_rename_destination(execution.execution(), *destination)
         });
-        if let Some(rename_destination) = rename_destination {
-            self.publish_live_rename_entry(rename_destination);
+        if rename_destination.is_none() && entry.rename_destination().is_some() {
+            self.snapshot.reorder_buffer[index].clear_live_staged_destination();
         }
 
         let admitted_writeback_tick =
@@ -190,8 +191,7 @@ impl O3RuntimeState {
         let (rob_commits, _) = rob_commit_boundary(&self.snapshot);
         let rob_commit_blocked = rob_commits <= index;
         let commit_tick = rob_commit_tick(&self.snapshot, rob_commits).unwrap_or(retire_tick);
-        self.snapshot.reorder_buffer.drain(0..rob_commits);
-        self.retain_live_scalar_memory_younger_sequences_in_rob();
+        let commit_tick = self.commit_live_rob_prefix(rob_commits, commit_tick);
         let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
         self.stats.set_rename_map_entries(rename_map_entries);
 
@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(trace.writeback_tick(), 10);
         assert_eq!(trace.admitted_writeback_tick(), Some(10));
         assert_eq!(trace.fu_latency_cycles(), 0);
-        assert_eq!(trace.commit_tick(), 10);
+        assert_eq!(trace.commit_tick(), 29);
     }
 
     #[test]
@@ -1028,7 +1028,7 @@ mod tests {
         assert_eq!(trace.writeback_tick(), 10);
         assert_eq!(trace.admitted_writeback_tick(), Some(10));
         assert_eq!(trace.fu_latency_cycles(), 0);
-        assert_eq!(trace.commit_tick(), 10);
+        assert_eq!(trace.commit_tick(), 29);
     }
 
     #[test]

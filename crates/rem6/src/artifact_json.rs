@@ -1575,8 +1575,12 @@ impl Rem6ExecutionModeStateTransferSummary {
             .collect::<Vec<_>>()
             .join(",");
         let quiescence_gate = self.quiescence_gate.to_json();
+        let writeback_width = optional_count_json(self.writeback_width);
+        let reserved_future_completions = optional_count_json(self.reserved_future_completions);
+        let earliest_unpublished_writeback_tick =
+            optional_tick_json(self.earliest_unpublished_writeback_tick);
         format!(
-            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
+            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"writeback_width\":{},\"reserved_future_completions\":{},\"earliest_unpublished_writeback_tick\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
             json_escape(&self.manifest_label),
             self.manifest_tick,
             self.component_count,
@@ -1584,6 +1588,9 @@ impl Rem6ExecutionModeStateTransferSummary {
             self.payload_bytes,
             self.restorable,
             self.live_data_handoff,
+            writeback_width,
+            reserved_future_completions,
+            earliest_unpublished_writeback_tick,
             quiescence_gate,
             components,
         )

@@ -783,6 +783,14 @@ impl RiscvCore {
         );
     }
 
+    pub fn o3_writeback_debug_state(&self, now: u64) -> RiscvO3WritebackDebugState {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .writeback_debug_state(now)
+    }
+
     pub fn set_branch_predictor_kind(&self, kind: RiscvBranchPredictorKind) {
         self.state
             .lock()

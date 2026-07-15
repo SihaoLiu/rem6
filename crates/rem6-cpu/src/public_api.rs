@@ -84,7 +84,7 @@ pub use crate::o3_pipeline::{
 pub use crate::o3_runtime::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
-    O3RuntimeWritebackReservation,
+    O3RuntimeWritebackReservation, RiscvO3WritebackDebugState,
 };
 pub use crate::o3_runtime_trace::{
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
@@ -120,8 +120,9 @@ pub use crate::riscv_execution_event::{
     RiscvTournamentBranchUpdate,
 };
 pub use crate::riscv_execution_mode_handoff::{
-    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffCompletedPartialOverlay,
-    RiscvO3LiveDataHandoffEntry, RiscvO3LiveDataHandoffError, RiscvO3LiveDataHandoffForwardedRow,
+    RiscvO3LiveDataHandoff, RiscvO3LiveDataHandoffCapture,
+    RiscvO3LiveDataHandoffCompletedPartialOverlay, RiscvO3LiveDataHandoffEntry,
+    RiscvO3LiveDataHandoffError, RiscvO3LiveDataHandoffForwardedRow,
     RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffOwnership,
     RiscvO3LiveDataHandoffPartialOverlay, RiscvO3LiveDataHandoffPartialOverlaySource,
     RiscvO3LiveDataHandoffTarget, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,

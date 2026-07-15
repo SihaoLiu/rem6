@@ -58,6 +58,11 @@ impl O3ReorderBufferEntry {
         self.ready_tick = ready_tick;
     }
 
+    pub(super) fn clear_live_staged_destination(&mut self) {
+        self.destination = None;
+        self.rename_destination = None;
+    }
+
     pub const fn sequence(self) -> u64 {
         self.sequence
     }

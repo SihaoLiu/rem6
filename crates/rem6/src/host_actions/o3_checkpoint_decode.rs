@@ -28,6 +28,16 @@ pub(super) fn decode_o3_runtime_checkpoint_chunk(
             .get(O3_RUNTIME_CHECKPOINT_VERSION_OFFSET)
             .copied()
             .map(u64::from),
+        writeback_width: Some(
+            u64::try_from(
+                snapshot
+                    .pending_state()
+                    .writeback()
+                    .policy()
+                    .writeback_width(),
+            )
+            .unwrap_or(u64::MAX),
+        ),
         live_retire_gate_request_agent: live_retire_gate_request
             .map(|request| u64::from(request.agent().get())),
         live_retire_gate_request_sequence: live_retire_gate_request

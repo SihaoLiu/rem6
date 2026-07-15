@@ -1018,8 +1018,8 @@ fn o3_runtime_trace_dates_partial_rob_drain_at_committed_ready_tick() {
     assert!(trace[1].writeback_tick() > older_ready_tick);
     assert_eq!(trace[1].rob_commits_at_tick(), 1);
     assert!(trace[1].rob_commit_blocked());
-    assert_eq!(trace[1].commit_tick(), older_ready_tick);
-    assert!(trace[1].commit_tick() < trace[1].writeback_tick());
+    assert_eq!(trace[1].commit_tick(), trace[1].writeback_tick());
+    assert!(trace[1].commit_tick() >= older_ready_tick);
     assert_eq!(trace[1].writeback_to_commit_ticks(), 0);
 }
 

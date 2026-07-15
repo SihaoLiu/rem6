@@ -75,6 +75,262 @@ fn scalar_load_stages_predicted_branch_and_two_descendants() {
 }
 
 #[test]
+fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let load = scalar_load_event();
+    let first = addi(5, 0, 1);
+    let second = addi(6, 0, 2);
+    let branch = beq(0, 0);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert_eq!(
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), first),
+                (Address::new(0x8008), second),
+                (Address::new(0x800c), branch),
+            ],
+        ),
+        3
+    );
+
+    for (pc, next_pc, instruction, sequence, value) in [
+        (0x8004, 0x8008, first, 11, Some((5, 1))),
+        (0x8008, 0x800c, second, 12, Some((6, 2))),
+        (0x800c, 0x8014, branch, 13, None),
+    ] {
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(pc), instruction)
+            .expect("independent younger row should issue while the load is pending");
+        let writes = value
+            .map(|(register, value)| vec![RegisterWrite::new(reg(register), value)])
+            .unwrap_or_default();
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(sequence)],
+                20 + sequence,
+                RiscvExecutionRecord::new(instruction, pc, next_pc, writes, None),
+            )
+            .unwrap();
+    }
+    assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
+
+    let mut retired_younger = Vec::new();
+    for (pc, next_pc, instruction, sequence, value, retire_tick) in [
+        (0x8004, 0x8008, first, 11, Some((5, 1)), 40),
+        (0x8008, 0x800c, second, 12, Some((6, 2)), 41),
+    ] {
+        let writes = value
+            .map(|(register, value)| vec![RegisterWrite::new(reg(register), value)])
+            .unwrap_or_default();
+        let event = RiscvCpuExecutionEvent::new(
+            fetch_event(pc, sequence),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, next_pc, writes, None),
+        );
+        assert_eq!(event.execution().pc(), pc);
+        runtime.retire_live_staged_instruction(&event, &[request(sequence)], retire_tick);
+        assert!(runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .any(|entry| entry.pc() == Address::new(0x8000)));
+        retired_younger.push(event);
+    }
+
+    let mut completed_load = load.clone();
+    completed_load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert_eq!(runtime.live_scalar_memories.len(), 1);
+    let load_sequence = runtime.live_scalar_memories[0].sequence;
+    assert!(runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .any(|entry| entry.sequence() == load_sequence));
+    assert!(runtime
+        .snapshot()
+        .load_store_queue()
+        .iter()
+        .any(|entry| entry.sequence() == load_sequence));
+    assert!(runtime
+        .complete_live_scalar_memory_response(
+            &completed_load,
+            request(20),
+            50,
+            19,
+            Some(&[0x2a, 0, 0, 0]),
+        )
+        .unwrap());
+    let retired_load = runtime
+        .take_ready_live_scalar_memory_event(u64::MAX)
+        .expect("completed load should retire");
+    runtime.record_retired_instruction_with_trace(&retired_load, true);
+
+    let branch_event = RiscvCpuExecutionEvent::new(
+        fetch_event(0x800c, 13),
+        branch,
+        RiscvExecutionRecord::new(branch, 0x800c, 0x8014, Vec::new(), None),
+    );
+    runtime.retire_live_staged_instruction(&branch_event, &[request(13)], 53);
+    for event in &retired_younger {
+        runtime.record_retired_instruction_with_trace(event, true);
+    }
+    runtime.record_retired_instruction_with_trace(&branch_event, true);
+
+    let ordered = [0x8000, 0x8004, 0x8008, 0x800c].map(|pc| {
+        runtime
+            .trace_records()
+            .iter()
+            .copied()
+            .find(|record| record.pc() == Address::new(pc))
+            .unwrap_or_else(|| panic!("missing trace row for {pc:#x}"))
+    });
+    assert!(ordered
+        .iter()
+        .all(|record| record.commit_tick() >= record.writeback_tick()));
+    assert!(
+        ordered
+            .windows(2)
+            .all(|records| records[0].commit_tick() <= records[1].commit_tick()),
+        "commit ticks: {:?}",
+        ordered.map(O3RuntimeTraceRecord::commit_tick)
+    );
+}
+
+#[test]
+fn blocked_prefix_dependency_chain_uses_preceding_staged_rename_across_stats_reset() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    let committed_x5 = O3PhysicalRegisterId::new(40);
+    runtime.publish_live_rename_entry(O3RenameMapEntry::new(
+        O3RegisterClass::Integer,
+        5,
+        committed_x5,
+    ));
+    runtime.next_physical_register = 41;
+
+    let load = scalar_load_event();
+    let producer = addi(5, 5, 1);
+    let consumer = addi(6, 5, 1);
+    let younger_writer = addi(5, 0, 2);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert_eq!(
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), producer),
+                (Address::new(0x8008), consumer),
+                (Address::new(0x800c), younger_writer),
+            ],
+        ),
+        3
+    );
+
+    let staged = runtime.snapshot().reorder_buffer().to_vec();
+    let producer_destination = staged_rename_entry(staged[1])
+        .expect("producer staged destination")
+        .physical();
+    let younger_destination = staged_rename_entry(staged[3])
+        .expect("younger staged destination")
+        .physical();
+    assert_ne!(producer_destination, committed_x5);
+    assert_ne!(producer_destination, younger_destination);
+
+    for (pc, next_pc, instruction, sequence, write) in [
+        (0x8004, 0x8008, producer, 11, RegisterWrite::new(reg(5), 1)),
+        (0x8008, 0x800c, consumer, 12, RegisterWrite::new(reg(6), 2)),
+        (
+            0x800c,
+            0x8010,
+            younger_writer,
+            13,
+            RegisterWrite::new(reg(5), 2),
+        ),
+    ] {
+        let candidate = runtime
+            .live_speculative_issue_candidate(Address::new(pc), instruction)
+            .expect("staged dependency chain should issue before the load completes");
+        runtime
+            .record_live_speculative_execution(
+                candidate,
+                &[request(sequence)],
+                20 + sequence,
+                RiscvExecutionRecord::new(instruction, pc, next_pc, vec![write], None),
+            )
+            .unwrap();
+    }
+
+    let producer_event = RiscvCpuExecutionEvent::new(
+        fetch_event(0x8004, 11),
+        producer,
+        RiscvExecutionRecord::new(
+            producer,
+            0x8004,
+            0x8008,
+            vec![RegisterWrite::new(reg(5), 1)],
+            None,
+        ),
+    );
+    runtime.retire_live_staged_instruction(&producer_event, &[request(11)], 40);
+    let retired_producer = runtime
+        .live_retired_instructions
+        .iter()
+        .find(|instruction| instruction.request == request(11))
+        .expect("blocked producer retirement record");
+    assert_eq!(
+        retired_producer.iew_dependency_producer_registers,
+        [committed_x5]
+    );
+    assert_eq!(retired_producer.iew_dependency_producers, 1);
+    assert_eq!(retired_producer.iew_dependency_consumers, 1);
+    assert_eq!(runtime.stats().iew_producer_insts(), 1);
+    assert_eq!(runtime.stats().iew_consumer_insts(), 1);
+
+    runtime.reset_stats();
+    assert_eq!(runtime.stats().iew_producer_insts(), 1);
+    assert_eq!(runtime.stats().iew_consumer_insts(), 1);
+
+    let consumer_event = RiscvCpuExecutionEvent::new(
+        fetch_event(0x8008, 12),
+        consumer,
+        RiscvExecutionRecord::new(
+            consumer,
+            0x8008,
+            0x800c,
+            vec![RegisterWrite::new(reg(6), 2)],
+            None,
+        ),
+    );
+    runtime.retire_live_staged_instruction(&consumer_event, &[request(12)], 41);
+    assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
+    assert!(runtime.snapshot().reorder_buffer()[1].is_ready());
+    assert!(runtime.snapshot().reorder_buffer()[2].is_ready());
+    let retired_consumer = runtime
+        .live_retired_instructions
+        .iter()
+        .find(|instruction| instruction.request == request(12))
+        .expect("blocked consumer retirement record");
+    assert_eq!(
+        retired_consumer.iew_dependency_producer_registers,
+        [producer_destination]
+    );
+    assert_eq!(retired_consumer.iew_dependency_producers, 1);
+    assert_eq!(retired_consumer.iew_dependency_consumers, 1);
+    assert_eq!(runtime.stats().iew_producer_insts(), 2);
+    assert_eq!(runtime.stats().iew_consumer_insts(), 2);
+
+    runtime.reset_stats();
+    assert_eq!(runtime.stats().iew_producer_insts(), 2);
+    assert_eq!(runtime.stats().iew_consumer_insts(), 2);
+    assert_eq!(
+        runtime.dependency_producers_with_consumers,
+        BTreeSet::from([committed_x5, producer_destination])
+    );
+}
+
+#[test]
 fn nested_control_dependencies_follow_immediate_branch() {
     let (runtime, _, _, _) = nested_control_runtime();
     let snapshot = runtime.snapshot();

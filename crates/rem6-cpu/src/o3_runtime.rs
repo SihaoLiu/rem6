@@ -84,10 +84,10 @@ pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
-pub use o3_runtime_writeback::O3RuntimeWritebackReservation;
 pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
 #[cfg(test)]
 pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
+pub use o3_runtime_writeback::{O3RuntimeWritebackReservation, RiscvO3WritebackDebugState};
 pub(crate) use o3_source_operands::{
     o3_direct_conditional_sources, o3_predicted_scalar_descendant_operands,
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
@@ -219,7 +219,7 @@ pub struct O3RuntimeState {
     scalar_memory_window_limit: usize,
     scalar_memory_window_limit_explicit: bool,
     issue_width: usize,
-    last_scalar_memory_commit_tick: Option<u64>,
+    last_live_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
 }
@@ -257,7 +257,7 @@ impl O3RuntimeState {
         self.deferred_scalar_memory_execution = None;
         self.live_scalar_memories.clear();
         self.live_scalar_memory_younger_sequences.clear();
-        self.last_scalar_memory_commit_tick = None;
+        self.last_live_commit_tick = None;
         Ok(())
     }
 
@@ -624,7 +624,7 @@ impl Default for O3RuntimeState {
             scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
             scalar_memory_window_limit_explicit: false,
             issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
-            last_scalar_memory_commit_tick: None,
+            last_live_commit_tick: None,
             next_sequence: 0,
             next_physical_register: 1,
         }
