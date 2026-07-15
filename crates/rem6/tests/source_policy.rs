@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,8 @@ const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
 const MAX_DATA_CACHE_MULTICORE_LINES: usize = 800;
 const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 14_600;
+const MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES: usize = 1_700;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_LINES: usize = 1700;
 const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_IPI_LINES: usize = 500;
@@ -277,6 +280,166 @@ fn cli_pipeline_interrupt_stall_backlog_flush_modules_stay_focused() {
             "{relative_path} should remain a focused interrupt-correlation module, but it has {lines} lines"
         );
     }
+}
+
+#[test]
+fn parsed_source_helpers_ignore_non_items_and_require_attached_module_path() {
+    let detached_path_source = r###"
+        /*
+        fn block_comment_fake() {}
+        */
+        const FAKE_SOURCE: &str = r#"
+            fn raw_string_fake() {}
+        "#;
+
+        pub(crate) async fn qualified_multiline<T>(
+            value: T,
+        ) -> T
+        where
+            T: Copy,
+        {
+            value
+        }
+
+        fn private_multiline
+        (
+            value: usize,
+        ) -> usize {
+            fn nested_fake() {}
+            nested_fake();
+            value
+        }
+
+        #[path = "debug_flags/o3_fu_latency.rs"]
+        mod wrong_owner;
+        mod o3_fu_latency;
+    "###;
+    let attached_path_source = r#"
+        #[path = "debug_flags/o3_fu_latency.rs"]
+        mod o3_fu_latency;
+    "#;
+    let mut function_names = rust_function_definition_names(detached_path_source)
+        .into_iter()
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
+    function_names.sort();
+    let detached_path_accepted = module_has_path_attribute(
+        detached_path_source,
+        "o3_fu_latency",
+        "debug_flags/o3_fu_latency.rs",
+    );
+    let attached_path_accepted = module_has_path_attribute(
+        attached_path_source,
+        "o3_fu_latency",
+        "debug_flags/o3_fu_latency.rs",
+    );
+
+    assert_eq!(
+        (
+            function_names,
+            detached_path_accepted,
+            attached_path_accepted,
+        ),
+        (
+            vec![
+                "private_multiline".to_string(),
+                "qualified_multiline".to_string(),
+            ],
+            false,
+            true,
+        )
+    );
+}
+
+#[test]
+fn cli_debug_flags_o3_fu_latency_lives_in_focused_module() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = manifest_dir.join("tests/cli_run/debug_flags.rs");
+    let child_path = manifest_dir.join("tests/cli_run/debug_flags/o3_fu_latency.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let child_exists = child_path.exists();
+    let child = child_exists
+        .then(|| fs::read_to_string(&child_path).unwrap())
+        .unwrap_or_default();
+    let root_functions = rust_function_definition_names(&root);
+    let child_functions = rust_function_definition_names(&child);
+    let moved_definitions = [
+        "rem6_run_o3_debug_flag_emits_fu_latency_event_classes",
+        "rem6_run_o3_debug_flag_classifies_vector_integer_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_vector_mul_family_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_vector_saturating_mul_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_float_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_extended_float_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_float_compare_fu_latency_events",
+        "rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events",
+        "detailed_o3_fu_latency_debug_binary",
+        "detailed_o3_vector_fu_latency_debug_binary",
+        "detailed_o3_vector_mul_family_fu_latency_debug_binary",
+        "detailed_o3_vector_saturating_mul_fu_latency_debug_binary",
+        "detailed_o3_float_fu_latency_debug_binary",
+        "detailed_o3_float_extended_fu_latency_debug_binary",
+        "detailed_o3_float_compare_fu_latency_debug_binary",
+        "detailed_o3_float_misc_fu_latency_debug_binary",
+        "assert_o3_event_with_fu",
+        "o3_event_fu_latency_class_count",
+    ];
+    let mut failures = Vec::new();
+
+    if !module_has_path_attribute(&root, "o3_fu_latency", "debug_flags/o3_fu_latency.rs") {
+        failures.push(
+            "tests/cli_run/debug_flags.rs must attach #[path = \"debug_flags/o3_fu_latency.rs\"] to mod o3_fu_latency;"
+                .to_string(),
+        );
+    }
+    if !child_exists {
+        failures.push(
+            "O3 FU-latency debug evidence belongs in tests/cli_run/debug_flags/o3_fu_latency.rs"
+                .to_string(),
+        );
+    }
+
+    let root_lines = line_count(&root_path);
+    if root_lines > MAX_DEBUG_FLAGS_ROOT_LINES {
+        failures.push(format!(
+            "tests/cli_run/debug_flags.rs should delegate O3 FU-latency evidence, but it has {root_lines} lines"
+        ));
+    }
+    if child_exists {
+        let child_lines = line_count(&child_path);
+        if child_lines > MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES {
+            failures.push(format!(
+                "tests/cli_run/debug_flags/o3_fu_latency.rs exceeds {MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES} lines: {child_lines}"
+            ));
+        }
+    }
+
+    for name in moved_definitions {
+        let anchor = format!("fn {name}(");
+        if child_exists && !child_functions.contains(name) {
+            failures.push(format!(
+                "tests/cli_run/debug_flags/o3_fu_latency.rs is missing `{anchor}`"
+            ));
+        }
+        if root_functions.contains(name) {
+            failures.push(format!(
+                "tests/cli_run/debug_flags.rs still owns `{anchor}`"
+            ));
+        }
+    }
+
+    if child_exists {
+        for name in root_functions.intersection(&child_functions) {
+            failures.push(format!(
+                "tests/cli_run/debug_flags.rs duplicates child function `fn {name}`"
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "O3 FU-latency debug ownership policy failures:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -1030,6 +1193,50 @@ fn line_count(path: &Path) -> usize {
 
 fn has_exact_trimmed_source_line(source: &str, expected: &str) -> bool {
     source.lines().any(|line| line.trim() == expected)
+}
+
+fn rust_function_definition_names(source: &str) -> BTreeSet<String> {
+    let syntax = syn::parse_file(source).unwrap_or_else(|error| {
+        panic!("failed to parse Rust source for function inventory: {error}")
+    });
+    syntax
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            let syn::Item::Fn(function) = item else {
+                return None;
+            };
+            Some(function.sig.ident.to_string())
+        })
+        .collect()
+}
+
+fn module_has_path_attribute(source: &str, module_name: &str, expected_path: &str) -> bool {
+    let syntax = syn::parse_file(source).unwrap_or_else(|error| {
+        panic!("failed to parse Rust source for module path policy: {error}")
+    });
+    syntax.items.iter().any(|item| {
+        let syn::Item::Mod(module) = item else {
+            return false;
+        };
+        module.ident == module_name
+            && module.attrs.iter().any(|attribute| {
+                if !attribute.path().is_ident("path") {
+                    return false;
+                }
+                let syn::Meta::NameValue(value) = &attribute.meta else {
+                    return false;
+                };
+                let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(path),
+                    ..
+                }) = &value.value
+                else {
+                    return false;
+                };
+                path.value() == expected_path
+            })
+    })
 }
 
 fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
