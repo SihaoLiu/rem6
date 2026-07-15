@@ -18,7 +18,7 @@ const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
-const MAX_O3_RUNTIME_ISSUE_STATS_LINES: usize = 800;
+const MAX_O3_RUNTIME_FOCUSED_STATS_LINES: usize = 800;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_ROOT_LINES: usize = 16_650;
@@ -387,8 +387,8 @@ fn cli_config_root_stays_focused() {
     let lines = line_count(&path);
 
     assert!(
-        lines <= MAX_CONFIG_ROOT_LINES,
-        "src/config.rs should remain a facade over focused config parsers, but it has {lines} lines"
+        lines < MAX_CONFIG_ROOT_LINES,
+        "src/config.rs should remain below {MAX_CONFIG_ROOT_LINES} lines as a facade over focused config parsers, but it has {lines} lines"
     );
 }
 
@@ -420,78 +420,35 @@ fn cli_stats_output_o3_runtime_stays_focused() {
     let lines = line_count(&path);
 
     assert!(
-        lines <= MAX_O3_RUNTIME_STATS_LINES,
-        "src/stats_output/o3_runtime.rs should delegate O3 stat families to focused modules, but it has {lines} lines"
+        lines < MAX_O3_RUNTIME_STATS_LINES,
+        "src/stats_output/o3_runtime.rs should stay below {MAX_O3_RUNTIME_STATS_LINES} lines while delegating O3 stat families, but it has {lines} lines"
     );
 }
 
 #[test]
 fn cli_stats_output_o3_runtime_issue_stays_focused() {
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root_path = crate_dir.join("src/stats_output/o3_runtime.rs");
-    let root = fs::read_to_string(&root_path).unwrap();
-    let module_path = crate_dir.join("src/stats_output/o3_runtime_issue.rs");
-
+    assert_cli_o3_runtime_stats_family_is_focused(
+        "o3_runtime_issue",
+        "emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;",
+        "",
+        "issue_cycles,issued_rows,resource_blocked_row_cycles,dependency_blocked_row_cycles,max_rows_per_cycle",
+    );
+}
+#[test]
+fn cli_stats_output_o3_runtime_writeback_stays_focused() {
+    assert_cli_o3_runtime_stats_family_is_focused(
+        "o3_runtime_writeback",
+        "emit_o3_runtime_writeback_port_stats(stats, core.cpu, o3)?;",
+        "writeback_port_",
+        "cycles,admitted_rows,deferred_rows,deferred_row_cycles,max_ready_rows_per_cycle,max_deferred_rows",
+    );
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/cli_run/m5_host_actions/o3/writeback_port.rs");
+    let lines = line_count(&path);
     assert!(
-        root.contains("mod o3_runtime_issue;"),
-        "src/stats_output/o3_runtime.rs must declare the focused issue-stats module"
+        lines < MAX_M5_HOST_ACTIONS_O3_MODULE_LINES,
+        "tests/cli_run/m5_host_actions/o3/writeback_port.rs must stay below the {MAX_M5_HOST_ACTIONS_O3_MODULE_LINES}-line child cap, but it has {lines} lines"
     );
-    let emit_o3_runtime_stats = source_section(
-        &root,
-        "pub(super) fn emit_o3_runtime_stats(",
-        "fn increment_count_stat(",
-    );
-    assert!(
-        emit_o3_runtime_stats.contains("emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;"),
-        "src/stats_output/o3_runtime.rs must delegate issue counters via emit_o3_runtime_issue_stats"
-    );
-    let root_lines = line_count(&root_path);
-    assert!(
-        root_lines <= MAX_O3_RUNTIME_STATS_LINES,
-        "src/stats_output/o3_runtime.rs should delegate O3 issue stats, but it has {root_lines} lines"
-    );
-
-    assert!(
-        module_path.exists(),
-        "O3 issue stats output belongs in src/stats_output/o3_runtime_issue.rs"
-    );
-    let module = fs::read_to_string(&module_path).unwrap();
-    let module_lines = module.lines().count();
-    assert!(
-        module_lines <= MAX_O3_RUNTIME_ISSUE_STATS_LINES,
-        "src/stats_output/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_STATS_LINES} lines: {module_lines}"
-    );
-    assert!(
-        module.contains("fn emit_o3_runtime_issue_stats"),
-        "src/stats_output/o3_runtime_issue.rs is missing `fn emit_o3_runtime_issue_stats`"
-    );
-    let issue_stat_fields = [
-        "\"issue_cycles\"",
-        "\"issued_rows\"",
-        "\"resource_blocked_row_cycles\"",
-        "\"dependency_blocked_row_cycles\"",
-        "\"max_rows_per_cycle\"",
-    ];
-    for field in issue_stat_fields {
-        assert!(
-            module.contains(field),
-            "src/stats_output/o3_runtime_issue.rs is missing issue stat field {field}"
-        );
-    }
-    for field in issue_stat_fields {
-        for path in rust_source_files(&crate_dir.join("src/stats_output")) {
-            let relative = path.strip_prefix(crate_dir).unwrap();
-            if relative == Path::new("src/stats_output/o3_runtime_issue.rs") {
-                continue;
-            }
-            let source = fs::read_to_string(&path).unwrap();
-            assert!(
-                !source.contains(field),
-                "{} duplicates O3 issue stat field {field}; keep emission in src/stats_output/o3_runtime_issue.rs",
-                relative.display()
-            );
-        }
-    }
 }
 
 #[test]
@@ -1293,6 +1250,68 @@ fn gem5_migration_sections_are_auditable() {
     );
 }
 
+fn assert_cli_o3_runtime_stats_family_is_focused(
+    module_name: &str,
+    delegate_call: &str,
+    accessor_prefix: &str,
+    fields: &str,
+) {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = fs::read_to_string(crate_dir.join("src/stats_output/o3_runtime.rs")).unwrap();
+    let module_relative = PathBuf::from(format!("src/stats_output/{module_name}.rs"));
+    let module = fs::read_to_string(crate_dir.join(&module_relative)).unwrap();
+    let module_lines = line_count(&crate_dir.join(&module_relative));
+    let emit_function = delegate_call.split_once('(').unwrap().0;
+    let emit_root = source_section(
+        &root,
+        "pub(super) fn emit_o3_runtime_stats(",
+        "fn increment_count_stat(",
+    );
+    assert!(
+        root.contains(&format!("mod {module_name};")) && emit_root.contains(delegate_call),
+        "src/stats_output/o3_runtime.rs must declare and delegate to {module_name}"
+    );
+    let emit_declaration = format!("pub(super) fn {emit_function}(");
+    assert!(has_exact_trimmed_source_line(&module, &emit_declaration));
+    assert!(
+        module_lines < MAX_O3_RUNTIME_FOCUSED_STATS_LINES,
+        "{} has {module_lines} lines",
+        module_relative.display()
+    );
+    let qualified_writeback_fields = accessor_prefix == "writeback_port_";
+    assert!(!qualified_writeback_fields || module.contains("o3.writeback_port.{name}"));
+    for field in fields.split(',') {
+        let field_literal = format!("\"{field}\"");
+        let accessor = format!(".{accessor_prefix}{field}()");
+        assert!(
+            module.contains(&field_literal) && module.contains(&accessor),
+            "{} is missing {field_literal} via {accessor}",
+            module_relative.display(),
+        );
+    }
+    for path in rust_source_files(&crate_dir.join("src/stats_output")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if relative == module_relative {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(!qualified_writeback_fields || !source.contains("o3.writeback_port.{name}"));
+        for field in fields.split(',') {
+            let field_literal = format!("\"{field}\"");
+            let accessor = format!(".{accessor_prefix}{field}()");
+            let field_owner = if qualified_writeback_fields {
+                format!("o3.writeback_port.{field}")
+            } else {
+                field_literal.clone()
+            };
+            assert!(
+                !source.contains(&accessor) && !source.contains(&field_owner),
+                "{} duplicates {field_owner} via {accessor}",
+                relative.display(),
+            );
+        }
+    }
+}
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
