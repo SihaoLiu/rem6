@@ -91,3 +91,14 @@ pub(super) fn assert_no_data_address(json: &Value, address: &str) {
         );
     }
 }
+
+pub(super) fn assert_no_fetch_pc(json: &Value, pc: &str) {
+    assert!(
+        json.pointer("/debug/fetch_trace")
+            .and_then(Value::as_array)
+            .is_some_and(|records| records
+                .iter()
+                .all(|record| { record.pointer("/pc").and_then(Value::as_str) != Some(pc) })),
+        "unexpected fetch at {pc}: {json}"
+    );
+}

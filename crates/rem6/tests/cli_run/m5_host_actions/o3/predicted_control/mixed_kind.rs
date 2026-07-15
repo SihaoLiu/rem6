@@ -1,5 +1,6 @@
 use super::window_support::{
-    assert_no_data_address, control_window_command, resident_rob_pcs, run_control_window_json,
+    assert_no_data_address, assert_no_fetch_pc, control_window_command, resident_rob_pcs,
+    run_control_window_json,
 };
 use super::*;
 
@@ -567,16 +568,5 @@ fn assert_drained_mixed_control_runtime(json: &Value) {
         json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
             .and_then(Value::as_u64),
         Some(0)
-    );
-}
-
-fn assert_no_fetch_pc(json: &Value, pc: &str) {
-    assert!(
-        json.pointer("/debug/fetch_trace")
-            .and_then(Value::as_array)
-            .is_some_and(|records| records
-                .iter()
-                .all(|record| record.pointer("/pc").and_then(Value::as_str) != Some(pc))),
-        "unexpected fetch at {pc}: {json}"
     );
 }
