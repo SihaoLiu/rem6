@@ -776,8 +776,8 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
             109,
             BacklogFlushTotals {
                 sequences: 3,
-                stall_records: 18,
-                stall_cycles: 18,
+                stall_records: 21,
+                stall_cycles: 21,
             },
         ),
         ("timing", 118, BacklogFlushTotals::default()),
@@ -859,7 +859,7 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
                     record.get("stall_cause").and_then(Value::as_str) == Some("data_wait")
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(waits.len(), 6, "{waits:?}");
+            assert_eq!(waits.len(), 7, "{waits:?}");
             assert!(waits.iter().all(|record| {
                 json_record_u64(record, "stall_cycles") == 1
                     && flushed_sequences.iter().all(|sequence| {
@@ -883,7 +883,7 @@ fn rem6_run_pipeline_debug_correlates_data_wait_backlog_with_interrupt_flush() {
                             .count()
                     })
                     .sum::<usize>(),
-                12
+                14
             );
             assert_detailed_interrupt_discards_younger_load_window(&json);
         } else {
@@ -928,8 +928,8 @@ fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flus
             160,
             BacklogFlushTotals {
                 sequences: 3,
-                stall_records: 18,
-                stall_cycles: 18,
+                stall_records: 21,
+                stall_cycles: 21,
             },
         ),
         ("timing", 167, BacklogFlushTotals::default()),
@@ -1022,7 +1022,7 @@ fn rem6_run_pipeline_debug_correlates_cpu1_data_wait_backlog_with_interrupt_flus
                         && record.get("stall_cause").and_then(Value::as_str) == Some("data_wait")
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(waits.len(), 6, "{waits:?}");
+            assert_eq!(waits.len(), 7, "{waits:?}");
             assert!(waits.iter().all(|record| {
                 json_record_u64(record, "stall_cycles") == 1
                     && flushed_sequences.iter().all(|sequence| {
@@ -1344,6 +1344,9 @@ fn assert_detailed_secondary_interrupt_discards_younger_load_window(
         load.get("lsq_data_response_tick").and_then(Value::as_u64),
         Some(issue_tick + 6)
     );
+    let writeback_tick = json_record_u64(load, "writeback_tick");
+    assert_eq!(writeback_tick, issue_tick + 7);
+    assert_eq!(json_record_u64(load, "commit_tick"), writeback_tick);
     for pc in [
         program.load_pc + 4,
         program.load_pc + 8,
@@ -1395,6 +1398,8 @@ fn assert_detailed_interrupt_discards_younger_load_window(json: &Value) {
         load.get("lsq_data_response_tick").and_then(Value::as_u64),
         Some(114)
     );
+    assert_eq!(json_record_u64(load, "writeback_tick"), 115);
+    assert_eq!(json_record_u64(load, "commit_tick"), 115);
     for pc in ["0x8000003c", "0x80000040", "0x80000044"] {
         assert!(
             events

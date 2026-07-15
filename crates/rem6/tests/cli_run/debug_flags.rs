@@ -12403,7 +12403,7 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         ("fu_integer_mul_latency_cycles", 2),
         ("fu_integer_div_instructions", 1),
         ("fu_integer_div_latency_cycles", 19),
-        ("max_rob_occupancy", 1),
+        ("max_rob_occupancy", 2),
         ("max_lsq_occupancy", 0),
         ("rename_map_entries", 3),
     ] {
@@ -12427,6 +12427,15 @@ fn rem6_run_o3_debug_flag_emits_fu_latency_event_classes() {
         event_ticks.windows(2).all(|window| window[0] < window[1]),
         "O3 event ticks should be strictly increasing: {event_ticks:?}"
     );
+    for event in events {
+        let issue_tick = json_record_u64(event, "issue_tick");
+        let writeback_tick = json_record_u64(event, "writeback_tick");
+        let commit_tick = json_record_u64(event, "commit_tick");
+        assert!(
+            issue_tick <= writeback_tick && writeback_tick <= commit_tick,
+            "O3 issue/writeback/commit ticks must remain monotonic: {event}"
+        );
+    }
     assert_o3_event_with_fu(&events[0], 0, "0x80000004", 1, 0, 0, 0, None, false);
     assert_o3_event_with_fu(&events[1], 1, "0x80000008", 1, 0, 0, 0, None, false);
     assert_o3_event_with_fu(

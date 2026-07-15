@@ -499,27 +499,38 @@ fn assert_scalar_memory_event(
     forwarded: bool,
 ) {
     let issue_tick = event_u64(event, "issue_tick");
+    let response_tick = event_u64(event, "lsq_data_response_tick");
     let writeback_tick = event_u64(event, "writeback_tick");
     let commit_tick = event_u64(event, "commit_tick");
     if forwarded {
         assert_eq!(
-            issue_tick, writeback_tick,
-            "forwarded loads must complete locally at their issue tick: {event}"
+            issue_tick, response_tick,
+            "forwarded loads must produce their local data response at issue: {event}"
         );
     } else {
         assert!(
-            issue_tick < writeback_tick,
+            issue_tick < response_tick,
             "transport request issue must precede response: {event}"
+        );
+    }
+    if operation == "load" {
+        assert!(
+            response_tick < writeback_tick,
+            "load data response must precede admitted writeback: {event}"
+        );
+    } else {
+        assert_eq!(
+            response_tick, writeback_tick,
+            "stores without a destination complete at their response tick: {event}"
         );
     }
     assert!(
         writeback_tick <= commit_tick,
-        "response must precede commit: {event}"
+        "admitted writeback must precede commit: {event}"
     );
-    assert_eq!(event_u64(event, "lsq_data_response_tick"), writeback_tick);
     assert_eq!(
         event_u64(event, "lsq_data_latency_ticks"),
-        writeback_tick.saturating_sub(issue_tick)
+        response_tick.saturating_sub(issue_tick)
     );
     assert_eq!(
         event.pointer("/rob_occupancy").and_then(Value::as_u64),

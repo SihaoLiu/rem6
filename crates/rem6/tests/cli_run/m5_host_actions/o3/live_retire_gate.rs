@@ -261,12 +261,15 @@ fn assert_live_retire_window(json: &Value) {
         .pointer("/entries")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("live ROB should expose ordered entries: {rob}"));
-    for (entry, pc) in entries.iter().zip(["0x8000000c", "0x80000010"]) {
+    for (entry, (pc, ready)) in entries
+        .iter()
+        .zip([("0x8000000c", true), ("0x80000010", false)])
+    {
         assert_eq!(entry.pointer("/pc").and_then(Value::as_str), Some(pc));
         assert_eq!(
             entry.pointer("/ready").and_then(Value::as_bool),
-            Some(false),
-            "neither staged instruction may become architecturally ready before the gate wakes: {entry}"
+            Some(ready),
+            "live readiness may record admitted writeback while architectural state remains gated: {entry}"
         );
         assert_eq!(
             entry.pointer("/live_staged").and_then(Value::as_bool),
@@ -281,6 +284,36 @@ fn assert_live_retire_window(json: &Value) {
             "both scalar instructions should own a physical destination while staged: {entry}"
         );
     }
+    for architectural in [3, 4] {
+        assert_eq!(
+            json.pointer(&format!("/cores/0/registers/x{architectural}")),
+            None,
+            "staged x{architectural} must remain architecturally unpublished before ordered commit"
+        );
+    }
+
+    let writeback_entries = json
+        .pointer("/cores/0/o3_runtime/writeback_calendar/entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("live retire window should expose writeback reservations: {json}")
+        });
+    assert_eq!(writeback_entries.len(), 2);
+    for entry in writeback_entries {
+        let raw_ready_tick = live_retire_gate_json_u64_field(entry, "/raw_ready_tick");
+        let admitted_tick = live_retire_gate_json_u64_field(entry, "/admitted_tick");
+        assert!(
+            raw_ready_tick <= admitted_tick,
+            "admitted writeback must not precede raw readiness: {entry}"
+        );
+    }
+    assert!(
+        writeback_entries.windows(2).all(|window| {
+            live_retire_gate_json_u64_field(&window[0], "/admitted_tick")
+                <= live_retire_gate_json_u64_field(&window[1], "/admitted_tick")
+        }),
+        "ordered writeback reservations must remain monotonic: {writeback_entries:?}"
+    );
 
     let rename_entries = snapshot
         .pointer("/rename_map/entries")

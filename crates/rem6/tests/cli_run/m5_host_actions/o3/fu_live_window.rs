@@ -78,7 +78,15 @@ fn rem6_run_o3_detailed_four_row_fu_window_remains_resident_at_tick_limit() {
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("00000000000000000000000000000000")
     );
-    assert_live_rob_rows(&json, &[DIV_PC, FIRST_PC, SECOND_PC, THIRD_PC]);
+    assert_live_rob_rows(
+        &json,
+        &[
+            (DIV_PC, true, 3),
+            (FIRST_PC, false, 4),
+            (SECOND_PC, false, 5),
+            (THIRD_PC, false, 6),
+        ],
+    );
     assert_live_integer_rename_owners(&json, &[3, 4, 5, 6]);
     assert_json_stat(
         &json,
@@ -132,7 +140,14 @@ fn rem6_run_o3_detailed_head_dependency_stops_fourth_fu_row_prefetch() {
         resident.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("00000000000000000000000000000000")
     );
-    assert_live_rob_rows(&resident, &[DIV_PC, FIRST_PC, SECOND_PC]);
+    assert_live_rob_rows(
+        &resident,
+        &[
+            (DIV_PC, true, 3),
+            (FIRST_PC, false, 4),
+            (SECOND_PC, false, 5),
+        ],
+    );
     assert_live_integer_rename_owners(&resident, &[3, 4, 5]);
     assert!(resident
         .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
@@ -270,17 +285,18 @@ fn assert_final_architecture(json: &Value, expected_memory: &str, expected_regis
     }
 }
 
-fn assert_live_rob_rows(json: &Value, expected_pcs: &[&str]) {
+fn assert_live_rob_rows(json: &Value, expected_rows: &[(&str, bool, u64)]) {
     let entries = json
         .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("resident FU-window run should expose ROB rows: {json}"));
-    assert_eq!(entries.len(), expected_pcs.len());
-    for (entry, pc) in entries.iter().zip(expected_pcs) {
+    assert_eq!(entries.len(), expected_rows.len());
+    for (entry, (pc, ready, architectural)) in entries.iter().zip(expected_rows) {
         assert_eq!(entry.pointer("/pc").and_then(Value::as_str), Some(*pc));
         assert_eq!(
             entry.pointer("/ready").and_then(Value::as_bool),
-            Some(false)
+            Some(*ready),
+            "resident row readiness should reflect admitted writeback without publishing architecture: {entry}"
         );
         assert_eq!(
             entry.pointer("/live_staged").and_then(Value::as_bool),
@@ -290,6 +306,11 @@ fn assert_live_rob_rows(json: &Value, expected_pcs: &[&str]) {
             .pointer("/destination")
             .and_then(Value::as_u64)
             .is_some());
+        assert_eq!(
+            json.pointer(&format!("/cores/0/registers/x{architectural}")),
+            None,
+            "resident staged destination x{architectural} must remain architecturally unpublished"
+        );
     }
 }
 

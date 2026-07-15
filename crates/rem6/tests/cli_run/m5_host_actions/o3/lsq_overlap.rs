@@ -203,18 +203,19 @@ fn assert_completed_mixed_scalar_load_overlap(json: &Value) {
     let load = event_at_pc(json, LOAD_PC);
     let independent = event_at_pc(json, INDEPENDENT_PC);
     let dependent = event_at_pc(json, DEPENDENT_PC);
-    let load_response_tick = event_u64(load, "writeback_tick");
-    assert_eq!(
-        event_u64(load, "lsq_data_response_tick"),
-        load_response_tick
+    let load_response_tick = event_u64(load, "lsq_data_response_tick");
+    let load_writeback_tick = event_u64(load, "writeback_tick");
+    assert!(
+        load_response_tick < load_writeback_tick,
+        "load data response must precede admitted writeback: {load}"
     );
     assert!(
         event_u64(independent, "issue_tick") < load_response_tick,
         "independent younger ALU should issue before the older load response: {independent}"
     );
     assert!(
-        event_u64(dependent, "issue_tick") >= load_response_tick,
-        "load-dependent younger ALU must not issue before the older load response: {dependent}"
+        event_u64(dependent, "issue_tick") >= load_writeback_tick,
+        "load-dependent younger ALU must not issue before admitted load writeback: {dependent}"
     );
     assert!(
         event_u64(load, "commit_tick") <= event_u64(independent, "commit_tick"),

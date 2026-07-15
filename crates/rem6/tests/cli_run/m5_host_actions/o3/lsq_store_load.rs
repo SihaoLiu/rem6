@@ -211,8 +211,16 @@ fn rem6_run_o3_detailed_forwarded_load_dependent_alu_remains_resident_before_sto
     let dependent = event_at_pc(&completed, DEPENDENT_ALU_PC);
     let dependent_issue_tick = event_u64(dependent, "issue_tick");
     let older_response_tick = event_u64(older, "lsq_data_response_tick");
+    let younger_response_tick = event_u64(younger, "lsq_data_response_tick");
+    let younger_writeback_tick = event_u64(younger, "writeback_tick");
+    assert_eq!(
+        younger_response_tick,
+        event_u64(younger, "issue_tick"),
+        "forwarded load must produce its local response at issue: {younger}"
+    );
     assert!(
-        event_u64(younger, "lsq_data_response_tick") < dependent_issue_tick
+        younger_response_tick < younger_writeback_tick
+            && younger_writeback_tick <= dependent_issue_tick
             && dependent_issue_tick < older_response_tick
     );
     let stop_tick = dependent_issue_tick
@@ -233,7 +241,8 @@ fn rem6_run_o3_detailed_forwarded_load_dependent_alu_remains_resident_before_sto
         rob.iter()
             .map(|entry| entry.pointer("/ready").and_then(Value::as_bool))
             .collect::<Vec<_>>(),
-        [Some(false), Some(true), Some(false)]
+        [Some(false), Some(false), Some(false)],
+        "the older store, forwarded load, and dependent ALU must remain unpublished before the store response"
     );
     let rename_entries = json
         .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
@@ -329,9 +338,9 @@ fn rem6_run_o3_detailed_store_load_width_mismatch_merges_store_byte() {
         );
     }
     assert_eq!(event_u64(younger, "store_load_forwarding_bytes"), 1);
-    assert_eq!(
-        event_u64(dependent, "issue_tick"),
-        event_u64(younger, "lsq_data_response_tick").saturating_add(1)
+    assert!(
+        event_u64(dependent, "issue_tick") >= event_u64(younger, "writeback_tick"),
+        "dependent ALU must not issue before the partial load's admitted writeback: younger={younger}, dependent={dependent}"
     );
     for field in [
         "store_load_forwarding_suppressed",
@@ -382,10 +391,9 @@ fn assert_forwarded_alias_store_load(json: &Value) {
         event_u64(older, "commit_tick") <= event_u64(younger, "commit_tick"),
         "forwarded pair must retire in program order: older={older}, younger={younger}"
     );
-    assert_eq!(
-        event_u64(dependent, "issue_tick"),
-        event_u64(younger, "lsq_data_response_tick").saturating_add(1),
-        "dependent ALU should wake one modeled tick after the forwarded load response: younger={younger}, dependent={dependent}"
+    assert!(
+        event_u64(dependent, "issue_tick") >= event_u64(younger, "writeback_tick"),
+        "dependent ALU must wake from admitted forwarded-load writeback: younger={younger}, dependent={dependent}"
     );
     assert!(
         event_u64(dependent, "writeback_tick") < event_u64(older, "lsq_data_response_tick"),
@@ -623,10 +631,9 @@ fn assert_completed_disjoint_store_load(json: &Value) {
         event_u64(older, "commit_tick") <= event_u64(younger, "commit_tick"),
         "store-load pair must retire in program order: older={older}, younger={younger}"
     );
-    assert_eq!(
-        event_u64(dependent, "issue_tick"),
-        event_u64(younger, "lsq_data_response_tick").saturating_add(1),
-        "transport-completed load should wake the dependent ALU: younger={younger}, dependent={dependent}"
+    assert!(
+        event_u64(dependent, "issue_tick") >= event_u64(younger, "writeback_tick"),
+        "transport-completed load must wake the dependent ALU from admitted writeback: younger={younger}, dependent={dependent}"
     );
     assert!(
         event_u64(younger, "commit_tick") <= event_u64(dependent, "commit_tick"),
