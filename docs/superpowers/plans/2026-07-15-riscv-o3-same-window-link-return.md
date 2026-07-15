@@ -4,7 +4,7 @@
 
 **Goal:** Admit one bounded same-window linked call/return pair and one return-target descendant behind a delayed scalar-memory head, using staged link forwarding and RAS-only target authority with real CLI evidence.
 
-**Architecture:** Track the latest live call-produced `x1`/`x5` provenance in the existing scalar-memory window policy and return a distinct RAS-required predicted-control decision. Carry that authority through detailed fetch selection so a same-window return may use the speculative RAS top but may never fall back to stale committed link state; keep runtime rename, source forwarding, issue, writeback, retire, RAS, repair, mode-transfer, and checkpoint owners unchanged.
+**Architecture:** Track one optional latest live call-produced owner across `x1` and `x5` in the existing scalar-memory window policy and return a distinct RAS-required predicted-control decision. Carry that authority through detailed fetch selection so a same-window return may use the speculative RAS top but may never fall back to stale committed link state; keep runtime rename, source forwarding, issue, writeback, retire, RAS, repair, mode-transfer, and checkpoint owners unchanged.
 
 **Tech Stack:** Rust workspace, `rem6-cpu`, top-level `rem6 run --execute` integration tests, generated RV64 ELF fixtures, JSON/debug artifacts, source-policy tests, Cargo.
 
@@ -70,6 +70,78 @@ fn same_window_link_return_requires_ras_prediction() {
         );
         assert!(window.is_full());
     }
+}
+
+#[test]
+fn same_window_link_return_consumes_forwardable_provenance() {
+    let mut window = scalar_load_window(4);
+
+    assert_eq!(
+        window.classify_younger(jal_with_destination(1)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        window.classify_younger(jalr_with_registers(0, 1)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    );
+    assert_eq!(
+        window.classify_younger(jalr_with_registers(0, 1)),
+        RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+    );
+    assert!(window.is_full());
+}
+
+#[test]
+fn same_window_return_must_match_latest_link_call() {
+    let mut older_link = scalar_load_window(4);
+
+    assert_eq!(
+        older_link.classify_younger(jal_with_destination(1)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        older_link.classify_younger(jal_with_destination(5)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        older_link.classify_younger(jalr_with_registers(0, 1)),
+        RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+    );
+    assert!(older_link.is_full());
+
+    let mut latest_link = scalar_load_window(4);
+    assert_eq!(
+        latest_link.classify_younger(jal_with_destination(1)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        latest_link.classify_younger(jal_with_destination(5)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        latest_link.classify_younger(jalr_with_registers(0, 5)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    );
+    assert!(latest_link.is_full());
+}
+
+#[test]
+fn same_window_admitted_return_consumes_pending_link_owner() {
+    let mut window = scalar_load_window(4);
+
+    assert_eq!(
+        window.classify_younger(jal_with_destination(1)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        window.classify_younger(jalr_with_registers(0, 5)),
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    assert_eq!(
+        window.classify_younger(jalr_with_registers(0, 1)),
+        RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+    );
+    assert!(window.is_full());
 }
 
 #[test]
@@ -191,7 +263,7 @@ Add the field and variant:
 pub(crate) struct RiscvScalarIntegerLiveWindow {
     unresolved_destinations: Vec<Register>,
     live_destinations: Vec<Register>,
-    forwardable_link_destinations: Vec<Register>,
+    forwardable_link_destination: Option<Register>,
     rows: usize,
     row_limit: usize,
     admits_terminal_control: bool,
@@ -209,16 +281,19 @@ pub(crate) enum RiscvScalarIntegerYoungerDecision {
 }
 ```
 
-Initialize `forwardable_link_destinations` to `Vec::new()` in `new`.
+Initialize `forwardable_link_destination` to `None` in `new`. This is one latest
+owner across both supported link registers, not a per-register collection.
+
+```rust
+forwardable_link_destination: None,
+```
 
 Before the current terminal decision, derive:
 
 ```rust
 let forwardable_live_return = control.kind() == BranchTargetKind::Return
     && control.sources().len() == 1
-    && self
-        .forwardable_link_destinations
-        .contains(&control.sources()[0]);
+    && self.forwardable_link_destination == Some(control.sources()[0]);
 ```
 
 Change the terminal condition to:
@@ -247,6 +322,20 @@ if let Some(destination) = control
 }
 ```
 
+`record_forwardable_link_destination` is a replacement assignment: a later
+supported call to either `x1` or `x5` replaces any prior owner, including the
+other link register. Reuse `o3_live_control_operands` and `BranchTargetKind` for
+supported-call recognition; do not add a duplicate opcode inventory.
+
+After control-destination handling, consume all pending link provenance when a
+return is admitted:
+
+```rust
+if control.kind() == BranchTargetKind::Return {
+    self.forwardable_link_destination = None;
+}
+```
+
 Return the distinct decision after incrementing control depth:
 
 ```rust
@@ -258,21 +347,23 @@ if forwardable_live_return {
 }
 ```
 
-Make every generic destination overwrite clear link provenance:
+Keep generic destination handling in the one shadowing helper. It clears link
+provenance only when the generic write overwrites the current owner; unrelated
+generic destinations leave the owner unchanged. Unresolved memory tracking never
+calls the forwardable-record helper and therefore never creates provenance:
 
 ```rust
 fn record_shadowing_destination(&mut self, destination: Register) {
     self.unresolved_destinations
         .retain(|unresolved| *unresolved != destination);
-    self.forwardable_link_destinations
-        .retain(|link| *link != destination);
+    if self.forwardable_link_destination == Some(destination) {
+        self.forwardable_link_destination = None;
+    }
     self.record_live_destination(destination);
 }
 
 fn record_forwardable_link_destination(&mut self, destination: Register) {
-    if !self.forwardable_link_destinations.contains(&destination) {
-        self.forwardable_link_destinations.push(destination);
-    }
+    self.forwardable_link_destination = Some(destination);
 }
 ```
 

@@ -144,23 +144,28 @@ introduced.
 2. every destination produced inside the current window;
 3. row and predicted-control depth.
 
-Add one focused `forwardable_link_destinations` provenance set for link
-destinations whose latest live producer is a supported linked call.
+Add one focused `forwardable_link_destination: Option<Register>` provenance
+owner. It holds at most the latest supported linked-call destination across
+`x1` and `x5`; `None` means no live call-produced link may admit a return.
 
-The collection follows latest-writer semantics:
+The owner follows latest-writer and single-consumer semantics:
 
-1. a generic scalar destination clears the same register from forwardable-link
-   provenance before recording it as live;
-2. a supported linked call clears older provenance for its destination, records
-   the destination as live, then marks it as a forwardable link;
-3. a second supported linked call to the same link register becomes the latest
-   forwardable producer;
-4. an unrelated destination does not alter other link provenance;
-5. unresolved memory state never creates forwardable-link provenance.
+1. a supported linked call records its destination as live, then assigns
+   `Some(destination)`; every later supported linked call to `x1` or `x5`
+   replaces the prior owner, including a call that switches link registers;
+2. a generic scalar destination clears provenance only when it overwrites the
+   current owner, while an unrelated generic destination leaves the owner
+   unchanged;
+3. a return receives RAS-required admission only when its one source equals the
+   owner, and an admitted return consumes the provenance entirely by restoring
+   `None`;
+4. unresolved memory state never creates forwardable-link provenance.
 
 The existing shadowing helper should remain the single operation that removes an
 overwritten unresolved destination and records the live destination. Link
-provenance is layered on that operation rather than duplicating it.
+provenance is layered on that operation rather than duplicating it. Supported
+call recognition continues to use the existing live-control descriptor and
+`BranchTargetKind`; no second opcode inventory is introduced.
 
 ## Admission Decisions
 
@@ -182,8 +187,8 @@ Admission rules become:
 2. independent indirect calls with committed non-link targets remain ordinary
    predicted controls;
 3. committed-source returns remain ordinary predicted controls;
-4. a return whose live source is the latest forwardable link destination becomes
-   a RAS-required predicted control;
+4. a return whose live source matches the one forwardable link owner becomes a
+   RAS-required predicted control and consumes that owner;
 5. a return whose source is unresolved, produced by a load, produced by a scalar
    ALU, or overwritten after the call remains terminal;
 6. all currently rejected instruction forms remain rejected;
@@ -440,12 +445,18 @@ The hierarchy row proves nonzero:
 
 Add failing tests proving:
 
-1. direct and indirect linked calls mark their destination as forwardable;
-2. same-window returns receive RAS-required predicted admission;
-3. scalar overwrite clears forwardable-link provenance;
-4. load/ALU-produced return sources remain terminal;
-5. existing unsupported forms remain rejected;
-6. lookahead depth remains enforced.
+1. direct and indirect linked calls assign their destination as the one
+   forwardable owner;
+2. a later supported call replaces the prior owner even when it changes from
+   `x1` to `x5` or vice versa;
+3. same-window returns must match the current owner, receive RAS-required
+   predicted admission, and consume the owner so it cannot admit another return;
+4. a generic overwrite of the current owner clears provenance, while an
+   unrelated generic destination leaves it unchanged;
+5. unresolved memory and load/ALU-produced return sources never create usable
+   provenance and remain terminal;
+6. existing unsupported forms remain rejected;
+7. lookahead depth remains enforced.
 
 ### Frontend red tests
 
