@@ -1814,20 +1814,37 @@ git commit -m "cpu: gate scalar load writeback admission"
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_memory_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_checkpoint.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_checkpoint_tests.rs`
+- Modify: `crates/rem6-cpu/src/public_api.rs`
 - Modify: `crates/rem6-cpu/src/riscv_live_retire_gate.rs`
-- Modify: `crates/rem6-cpu/src/riscv_data_issue.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue/o3_callback.rs`
 - Modify: `crates/rem6-cpu/src/riscv_execute.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch.rs`
 - Modify: `crates/rem6-cpu/src/riscv_hart_run_state.rs`
 - Modify: `crates/rem6-cpu/src/riscv_htm.rs`
+- Modify: `crates/rem6-cpu/src/riscv_in_order_drive_tests.rs`
 - Modify: `crates/rem6-cpu/src/riscv_o3_writeback_wake.rs`
+- Test: `crates/rem6-cpu/tests/o3_runtime.rs`
 - Modify: `crates/rem6-system/src/riscv_checkpoint.rs`
 - Modify: `crates/rem6-system/src/riscv_checkpoint/o3_payload.rs`
+- Modify: `crates/rem6-system/src/riscv_o3_runtime_stats.rs`
+- Modify: `crates/rem6-system/src/riscv_sbi.rs`
+- Modify: `crates/rem6-system/src/riscv_sbi/tests.rs`
+- Test: `crates/rem6-system/tests/live_retire_gate_scheduler_checkpoint.rs`
+- Test: `crates/rem6-system/tests/riscv_checkpoint.rs`
 - Modify: `crates/rem6-system/tests/riscv_checkpoint/o3_compatibility.rs`
 - Modify: `crates/rem6-system/tests/source_policy.rs`
+- Modify: `crates/rem6/src/core_summary.rs`
+- Modify: `crates/rem6/src/core_summary_json.rs`
+- Modify: `crates/rem6/src/host_actions.rs`
+- Create: `crates/rem6/src/host_actions/o3_checkpoint_decode.rs`
+- Modify: `crates/rem6/src/run_execution_summary.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/scoped_issue.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs`
+- Modify: `crates/rem6/tests/source_policy.rs`
 
 - [ ] **Step 1: Write failing cleanup, reset, and compatibility tests**
 
@@ -1892,6 +1909,18 @@ Add retry/failure, branch-descendant, PC redirect, reset, and full lifecycle
 cleanup variants. Each must assert both owner-side admitted ticks and calendar
 entries disappear for discarded rows while surviving rows remain.
 
+Add direct, serial RFENCE, and parallel RFENCE regressions. A fetch-only reset
+at the current scheduler tick must remove speculative future reservations while
+preserving a completed scalar-load or retired-owner reservation and same-tick
+history. Reserve a later row at the surviving owner's raw-ready tick and prove
+it is deferred instead of reusing the occupied slot.
+
+Add a real wake lifecycle with two completed loads: schedule and fire the first
+wake, publish the first load, assert the desired tick advances to the second,
+then fire/publish the second and assert checkpoint finalization clears consumed
+calendar history and detached no-op wake authority without a manual desired-tick
+reset.
+
 Add checkpoint codec tests:
 
 ```rust
@@ -1939,6 +1968,12 @@ Add CLI rows `rem6_run_o3_writeback_wrong_path_reservation_never_publishes` and
 non-quiescent; the drained capture must have runtime version 23, empty ROB/LSQ,
 empty calendar/wake authority, and preserved counters.
 
+The wrong-path row must be a real fixed-FU reservation, not merely an absent
+trace row. Expose an immutable owner-side calendar snapshot through the core
+summary JSON, capture the issued wrong-path DIV with its sequence, raw/admitted
+tick, and slot before squash, then assert that exact sequence is absent after
+the branch misprediction and never publishes architecturally.
+
 - [ ] **Step 2: Run and verify RED**
 
 Run:
@@ -1948,7 +1983,8 @@ cargo test -p rem6-cpu rollback_discards_future_writeback_reservation --lib -- -
 cargo test -p rem6-cpu checkpoint_v23 --lib -- --nocapture
 cargo test -p rem6-cpu checkpoint_v22 --lib -- --nocapture
 cargo test -p rem6-system --test riscv_checkpoint o3_compatibility -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_port_checkpoint_boundary -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_wrong_path_reservation_never_publishes -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_checkpoint_boundary -- --exact --nocapture
 ```
 
 Expected: failures because cleanup does not own reservations, the codec is
@@ -2011,6 +2047,11 @@ authority. `riscv_execute.rs` passes `retire_tick` to the `_at` variants, and
 the scalar response path passes `response_tick`. Update focused control-window
 tests to call the `_at` variants with a tick before their future reservations.
 
+Make `reset_instruction_fetch_stream(now)` tick-aware. It is a fetch-only
+rebind, so it calls `discard_live_speculative_executions_at(now)` and preserves
+reservations owned by completed scalar loads, retired rows, and current-tick
+history. Serial and parallel remote FENCE.I callbacks pass `context.now()`.
+
 Audit these paths:
 
 ```text
@@ -2041,6 +2082,11 @@ remains. A still-scheduled wake keeps capture non-quiescent. Call the finalizer
 at the start of `RiscvCoreCheckpointPort::validate_capture` before the final
 quiescence check; this is the only path allowed to remove the last consumed
 current-tick entry or detached no-op without observing a later scheduler tick.
+
+When a scheduled writeback wake fires, clear the desired tick only when that
+tick has been satisfied. After scalar-load publication, recompute desired wake
+authority from the remaining unpublished loads so a second load schedules at
+its own tick and the final load leaves checkpoint capture genuinely quiescent.
 
 - [ ] **Step 4: Add checkpoint v23 counters and private decode origin**
 
@@ -2181,6 +2227,11 @@ O3RuntimeCheckpointPayload::from_legacy_pending_state(pending.into_snapshot())
 Update system source policy to require this bridge and forbid local
 `O3RuntimeSnapshot::new` reconstruction in the legacy pending path.
 
+Move `O3RuntimeState::checkpoint_payload` into the checkpoint module rather
+than compressing the runtime root to fit a new re-export. Tighten the rem6
+source-policy assertion so `o3_runtime.rs` must remain strictly below its
+1700-line ceiling, preserving real headroom for later correctness work.
+
 - [ ] **Step 5: Verify GREEN and commit**
 
 Run:
@@ -2188,10 +2239,13 @@ Run:
 ```bash
 cargo test -p rem6-cpu o3_runtime_writeback --lib -- --nocapture
 cargo test -p rem6-cpu o3_runtime_checkpoint --lib -- --nocapture
+cargo test -p rem6-cpu fetch_stream_reset_preserves_retired_writeback_slot_occupancy --lib -- --nocapture
+cargo test -p rem6-cpu o3_writeback_wake --lib -- --nocapture
+cargo test -p rem6-system remote_fence_i_preserves_target_writeback_reservation --lib -- --nocapture
 cargo test -p rem6-system --test riscv_checkpoint o3_compatibility -- --nocapture
 cargo test -p rem6-system --test source_policy riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_wrong_path_reservation_never_publishes -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_port_checkpoint_boundary -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_wrong_path_reservation_never_publishes -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_checkpoint_boundary -- --exact --nocapture
 ```
 
 Expected: legacy snapshots remain inspectable but cannot become live deferred
@@ -2201,26 +2255,43 @@ drained checkpoint/restore preserves only policy plus counters.
 ```bash
 git add crates/rem6-cpu/src/lib.rs \
   crates/rem6-cpu/src/o3_runtime_authority.rs \
-  crates/rem6-cpu/src/o3_runtime_writeback.rs \
-  crates/rem6-cpu/src/o3_runtime_writeback_tests.rs \
-  crates/rem6-cpu/src/o3_runtime_live_window.rs \
-  crates/rem6-cpu/src/o3_runtime_control_window.rs \
-  crates/rem6-cpu/src/o3_runtime_control_window_tests.rs \
-  crates/rem6-cpu/src/o3_runtime_memory.rs \
   crates/rem6-cpu/src/o3_runtime.rs \
   crates/rem6-cpu/src/o3_runtime_checkpoint.rs \
   crates/rem6-cpu/src/o3_runtime_checkpoint_tests.rs \
-  crates/rem6-cpu/src/riscv_live_retire_gate.rs \
-  crates/rem6-cpu/src/riscv_data_issue.rs \
+  crates/rem6-cpu/src/o3_runtime_control_window.rs \
+  crates/rem6-cpu/src/o3_runtime_control_window_tests.rs \
+  crates/rem6-cpu/src/o3_runtime_live_window.rs \
+  crates/rem6-cpu/src/o3_runtime_memory.rs \
+  crates/rem6-cpu/src/o3_runtime_memory_tests.rs \
+  crates/rem6-cpu/src/o3_runtime_writeback.rs \
+  crates/rem6-cpu/src/o3_runtime_writeback_tests.rs \
+  crates/rem6-cpu/src/public_api.rs \
+  crates/rem6-cpu/src/riscv_data_issue/o3_callback.rs \
   crates/rem6-cpu/src/riscv_execute.rs \
+  crates/rem6-cpu/src/riscv_fetch.rs \
   crates/rem6-cpu/src/riscv_hart_run_state.rs \
   crates/rem6-cpu/src/riscv_htm.rs \
+  crates/rem6-cpu/src/riscv_in_order_drive_tests.rs \
+  crates/rem6-cpu/src/riscv_live_retire_gate.rs \
   crates/rem6-cpu/src/riscv_o3_writeback_wake.rs \
+  crates/rem6-cpu/tests/o3_runtime.rs \
   crates/rem6-system/src/riscv_checkpoint.rs \
   crates/rem6-system/src/riscv_checkpoint/o3_payload.rs \
+  crates/rem6-system/src/riscv_o3_runtime_stats.rs \
+  crates/rem6-system/src/riscv_sbi.rs \
+  crates/rem6-system/src/riscv_sbi/tests.rs \
+  crates/rem6-system/tests/live_retire_gate_scheduler_checkpoint.rs \
+  crates/rem6-system/tests/riscv_checkpoint.rs \
   crates/rem6-system/tests/riscv_checkpoint/o3_compatibility.rs \
   crates/rem6-system/tests/source_policy.rs \
-  crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs
+  crates/rem6/src/core_summary.rs \
+  crates/rem6/src/core_summary_json.rs \
+  crates/rem6/src/host_actions.rs \
+  crates/rem6/src/host_actions/o3_checkpoint_decode.rs \
+  crates/rem6/src/run_execution_summary.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/scoped_issue.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs \
+  crates/rem6/tests/source_policy.rs
 git commit -m "cpu: preserve O3 writeback checkpoint boundaries"
 ```
 
