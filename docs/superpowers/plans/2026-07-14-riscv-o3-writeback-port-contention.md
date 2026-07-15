@@ -2369,10 +2369,10 @@ structured object and all six native paths are absent.
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_port_json_exposes_counters -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_port_text_stats_expose_counters -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_o3_writeback_port_stats_dump_exposes_counters -- --exact --nocapture
-cargo test -p rem6 --test cli_run rem6_run_timing_suppresses_o3_writeback_port_surface -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_json_exposes_counters -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_text_stats_expose_counters -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_stats_dump_exposes_counters -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_timing_suppresses_o3_writeback_port_surface -- --exact --nocapture
 ```
 
 Expected: runtime behavior passes far enough to expose the missing JSON/stat
@@ -2460,7 +2460,7 @@ Run:
 ```bash
 cargo test -p rem6-system riscv_o3_runtime_stats -- --nocapture
 cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port:: -- --nocapture
-cargo test -p rem6 --test cli_run rem6_run_timing_suppresses_o3_writeback_port_surface -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_timing_suppresses_o3_writeback_port_surface -- --exact --nocapture
 ```
 
 Expected: direct and hierarchy rows expose the same six runtime values through
