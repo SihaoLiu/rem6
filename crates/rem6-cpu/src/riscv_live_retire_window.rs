@@ -454,7 +454,8 @@ fn accepted_scalar_integer_younger_window(
             RiscvScalarIntegerYoungerDecision::AdmitContinue => accepted.push(younger),
             RiscvScalarIntegerYoungerDecision::AdmitStop
             | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl => {
                 accepted.push(younger);
                 break;
             }
@@ -541,7 +542,11 @@ fn completed_scalar_integer_younger_window(
                 .get()
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
-        let next_pc = if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
+        let next_pc = if matches!(
+            decision,
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+                | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+        ) {
             let Some(next_pc) = crate::riscv_fetch_ahead::recorded_predicted_pc(
                 state,
                 prediction_request,

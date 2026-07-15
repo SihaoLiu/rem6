@@ -23,6 +23,7 @@ const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bo
 pub(crate) struct RiscvScalarIntegerLiveWindow {
     unresolved_destinations: Vec<Register>,
     live_destinations: Vec<Register>,
+    forwardable_link_destination: Option<Register>,
     rows: usize,
     row_limit: usize,
     admits_terminal_control: bool,
@@ -36,6 +37,7 @@ pub(crate) enum RiscvScalarIntegerYoungerDecision {
     AdmitStop,
     AdmitTerminalControl,
     AdmitPredictedControl,
+    AdmitPredictedRasControl,
     Reject,
 }
 
@@ -86,6 +88,7 @@ impl RiscvScalarIntegerLiveWindow {
         Self {
             unresolved_destinations,
             live_destinations,
+            forwardable_link_destination: None,
             rows,
             row_limit: row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS),
             admits_terminal_control,
@@ -128,7 +131,10 @@ impl RiscvScalarIntegerLiveWindow {
                     .sources()
                     .iter()
                     .any(|source| self.live_destinations.contains(source));
-            if depends_on_unresolved || indirect_target_is_live {
+            let forwardable_live_return = control.kind() == BranchTargetKind::Return
+                && control.sources().len() == 1
+                && self.forwardable_link_destination == Some(control.sources()[0]);
+            if depends_on_unresolved || (indirect_target_is_live && !forwardable_live_return) {
                 self.control_closed = true;
                 return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
             }
@@ -137,9 +143,22 @@ impl RiscvScalarIntegerLiveWindow {
                 .filter(|destination| !destination.is_zero())
             {
                 self.record_shadowing_destination(destination);
+                if matches!(
+                    control.kind(),
+                    BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect
+                ) {
+                    self.record_forwardable_link_destination(destination);
+                }
+            }
+            if control.kind() == BranchTargetKind::Return {
+                self.forwardable_link_destination = None;
             }
             self.control_depth += 1;
-            return RiscvScalarIntegerYoungerDecision::AdmitPredictedControl;
+            return if forwardable_live_return {
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            } else {
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            };
         }
         self.classify_scalar_younger(instruction)
     }
@@ -185,7 +204,14 @@ impl RiscvScalarIntegerLiveWindow {
     fn record_shadowing_destination(&mut self, destination: Register) {
         self.unresolved_destinations
             .retain(|unresolved| *unresolved != destination);
+        if self.forwardable_link_destination == Some(destination) {
+            self.forwardable_link_destination = None;
+        }
         self.record_live_destination(destination);
+    }
+
+    fn record_forwardable_link_destination(&mut self, destination: Register) {
+        self.forwardable_link_destination = Some(destination);
     }
 
     fn record_live_destination(&mut self, destination: Register) {
@@ -690,30 +716,120 @@ mod tests {
     }
 
     #[test]
-    fn same_window_call_followed_by_return_is_terminal() {
-        let mut direct_call = scalar_load_window(4);
-        assert_eq!(
-            direct_call.classify_younger(jal_with_destination(1)),
-            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
-        );
-        assert_eq!(
-            direct_call.classify_younger(jalr_with_registers(0, 1)),
-            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-        );
-        assert_eq!(
-            direct_call.classify_younger(addi(8, 0)),
-            RiscvScalarIntegerYoungerDecision::Reject
-        );
+    fn same_window_link_return_requires_ras_prediction() {
+        for (call, return_jump) in [
+            (jal_with_destination(1), jalr_with_registers(0, 1)),
+            (jalr_with_registers(5, 9), jalr_with_registers(0, 5)),
+        ] {
+            let mut window = scalar_load_window(4);
 
-        let mut indirect_call = scalar_load_window(4);
+            assert_eq!(
+                window.classify_younger(call),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl,
+                "{call:?}"
+            );
+            assert_eq!(
+                window.classify_younger(return_jump),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl,
+                "{return_jump:?}"
+            );
+            assert_eq!(
+                window.classify_younger(addi(8, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert!(window.is_full());
+        }
+    }
+
+    #[test]
+    fn same_window_link_return_consumes_forwardable_provenance() {
+        let mut window = scalar_load_window(4);
+
         assert_eq!(
-            indirect_call.classify_younger(jalr_with_registers(5, 9)),
+            window.classify_younger(jal_with_destination(1)),
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
         );
         assert_eq!(
-            indirect_call.classify_younger(jalr_with_registers(0, 5)),
+            window.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(0, 1)),
             RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
         );
+        assert!(window.is_full());
+    }
+
+    #[test]
+    fn same_window_return_must_match_latest_link_call() {
+        let mut older_link = scalar_load_window(4);
+
+        assert_eq!(
+            older_link.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            older_link.classify_younger(jal_with_destination(5)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            older_link.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert!(older_link.is_full());
+
+        let mut latest_link = scalar_load_window(4);
+        assert_eq!(
+            latest_link.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            latest_link.classify_younger(jal_with_destination(5)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            latest_link.classify_younger(jalr_with_registers(0, 5)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+        );
+        assert!(latest_link.is_full());
+    }
+
+    #[test]
+    fn same_window_admitted_return_consumes_pending_link_owner() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(0, 5)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert!(window.is_full());
+    }
+
+    #[test]
+    fn scalar_overwrite_after_call_keeps_same_window_return_terminal() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(addi(1, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(0, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert!(window.is_full());
     }
 
     #[test]

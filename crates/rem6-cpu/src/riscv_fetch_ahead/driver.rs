@@ -79,6 +79,7 @@ impl RiscvCore {
                 pc,
                 sequential_pc,
                 instruction,
+                target_authority,
             } => {
                 return fetch_ahead_decision(
                     &mut state,
@@ -87,6 +88,7 @@ impl RiscvCore {
                     pc,
                     sequential_pc,
                     instruction,
+                    target_authority,
                     translated,
                 );
             }
@@ -134,6 +136,7 @@ impl RiscvCore {
             fetch.pc(),
             sequential_pc,
             decoded.instruction(),
+            detailed_o3::PredictedControlTargetAuthority::Normal,
             translated,
         )
     }

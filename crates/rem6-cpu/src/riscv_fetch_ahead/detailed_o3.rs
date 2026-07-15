@@ -23,11 +23,18 @@ pub(super) enum DetailedFetchAheadCandidate {
         pc: Address,
         sequential_pc: Address,
         instruction: RiscvInstruction,
+        target_authority: PredictedControlTargetAuthority,
     },
     ReadyCachedTranslatedLoad {
         pc: Address,
         fetch_request: MemoryRequestId,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PredictedControlTargetAuthority {
+    Normal,
+    RasRequired,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -270,9 +277,19 @@ fn scalar_integer_window_candidate_from(
             Ok(younger) => younger,
             Err(candidate) => return candidate,
         };
-        match window.classify_younger(younger.decoded().instruction()) {
+        let decision = window.classify_younger(younger.decoded().instruction());
+        match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
-            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl => {
+                let target_authority = if matches!(
+                    decision,
+                    RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+                ) {
+                    PredictedControlTargetAuthority::RasRequired
+                } else {
+                    PredictedControlTargetAuthority::Normal
+                };
                 let prediction_request = younger.first_consumed_request();
                 previous_request = younger.last_consumed_request();
                 let sequential_pc = Address::new(
@@ -289,6 +306,7 @@ fn scalar_integer_window_candidate_from(
                             pc: younger.pc(),
                             sequential_pc,
                             instruction: younger.decoded().instruction(),
+                            target_authority,
                         };
                     }
                     None => return DetailedFetchAheadCandidate::Blocked,
@@ -385,7 +403,8 @@ fn scalar_memory_window_candidate(
         ) else {
             return DetailedFetchAheadCandidate::Blocked;
         };
-        match alu_window.classify_younger(next.decoded().instruction()) {
+        let decision = alu_window.classify_younger(next.decoded().instruction());
+        match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {
                 let previous_request = next.last_consumed_request();
                 let next_pc = Address::new(
@@ -401,7 +420,16 @@ fn scalar_memory_window_candidate(
                     alu_window,
                 );
             }
-            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl => {
+                let target_authority = if matches!(
+                    decision,
+                    RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+                ) {
+                    PredictedControlTargetAuthority::RasRequired
+                } else {
+                    PredictedControlTargetAuthority::Normal
+                };
                 let prediction_request = next.first_consumed_request();
                 let previous_request = next.last_consumed_request();
                 let sequential_pc = Address::new(
@@ -418,6 +446,7 @@ fn scalar_memory_window_candidate(
                             pc: next.pc(),
                             sequential_pc,
                             instruction: next.decoded().instruction(),
+                            target_authority,
                         };
                     }
                     None => return DetailedFetchAheadCandidate::Blocked,

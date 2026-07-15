@@ -110,12 +110,17 @@ impl O3RuntimeState {
                     decision,
                     RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
                         | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+                        | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
                 )
             {
                 self.live_control_window_sequences.insert(sequence);
             }
             self.live_scalar_memory_younger_sequences.insert(sequence);
-            if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedControl {
+            if matches!(
+                decision,
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+                    | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            ) {
                 control_sequence = Some(sequence);
             }
             if matches!(

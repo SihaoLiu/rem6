@@ -808,6 +808,7 @@ fn fetch_ahead_decision(
     fetch_pc: Address,
     sequential_pc: Address,
     instruction: RiscvInstruction,
+    target_authority: detailed_o3::PredictedControlTargetAuthority,
     translated: detailed_o3::TranslatedMemoryFetchAhead,
 ) -> Option<RiscvFetchAheadDecision> {
     let scalar_memory_head =
@@ -827,7 +828,7 @@ fn fetch_ahead_decision(
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
-        direct_jump_fetch_ahead_target(state, fetch_pc, instruction)
+        direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
     {
         let selected_speculation = selected_direct_branch_speculation(
             state,
@@ -1425,6 +1426,7 @@ fn direct_jump_fetch_ahead_target(
     state: &mut RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
+    target_authority: detailed_o3::PredictedControlTargetAuthority,
 ) -> Option<(
     Address,
     BranchTargetKind,
@@ -1437,12 +1439,20 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => return None,
     };
+    let ras_required =
+        target_authority == detailed_o3::PredictedControlTargetAuthority::RasRequired;
+    if ras_required && kind != BranchTargetKind::Return {
+        return None;
+    }
     let target_lookup = state.branch_target_buffer.lookup(fetch_pc, kind);
     let branch_target_prediction =
         BranchTargetPrediction::new(target_lookup.hit(), target_lookup.target());
     let ras_target = (kind == BranchTargetKind::Return)
         .then(|| state.return_address_stack.top())
         .flatten();
+    if ras_required && ras_target.is_none() {
+        return None;
+    }
     let target = match instruction {
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)

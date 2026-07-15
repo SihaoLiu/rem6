@@ -121,7 +121,7 @@ fn detailed_scalar_window_direct_call_follows_target_and_pushes_ras() {
 }
 
 #[test]
-fn detailed_scalar_window_keeps_same_window_return_terminal_after_direct_call() {
+fn detailed_scalar_window_forwards_call_ras_to_same_window_return() {
     let load = i_type(0, 2, 0x2, 6, 0x03);
     let call = j_type(8, 1);
     let return_jump = i_type(0, 1, 0x0, 0, 0x67);
@@ -130,8 +130,9 @@ fn detailed_scalar_window_keeps_same_window_return_terminal_after_direct_call() 
         (0, 0x8000, load.to_le_bytes().to_vec()),
         (1, 0x8004, call.to_le_bytes().to_vec()),
         (2, 0x800c, return_jump.to_le_bytes().to_vec()),
-        (3, 0x8010, fallthrough.to_le_bytes().to_vec()),
+        (3, 0x8008, fallthrough.to_le_bytes().to_vec()),
     ]);
+    core.set_branch_lookahead(2);
 
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     assert_eq!(call_decision.pc(), Address::new(0x800c));
@@ -139,6 +140,185 @@ fn detailed_scalar_window_keeps_same_window_return_terminal_after_direct_call() 
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
+
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(return_decision.pc(), Address::new(0x8008));
+    let speculation = return_decision.branch_speculation().unwrap();
+    assert_eq!(speculation.pc(), Address::new(0x800c));
+    assert_eq!(speculation.target(), Some(Address::new(0x8008)));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&return_decision)
+            .unwrap(),
+    );
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.return_address_stack.stack_entries().is_empty());
+    assert_eq!(state.return_address_stack.pending_operation_count(), 2);
+    assert_eq!(state.return_address_stack_operations.len(), 2);
+    assert_eq!(
+        state
+            .branch_speculation_summary
+            .target_provider()
+            .value(BranchTargetProvider::RAS),
+        1
+    );
+}
+
+#[test]
+fn detailed_same_window_return_consumes_call_ras_provenance() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+        (3, 0x8008, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(3);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let outer = state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+        state
+            .return_address_stack
+            .commit_operation(outer.id())
+            .unwrap();
+    }
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let first_return = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(first_return.pc(), Address::new(0x8008));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&first_return).unwrap(),
+    );
+
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x9000)]
+        );
+    }
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_same_window_return_requires_latest_call_link_owner() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call_x1 = j_type(8, 1);
+    let call_x5 = j_type(8, 5);
+    let return_x1 = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call_x1.to_le_bytes().to_vec()),
+        (2, 0x800c, call_x5.to_le_bytes().to_vec()),
+        (3, 0x8014, return_x1.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(3);
+
+    let first_call = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(first_call.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&first_call).unwrap(),
+    );
+
+    let second_call = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(second_call.pc(), Address::new(0x8014));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&second_call).unwrap(),
+    );
+
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x8008), Address::new(0x8010)]
+        );
+    }
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_ordinary_return_consumes_pending_call_ras_owner() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call_x1 = j_type(8, 1);
+    let return_x5 = i_type(0, 5, 0x0, 0, 0x67);
+    let return_x1 = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call_x1.to_le_bytes().to_vec()),
+        (2, 0x800c, return_x5.to_le_bytes().to_vec()),
+        (3, 0x8008, return_x1.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(3);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let outer = state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+        state
+            .return_address_stack
+            .commit_operation(outer.id())
+            .unwrap();
+    }
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let middle_return = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(middle_return.pc(), Address::new(0x8008));
+    let speculation = middle_return.branch_speculation().unwrap();
+    assert_eq!(speculation.pc(), Address::new(0x800c));
+    assert_eq!(speculation.target(), Some(Address::new(0x8008)));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&middle_return)
+            .unwrap(),
+    );
+
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x9000)]
+        );
+    }
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_same_window_return_does_not_fall_back_without_ras() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.discard_return_address_stack_speculations();
+        state.hart.write(Register::new(1).unwrap(), 0x9000);
+    }
 
     assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
