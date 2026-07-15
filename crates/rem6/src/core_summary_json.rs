@@ -204,6 +204,18 @@ fn o3_runtime_issue_json(stats: O3RuntimeStats) -> String {
     )
 }
 
+fn o3_runtime_writeback_port_json(stats: O3RuntimeStats) -> String {
+    format!(
+        "{{\"cycles\":{},\"admitted_rows\":{},\"deferred_rows\":{},\"deferred_row_cycles\":{},\"max_ready_rows_per_cycle\":{},\"max_deferred_rows\":{}}}",
+        stats.writeback_port_cycles(),
+        stats.writeback_port_admitted_rows(),
+        stats.writeback_port_deferred_rows(),
+        stats.writeback_port_deferred_row_cycles(),
+        stats.writeback_port_max_ready_rows_per_cycle(),
+        stats.writeback_port_max_deferred_rows(),
+    )
+}
+
 fn o3_runtime_iew_json(summary: &Rem6CoreSummary) -> String {
     format!(
         "{{\"dispatched_insts\":{},\"insts_to_commit\":{},\"writeback_count\":{},\"producer_inst\":{},\"consumer_inst\":{},\"predicted_taken_incorrect\":{},\"predicted_not_taken_incorrect\":{},\"branch_mispredicts\":{}}}",
@@ -855,6 +867,7 @@ impl Rem6CoreSummary {
             let branch_target_mismatch = o3_runtime_branch_target_mismatch_json(self);
             let iq = o3_runtime_iq_json(self);
             let issue = o3_runtime_issue_json(self.o3_runtime);
+            let writeback_port = o3_runtime_writeback_port_json(self.o3_runtime);
             let iew = o3_runtime_iew_json(self);
             let commit = o3_runtime_commit_json(self);
             let rob = o3_runtime_rob_json(self);
@@ -865,7 +878,7 @@ impl Rem6CoreSummary {
             let event_window = o3_runtime_event_window_json(self);
             let event_summary = o3_runtime_event_summary_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"issue\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"writeback_calendar\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"issue\":{},\"writeback_port\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"writeback_calendar\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
@@ -897,6 +910,7 @@ impl Rem6CoreSummary {
                 lsq,
                 iq,
                 issue,
+                writeback_port,
                 iew,
                 commit,
                 branch_event,

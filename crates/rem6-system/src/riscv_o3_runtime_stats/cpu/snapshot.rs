@@ -167,6 +167,19 @@ impl RiscvO3RuntimeCpuStats {
                 snapshot.dependency_blocked_row_cycles(),
             ),
             (self.max_rows_per_cycle, snapshot.max_rows_per_cycle()),
+            (self.writeback_port_cycles, snapshot.writeback_port_cycles()),
+            (
+                self.writeback_port_admitted_rows,
+                snapshot.writeback_port_admitted_rows(),
+            ),
+            (
+                self.writeback_port_deferred_rows,
+                snapshot.writeback_port_deferred_rows(),
+            ),
+            (
+                self.writeback_port_deferred_row_cycles,
+                snapshot.writeback_port_deferred_row_cycles(),
+            ),
             (self.iq_insts_issued, snapshot.instructions()),
             (
                 self.iq_mem_insts_issued,
@@ -210,6 +223,7 @@ impl RiscvO3RuntimeCpuStats {
         ] {
             registry.set_resettable_counter(stat, value)?;
         }
+        self.set_writeback_port_extrema_snapshot(registry, snapshot)?;
         self.set_runtime_snapshot_counts(registry, runtime_snapshot)?;
         self.structural_aliases.set_snapshot(registry, snapshot)?;
         self.branch_aliases.set_snapshot(registry, snapshot)?;
@@ -515,6 +529,26 @@ impl RiscvO3RuntimeCpuStats {
             ] {
                 registry.set_resettable_counter(stat, value)?;
             }
+        }
+        Ok(())
+    }
+
+    pub(super) fn set_writeback_port_extrema_snapshot(
+        self,
+        registry: &mut StatsRegistry,
+        snapshot: O3RuntimeStats,
+    ) -> Result<(), StatsError> {
+        for (stat, value) in [
+            (
+                self.writeback_port_max_ready_rows_per_cycle,
+                snapshot.writeback_port_max_ready_rows_per_cycle(),
+            ),
+            (
+                self.writeback_port_max_deferred_rows,
+                snapshot.writeback_port_max_deferred_rows(),
+            ),
+        ] {
+            registry.set_resettable_counter(stat, value)?;
         }
         Ok(())
     }

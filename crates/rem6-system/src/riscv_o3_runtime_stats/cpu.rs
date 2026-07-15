@@ -93,6 +93,12 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     resource_blocked_row_cycles: StatId,
     dependency_blocked_row_cycles: StatId,
     max_rows_per_cycle: StatId,
+    writeback_port_cycles: StatId,
+    writeback_port_admitted_rows: StatId,
+    writeback_port_deferred_rows: StatId,
+    writeback_port_deferred_row_cycles: StatId,
+    writeback_port_max_ready_rows_per_cycle: StatId,
+    writeback_port_max_deferred_rows: StatId,
     fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     nested_fu_latency_classes: [RiscvO3RuntimeFuLatencyClassStats; O3RuntimeFuLatencyClass::COUNT],
     iq_insts_issued: StatId,
@@ -528,6 +534,42 @@ impl RiscvO3RuntimeCpuStats {
                 "max_rows_per_cycle",
                 "Count",
             )?,
+            writeback_port_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.cycles",
+                "Cycle",
+            )?,
+            writeback_port_admitted_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.admitted_rows",
+                "Count",
+            )?,
+            writeback_port_deferred_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.deferred_rows",
+                "Count",
+            )?,
+            writeback_port_deferred_row_cycles: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.deferred_row_cycles",
+                "Cycle",
+            )?,
+            writeback_port_max_ready_rows_per_cycle: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.max_ready_rows_per_cycle",
+                "Count",
+            )?,
+            writeback_port_max_deferred_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "writeback_port.max_deferred_rows",
+                "Count",
+            )?,
             fu_latency_classes: register_o3_fu_latency_class_counters(registry, &prefix)?,
             nested_fu_latency_classes: register_o3_nested_fu_latency_class_counters(
                 registry, &prefix,
@@ -921,6 +963,26 @@ impl RiscvO3RuntimeCpuStats {
                 current.max_rows_per_cycle(),
             ),
             (
+                self.writeback_port_cycles,
+                previous.writeback_port_cycles(),
+                current.writeback_port_cycles(),
+            ),
+            (
+                self.writeback_port_admitted_rows,
+                previous.writeback_port_admitted_rows(),
+                current.writeback_port_admitted_rows(),
+            ),
+            (
+                self.writeback_port_deferred_rows,
+                previous.writeback_port_deferred_rows(),
+                current.writeback_port_deferred_rows(),
+            ),
+            (
+                self.writeback_port_deferred_row_cycles,
+                previous.writeback_port_deferred_row_cycles(),
+                current.writeback_port_deferred_row_cycles(),
+            ),
+            (
                 self.iq_insts_issued,
                 previous.instructions(),
                 current.instructions(),
@@ -1021,6 +1083,7 @@ impl RiscvO3RuntimeCpuStats {
                 registry.increment(stat, delta)?;
             }
         }
+        self.set_writeback_port_extrema_snapshot(registry, current)?;
         self.set_runtime_snapshot_counts(registry, runtime_snapshot)?;
         self.structural_aliases
             .increment_delta(registry, previous, current)?;

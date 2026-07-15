@@ -19,6 +19,9 @@ mod o3_runtime_gem5_lsq;
 #[path = "o3_runtime_issue.rs"]
 mod o3_runtime_issue;
 
+#[path = "o3_runtime_writeback.rs"]
+mod o3_runtime_writeback;
+
 use super::{increment_stat, stat_path_segment};
 use crate::execution_mode_lanes::{execution_mode_lane_index, EXECUTION_MODE_LANES};
 use crate::{Rem6CliError, Rem6CoreSummary};
@@ -31,6 +34,7 @@ use o3_runtime_issue::emit_o3_runtime_issue_stats;
 use o3_runtime_snapshot_restore::{
     emit_o3_runtime_checkpoint_restore_stats, emit_o3_runtime_snapshot_stats,
 };
+use o3_runtime_writeback::emit_o3_runtime_writeback_port_stats;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct O3EventSummaryFuLatencyStats {
@@ -941,6 +945,7 @@ pub(super) fn emit_o3_runtime_stats(
     )?;
     emit_o3_execution_mode_stats(stats, core.cpu, core.o3_runtime_execution_mode)?;
     emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;
+    emit_o3_runtime_writeback_port_stats(stats, core.cpu, o3)?;
 
     for (name, value) in [
         ("instructions", o3.instructions()),
