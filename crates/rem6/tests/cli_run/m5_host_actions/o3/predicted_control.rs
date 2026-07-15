@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "predicted_control/link_kind.rs"]
 mod link_kind;
+#[path = "predicted_control/link_return.rs"]
+mod link_return;
 #[path = "predicted_control/mixed_kind.rs"]
 mod mixed_kind;
 #[path = "predicted_control/nested.rs"]

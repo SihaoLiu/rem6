@@ -1,6 +1,9 @@
 use super::window_support::{
-    assert_no_data_address, assert_no_fetch_pc, control_window_command, resident_rob_pcs,
-    run_control_window_json,
+    assert_branch_kind_and_link, assert_drained_control_runtime, assert_final_execution_mode,
+    assert_hierarchy_activity, assert_link_rename_maps_to_call_destination, assert_no_data_address,
+    assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits, assert_pointer_u64_gt,
+    assert_register_absent_or_zero, assert_stopped_by_host, control_window_command,
+    resident_rob_pcs, run_control_window_json,
 };
 use super::*;
 
@@ -318,31 +321,6 @@ fn rem6_run_o3_link_kind_live_target_sources_stay_terminal() {
         ["0x80000010", "0x80000014", "0x80000018", "0x8000001c",]
     );
     assert_no_fetch_pc(&resident, "0x8000002c");
-
-    let same_window = same_window_call_return_binary("o3-link-kind-same-window-call-return");
-    let return_completed = run_link_kind_json(&same_window, "direct", 2_500, "detailed", &[]);
-    assert_stopped_by_host(&return_completed);
-    assert_eq!(register_value(&return_completed, "x1"), 0x8000_0014);
-    assert_eq!(register_value(&return_completed, "x13"), 42);
-    assert_eq!(
-        return_completed
-            .pointer("/memory/0/hex")
-            .and_then(Value::as_str),
-        Some("2a0000002a0000000000000000000000")
-    );
-    assert_no_data_address(&return_completed, FALLTHROUGH_STORE_ADDRESS);
-    let load = event_at_pc(&return_completed, "0x8000000c");
-    let ret = event_at_pc(&return_completed, "0x8000001c");
-    assert_branch_kind_and_link(ret, "return", false);
-    let live_tick = event_u64(ret, "issue_tick") + 1;
-    assert!(live_tick < event_u64(load, "lsq_data_response_tick"));
-    assert!(event_u64(event_at_pc(&return_completed, "0x80000010"), "issue_tick") < live_tick);
-    let resident = run_link_kind_json(&same_window, "direct", live_tick, "detailed", &[]);
-    assert_eq!(
-        resident_rob_pcs(&resident),
-        ["0x8000000c", "0x80000010", "0x8000001c"]
-    );
-    assert_no_fetch_pc(&resident, "0x80000014");
 }
 
 #[test]
@@ -422,7 +400,7 @@ fn rem6_run_host_switch_transfers_o3_link_kind_window() {
         baseline.pointer("/memory/0/hex").and_then(Value::as_str)
     );
     assert_final_execution_mode(&switched, "timing");
-    assert_drained_link_kind_runtime(&switched);
+    assert_drained_control_runtime(&switched);
 }
 
 #[test]
@@ -504,7 +482,7 @@ fn rem6_run_o3_link_kind_checkpoint_boundary() {
         restored.pointer("/memory/0/hex").and_then(Value::as_str),
         baseline.pointer("/memory/0/hex").and_then(Value::as_str)
     );
-    assert_drained_link_kind_runtime(&restored);
+    assert_drained_control_runtime(&restored);
 }
 
 #[test]
@@ -667,26 +645,6 @@ fn live_alu_target_binary(name: &str) -> std::path::PathBuf {
     finish_link_kind_binary(name, words, [42, 0, 0, 0])
 }
 
-fn same_window_call_return_binary(name: &str) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-        i_type(0, 18, 0b010, 12, 0x03),
-        j_type(12, 1),
-        i_type(42, 0, 0x0, 13, 0x13),
-        j_type(16, 0),
-        i_type(0, 1, 0x0, 0, 0x67),
-        s_type(8, 7, 18, 0b010),
-        m5op(M5_FAIL),
-        s_type(4, 13, 18, 0b010),
-        m5op(M5_EXIT),
-        m5op(M5_FAIL),
-    ]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
-}
-
 fn finish_link_kind_binary(
     name: &str,
     mut words: Vec<u32>,
@@ -720,34 +678,6 @@ fn run_link_kind_json(
     )
 }
 
-fn assert_stopped_by_host(json: &Value) {
-    assert_eq!(
-        json.pointer("/simulation/status").and_then(Value::as_str),
-        Some("stopped_by_host")
-    );
-}
-
-fn assert_branch_kind_and_link(event: &Value, kind: &str, link_write: bool) {
-    assert_eq!(
-        event.pointer("/branch_kind").and_then(Value::as_str),
-        Some(kind),
-        "unexpected branch kind: {event}"
-    );
-    assert_eq!(
-        event
-            .pointer("/branch_link_register_write")
-            .and_then(Value::as_bool),
-        Some(link_write),
-        "unexpected branch link-write flag: {event}"
-    );
-}
-
-fn assert_ordered_commits<const N: usize>(events: [&Value; N]) {
-    assert!(events
-        .windows(2)
-        .all(|events| event_u64(events[0], "commit_tick") <= event_u64(events[1], "commit_tick")));
-}
-
 fn live_midpoint(load: &Value) -> u64 {
     let issue_tick = event_u64(load, "issue_tick");
     let response_tick = event_u64(load, "lsq_data_response_tick");
@@ -757,130 +687,4 @@ fn live_midpoint(load: &Value) -> u64 {
         "live midpoint must be strictly between issue and response: issue_tick={issue_tick} midpoint={midpoint} response_tick={response_tick} load={load}"
     );
     midpoint
-}
-
-fn assert_register_absent_or_zero(json: &Value, register: &str) {
-    let registers = json
-        .pointer("/cores/0/registers")
-        .and_then(Value::as_object)
-        .unwrap_or_else(|| panic!("missing register object: {json}"));
-    match registers.get(register) {
-        None => {}
-        Some(value) if value.as_str() == Some("0x0") => {}
-        Some(value) => {
-            panic!("expected {register} to be absent or explicitly zero, got {value}: {json}")
-        }
-    }
-}
-
-fn assert_link_rename_maps_to_call_destination(json: &Value, call_pc: &str, register: u64) {
-    let call_entry = json
-        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
-        .and_then(Value::as_array)
-        .and_then(|entries| {
-            entries
-                .iter()
-                .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(call_pc))
-        })
-        .unwrap_or_else(|| panic!("missing resident linked call row {call_pc}: {json}"));
-    let destination = call_entry
-        .pointer("/destination")
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| panic!("linked call row should own a destination: {call_entry}"));
-    let rename_entry = json
-        .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
-        .and_then(Value::as_array)
-        .and_then(|entries| {
-            entries.iter().find(|entry| {
-                entry.pointer("/register_class").and_then(Value::as_str) == Some("integer")
-                    && entry.pointer("/architectural").and_then(Value::as_u64) == Some(register)
-            })
-        })
-        .unwrap_or_else(|| panic!("missing live rename for x{register}: {json}"));
-    assert_eq!(
-        rename_entry.pointer("/physical").and_then(Value::as_u64),
-        Some(destination),
-        "x{register} should map to the linked call destination"
-    );
-}
-
-fn assert_pointer_u64_gt(json: &Value, pointer: &str, minimum: u64) {
-    assert!(
-        json.pointer(pointer)
-            .and_then(Value::as_u64)
-            .is_some_and(|value| value > minimum),
-        "expected {pointer} > {minimum}: {json}"
-    );
-}
-
-fn assert_hierarchy_activity(json: &Value) {
-    for pointer in [
-        "/memory_resources/cache/data/activity",
-        "/memory_resources/transport/data/activity",
-        "/memory_resources/fabric/activity",
-        "/memory_resources/dram/activity",
-    ] {
-        assert_pointer_u64_gt(json, pointer, 0);
-    }
-}
-
-fn assert_final_execution_mode(json: &Value, expected_mode: &str) {
-    let execution_modes = json
-        .pointer("/host_actions/execution_modes")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing final execution mode: {json}"));
-    assert_eq!(execution_modes.len(), 1);
-    assert_eq!(
-        execution_modes[0]
-            .pointer("/target")
-            .and_then(Value::as_str),
-        Some("cpu0")
-    );
-    assert_eq!(
-        execution_modes[0].pointer("/mode").and_then(Value::as_str),
-        Some(expected_mode)
-    );
-}
-
-fn assert_drained_link_kind_runtime(json: &Value) {
-    assert_eq!(
-        json.pointer("/cores/0/o3_runtime/snapshot/rob/count")
-            .and_then(Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
-            .and_then(Value::as_u64),
-        Some(0)
-    );
-}
-
-fn assert_no_o3_stats(json: &Value) {
-    let unexpected = json
-        .pointer("/stats")
-        .and_then(Value::as_array)
-        .expect("timing link-kind stats")
-        .iter()
-        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
-        .filter(|path| {
-            path.starts_with("sim.cpu0.o3.")
-                || [
-                    "system.cpu.rob.",
-                    "system.cpu.lsq0.",
-                    "system.cpu.rename.",
-                    "system.cpu.iq.",
-                    "system.cpu.iew.",
-                    "system.cpu.commit.",
-                    "system.cpu.ftq.",
-                    "system.cpu.fetch.",
-                    "system.cpu.bac.",
-                ]
-                .iter()
-                .any(|prefix| path.starts_with(prefix))
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        unexpected.is_empty(),
-        "timing mode leaked link-kind O3 stats: {unexpected:?}"
-    );
 }
