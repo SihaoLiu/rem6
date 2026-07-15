@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::{
     CpuCore, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineStallCause, RiscvCore,
     RiscvCoreDriveAction,
@@ -15,7 +15,7 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort,
-    SystemActionExecutor, SystemActionOutcome,
+    SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -378,7 +378,7 @@ fn attached_checkpoint_executor(
 }
 
 #[test]
-fn attached_scheduler_checkpoint_captures_restores_and_rearms_live_div_gate_once() {
+fn attached_scheduler_checkpoint_rejects_live_div_gate_without_losing_wake() {
     let (core, transport) = core_and_transport();
     core.write_register(Register::new(1).unwrap(), 84);
     core.write_register(Register::new(2).unwrap(), 7);
@@ -400,7 +400,7 @@ fn attached_scheduler_checkpoint_captures_restores_and_rearms_live_div_gate_once
         Err(SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 })
     ));
 
-    let (mut executor, cpu_component, scheduler_component) =
+    let (mut executor, cpu_component, _scheduler_component) =
         attached_checkpoint_executor(&core, &scheduler);
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(31);
@@ -415,63 +415,27 @@ fn attached_scheduler_checkpoint_captures_restores_and_rearms_live_div_gate_once
         },
     );
 
-    let manifest = match executor.apply(&checkpoint).unwrap() {
-        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
-        other => panic!("unexpected outcome: {other:?}"),
-    };
-    assert!(manifest.states().iter().any(|state| {
-        state.component() == &cpu_component
-            && state
-                .chunks()
-                .iter()
-                .any(|chunk| chunk.name() == "o3-runtime-state")
-    }));
-    assert!(manifest.states().iter().any(|state| {
-        state.component() == &scheduler_component
-            && state
-                .chunks()
-                .iter()
-                .any(|chunk| chunk.name() == "scheduler")
-    }));
+    let error = executor.apply(&checkpoint).unwrap_err();
+    assert!(matches!(
+        error,
+        SystemError::Checkpoint(CheckpointError::ComponentNotQuiescent { component })
+            if component == cpu_component
+    ));
     assert_eq!(
         scheduler.lock().unwrap().snapshot().total_pending_events(),
         1
     );
-
-    let restore = HostActionRecord::new(
-        checkpoint.tick().saturating_add(1),
-        host,
-        host,
-        GuestEventId::new(52),
-        source,
-        HostAction::RestoreCheckpoint {
-            manifest: manifest.clone(),
-        },
-    );
-    assert_eq!(
-        executor.apply(&restore).unwrap(),
-        SystemActionOutcome::CheckpointRestored {
-            tick: restore.tick(),
-            event: restore.event(),
-            source,
-            manifest,
-        }
-    );
-    assert!(scheduler.lock().unwrap().is_idle());
-    assert!(core.checkpoint_owned_live_retire_gate_wakes().is_empty());
-
-    let mut scheduler = scheduler.lock().unwrap();
-    drive_to_live_gate(&core, &mut scheduler, &transport, &store);
-    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
     assert_eq!(
         core.checkpoint_owned_live_retire_gate_wakes()
             .first()
             .copied()
-            .expect("restored gate should rearm once")
+            .expect("failed checkpoint must preserve the live gate wake")
             .1
             .tick(),
         ready_tick
     );
+
+    let mut scheduler = scheduler.lock().unwrap();
     assert_eq!(
         core.drive_next_action(
             &mut scheduler,

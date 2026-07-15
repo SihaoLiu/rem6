@@ -623,13 +623,19 @@ mod tests {
             1
         );
 
-        let response_summary = scheduler.run_until_idle();
-        let response_retirement = driver
-            .record_run_stats(
+        let response_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        let wakes = driver
+            .schedule_riscv_system_events_from_turn(
                 &cluster,
-                scheduler.now(),
-                &RiscvClusterTurn::scheduler(response_summary),
+                &mut scheduler,
+                &response_turn,
+                |_| GuestEventId::new(1),
             )
+            .unwrap();
+        assert_eq!(wakes.len(), 1);
+        let wake_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        let response_retirement = driver
+            .record_run_stats(&cluster, scheduler.now(), &wake_turn)
             .unwrap();
         assert_eq!(response_retirement.count(), 1);
         assert_eq!(response_retirement.last_tick(), Some(scheduler.now()));
@@ -747,13 +753,19 @@ mod tests {
             )
             .unwrap();
 
-        let response_summary = scheduler.run_until_idle();
-        let response_retirement = driver
-            .record_run_stats(
+        let response_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        let wakes = driver
+            .schedule_riscv_system_events_from_turn(
                 &cluster,
-                scheduler.now(),
-                &RiscvClusterTurn::scheduler(response_summary),
+                &mut scheduler,
+                &response_turn,
+                |_| GuestEventId::new(1),
             )
+            .unwrap();
+        assert_eq!(wakes.len(), 1);
+        let wake_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        let response_retirement = driver
+            .record_run_stats(&cluster, scheduler.now(), &wake_turn)
             .unwrap();
 
         assert_eq!(response_retirement.count(), 1);
@@ -861,14 +873,23 @@ mod tests {
             )
             .unwrap();
 
-        let responses = scheduler.run_until_idle();
-        let first = driver
-            .record_run_stats_with_retirement_budget(
+        let response_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        let wakes = driver
+            .schedule_riscv_system_events_from_turn(
                 &cluster,
-                scheduler.now(),
-                &RiscvClusterTurn::scheduler(responses),
-                1,
+                &mut scheduler,
+                &response_turn,
+                |_| GuestEventId::new(1),
             )
+            .unwrap();
+        let retirement_turn = if wakes.is_empty() {
+            response_turn
+        } else {
+            assert_eq!(wakes.len(), 1);
+            RiscvClusterTurn::scheduler(scheduler.run_until_idle())
+        };
+        let first = driver
+            .record_run_stats_with_retirement_budget(&cluster, scheduler.now(), &retirement_turn, 1)
             .unwrap();
         assert_eq!(first.count(), 1);
         assert_eq!(retired_instruction_count(&driver), 1);
@@ -1009,9 +1030,25 @@ mod tests {
 
         scheduler.run_until_idle_parallel().unwrap();
         assert_eq!(device_responses.load(Ordering::SeqCst), 1);
-        driver
-            .record_o3_runtime_stats(&cluster, &RiscvClusterTurn::idle(scheduler.now()))
+        let turn = RiscvClusterTurn::idle(scheduler.now());
+        let wakes = driver
+            .schedule_riscv_system_events_from_turn_parallel(
+                &cluster,
+                &mut scheduler,
+                &turn,
+                |_| GuestEventId::new(1),
+            )
             .unwrap();
+        assert_eq!(wakes.len(), 1);
+        scheduler.run_until_idle_parallel().unwrap();
+        let retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
+            .unwrap();
+        assert_eq!(retirement.count(), 1);
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
         assert_eq!(core.o3_runtime_stats().lsq_loads(), 1);
         assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());

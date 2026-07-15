@@ -4,8 +4,8 @@ use rem6_cpu::{
     O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PhysicalRegisterId, O3PipelineStage,
     O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry, O3RuntimeCheckpointPayload,
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats,
-    O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
-    O3WritebackTransferSnapshot, RiscvCore, RiscvCpuExecutionEvent,
+    O3ScopedReadyInstruction, O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore,
+    RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
@@ -20,6 +20,7 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 const O3_RUNTIME_CHECKPOINT_MAGIC_BYTES: usize = 4;
 const O3_RUNTIME_CHECKPOINT_VERSION_BYTES: usize = 1;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS: u8 = 22;
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS: u8 = 23;
 const O3_RUNTIME_CHECKPOINT_PENDING_LEN_OFFSET: usize =
     O3_RUNTIME_CHECKPOINT_MAGIC_BYTES + O3_RUNTIME_CHECKPOINT_VERSION_BYTES;
 const O3_RUNTIME_CHECKPOINT_HEADER_BYTES: usize =
@@ -71,6 +72,7 @@ const O3_RUNTIME_CHECKPOINT_BRANCH_EVENT_PREDICTION_STATS_BYTES: usize =
 const O3_RUNTIME_CHECKPOINT_BRANCH_MISMATCH_STATS_BYTES: usize = BranchTargetKind::COUNT * 16 * 8;
 const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * 8;
 const O3_RUNTIME_CHECKPOINT_ISSUE_ARBITRATION_STATS_BYTES: usize = 5 * 8;
+const O3_RUNTIME_CHECKPOINT_WRITEBACK_PORT_STATS_BYTES: usize = 6 * 8;
 const O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + 4 + 8 + 8;
 const O3_RUNTIME_CHECKPOINT_STATS_BYTES_WITHOUT_FORWARDING_SUPPRESSION: usize =
     (15 + O3RuntimeFuLatencyClass::COUNT * 2) * 8
@@ -139,7 +141,7 @@ fn o3_runtime_checkpoint_round_trips_rob_lsq_rename_and_pending_state() {
             ],
             O3WritebackTransferSnapshot::new(
                 O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
-                [O3WritebackCompletion::new(13)],
+                [],
             ),
         )
         .unwrap(),
@@ -1401,10 +1403,11 @@ fn strip_current_live_retire_gate(payload: &[u8]) -> Vec<u8> {
 }
 
 fn strip_current_issue_arbitration_stats(payload: &[u8]) -> Vec<u8> {
+    let payload = strip_current_writeback_port_stats(payload);
     if payload[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES]
         < O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
     {
-        return payload.to_vec();
+        return payload;
     }
     let trailer_offset = payload
         .len()
@@ -1414,6 +1417,22 @@ fn strip_current_issue_arbitration_stats(payload: &[u8]) -> Vec<u8> {
         .checked_sub(O3_RUNTIME_CHECKPOINT_ISSUE_ARBITRATION_STATS_BYTES)
         .unwrap();
     [&payload[..issue_offset], &payload[trailer_offset..]].concat()
+}
+
+fn strip_current_writeback_port_stats(payload: &[u8]) -> Vec<u8> {
+    if payload[O3_RUNTIME_CHECKPOINT_MAGIC_BYTES]
+        < O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS
+    {
+        return payload.to_vec();
+    }
+    let trailer_offset = payload
+        .len()
+        .checked_sub(O3_RUNTIME_CHECKPOINT_LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    let writeback_offset = trailer_offset
+        .checked_sub(O3_RUNTIME_CHECKPOINT_WRITEBACK_PORT_STATS_BYTES)
+        .unwrap();
+    [&payload[..writeback_offset], &payload[trailer_offset..]].concat()
 }
 
 fn strip_current_live_staged_rob_bytes(payload: &[u8]) -> Vec<u8> {

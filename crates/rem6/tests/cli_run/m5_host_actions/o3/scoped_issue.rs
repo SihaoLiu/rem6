@@ -319,7 +319,7 @@ fn rem6_run_o3_scoped_issue_checkpoint_boundary() {
         "live scoped-issue checkpoint should fail closed: {stderr}"
     );
 
-    let checkpoint_tick = event_u64(event_at_pc(&baseline, THIRD_ROW_PC), "commit_tick") + 1;
+    let checkpoint_tick = event_u64(event_at_pc(&baseline, LOAD_PC), "commit_tick") + 1;
     let restore_tick = checkpoint_tick + 1;
     let checkpoint_arg = format!("{checkpoint_tick}:scoped-issue-drained");
     let restore_arg = format!("{restore_tick}:scoped-issue-drained");
@@ -370,7 +370,7 @@ fn rem6_run_o3_scoped_issue_checkpoint_boundary() {
         captured_runtime
             .pointer("/checkpoint_version")
             .and_then(Value::as_u64),
-        Some(22)
+        Some(23)
     );
     for field in ["snapshot_rob_entries", "snapshot_lsq_entries"] {
         assert_eq!(

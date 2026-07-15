@@ -84,6 +84,7 @@ pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
+pub use o3_runtime_writeback::O3RuntimeWritebackReservation;
 pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
 #[cfg(test)]
 pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
@@ -96,7 +97,6 @@ pub(crate) use o3_store_forwarding::O3StoreLoadForwardingPlan;
 use o3_store_forwarding::{
     o3_load_forwarding_access, o3_store_forwarding_entry, O3StoreForwardingEntry,
 };
-
 const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
 const DEFAULT_O3_SCALAR_MEMORY_DEPTH: usize = 2;
 const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
@@ -319,15 +319,6 @@ impl O3RuntimeState {
             .expect("rebuilt O3 pending-state snapshot is valid");
         debug_assert_eq!(self.writeback_width(), writeback_width);
         true
-    }
-
-    pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
-        O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
-            self.snapshot.clone(),
-            self.stats(),
-            self.dependency_producers_with_consumers.clone(),
-        )
-        .expect("captured O3 runtime checkpoint is internally consistent")
     }
 
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
@@ -1676,6 +1667,7 @@ impl crate::RiscvCore {
             apply_deferred_scalar_load_writeback(&mut state, &access, &data);
             crate::riscv_checker::sync_checker_hart(&mut state);
         }
+        state.refresh_o3_writeback_wake(current_tick);
         Some(execution)
     }
 

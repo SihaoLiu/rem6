@@ -3,7 +3,7 @@ use rem6_memory::MemoryRequestId;
 use super::O3RuntimeState;
 
 impl O3RuntimeState {
-    pub(crate) fn has_pending_retirement_authority(&self) -> bool {
+    pub(crate) fn has_live_retirement_authority(&self) -> bool {
         self.has_pending_scalar_memory_retirement()
             || self
                 .snapshot
@@ -13,6 +13,25 @@ impl O3RuntimeState {
             || !self.live_retired_instructions.is_empty()
             || !self.live_speculative_executions.is_empty()
             || !self.live_scalar_memory_younger_sequences.is_empty()
+    }
+
+    pub(crate) fn has_pending_retirement_authority(&self) -> bool {
+        self.has_live_retirement_authority() || !self.writeback_calendar.is_empty()
+    }
+
+    pub(crate) fn has_live_writeback_owner(&self) -> bool {
+        self.live_speculative_executions
+            .iter()
+            .any(|execution| execution.writeback_slot.is_some())
+            || self.live_retired_instructions.iter().any(|instruction| {
+                self.writeback_calendar
+                    .reservation(instruction.sequence)
+                    .is_some()
+            })
+            || self
+                .live_scalar_memories
+                .iter()
+                .any(|live| live.admitted_writeback_tick.is_some())
     }
 
     pub(crate) fn owns_pending_retirement_authority(&self, fetch_request: MemoryRequestId) -> bool {
@@ -26,7 +45,9 @@ impl O3RuntimeState {
 
 impl crate::RiscvCore {
     pub fn has_pending_o3_runtime_retirement(&self) -> bool {
-        self.with_o3_runtime(|runtime| runtime.has_pending_retirement_authority())
+        let state = self.state.lock().expect("riscv core lock");
+        state.o3_runtime.has_pending_retirement_authority()
+            || state.o3_writeback_wake.has_pending_checkpoint_authority()
     }
 
     pub fn owns_pending_o3_runtime_retirement(&self, fetch_request: MemoryRequestId) -> bool {

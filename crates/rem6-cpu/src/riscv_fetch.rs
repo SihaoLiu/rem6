@@ -161,7 +161,7 @@ impl RiscvCore {
         self.sync_in_order_fetch_state()
     }
 
-    pub fn reset_instruction_fetch_stream(&self) {
+    pub fn reset_instruction_fetch_stream(&self, now: Tick) {
         let mut state = self.state.lock().expect("riscv core lock");
         let pc = Address::new(state.hart.pc());
         state.pending_fetch_prefix = None;
@@ -169,7 +169,7 @@ impl RiscvCore {
         state.detach_pending_in_order_pipeline_advance();
         state.discard_branch_speculations();
         state.live_retire_gate.rebind_pending_to_next_request();
-        state.o3_runtime.discard_live_speculative_executions();
+        state.o3_runtime.discard_live_speculative_executions_at(now);
         drop(state);
         self.inner().reset_fetch_stream_to_pc(pc);
     }

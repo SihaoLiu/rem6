@@ -8,7 +8,9 @@ use super::o3_runtime_checkpoint_branch_mismatch::{
     O3RuntimeBranchMismatchCheckpointStats,
 };
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
-use crate::o3_pipeline::O3PendingStateCheckpointPayload;
+use crate::o3_pipeline::{
+    O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3WritebackTransferSnapshot,
+};
 use crate::o3_runtime_trace::{
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
 };
@@ -16,10 +18,11 @@ use crate::o3_runtime_trace::{
 use super::{
     encode_register_class, encode_u32, validate_live_staged_rob_metadata,
     validate_runtime_snapshot, O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry,
-    O3ReorderBufferEntry, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
+    O3ReorderBufferEntry, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeState, O3RuntimeStats,
 };
 
 const O3_RUNTIME_CHECKPOINT_MAGIC: [u8; 4] = *b"O3RT";
+const O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS: u8 = 23;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS: u8 = 22;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB: u8 = 21;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE: u8 = 20;
@@ -30,8 +33,7 @@ const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_OPERATION_BYTE_STATS: u8 = 16;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_PREDICTION_STATS: u8 = 15;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_REASON_STATS: u8 = 14;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_SUPPRESSION_STATS: u8 = 13;
-const O3_RUNTIME_CHECKPOINT_VERSION: u8 =
-    O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS;
+const O3_RUNTIME_CHECKPOINT_VERSION: u8 = O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_EVENT_STATS: u8 = 12;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_LSQ_FORWARDING_MATRIX_STATS: u8 = 11;
 const O3_RUNTIME_CHECKPOINT_VERSION_WITH_IQ_BRANCH_ISSUED_STATS: u8 = 10;
@@ -63,6 +65,13 @@ pub struct O3RuntimeCheckpointPayload {
     stats: O3RuntimeStats,
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retire_gate: Option<O3LiveRetireGateCheckpointPayload>,
+    decode_origin: O3RuntimeCheckpointDecodeOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum O3RuntimeCheckpointDecodeOrigin {
+    RuntimeVersion(u8),
+    LegacyPendingOnly,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,14 +114,58 @@ impl O3RuntimeCheckpointPayload {
         stats: O3RuntimeStats,
         dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     ) -> Result<Self, O3RuntimeError> {
+        Self::from_snapshot_with_stats_and_origin(
+            snapshot,
+            stats,
+            dependency_producers_with_consumers,
+            O3RuntimeCheckpointDecodeOrigin::RuntimeVersion(O3_RUNTIME_CHECKPOINT_VERSION),
+        )
+    }
+
+    fn from_snapshot_with_stats_and_origin(
+        snapshot: O3RuntimeSnapshot,
+        stats: O3RuntimeStats,
+        dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
+        decode_origin: O3RuntimeCheckpointDecodeOrigin,
+    ) -> Result<Self, O3RuntimeError> {
         let snapshot = snapshot.into_checkpoint_snapshot();
         validate_runtime_snapshot(&snapshot)?;
+        if matches!(
+            decode_origin,
+            O3RuntimeCheckpointDecodeOrigin::RuntimeVersion(
+                O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS
+            )
+        ) && !snapshot.pending_state().writeback().deferred().is_empty()
+        {
+            return Err(O3RuntimeError::StableWritebackQueueNotEmpty {
+                deferred: snapshot.pending_state().writeback().deferred().len(),
+            });
+        }
         Ok(Self {
             snapshot,
             stats,
             dependency_producers_with_consumers,
             live_retire_gate: None,
+            decode_origin,
         })
+    }
+
+    pub fn from_legacy_pending_state(
+        pending_state: O3PendingStateSnapshot,
+    ) -> Result<Self, O3RuntimeError> {
+        let default = super::default_o3_runtime_snapshot();
+        let snapshot = O3RuntimeSnapshot::new(
+            default.reorder_buffer().iter().copied(),
+            default.load_store_queue().iter().copied(),
+            default.rename_map().iter().copied(),
+            pending_state,
+        )?;
+        Self::from_snapshot_with_stats_and_origin(
+            snapshot,
+            O3RuntimeStats::default(),
+            BTreeSet::new(),
+            O3RuntimeCheckpointDecodeOrigin::LegacyPendingOnly,
+        )
     }
 
     pub(crate) fn with_live_retire_gate(
@@ -159,6 +212,7 @@ impl O3RuntimeCheckpointPayload {
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE
                 | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB
+                | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
                 | O3_RUNTIME_CHECKPOINT_VERSION
         ) {
             return Err(O3RuntimeError::UnsupportedCheckpointVersion { version });
@@ -258,6 +312,7 @@ impl O3RuntimeCheckpointPayload {
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_BRANCH_MISMATCH_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_FU_CLASS_EXTREMA_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS,
+                version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS,
                 version >= O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE,
             )?
         };
@@ -274,29 +329,30 @@ impl O3RuntimeCheckpointPayload {
             });
         }
 
-        Ok(Self::from_snapshot_with_stats_and_dependency_producers(
+        Ok(Self::from_snapshot_with_stats_and_origin(
             O3RuntimeSnapshot::new(reorder_buffer, load_store_queue, rename_map, pending_state)?,
             stats,
             dependency_producers_with_consumers,
+            O3RuntimeCheckpointDecodeOrigin::RuntimeVersion(version),
         )?
         .with_live_retire_gate(live_retire_gate))
     }
 
     pub fn encode(&self) -> Vec<u8> {
+        let snapshot = self
+            .normalized_snapshot_for_current_runtime()
+            .expect("O3 runtime checkpoint payload was validated before construction");
         let pending_payload =
-            O3PendingStateCheckpointPayload::from_snapshot(self.snapshot.pending_state.clone())
+            O3PendingStateCheckpointPayload::from_snapshot(snapshot.pending_state.clone())
                 .expect("O3 runtime checkpoint payload was validated before construction")
                 .encode();
         let pending_payload_len = encode_u32("pending_payload_length", pending_payload.len())
             .expect("O3 runtime checkpoint payload was validated before construction");
-        let rob_count = encode_u32("reorder_buffer_count", self.snapshot.reorder_buffer.len())
+        let rob_count = encode_u32("reorder_buffer_count", snapshot.reorder_buffer.len())
             .expect("O3 runtime checkpoint payload was validated before construction");
-        let lsq_count = encode_u32(
-            "load_store_queue_count",
-            self.snapshot.load_store_queue.len(),
-        )
-        .expect("O3 runtime checkpoint payload was validated before construction");
-        let rename_count = encode_u32("rename_map_count", self.snapshot.rename_map.len())
+        let lsq_count = encode_u32("load_store_queue_count", snapshot.load_store_queue.len())
+            .expect("O3 runtime checkpoint payload was validated before construction");
+        let rename_count = encode_u32("rename_map_count", snapshot.rename_map.len())
             .expect("O3 runtime checkpoint payload was validated before construction");
 
         let mut payload = Vec::new();
@@ -307,13 +363,13 @@ impl O3RuntimeCheckpointPayload {
         payload.extend_from_slice(&lsq_count.to_le_bytes());
         payload.extend_from_slice(&rename_count.to_le_bytes());
         payload.extend_from_slice(&pending_payload);
-        for entry in &self.snapshot.reorder_buffer {
+        for entry in &snapshot.reorder_buffer {
             write_rob_entry(&mut payload, *entry);
         }
-        for entry in &self.snapshot.load_store_queue {
+        for entry in &snapshot.load_store_queue {
             write_lsq_entry(&mut payload, *entry);
         }
-        for entry in &self.snapshot.rename_map {
+        for entry in &snapshot.rename_map {
             write_rename_entry(
                 &mut payload,
                 *entry,
@@ -324,6 +380,32 @@ impl O3RuntimeCheckpointPayload {
         write_o3_runtime_stats(&mut payload, self.stats);
         write_live_retire_gate_checkpoint(&mut payload, self.live_retire_gate);
         payload
+    }
+
+    fn normalized_snapshot_for_current_runtime(&self) -> Result<O3RuntimeSnapshot, O3RuntimeError> {
+        let legacy = matches!(
+            self.decode_origin,
+            O3RuntimeCheckpointDecodeOrigin::LegacyPendingOnly
+                | O3RuntimeCheckpointDecodeOrigin::RuntimeVersion(
+                    1..=O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
+                )
+        );
+        if !legacy
+            && !self
+                .snapshot
+                .pending_state()
+                .writeback()
+                .deferred()
+                .is_empty()
+        {
+            return Err(O3RuntimeError::StableWritebackQueueNotEmpty {
+                deferred: self.snapshot.pending_state().writeback().deferred().len(),
+            });
+        }
+        if !legacy {
+            return Ok(self.snapshot.clone());
+        }
+        snapshot_with_empty_writeback_deferred(&self.snapshot)
     }
 
     pub const fn snapshot(&self) -> &O3RuntimeSnapshot {
@@ -350,8 +432,42 @@ impl O3RuntimeCheckpointPayload {
     }
 
     pub fn into_snapshot(self) -> O3RuntimeSnapshot {
-        self.snapshot
+        self.normalized_snapshot_for_current_runtime()
+            .expect("O3 runtime checkpoint payload was validated before construction")
     }
+}
+
+impl O3RuntimeState {
+    pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
+        O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
+            self.snapshot.clone(),
+            self.stats(),
+            self.dependency_producers_with_consumers.clone(),
+        )
+        .expect("captured O3 runtime checkpoint is internally consistent")
+    }
+}
+
+fn snapshot_with_empty_writeback_deferred(
+    snapshot: &O3RuntimeSnapshot,
+) -> Result<O3RuntimeSnapshot, O3RuntimeError> {
+    let pending = snapshot.pending_state();
+    let normalized_pending = O3PendingStateSnapshot::new(
+        pending.resolved_dependency_scopes().iter().copied(),
+        pending.ready().iter().cloned(),
+        O3WritebackTransferSnapshot::new(pending.writeback().policy().clone(), []),
+    )
+    .map_err(|error| O3RuntimeError::InvalidPendingState { error })?;
+    let mut normalized = snapshot.clone();
+    normalized.pending_state = normalized_pending;
+    Ok(normalized)
+}
+
+#[cfg(test)]
+fn encode_pending_state_for_checkpoint_test(snapshot: O3PendingStateSnapshot) -> Vec<u8> {
+    O3PendingStateCheckpointPayload::from_snapshot(snapshot)
+        .expect("checkpoint test pending state is valid")
+        .encode()
 }
 
 fn checked_bytes(
@@ -641,6 +757,16 @@ fn write_o3_runtime_stats(payload: &mut Vec<u8>, stats: O3RuntimeStats) {
     ] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
+    for value in [
+        stats.writeback_port_cycles(),
+        stats.writeback_port_admitted_rows(),
+        stats.writeback_port_deferred_rows(),
+        stats.writeback_port_deferred_row_cycles(),
+        stats.writeback_port_max_ready_rows_per_cycle(),
+        stats.writeback_port_max_deferred_rows(),
+    ] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
 }
 
 fn write_live_retire_gate_checkpoint(
@@ -765,6 +891,7 @@ fn read_o3_runtime_stats(
     has_branch_mismatch_stats: bool,
     has_fu_latency_class_extrema_stats: bool,
     has_issue_arbitration_stats: bool,
+    has_writeback_port_stats: bool,
     has_live_retire_gate_stats: bool,
 ) -> Result<O3RuntimeStats, O3RuntimeError> {
     let mut fu_latency_class_instructions = [0; O3RuntimeFuLatencyClass::COUNT];
@@ -1021,6 +1148,25 @@ fn read_o3_runtime_stats(
     } else {
         (0, 0, 0, 0, 0)
     };
+    let (
+        writeback_port_cycles,
+        writeback_port_admitted_rows,
+        writeback_port_deferred_rows,
+        writeback_port_deferred_row_cycles,
+        writeback_port_max_ready_rows_per_cycle,
+        writeback_port_max_deferred_rows,
+    ) = if has_writeback_port_stats {
+        (
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+            read_u64(payload, offset)?,
+        )
+    } else {
+        (0, 0, 0, 0, 0, 0)
+    };
     Ok(O3RuntimeStats {
         instructions,
         rob_allocations,
@@ -1118,12 +1264,12 @@ fn read_o3_runtime_stats(
         resource_blocked_row_cycles,
         dependency_blocked_row_cycles,
         max_rows_per_cycle,
-        writeback_port_cycles: 0,
-        writeback_port_admitted_rows: 0,
-        writeback_port_deferred_rows: 0,
-        writeback_port_deferred_row_cycles: 0,
-        writeback_port_max_ready_rows_per_cycle: 0,
-        writeback_port_max_deferred_rows: 0,
+        writeback_port_cycles,
+        writeback_port_admitted_rows,
+        writeback_port_deferred_rows,
+        writeback_port_deferred_row_cycles,
+        writeback_port_max_ready_rows_per_cycle,
+        writeback_port_max_deferred_rows,
         live_retire_gate_scheduled_waits,
         live_retire_gate_wait_ticks,
         live_retire_gate_max_wait_ticks,

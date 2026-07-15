@@ -328,6 +328,28 @@ fn o3_runtime_snapshot_json(summary: &Rem6CoreSummary) -> String {
     )
 }
 
+fn o3_runtime_writeback_calendar_json(summary: &Rem6CoreSummary) -> String {
+    let entries = summary
+        .o3_runtime_writeback_reservations
+        .iter()
+        .map(|reservation| {
+            format!(
+                "{{\"sequence\":{},\"raw_ready_tick\":{},\"admitted_tick\":{},\"slot\":{}}}",
+                reservation.sequence(),
+                reservation.raw_ready_tick(),
+                reservation.admitted_tick(),
+                reservation.slot()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"count\":{},\"entries\":[{}]}}",
+        summary.o3_runtime_writeback_reservations.len(),
+        entries
+    )
+}
+
 fn o3_runtime_event_window_row_json(event: Option<&O3RuntimeTraceRecord>) -> String {
     event.map_or_else(
         || "null".to_string(),
@@ -839,10 +861,11 @@ impl Rem6CoreSummary {
             let rename = o3_runtime_rename_json(self);
             let lsq = o3_runtime_lsq_json(self);
             let snapshot = o3_runtime_snapshot_json(self);
+            let writeback_calendar = o3_runtime_writeback_calendar_json(self);
             let event_window = o3_runtime_event_window_json(self);
             let event_summary = o3_runtime_event_summary_json(self);
             format!(
-                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"issue\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
+                ",\"o3_runtime\":{{\"execution_mode\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"event_window\":{},\"event_summary\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"issue\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"writeback_calendar\":{},\"snapshot\":{},\"iew_predicted_taken_incorrect\":{},\"iew_predicted_not_taken_incorrect\":{},\"iew_producer_insts\":{},\"iew_consumer_insts\":{},\"iq_branch_insts_issued\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},{},{},{},{}{},\"lsq_store_conditional_failures\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{}}}",
                 execution_mode,
                 self.o3_runtime_stats_epoch,
                 self.o3_runtime_stats_reset_tick,
@@ -880,6 +903,7 @@ impl Rem6CoreSummary {
                 branch_repair,
                 branch_direction_mismatch,
                 branch_target_mismatch,
+                writeback_calendar,
                 snapshot,
                 self.o3_runtime.iew_predicted_taken_incorrect(),
                 self.o3_runtime.iew_predicted_not_taken_incorrect(),

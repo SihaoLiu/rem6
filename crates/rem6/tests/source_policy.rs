@@ -177,7 +177,7 @@ fn rem6_cpu_o3_runtime_root_keeps_headroom() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
         let lines = line_count(&path);
         assert!(
-            lines <= maximum,
+            lines < maximum,
             "{relative_path} should keep headroom for executable O3 evidence, but it has {lines} lines"
         );
     }

@@ -84,6 +84,7 @@ pub use crate::o3_pipeline::{
 pub use crate::o3_runtime::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
+    O3RuntimeWritebackReservation,
 };
 pub use crate::o3_runtime_trace::{
     O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,

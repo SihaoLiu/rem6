@@ -16,6 +16,43 @@ pub(crate) struct O3WritebackReservation {
     decision_counted: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3RuntimeWritebackReservation {
+    sequence: u64,
+    raw_ready_tick: u64,
+    admitted_tick: u64,
+    slot: usize,
+}
+
+impl O3RuntimeWritebackReservation {
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn raw_ready_tick(self) -> u64 {
+        self.raw_ready_tick
+    }
+
+    pub const fn admitted_tick(self) -> u64 {
+        self.admitted_tick
+    }
+
+    pub const fn slot(self) -> usize {
+        self.slot
+    }
+}
+
+impl From<O3WritebackReservation> for O3RuntimeWritebackReservation {
+    fn from(reservation: O3WritebackReservation) -> Self {
+        Self {
+            sequence: reservation.sequence,
+            raw_ready_tick: reservation.raw_ready_tick,
+            admitted_tick: reservation.admitted_tick,
+            slot: reservation.slot,
+        }
+    }
+}
+
 impl O3WritebackReservation {
     const fn new(
         sequence: u64,
@@ -90,6 +127,15 @@ impl O3WritebackReservationCalendar {
         slots
     }
 
+    pub(crate) fn snapshot(&self) -> Vec<O3RuntimeWritebackReservation> {
+        self.by_tick
+            .values()
+            .flatten()
+            .copied()
+            .map(O3RuntimeWritebackReservation::from)
+            .collect()
+    }
+
     pub(crate) fn insert(
         &mut self,
         reservation: O3WritebackReservation,
@@ -128,24 +174,19 @@ impl O3WritebackReservationCalendar {
         removed
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn remove_future_from_sequence(
-        &mut self,
-        sequence: u64,
-        now: u64,
-    ) -> Option<O3WritebackReservation> {
-        let reservation = self.reservation(sequence)?;
-        if reservation.admitted_tick <= now {
-            return None;
-        }
-        self.remove_sequence(sequence)
+    pub(crate) fn remove_future_from_sequence(&mut self, sequence: u64, now: u64) {
+        self.by_tick.retain(|_, reservations| {
+            reservations.retain(|reservation| {
+                reservation.sequence < sequence || reservation.admitted_tick <= now
+            });
+            !reservations.is_empty()
+        });
     }
 
     pub(crate) fn clear(&mut self) {
         self.by_tick.clear();
     }
 
-    #[allow(dead_code)]
     pub(crate) fn prune_before(&mut self, tick: u64) {
         self.by_tick
             .retain(|admitted_tick, _| *admitted_tick >= tick);
@@ -444,14 +485,43 @@ impl O3RuntimeState {
         Ok(())
     }
 
+    pub(super) fn discard_future_writeback_sequence(&mut self, sequence: u64, now: u64) {
+        if self
+            .writeback_calendar
+            .reservation(sequence)
+            .is_some_and(|reservation| reservation.admitted_tick() > now)
+        {
+            self.writeback_calendar.remove_sequence(sequence);
+        }
+    }
+
+    pub(super) fn discard_future_writeback_from_sequence(&mut self, sequence: u64, now: u64) {
+        self.writeback_calendar
+            .remove_future_from_sequence(sequence, now);
+    }
+
+    pub(crate) fn discard_all_writeback_reservations(&mut self) {
+        self.writeback_calendar.clear();
+        self.live_writeback_cycle_ticks.clear();
+        self.live_writeback_ready_rows_by_tick.clear();
+    }
+
+    pub(crate) fn prune_writeback_calendar_before(&mut self, tick: u64) {
+        self.writeback_calendar.prune_before(tick);
+    }
+
     pub(super) fn remove_live_writeback_sequence(&mut self, sequence: u64) {
         self.writeback_calendar.remove_sequence(sequence);
     }
 
     pub(super) fn clear_live_writeback_state(&mut self) {
-        self.writeback_calendar.clear();
-        self.live_writeback_cycle_ticks.clear();
-        self.live_writeback_ready_rows_by_tick.clear();
+        self.discard_all_writeback_reservations();
+    }
+}
+
+impl crate::RiscvCore {
+    pub fn o3_runtime_writeback_reservations(&self) -> Vec<O3RuntimeWritebackReservation> {
+        self.with_o3_runtime(|runtime| runtime.writeback_calendar.snapshot())
     }
 }
 

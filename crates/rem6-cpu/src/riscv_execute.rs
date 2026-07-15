@@ -338,13 +338,18 @@ impl RiscvCore {
                     if let Some(sequence) = live_control_sequence {
                         state
                             .o3_runtime
-                            .discard_live_control_descendants_from(sequence);
+                            .discard_live_control_descendants_from_at(sequence, retire_tick);
+                        state.refresh_o3_writeback_wake(retire_tick);
                     } else {
-                        state.o3_runtime.discard_live_staged_instructions();
+                        state
+                            .o3_runtime
+                            .discard_live_staged_instructions_at(retire_tick);
+                        state.refresh_o3_writeback_wake(retire_tick);
                     }
                 }
             } else {
                 state.o3_runtime.discard_live_staged_instructions();
+                state.o3_writeback_wake.clear();
             }
         }
         let squashed_requests = event

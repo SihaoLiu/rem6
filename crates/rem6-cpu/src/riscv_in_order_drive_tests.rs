@@ -174,7 +174,7 @@ fn reset_detaches_pipeline_wake_until_stale_delivery() {
     };
     let wake = scheduler.pending_event_snapshot(event).unwrap();
 
-    core.reset_instruction_fetch_stream();
+    core.reset_instruction_fetch_stream(scheduler.now());
 
     assert_eq!(
         core.checkpoint_owned_in_order_pipeline_wakes(),
@@ -182,6 +182,22 @@ fn reset_detaches_pipeline_wake_until_stale_delivery() {
     );
     scheduler.run_until_idle();
     assert!(core.checkpoint_owned_in_order_pipeline_wakes().is_empty());
+}
+
+#[test]
+fn fetch_stream_reset_preserves_retired_writeback_slot_occupancy() {
+    let core = core_with_completed_fetch();
+    core.reserve_test_fixed_fu_writeback(40, 20).unwrap();
+
+    core.reset_instruction_fetch_stream(20);
+    core.reserve_test_fixed_fu_writeback(41, 20).unwrap();
+
+    let reservations = core.o3_runtime_writeback_reservations();
+    assert_eq!(reservations.len(), 2);
+    assert_eq!(reservations[0].sequence(), 40);
+    assert_eq!(reservations[0].admitted_tick(), 20);
+    assert_eq!(reservations[1].sequence(), 41);
+    assert_eq!(reservations[1].admitted_tick(), 21);
 }
 
 #[test]

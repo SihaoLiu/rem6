@@ -99,13 +99,10 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn earliest_unpublished_scalar_load_writeback_tick(&self) -> Option<u64> {
-        self.live_scalar_memories
-            .iter()
-            .filter(|live| {
-                live.outcome == O3LiveScalarMemoryOutcome::Completed && !live.event_taken
-            })
-            .filter_map(|live| live.admitted_writeback_tick)
-            .min()
+        let live = self.live_scalar_memories.first()?;
+        (live.outcome == O3LiveScalarMemoryOutcome::Completed && !live.event_taken)
+            .then_some(live.admitted_writeback_tick)
+            .flatten()
     }
 
     pub(crate) fn ready_live_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
@@ -396,7 +393,7 @@ impl O3RuntimeState {
                 self.pending_data_accesses.remove(&stale.fetch_request);
             }
             self.live_scalar_memories.truncate(index + 1);
-            self.discard_live_scalar_memory_window_rows(sequence);
+            self.discard_live_scalar_memory_window_rows_at(sequence, response_tick);
         }
         Ok(true)
     }
@@ -499,6 +496,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_scalar_memory_lifecycle(&mut self) {
+        self.discard_all_writeback_reservations();
         self.deferred_scalar_memory_execution = None;
         let live = std::mem::take(&mut self.live_scalar_memories);
         for live in &live {
@@ -513,8 +511,30 @@ impl O3RuntimeState {
         }
     }
 
+    pub(super) fn discard_live_scalar_memory_lifecycle_at(&mut self, now: u64) {
+        self.deferred_scalar_memory_execution = None;
+        let live = std::mem::take(&mut self.live_scalar_memories);
+        for live in &live {
+            self.pending_data_accesses.remove(&live.fetch_request);
+        }
+        let boundary_sequence = live
+            .first()
+            .map(|live| live.sequence)
+            .or_else(|| self.live_scalar_memory_younger_sequences.first().copied());
+        if let Some(sequence) = boundary_sequence {
+            self.discard_live_scalar_memory_window_rows_at(sequence, now);
+        }
+    }
+
     fn discard_live_scalar_memory_window_rows(&mut self, sequence: u64) {
         self.discard_live_staged_window_from(sequence);
+        self.snapshot
+            .load_store_queue
+            .retain(|entry| entry.sequence() < sequence);
+    }
+
+    pub(super) fn discard_live_scalar_memory_window_rows_at(&mut self, sequence: u64, now: u64) {
+        self.discard_live_staged_window_from_at(sequence, now);
         self.snapshot
             .load_store_queue
             .retain(|entry| entry.sequence() < sequence);

@@ -2,6 +2,10 @@ use super::*;
 
 const O3_PENDING_STATE_CHUNK: &str = "o3-pending-state";
 const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
+const O3_RUNTIME_MAGIC_BYTES: usize = 4;
+const O3_RUNTIME_HEADER_BYTES: usize = O3_RUNTIME_MAGIC_BYTES + 1 + 4 * 4;
+const O3_WRITEBACK_PORT_STATS_BYTES: usize = 6 * 8;
+const O3_LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + 4 + 8 + 8;
 
 fn simple_pending_payload(scope: u64, sequence: u64) -> O3PendingStateCheckpointPayload {
     O3PendingStateCheckpointPayload::from_snapshot(
@@ -43,6 +47,150 @@ fn registry_without_chunks(
         }
     }
     filtered
+}
+
+fn runtime_payload_with_replaced_pending(pending: &O3PendingStateCheckpointPayload) -> Vec<u8> {
+    let encoded = RiscvCore::default_o3_runtime_checkpoint_payload().encode();
+    let pending_payload = pending.encode();
+    let length_offset = O3_RUNTIME_MAGIC_BYTES + 1;
+    let old_length = u32::from_le_bytes(
+        encoded[length_offset..length_offset + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let mut replaced = encoded[..O3_RUNTIME_HEADER_BYTES].to_vec();
+    replaced[length_offset..length_offset + 4]
+        .copy_from_slice(&(pending_payload.len() as u32).to_le_bytes());
+    replaced.extend_from_slice(&pending_payload);
+    replaced.extend_from_slice(&encoded[O3_RUNTIME_HEADER_BYTES + old_length..]);
+    replaced
+}
+
+fn v22_runtime_payload_with_deferred(pending: &O3PendingStateCheckpointPayload) -> Vec<u8> {
+    let encoded = runtime_payload_with_replaced_pending(pending);
+    let trailer_offset = encoded.len() - O3_LIVE_RETIRE_GATE_PAYLOAD_BYTES;
+    let writeback_offset = trailer_offset - O3_WRITEBACK_PORT_STATS_BYTES;
+    let mut v22 = [&encoded[..writeback_offset], &encoded[trailer_offset..]].concat();
+    v22[O3_RUNTIME_MAGIC_BYTES] = 22;
+    v22
+}
+
+#[test]
+fn riscv_core_checkpoint_legacy_pending_only_uses_cpu_bridge_and_reencodes_v23() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let pending = simple_pending_payload(0x505, 51);
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry.remove_chunk(&component, O3_RUNTIME_STATE_CHUNK);
+    registry
+        .write_chunk(&component, O3_PENDING_STATE_CHUNK, pending.encode())
+        .unwrap();
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(
+        restored
+            .o3_runtime_payload()
+            .snapshot()
+            .pending_state()
+            .writeback()
+            .deferred()
+            .len(),
+        1
+    );
+    assert!(core
+        .o3_runtime_checkpoint_payload()
+        .snapshot()
+        .pending_state()
+        .writeback()
+        .deferred()
+        .is_empty());
+    let reencoded = restored.o3_runtime_payload().encode();
+    assert_eq!(reencoded[O3_RUNTIME_MAGIC_BYTES], 23);
+    assert!(O3RuntimeCheckpointPayload::decode(&reencoded)
+        .unwrap()
+        .snapshot()
+        .pending_state()
+        .writeback()
+        .deferred()
+        .is_empty());
+}
+
+#[test]
+fn riscv_core_checkpoint_v22_deferred_rows_normalize_before_restore() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let pending = simple_pending_payload(0x515, 52);
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            O3_RUNTIME_STATE_CHUNK,
+            v22_runtime_payload_with_deferred(&pending),
+        )
+        .unwrap();
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(
+        restored
+            .o3_runtime_payload()
+            .snapshot()
+            .pending_state()
+            .writeback()
+            .deferred()
+            .len(),
+        1
+    );
+    assert!(core
+        .o3_runtime_checkpoint_payload()
+        .snapshot()
+        .pending_state()
+        .writeback()
+        .deferred()
+        .is_empty());
+    let reencoded = restored.o3_runtime_payload().encode();
+    assert_eq!(reencoded[O3_RUNTIME_MAGIC_BYTES], 23);
+}
+
+#[test]
+fn riscv_core_checkpoint_rejects_v23_deferred_rows_without_partial_restore() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let pending = simple_pending_payload(0x525, 53);
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            O3_RUNTIME_STATE_CHUNK,
+            runtime_payload_with_replaced_pending(&pending),
+        )
+        .unwrap();
+    let sentinel = core.o3_runtime_checkpoint_payload();
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0xdead_beef);
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert!(matches!(
+        error,
+        rem6_system::RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
+            error: rem6_cpu::O3RuntimeError::StableWritebackQueueNotEmpty { deferred: 1 },
+            ..
+        }
+    ));
+    assert_eq!(core.o3_runtime_checkpoint_payload(), sentinel);
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.read_register(reg(1)), 0xdead_beef);
 }
 
 #[test]
@@ -88,8 +236,8 @@ fn riscv_core_checkpoint_accepts_matching_legacy_pending_beside_runtime() {
     let mut registry = CheckpointRegistry::new();
     let core = riscv_core();
     let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
-    let pending = simple_pending_payload(0x717, 72);
-    let runtime = runtime_payload_with_pending(pending.clone());
+    let runtime = runtime_payload_with_pending(simple_pending_payload(0x717, 72));
+    let pending = pending_payload_from_runtime(&runtime);
     let sentinel = runtime_payload_with_pending(simple_pending_payload(0x818, 82));
 
     core.restore_o3_runtime_checkpoint_payload(runtime.clone())

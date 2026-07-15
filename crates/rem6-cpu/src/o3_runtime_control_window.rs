@@ -324,11 +324,27 @@ impl O3RuntimeState {
         ))
     }
 
+    #[allow(dead_code)]
     pub(super) fn take_live_speculative_issue_timing(
         &mut self,
         entry: O3ReorderBufferEntry,
         execution: &RiscvCpuExecutionEvent,
         consumed_requests: &[MemoryRequestId],
+    ) -> Option<(u64, u64)> {
+        let timing =
+            self.take_live_speculative_issue_timing_at(entry, execution, consumed_requests, 0);
+        if timing.is_none() {
+            self.discard_all_writeback_reservations();
+        }
+        timing
+    }
+
+    pub(super) fn take_live_speculative_issue_timing_at(
+        &mut self,
+        entry: O3ReorderBufferEntry,
+        execution: &RiscvCpuExecutionEvent,
+        consumed_requests: &[MemoryRequestId],
+        now: u64,
     ) -> Option<(u64, u64)> {
         let index = self
             .live_speculative_executions
@@ -343,8 +359,8 @@ impl O3RuntimeState {
             self.validate_live_speculative_producer(entry.sequence());
             Some((issued.issue_tick, issued.admitted_writeback_tick))
         } else {
-            self.remove_live_writeback_sequence(issued.sequence);
-            self.invalidate_live_speculative_execution_chain(entry.sequence());
+            self.discard_future_writeback_sequence(issued.sequence, now);
+            self.invalidate_live_speculative_execution_chain_at(entry.sequence(), now);
             None
         }
     }
@@ -369,7 +385,25 @@ impl O3RuntimeState {
         !self.live_control_window_sequences.is_empty()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn discard_live_control_descendants_from(&mut self, branch_sequence: u64) {
+        self.discard_all_writeback_reservations();
+        self.discard_live_control_descendant_rows_from(branch_sequence);
+    }
+
+    pub(crate) fn discard_live_control_descendants_from_at(
+        &mut self,
+        branch_sequence: u64,
+        now: u64,
+    ) {
+        if let Some(descendant_sequence) = branch_sequence.checked_add(1) {
+            self.discard_future_writeback_from_sequence(descendant_sequence, now);
+        }
+        self.discard_live_control_descendant_rows_from_at(branch_sequence, now);
+    }
+
+    #[allow(dead_code)]
+    fn discard_live_control_descendant_rows_from(&mut self, branch_sequence: u64) {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
@@ -386,7 +420,27 @@ impl O3RuntimeState {
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }
 
-    fn invalidate_live_speculative_execution_chain(&mut self, sequence: u64) {
+    fn discard_live_control_descendant_rows_from_at(&mut self, branch_sequence: u64, now: u64) {
+        self.snapshot
+            .reorder_buffer
+            .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
+        self.live_scalar_memory_younger_sequences
+            .retain(|sequence| *sequence <= branch_sequence);
+        self.retain_live_speculative_executions_at(
+            |execution| execution.sequence <= branch_sequence,
+            now,
+        );
+        self.live_control_dependencies
+            .retain(|sequence, _| *sequence <= branch_sequence);
+        self.live_control_window_sequences
+            .retain(|sequence| *sequence <= branch_sequence);
+        self.live_retired_instructions
+            .retain(|instruction| instruction.sequence <= branch_sequence);
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+    }
+
+    fn invalidate_live_speculative_execution_chain_at(&mut self, sequence: u64, now: u64) {
         let mut invalidated = BTreeSet::from([sequence]);
         let mut pending = vec![sequence];
         while let Some(producer) = pending.pop() {
@@ -397,7 +451,7 @@ impl O3RuntimeState {
                     .contains(&producer)
                 {
                     let removed = self.live_speculative_executions.remove(index).sequence;
-                    self.remove_live_writeback_sequence(removed);
+                    self.discard_future_writeback_sequence(removed, now);
                     if invalidated.insert(removed) {
                         pending.push(removed);
                     }

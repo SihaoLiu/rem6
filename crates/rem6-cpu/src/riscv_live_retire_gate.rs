@@ -317,7 +317,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
-            if state.o3_runtime.has_pending_retirement_authority() {
+            if state.o3_runtime.has_live_retirement_authority() {
                 return;
             }
             if state.o3_runtime.has_live_scalar_memory_window() {
@@ -326,6 +326,7 @@ impl RiscvCore {
                 state.o3_runtime.discard_live_scalar_memory_lifecycle();
                 state.o3_runtime.discard_live_speculative_executions();
             }
+            state.o3_writeback_wake.clear();
         }
     }
 
@@ -387,6 +388,8 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.restore_checkpoint_payload(payload)?;
         state.live_retire_gate.restore_checkpoint(live_retire_gate);
+        state.o3_writeback_wake.clear();
+        state.pending_callback_error = None;
         Ok(())
     }
 }

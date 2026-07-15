@@ -118,17 +118,9 @@ fn riscv_core_with(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: u6
 fn runtime_payload_with_pending(
     pending: O3PendingStateCheckpointPayload,
 ) -> O3RuntimeCheckpointPayload {
-    let snapshot = RiscvCore::default_o3_runtime_checkpoint_payload().into_snapshot();
-    O3RuntimeCheckpointPayload::from_snapshot(
-        O3RuntimeSnapshot::new(
-            snapshot.reorder_buffer().iter().copied(),
-            snapshot.load_store_queue().iter().copied(),
-            snapshot.rename_map().iter().copied(),
-            pending.into_snapshot(),
-        )
-        .unwrap(),
-    )
-    .unwrap()
+    let legacy =
+        O3RuntimeCheckpointPayload::from_legacy_pending_state(pending.into_snapshot()).unwrap();
+    O3RuntimeCheckpointPayload::decode(&legacy.encode()).unwrap()
 }
 
 fn pending_payload_from_runtime(
@@ -500,7 +492,7 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
 }
 
 #[test]
-fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refetch() {
+fn riscv_core_only_checkpoint_rejects_pending_live_retire_gate() {
     let entry = 0x8000;
     let div = (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let core = riscv_core();
@@ -553,70 +545,20 @@ fn riscv_core_only_checkpoint_restores_pending_live_retire_gate_and_rearms_refet
     let live_snapshot = core.o3_runtime_snapshot();
     assert_eq!(live_snapshot.reorder_buffer().len(), 1);
     assert!(live_snapshot.reorder_buffer()[0].is_live_staged());
-    assert!(!live_snapshot.reorder_buffer()[0].is_ready());
+    assert!(live_snapshot.reorder_buffer()[0].is_ready());
+    assert_eq!(live_snapshot.reorder_buffer()[0].ready_tick(), ready_tick);
     assert!(live_snapshot.rename_map().iter().any(|entry| {
         entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
     }));
 
-    let captured = port.capture_into(&mut registry).unwrap();
     assert_eq!(
-        captured
-            .o3_runtime_payload()
-            .stats()
-            .live_retire_gate_scheduled_waits(),
-        1
+        port.capture_into(&mut registry),
+        Err(CheckpointError::ComponentNotQuiescent {
+            component: component.clone(),
+        })
     );
-    drop(scheduler);
-    port.restore_from(&registry).unwrap();
     assert_eq!(core.o3_runtime_snapshot(), live_snapshot);
-
-    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
-    let reissued = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
-    assert!(matches!(
-        reissued,
-        Some(RiscvCoreDriveAction::FetchIssued { .. })
-    ));
-    scheduler.run_until_idle_conservative();
-    let restored_fetch_ahead = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
-    assert!(matches!(
-        restored_fetch_ahead,
-        Some(RiscvCoreDriveAction::FetchIssued { .. })
-    ));
-    scheduler.run_until_idle_conservative();
-    for _ in 0..2 {
-        assert_eq!(
-            drive_non_pipeline_action(&core, &mut scheduler, &transport, &store),
-            None
-        );
-        assert!(matches!(
-            scheduler.quiescent_snapshot(),
-            Err(SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 })
-        ));
-    }
-
-    core.reset_o3_runtime_stats();
-    assert_eq!(core.o3_runtime_snapshot(), live_snapshot);
-    assert_eq!(core.o3_runtime_stats().max_rob_occupancy(), 1);
-    assert_eq!(core.o3_runtime_stats().rename_map_entries(), 1);
-    core.set_detailed_live_retire_gate_enabled(false);
-    scheduler.run_until_idle_conservative();
-    assert_eq!(scheduler.now(), ready_tick);
-    let retired = drive_non_pipeline_action(&core, &mut scheduler, &transport, &store);
-    assert!(matches!(
-        retired,
-        Some(RiscvCoreDriveAction::InstructionExecuted(_))
-    ));
-    assert_eq!(core.read_register(reg(3)), 12);
-    assert_eq!(core.pc(), Address::new(entry + 4));
-    let retired_snapshot = core.o3_runtime_snapshot();
-    assert!(retired_snapshot.reorder_buffer().is_empty());
-    assert!(retired_snapshot.rename_map().iter().any(|entry| {
-        entry.register_class() == O3RegisterClass::Integer && entry.architectural() == 3
-    }));
-    assert_eq!(
-        core.o3_runtime_stats().live_retire_gate_scheduled_waits(),
-        0
-    );
+    assert!(registry.chunk(&component, "pc").is_none());
 }
 
 #[test]
@@ -1161,6 +1103,7 @@ fn riscv_core_checkpoint_emits_only_runtime_o3_authority_and_prunes_stale_pendin
     )
     .unwrap();
     let runtime_payload = runtime_payload_with_pending(pending_payload.clone());
+    let normalized_pending = pending_payload_from_runtime(&runtime_payload);
 
     core.restore_o3_runtime_checkpoint_payload(runtime_payload.clone())
         .unwrap();
@@ -1187,7 +1130,7 @@ fn riscv_core_checkpoint_emits_only_runtime_o3_authority_and_prunes_stale_pendin
         .unwrap();
     assert_ne!(
         pending_payload_from_runtime(&core.o3_runtime_checkpoint_payload()),
-        pending_payload
+        normalized_pending
     );
 
     let restored = port.restore_from(&registry).unwrap();
@@ -1196,7 +1139,7 @@ fn riscv_core_checkpoint_emits_only_runtime_o3_authority_and_prunes_stale_pendin
     assert_eq!(restored.o3_runtime_payload(), &runtime_payload);
     assert_eq!(
         pending_payload_from_runtime(&core.o3_runtime_checkpoint_payload()),
-        pending_payload
+        normalized_pending
     );
 }
 
@@ -1232,7 +1175,7 @@ fn riscv_core_checkpoint_captures_and_restores_o3_runtime_state() {
                 )],
                 O3WritebackTransferSnapshot::new(
                     O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
-                    [O3WritebackCompletion::new(23)],
+                    [],
                 ),
             )
             .unwrap(),
@@ -1291,6 +1234,8 @@ fn riscv_core_checkpoint_restores_legacy_o3_pending_chunk_without_runtime_chunk(
         .unwrap(),
     )
     .unwrap();
+    let normalized_pending =
+        pending_payload_from_runtime(&runtime_payload_with_pending(pending_payload.clone()));
 
     port.register(&mut registry).unwrap();
     port.capture_into(&mut registry).unwrap();
@@ -1317,7 +1262,7 @@ fn riscv_core_checkpoint_restores_legacy_o3_pending_chunk_without_runtime_chunk(
     );
     assert_eq!(
         pending_payload_from_runtime(&core.o3_runtime_checkpoint_payload()),
-        pending_payload
+        normalized_pending
     );
     assert!(legacy_registry
         .chunk(&component, "o3-runtime-state")
@@ -1348,7 +1293,7 @@ fn riscv_core_checkpoint_rejects_mismatched_o3_pending_chunk_without_partial_res
                 [],
                 O3WritebackTransferSnapshot::new(
                     O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
-                    [O3WritebackCompletion::new(32)],
+                    [],
                 ),
             )
             .unwrap(),

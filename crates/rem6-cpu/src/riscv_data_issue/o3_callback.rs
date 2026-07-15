@@ -80,6 +80,7 @@ pub(super) fn record_o3_data_access_outcome(
             load_data,
         )?
     };
+    state.refresh_o3_writeback_wake(response_tick);
     if completed_live_scalar_memory {
         state.buffered_o3_stores.remove(&access.request);
         for (request, fetch_request) in squash_younger_requests {

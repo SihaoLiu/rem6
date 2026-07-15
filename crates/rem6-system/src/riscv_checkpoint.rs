@@ -348,6 +348,7 @@ impl RiscvCoreCheckpointPort {
     }
 
     fn validate_capture(&self) -> Result<(), CheckpointError> {
+        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
         if self.core.data_access_lifecycle_is_quiescent() {
             Ok(())
         } else {

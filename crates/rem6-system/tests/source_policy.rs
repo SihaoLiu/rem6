@@ -324,6 +324,14 @@ fn riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode() {
         );
     }
     assert!(
+        o3_payload.contains("O3RuntimeCheckpointPayload::from_legacy_pending_state("),
+        "legacy O3 pending-only decode must delegate snapshot construction to rem6-cpu"
+    );
+    assert!(
+        !o3_payload.contains("O3RuntimeSnapshot::new"),
+        "the rem6-system legacy bridge must not reconstruct O3 runtime snapshots locally"
+    );
+    assert!(
         checkpoint_rs.contains("decode_o3_runtime_authority("),
         "RISC-V checkpoint restore must delegate O3 authority selection"
     );

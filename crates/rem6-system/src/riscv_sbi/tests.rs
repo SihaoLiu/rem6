@@ -180,6 +180,28 @@ fn ecall_store(address: u64) -> Arc<Mutex<PartitionedMemoryStore>> {
     Arc::new(Mutex::new(store))
 }
 
+fn scalar_load_store() -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let layout = CacheLineLayout::new(16).expect("valid cache line size");
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout).expect("memory target");
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).expect("valid mapped size"),
+        )
+        .expect("mapped test memory");
+    BootImage::new(Address::new(0x8800))
+        .add_segment(Address::new(0x8800), 0x0001_2283_u32.to_le_bytes().to_vec())
+        .expect("scalar load segment")
+        .add_segment(Address::new(0x9000), vec![0x2a, 0, 0, 0])
+        .expect("scalar load data")
+        .load_into_partitioned_store(&mut store, target)
+        .expect("loaded scalar load fixture");
+    Arc::new(Mutex::new(store))
+}
+
 fn responder(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static {
@@ -318,6 +340,88 @@ fn registered_rfence_pair_with_tlb_entries(
             pc: 0x8800,
         },
         tlb_entries,
+    );
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).expect("valid cluster");
+    let firmware = RiscvSbiFirmware::new();
+    firmware
+        .register_cluster(&cluster)
+        .expect("cluster registers with SBI firmware");
+    (scheduler, transport, firmware, core0, core1)
+}
+
+fn registered_rfence_writeback_pair() -> (
+    PartitionedScheduler,
+    MemoryTransport,
+    RiscvSbiFirmware,
+    RiscvCore,
+    RiscvCore,
+) {
+    let scheduler =
+        PartitionedScheduler::with_min_remote_delay(4, 2).expect("valid test scheduler");
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .expect("valid CPU 0 route"),
+        )
+        .expect("registered CPU 0 route");
+    let cpu1_fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .expect("valid CPU 1 fetch route"),
+        )
+        .expect("registered CPU 1 fetch route");
+    let cpu1_data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .expect("valid CPU 1 data route"),
+        )
+        .expect("registered CPU 1 data route");
+    let core0 = test_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = RiscvCore::with_data(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(1),
+                PartitionId::new(1),
+                AgentId::new(8),
+                Address::new(0x8800),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu1.ifetch"),
+                cpu1_fetch_route,
+                CacheLineLayout::new(16).expect("valid cache line size"),
+                AccessSize::new(4).expect("valid fetch size"),
+            ),
+        )
+        .expect("valid CPU core"),
+        CpuDataConfig::new(
+            endpoint("cpu1.dmem"),
+            cpu1_data_route,
+            CacheLineLayout::new(16).expect("valid cache line size"),
+        ),
     );
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
@@ -505,6 +609,73 @@ fn remote_fence_i_resets_target_fetch_stream_when_completion_event_runs() {
     assert_eq!(core1.pc(), Address::new(0x8800));
     assert_eq!(core1.inner().pc(), Address::new(0x8800));
     assert!(core1.inner().fetch_events().is_empty());
+}
+
+fn assert_remote_fence_i_preserves_target_writeback_reservation(parallel: bool) {
+    let (mut scheduler, transport, firmware, core0, core1) = registered_rfence_writeback_pair();
+    let store = scalar_load_store();
+    core1.set_detailed_live_retire_gate_enabled(true);
+    core1.write_register(register(2), 0x9000);
+    core1
+        .issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            responder(store.clone()),
+        )
+        .expect("issued target scalar load fetch");
+    scheduler.run_until_idle_conservative();
+    core1
+        .execute_next_completed_fetch()
+        .expect("executed target scalar load")
+        .expect("target scalar load event");
+    core1
+        .issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            responder(store),
+        )
+        .expect("issued target scalar load data access")
+        .expect("target scalar load data event");
+    scheduler.run_until_idle_conservative();
+    let reservation = core1
+        .o3_runtime_writeback_reservations()
+        .into_iter()
+        .next()
+        .expect("completed target scalar load reservation");
+
+    execute_rfence_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        rfence_request(SBI_RFENCE_REMOTE_FENCE_I, 0b10, 0, 0, 0, 0),
+    );
+    firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, parallel)
+        .expect("handled SBI trap")
+        .expect("SBI outcome");
+    if parallel {
+        scheduler
+            .run_until_idle_parallel()
+            .expect("parallel RFENCE completion event");
+    } else {
+        scheduler.run_until_idle_conservative();
+    }
+
+    assert!(core1
+        .o3_runtime_writeback_reservations()
+        .contains(&reservation));
+}
+
+#[test]
+fn remote_fence_i_preserves_target_writeback_reservation() {
+    assert_remote_fence_i_preserves_target_writeback_reservation(false);
+}
+
+#[test]
+fn parallel_remote_fence_i_preserves_target_writeback_reservation() {
+    assert_remote_fence_i_preserves_target_writeback_reservation(true);
 }
 
 fn assert_send_ipi_sets_target_ssip_when_completion_event_runs(parallel: bool) {

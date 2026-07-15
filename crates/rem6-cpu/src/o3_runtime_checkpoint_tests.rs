@@ -1,4 +1,8 @@
+use super::super::O3RuntimeState;
 use super::*;
+use crate::o3_pipeline::{
+    O3PendingStateSnapshot, O3WritebackCompletion, O3WritebackTransferSnapshot,
+};
 
 const BASE_AND_FU_STATS_BYTES: usize = (12 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES;
 const CURRENT_BASE_AND_FU_STATS_BYTES: usize = BASE_AND_FU_STATS_BYTES + U64_BYTES;
@@ -25,6 +29,7 @@ const BRANCH_EVENT_PREDICTION_STATS_BYTES: usize = crate::BranchTargetKind::COUN
 const BRANCH_MISMATCH_STATS_BYTES: usize = crate::BranchTargetKind::COUNT * 16 * U64_BYTES;
 const LIVE_RETIRE_GATE_STATS_BYTES: usize = 3 * U64_BYTES;
 const ISSUE_ARBITRATION_STATS_BYTES: usize = 5 * U64_BYTES;
+const WRITEBACK_PORT_STATS_BYTES: usize = 6 * U64_BYTES;
 const LIVE_RETIRE_GATE_PAYLOAD_BYTES: usize = 1 + U32_BYTES + 2 * U64_BYTES;
 const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U64_BYTES
     + FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
@@ -43,9 +48,10 @@ const CURRENT_STATS_BYTES: usize = (15 + O3RuntimeFuLatencyClass::COUNT * 2) * U
     + BRANCH_EVENT_STATS_BYTES
     + BRANCH_EVENT_PREDICTION_STATS_BYTES
     + BRANCH_MISMATCH_STATS_BYTES
-    + ISSUE_ARBITRATION_STATS_BYTES;
+    + ISSUE_ARBITRATION_STATS_BYTES
+    + WRITEBACK_PORT_STATS_BYTES;
 const STATS_BYTES_WITHOUT_ISSUE_ARBITRATION: usize =
-    CURRENT_STATS_BYTES - ISSUE_ARBITRATION_STATS_BYTES;
+    CURRENT_STATS_BYTES - ISSUE_ARBITRATION_STATS_BYTES - WRITEBACK_PORT_STATS_BYTES;
 const STATS_BYTES_WITHOUT_BRANCH_MISMATCH: usize = STATS_BYTES_WITHOUT_ISSUE_ARBITRATION
     - FU_LATENCY_CLASS_EXTREMA_STATS_BYTES
     - BRANCH_MISMATCH_STATS_BYTES;
@@ -76,11 +82,47 @@ fn issue_stats_checkpoint_payload() -> O3RuntimeCheckpointPayload {
     .unwrap()
 }
 
+fn writeback_stats_checkpoint_payload() -> O3RuntimeCheckpointPayload {
+    O3RuntimeCheckpointPayload::from_snapshot_with_stats(
+        super::super::default_o3_runtime_snapshot(),
+        O3RuntimeStats {
+            writeback_port_cycles: 3,
+            writeback_port_admitted_rows: 4,
+            writeback_port_deferred_rows: 2,
+            writeback_port_deferred_row_cycles: 5,
+            writeback_port_max_ready_rows_per_cycle: 3,
+            writeback_port_max_deferred_rows: 2,
+            ..O3RuntimeStats::default()
+        },
+    )
+    .unwrap()
+}
+
+fn encoded_without_writeback_port_stats(encoded: &[u8]) -> Vec<u8> {
+    if encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()]
+        < O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS
+    {
+        return encoded.to_vec();
+    }
+    let trailer_offset = encoded
+        .len()
+        .checked_sub(LIVE_RETIRE_GATE_PAYLOAD_BYTES)
+        .unwrap();
+    let writeback_offset = trailer_offset
+        .checked_sub(WRITEBACK_PORT_STATS_BYTES)
+        .unwrap();
+    let mut downgraded = [&encoded[..writeback_offset], &encoded[trailer_offset..]].concat();
+    downgraded[O3_RUNTIME_CHECKPOINT_MAGIC.len()] =
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS;
+    downgraded
+}
+
 fn encoded_without_issue_arbitration_stats(encoded: &[u8]) -> Vec<u8> {
+    let encoded = encoded_without_writeback_port_stats(encoded);
     if encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()]
         < O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
     {
-        return encoded.to_vec();
+        return encoded;
     }
     let trailer_offset = encoded
         .len()
@@ -158,8 +200,62 @@ fn legacy_stats_bytes(version: u8) -> usize {
         | O3_RUNTIME_CHECKPOINT_VERSION_WITH_ROB_READY_TICKS => v18,
         O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_RETIRE_GATE
         | O3_RUNTIME_CHECKPOINT_VERSION_WITH_LIVE_STAGED_ROB => v18 + LIVE_RETIRE_GATE_STATS_BYTES,
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS => {
+            v18 + LIVE_RETIRE_GATE_STATS_BYTES + ISSUE_ARBITRATION_STATS_BYTES
+        }
         _ => panic!("unsupported legacy checkpoint version {version}"),
     }
+}
+
+fn checkpoint_payload_with_deferred_writeback(version: u8) -> Vec<u8> {
+    let encoded = if version == O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS {
+        O3RuntimeCheckpointPayload::from_snapshot(super::super::default_o3_runtime_snapshot())
+            .unwrap()
+            .encode()
+    } else {
+        legacy_zero_stats_payload(version)
+    };
+    replace_pending_payload(&encoded, pending_state_with_deferred_writeback())
+}
+
+fn pending_state_with_deferred_writeback() -> O3PendingStateSnapshot {
+    let default = super::super::default_o3_runtime_snapshot();
+    O3PendingStateSnapshot::new(
+        [],
+        [],
+        O3WritebackTransferSnapshot::new(
+            default.pending_state().writeback().policy().clone(),
+            [O3WritebackCompletion::new(77)],
+        ),
+    )
+    .unwrap()
+}
+
+fn runtime_snapshot_with_deferred_writeback() -> O3RuntimeSnapshot {
+    let default = super::super::default_o3_runtime_snapshot();
+    O3RuntimeSnapshot::new(
+        default.reorder_buffer().iter().copied(),
+        default.load_store_queue().iter().copied(),
+        default.rename_map().iter().copied(),
+        pending_state_with_deferred_writeback(),
+    )
+    .unwrap()
+}
+
+fn replace_pending_payload(encoded: &[u8], pending_state: O3PendingStateSnapshot) -> Vec<u8> {
+    let pending = encode_pending_state_for_checkpoint_test(pending_state);
+    let length_offset = O3_RUNTIME_CHECKPOINT_MAGIC.len() + 1;
+    let old_length = u32::from_le_bytes(
+        encoded[length_offset..length_offset + U32_BYTES]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let mut replaced = encoded[..O3_RUNTIME_CHECKPOINT_HEADER_BYTES].to_vec();
+    replaced[length_offset..length_offset + U32_BYTES]
+        .copy_from_slice(&(pending.len() as u32).to_le_bytes());
+    replaced.extend_from_slice(&pending);
+    replaced.extend_from_slice(&encoded[O3_RUNTIME_CHECKPOINT_HEADER_BYTES + old_length..]);
+    replaced
 }
 
 fn encoded_without_lsq_operation_byte_stats(
@@ -289,13 +385,153 @@ fn encoded_without_lsq_forwarding_suppression_reason_stats(encoded: &[u8]) -> Ve
 }
 
 #[test]
-fn checkpoint_v22_payloads_round_trip_issue_arbitration_stats() {
+fn checkpoint_v23_payloads_round_trip_writeback_port_stats() {
+    let payload = writeback_stats_checkpoint_payload();
+    let encoded = payload.encode();
+    assert_eq!(
+        encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()],
+        23,
+        "current O3 runtime checkpoints must use version 23"
+    );
+
+    let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();
+    assert_eq!(decoded.stats().writeback_port_cycles(), 3);
+    assert_eq!(decoded.stats().writeback_port_admitted_rows(), 4);
+    assert_eq!(decoded.stats().writeback_port_deferred_rows(), 2);
+    assert_eq!(decoded.stats().writeback_port_deferred_row_cycles(), 5);
+    assert_eq!(decoded.stats().writeback_port_max_ready_rows_per_cycle(), 3);
+    assert_eq!(decoded.stats().writeback_port_max_deferred_rows(), 2);
+}
+
+#[test]
+fn checkpoint_v22_payloads_decode_without_writeback_port_stats() {
+    let encoded =
+        encoded_without_writeback_port_stats(&writeback_stats_checkpoint_payload().encode());
+    assert_eq!(
+        encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()],
+        O3_RUNTIME_CHECKPOINT_VERSION_WITH_ISSUE_ARBITRATION_STATS
+    );
+
+    let stats = O3RuntimeCheckpointPayload::decode(&encoded)
+        .unwrap()
+        .stats();
+    assert_eq!(stats.writeback_port_cycles(), 0);
+    assert_eq!(stats.writeback_port_admitted_rows(), 0);
+    assert_eq!(stats.writeback_port_deferred_rows(), 0);
+    assert_eq!(stats.writeback_port_deferred_row_cycles(), 0);
+    assert_eq!(stats.writeback_port_max_ready_rows_per_cycle(), 0);
+    assert_eq!(stats.writeback_port_max_deferred_rows(), 0);
+}
+
+#[test]
+fn checkpoint_v1_through_v22_normalize_deferred_writeback_before_restore_or_encode() {
+    for version in 1..=22 {
+        let payload = O3RuntimeCheckpointPayload::decode(
+            &checkpoint_payload_with_deferred_writeback(version),
+        )
+        .unwrap_or_else(|error| panic!("checkpoint v{version} must decode: {error}"));
+        assert_eq!(
+            payload
+                .snapshot()
+                .pending_state()
+                .writeback()
+                .deferred()
+                .len(),
+            1,
+            "checkpoint v{version}"
+        );
+
+        let reencoded = payload.encode();
+        assert_eq!(
+            reencoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()],
+            O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS,
+            "checkpoint v{version}"
+        );
+        assert!(O3RuntimeCheckpointPayload::decode(&reencoded)
+            .unwrap()
+            .snapshot()
+            .pending_state()
+            .writeback()
+            .deferred()
+            .is_empty());
+
+        let mut runtime = O3RuntimeState::default();
+        runtime.restore_checkpoint_payload(payload).unwrap();
+        assert!(runtime
+            .snapshot()
+            .pending_state()
+            .writeback()
+            .deferred()
+            .is_empty());
+    }
+}
+
+#[test]
+fn legacy_pending_only_payload_normalizes_deferred_writeback_before_restore_or_encode() {
+    let payload = O3RuntimeCheckpointPayload::from_legacy_pending_state(
+        pending_state_with_deferred_writeback(),
+    )
+    .unwrap();
+    assert_eq!(
+        payload
+            .snapshot()
+            .pending_state()
+            .writeback()
+            .deferred()
+            .len(),
+        1
+    );
+
+    let reencoded = O3RuntimeCheckpointPayload::decode(&payload.encode()).unwrap();
+    assert!(reencoded
+        .snapshot()
+        .pending_state()
+        .writeback()
+        .deferred()
+        .is_empty());
+    let mut runtime = O3RuntimeState::default();
+    runtime.restore_checkpoint_payload(payload).unwrap();
+    assert!(runtime
+        .snapshot()
+        .pending_state()
+        .writeback()
+        .deferred()
+        .is_empty());
+}
+
+#[test]
+fn checkpoint_v23_rejects_nonempty_stable_deferred_writeback() {
+    assert_eq!(
+        O3RuntimeCheckpointPayload::from_snapshot(runtime_snapshot_with_deferred_writeback()),
+        Err(O3RuntimeError::StableWritebackQueueNotEmpty { deferred: 1 })
+    );
+    assert_eq!(
+        O3RuntimeCheckpointPayload::decode(&checkpoint_payload_with_deferred_writeback(23)),
+        Err(O3RuntimeError::StableWritebackQueueNotEmpty { deferred: 1 })
+    );
+}
+
+#[test]
+fn from_legacy_pending_state_preserves_inspectable_deferred_snapshot() {
+    let payload = O3RuntimeCheckpointPayload::from_legacy_pending_state(
+        pending_state_with_deferred_writeback(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        payload.snapshot().pending_state().writeback().deferred(),
+        [O3WritebackCompletion::new(77)]
+    );
+}
+
+#[test]
+fn checkpoint_v23_payloads_round_trip_issue_arbitration_stats() {
     let payload = issue_stats_checkpoint_payload();
     let encoded = payload.encode();
     assert_eq!(
         encoded[O3_RUNTIME_CHECKPOINT_MAGIC.len()],
-        22,
-        "current O3 runtime checkpoints must use version 22"
+        23,
+        "current O3 runtime checkpoints must use version 23"
     );
 
     let decoded = O3RuntimeCheckpointPayload::decode(&encoded).unwrap();

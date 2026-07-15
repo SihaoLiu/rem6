@@ -424,6 +424,8 @@ impl RiscvCore {
         let state = self.state.lock().expect("riscv core lock");
         state.pending_callback_error.is_none()
             && state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
+            && !state.o3_runtime.has_pending_retirement_authority()
+            && !state.o3_writeback_wake.has_pending_checkpoint_authority()
             && state.outstanding_data.is_empty()
             && state.buffered_o3_stores.is_empty()
             && state.pending_data_translations.is_empty()
@@ -472,6 +474,7 @@ impl RiscvCore {
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_retire_window();
+        state.o3_writeback_wake.clear();
         state.live_retire_gate.clear_pending_for_pc_redirect();
         state.discard_data_accesses_for_control_boundary();
         riscv_checker::sync_checker_hart(&mut state);

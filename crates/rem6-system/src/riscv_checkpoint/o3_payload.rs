@@ -1,7 +1,5 @@
 use rem6_checkpoint::CheckpointComponentId;
-use rem6_cpu::{
-    O3PendingStateCheckpointPayload, O3RuntimeCheckpointPayload, O3RuntimeSnapshot, RiscvCore,
-};
+use rem6_cpu::{O3PendingStateCheckpointPayload, O3RuntimeCheckpointPayload, RiscvCore};
 
 use super::RiscvCoreCheckpointError;
 
@@ -68,21 +66,10 @@ fn runtime_from_legacy_pending(
     component: &CheckpointComponentId,
     pending: O3PendingStateCheckpointPayload,
 ) -> Result<O3RuntimeCheckpointPayload, RiscvCoreCheckpointError> {
-    let default = RiscvCore::default_o3_runtime_checkpoint_payload().into_snapshot();
-    let snapshot = O3RuntimeSnapshot::new(
-        default.reorder_buffer().iter().copied(),
-        default.load_store_queue().iter().copied(),
-        default.rename_map().iter().copied(),
-        pending.into_snapshot(),
-    )
-    .map_err(|error| RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-        component: component.clone(),
-        error,
-    })?;
-    O3RuntimeCheckpointPayload::from_snapshot(snapshot).map_err(|error| {
-        RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
+    O3RuntimeCheckpointPayload::from_legacy_pending_state(pending.into_snapshot()).map_err(
+        |error| RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
             component: component.clone(),
             error,
-        }
-    })
+        },
+    )
 }

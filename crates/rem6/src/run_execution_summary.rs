@@ -466,6 +466,7 @@ pub(super) fn execution_summary(
                 cpu,
             ),
             o3_runtime_snapshot: core.o3_runtime_snapshot(),
+            o3_runtime_writeback_reservations: core.o3_runtime_writeback_reservations(),
             o3_runtime_trace_records: core.o3_runtime_trace_records(),
             branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
             branch_target_buffer_hits: branch_target_buffer.hit_count(),

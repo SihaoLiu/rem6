@@ -170,11 +170,13 @@ impl RiscvCore {
         state.executed_fetches.clear();
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_staged_instructions();
+        state.o3_writeback_wake.clear();
         state.live_retire_gate.clear_pending_for_pc_redirect();
         state.discard_data_accesses_for_control_boundary();
         state.pending_trap = None;
         state.pending_trap_event = None;
         state.reservation = None;
+        state.pending_callback_error = None;
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(entry);

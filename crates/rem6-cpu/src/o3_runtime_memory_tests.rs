@@ -279,6 +279,49 @@ fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
 }
 
 #[test]
+fn writeback_wake_tracks_oldest_unpublished_scalar_load() {
+    let mut runtime = O3RuntimeState::default();
+    let older = scalar_load_event_with(0x8000, 10, 12, 10, 0x9000);
+    let younger = scalar_load_event_with(0x8004, 11, 13, 10, 0x9040);
+    let older_data_request = memory_request(20);
+    let younger_data_request = memory_request(21);
+    assert!(runtime.stage_live_scalar_memory_issue(&older, older_data_request, 31));
+    assert!(runtime.stage_live_scalar_memory_issue(&younger, younger_data_request, 32));
+
+    let mut younger_completed = younger.clone();
+    younger_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert!(runtime
+        .complete_live_scalar_memory_response(
+            &younger_completed,
+            younger_data_request,
+            40,
+            8,
+            Some(&[0x63, 0, 0, 0]),
+        )
+        .unwrap());
+    assert_eq!(
+        runtime.earliest_unpublished_scalar_load_writeback_tick(),
+        None
+    );
+
+    let mut older_completed = older.clone();
+    older_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert!(runtime
+        .complete_live_scalar_memory_response(
+            &older_completed,
+            older_data_request,
+            45,
+            14,
+            Some(&[0x2a, 0, 0, 0]),
+        )
+        .unwrap());
+    assert_eq!(
+        runtime.earliest_unpublished_scalar_load_writeback_tick(),
+        Some(46)
+    );
+}
+
+#[test]
 fn retry_response_removes_load_head_younger_rows_and_readies_one_abort_event() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8004, 11);
@@ -549,6 +592,8 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
 
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(state.o3_runtime.has_pending_retirement_authority());
+    state.o3_runtime.prune_writeback_calendar_before(43);
     assert!(!state.o3_runtime.has_pending_retirement_authority());
 }
 

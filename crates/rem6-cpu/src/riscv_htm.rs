@@ -41,6 +41,7 @@ impl RiscvCore {
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_staged_instructions();
+        state.o3_writeback_wake.clear();
         state.live_retire_gate.clear_pending_for_pc_redirect();
         state.discard_data_accesses_for_control_boundary();
         riscv_checker::sync_checker_hart(&mut state);

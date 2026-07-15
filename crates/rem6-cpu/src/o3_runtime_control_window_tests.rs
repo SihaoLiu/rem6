@@ -231,6 +231,48 @@ fn outer_control_discard_removes_inner_branch_and_descendant() {
 }
 
 #[test]
+fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
+    let (mut runtime, _, _, descendant) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let load_sequence = rob[0].sequence();
+    let branch_sequence = rob[1].sequence();
+    let descendant_sequence = rob[3].sequence();
+    let mut load = runtime.live_scalar_memories[0].execution.clone();
+    load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert!(runtime
+        .complete_live_scalar_memory_response(&load, request(20), 10, 0, Some(&[0x2a, 0, 0, 0]),)
+        .unwrap());
+    let load_admitted_tick = runtime.live_scalar_memories[0]
+        .admitted_writeback_tick
+        .unwrap();
+    let descendant_admitted_tick = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.execution.instruction() == descendant)
+        .unwrap()
+        .admitted_writeback_tick;
+    assert!(descendant_admitted_tick > 12);
+
+    runtime.discard_live_control_descendants_from_at(branch_sequence, 12);
+
+    assert_eq!(
+        runtime.live_scalar_memories[0].admitted_writeback_tick,
+        Some(load_admitted_tick)
+    );
+    assert!(runtime
+        .live_speculative_executions
+        .iter()
+        .all(|issued| issued.sequence != descendant_sequence));
+    assert_eq!(
+        runtime
+            .writeback_reservation(load_sequence)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(load_admitted_tick)
+    );
+    assert!(runtime.writeback_reservation(descendant_sequence).is_none());
+}
+
+#[test]
 fn inner_control_discard_preserves_outer_branch() {
     let (mut runtime, outer, inner, _) = issued_nested_control_runtime();
     let inner_sequence = runtime.snapshot().reorder_buffer()[2].sequence();

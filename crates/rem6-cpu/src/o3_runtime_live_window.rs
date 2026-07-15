@@ -151,11 +151,13 @@ impl O3RuntimeState {
         if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
             let boundary_sequence = self.snapshot.reorder_buffer[index].sequence();
             self.snapshot.reorder_buffer.drain(index..);
+            self.discard_future_writeback_from_sequence(boundary_sequence, retire_tick);
             self.live_scalar_memory_younger_sequences
                 .retain(|sequence| *sequence < boundary_sequence);
-            self.retain_live_speculative_executions(|speculative| {
-                speculative.sequence < boundary_sequence
-            });
+            self.retain_live_speculative_executions_at(
+                |speculative| speculative.sequence < boundary_sequence,
+                retire_tick,
+            );
             self.live_control_dependencies
                 .retain(|sequence, _| *sequence < boundary_sequence);
             self.live_control_window_sequences
@@ -167,8 +169,12 @@ impl O3RuntimeState {
             return;
         }
         let entry = self.snapshot.reorder_buffer[index];
-        let speculative_timing =
-            self.take_live_speculative_issue_timing(entry, execution, consumed_requests);
+        let speculative_timing = self.take_live_speculative_issue_timing_at(
+            entry,
+            execution,
+            consumed_requests,
+            retire_tick,
+        );
         let dependencies = self.record_scalar_integer_dependencies(&execution.instruction());
         let rename_destination = staged_rename_entry(entry).filter(|destination| {
             execution_writes_rename_destination(execution.execution(), *destination)
@@ -216,6 +222,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions(&mut self) {
+        self.discard_all_writeback_reservations();
         self.discard_live_scalar_memory_lifecycle();
         self.snapshot
             .reorder_buffer
@@ -228,14 +235,34 @@ impl O3RuntimeState {
             .set_rename_map_entries(self.snapshot.rename_map.len());
     }
 
+    pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
+        self.discard_live_scalar_memory_lifecycle_at(now);
+        self.snapshot
+            .reorder_buffer
+            .retain(|entry| !entry.is_live_staged());
+        self.live_scalar_memory_younger_sequences.clear();
+        self.live_control_dependencies.clear();
+        self.live_control_window_sequences.clear();
+        self.discard_live_speculative_executions_at(now);
+        self.stats
+            .set_rename_map_entries(self.snapshot.rename_map.len());
+    }
+
     pub(crate) fn discard_live_speculative_executions(&mut self) {
-        for execution in self
+        self.discard_all_writeback_reservations();
+        self.live_speculative_executions.clear();
+    }
+
+    pub(crate) fn discard_live_speculative_executions_at(&mut self, now: u64) {
+        let sequences = self
             .live_speculative_executions
-            .drain(..)
-            .collect::<Vec<_>>()
-        {
-            self.remove_live_writeback_sequence(execution.sequence);
+            .iter()
+            .map(|execution| execution.sequence)
+            .collect::<Vec<_>>();
+        for sequence in sequences {
+            self.discard_future_writeback_sequence(sequence, now);
         }
+        self.live_speculative_executions.clear();
     }
 
     pub(crate) fn live_scalar_memory_younger_wakeup_seed(
@@ -260,12 +287,22 @@ impl O3RuntimeState {
     }
 
     pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {
+        self.discard_all_writeback_reservations();
+        self.discard_live_staged_window_rows_from_at(sequence, 0);
+    }
+
+    pub(super) fn discard_live_staged_window_from_at(&mut self, sequence: u64, now: u64) {
+        self.discard_future_writeback_from_sequence(sequence, now);
+        self.discard_live_staged_window_rows_from_at(sequence, now);
+    }
+
+    fn discard_live_staged_window_rows_from_at(&mut self, sequence: u64, now: u64) {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);
         self.live_scalar_memory_younger_sequences
             .retain(|younger| *younger < sequence);
-        self.retain_live_speculative_executions(|execution| execution.sequence < sequence);
+        self.retain_live_speculative_executions_at(|execution| execution.sequence < sequence, now);
         self.live_control_dependencies
             .retain(|dependent, _| *dependent < sequence);
         self.live_control_window_sequences
@@ -409,6 +446,25 @@ impl O3RuntimeState {
                 retained.push(execution);
             } else {
                 self.remove_live_writeback_sequence(execution.sequence);
+            }
+        }
+        self.live_speculative_executions = retained;
+    }
+
+    pub(super) fn retain_live_speculative_executions_at<F>(&mut self, mut keep: F, now: u64)
+    where
+        F: FnMut(&O3LiveSpeculativeExecution) -> bool,
+    {
+        let mut retained = Vec::with_capacity(self.live_speculative_executions.len());
+        for execution in self
+            .live_speculative_executions
+            .drain(..)
+            .collect::<Vec<_>>()
+        {
+            if keep(&execution) {
+                retained.push(execution);
+            } else {
+                self.discard_future_writeback_sequence(execution.sequence, now);
             }
         }
         self.live_speculative_executions = retained;
@@ -917,7 +973,6 @@ mod tests {
                 ),
             )
             .unwrap();
-
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
         runtime.record_retired_instruction_with_trace(&divide, true);
@@ -1375,12 +1430,20 @@ mod tests {
                 ),
             )
             .unwrap();
+        let speculative_sequence = runtime.live_speculative_executions[0].sequence;
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         retire_live(&mut runtime, &divide, 29);
         runtime.record_retired_instruction_with_trace(&divide, true);
         let younger = execution_event(younger_instruction, 0x8004, 2, 4);
         runtime.retire_live_staged_instruction(&younger, &[request(2), request(4)], 30);
+        assert_eq!(
+            runtime
+                .writeback_reservation(speculative_sequence)
+                .map(O3WritebackReservation::admitted_tick),
+            Some(10),
+            "rebinding after the admitted tick must preserve historical occupancy"
+        );
         runtime.record_retired_instruction_with_trace(&younger, true);
 
         let trace = runtime.trace_records().last().copied().unwrap();

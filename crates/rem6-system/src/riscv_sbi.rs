@@ -1003,7 +1003,7 @@ impl RiscvSbiFirmware {
             let target_hart = target.hart_id();
             if parallel {
                 scheduler.schedule_parallel_at(target.partition(), deadline, move |context| {
-                    target.reset_instruction_fetch_stream();
+                    target.reset_instruction_fetch_stream(context.now());
                     record_rfence_completion(
                         &completions,
                         scope.completion_record(source_cpu, target_hart, context.now(), None),
@@ -1011,7 +1011,7 @@ impl RiscvSbiFirmware {
                 })?;
             } else {
                 scheduler.schedule_at(target.partition(), deadline, move |context| {
-                    target.reset_instruction_fetch_stream();
+                    target.reset_instruction_fetch_stream(context.now());
                     record_rfence_completion(
                         &completions,
                         scope.completion_record(source_cpu, target_hart, context.now(), None),
