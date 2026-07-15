@@ -2725,16 +2725,22 @@ git commit -m "debug: expose O3 writeback transfer state"
 
 Add `o3_runtime_writeback_lives_in_focused_module` beside the issue-owner check.
 Require `o3_runtime.rs` to declare the focused module and require only
-`o3_runtime_writeback.rs` to own these anchors:
+`o3_runtime_writeback.rs` production code to own these authority anchors:
 
 ```rust
 let writeback_authority_patterns = [
     "struct O3WritebackReservationCalendar",
-    "fn reserve_writeback_completions(",
+    "fn reserve_writeback_completions<I>(",
     "fn discard_future_writeback_from_sequence(",
-    "writeback_port_deferred_row_cycles",
 ];
 ```
+
+Strip comments, string literals, `#[cfg(test)]` items, and standalone test-only
+source files before judging production ownership. Require the focused module to
+own every mutation of all six `writeback_port_*` counters. Allow
+`o3_runtime_stats.rs` and `o3_runtime_checkpoint.rs` to retain only their
+declaration/getter and checkpoint-codec uses, and reject counter assignments in
+those or any other production source files.
 
 Require `riscv_live_retire_window.rs` and `o3_runtime_memory.rs` to delegate to
 the focused reservation API without constructing the calendar or generic
@@ -2751,8 +2757,10 @@ RISC-V runtime-authority pattern.
 Add `cli_stats_output_o3_runtime_writeback_stays_focused`, mirroring the issue
 test. Require `stats_output/o3_runtime.rs` to declare/delegate to
 `o3_runtime_writeback.rs`, keep the root below its existing cap, keep the new
-module below 800 lines, and ensure the six field strings occur in no other
-stats-output source file.
+module below 800 lines, and ensure no other production stats-output source file
+owns the canonical `o3.writeback_port.{name}` namespace, any of the six
+`writeback_port_*` accessors, or any qualified `o3.writeback_port.<field>` name.
+The unrelated raw field literal `"cycles"` remains valid for other stat families.
 
 Keep `config.rs` below 1,700 lines and the new CLI test module below the existing
 1,800-line child-module cap.
