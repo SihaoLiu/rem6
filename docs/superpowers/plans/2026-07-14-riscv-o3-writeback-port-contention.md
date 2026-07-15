@@ -2479,15 +2479,32 @@ git commit -m "stats: expose O3 writeback contention"
 ### Task 7: Preserve and Expose Mode-Transfer Writeback State
 
 **Files:**
-- Modify: `crates/rem6-cpu/src/o3_runtime_writeback.rs`
 - Modify: `crates/rem6-cpu/src/lib.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_helpers.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_live_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_memory.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_retire.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_snapshot_entries.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_trace.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_writeback.rs`
 - Modify: `crates/rem6-cpu/src/public_api.rs`
+- Modify: `crates/rem6-cpu/src/riscv_execution_mode_handoff.rs`
+- Test: `crates/rem6-cpu/tests/o3_runtime.rs`
 - Modify: `crates/rem6-system/src/riscv_checkpoint.rs`
 - Modify: `crates/rem6-system/src/host.rs`
 - Modify: `crates/rem6-system/src/host/execution_mode_handoff.rs`
 - Modify: `crates/rem6-system/src/host/execution_mode_transfer.rs`
+- Modify: `crates/rem6/src/artifact_json.rs`
+- Modify: `crates/rem6/src/debug_output/host_action.rs`
 - Modify: `crates/rem6/src/host_actions.rs`
+- Modify: `crates/rem6/src/host_actions/o3_checkpoint_decode.rs`
+- Modify: `crates/rem6/src/stats_output/host_actions.rs`
+- Modify: `crates/rem6/src/stats_output/host_actions/tests.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/lsq_fu_branch.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/switch.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/switch/store_load_forwarding.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs`
 
 - [ ] **Step 1: Add a failing transfer continuity/debug test**
@@ -2532,12 +2549,31 @@ first post-window timing-mode instruction at `0x8000001c` is absent from the
 detailed O3 trace. Use the existing DIV plus three-younger-row PC table from the
 switch test, not a second transfer binary.
 
+Derive the baseline `0x8000001c` issue tick and run the switched case beyond
+that boundary. Assert its timing-mode architectural effect (`x7 == 0xa`) and
+current timing mode while it remains absent from the detailed O3 trace, so the
+absence assertion cannot pass merely because the run stopped too early.
+
+Preserve the existing nondecreasing commit-tick assertions in the switch and
+mixed LSQ/FU/branch fixtures. Add blocked-prefix runtime tests where an older
+load blocks two younger dependent rows and a branch. Prove the ready ROB prefix
+stops at the blocked head, every commit tick is at least its writeback tick and
+nondecreasing, rename publication occurs only at commit, and a dependent row
+resolves its producer from the newest staged mapping strictly before its own ROB
+index. Include self-read, younger-shadow, and stats-reset producer-identity
+coverage.
+
+Add a mixed ineligible-data plus future-FU transfer test. Pure-FU resident
+calendar authority may use a non-restorable no-chunk handoff, but pending
+translation, unissued memory, or unsupported scalar-memory handoff shapes must
+still reject the switch.
+
 - [ ] **Step 2: Run and verify RED**
 
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_host_switch_preserves_o3_writeback_port_ticks -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_host_switch_preserves_o3_writeback_port_ticks -- --exact --nocapture
 ```
 
 Expected: inherited timing may already remain resident, but the transfer/debug
@@ -2570,6 +2606,10 @@ Expose `RiscvCore::o3_writeback_debug_state(now)` by reading the resident
 runtime calendar. This is observation only; it must not serialize or restore
 calendar authority.
 
+`reserved_future_completions` and `earliest_unpublished_tick` include only
+reservations with `admitted_tick > now`; current-tick historical occupancy is
+not future transfer authority.
+
 Add `RiscvCoreCheckpointBank::o3_writeback_debug_state_for_target(target, now)`
 beside `checker_summary_for_target`.
 
@@ -2600,6 +2640,28 @@ counter fields and `writeback_width`, which is available from
 `numeric_fields`, unit mapping, and aggregation: sum the first four counters,
 max the two extrema, and treat width as max/equality-preserving metadata.
 
+Use `RiscvO3LiveDataHandoffCapture::{NoLiveDataAuthority, Captured, Rejected}`
+to distinguish a pure-FU resident-calendar transfer from a failed data-handoff
+capture. Only `NoLiveDataAuthority` may use the no-chunk resident fallback;
+`Rejected` remains fail-closed even when a future FU reservation exists.
+
+Expose the three transfer debug fields through artifact/debug JSON and through
+both native stats surfaces:
+
+```text
+sim.host_actions.execution_mode_switch_state_transfer.latest_writeback_width
+sim.host_actions.execution_mode_switch_state_transfer.latest_reserved_future_completions
+sim.host_actions.execution_mode_switch_state_transfer.latest_earliest_unpublished_writeback_tick
+sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_writeback_width
+sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_reserved_future_completions
+sim.debug.host_action_trace.execution_mode_switch.state_transfer.latest_earliest_unpublished_writeback_tick
+```
+
+Use `Count`, `Count`, and `Tick` respectively with the existing optional latest-
+transfer suppression and monotonic policy. Keep checkpoint decoding in
+`host_actions/o3_checkpoint_decode.rs`. Move transfer construction into
+`host/execution_mode_transfer.rs` so `host.rs` retains source-policy headroom.
+
 Do not add calendar rows to the O3 runtime checkpoint or live-data handoff
 payload. The resident core remains the only authority through the switch.
 
@@ -2608,9 +2670,12 @@ payload. The resident core remains the only authority through the switch.
 Run:
 
 ```bash
-cargo test -p rem6 --test cli_run rem6_run_host_switch_preserves_o3_writeback_port_ticks -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_host_switch_preserves_o3_writeback_port_ticks -- --exact --nocapture
 cargo test -p rem6 --test cli_run m5_host_actions::o3::switch:: -- --nocapture
-cargo test -p rem6 host_o3_runtime_checkpoint_chunk -- --nocapture
+cargo test -p rem6-cpu blocked_prefix --lib -- --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::switch::store_load_forwarding::rem6_run_host_switch_rejects_ineligible_data_with_future_fu_row -- --exact --nocapture
+cargo test -p rem6 --lib host_actions::tests::malformed_o3_runtime_checkpoint_chunks_report_decode_error -- --exact --nocapture
+cargo test -p rem6 --test cli_run m5_host_actions::o3::writeback_port::rem6_run_o3_writeback_port_checkpoint_boundary -- --exact --nocapture
 cargo test -p rem6-system execution_mode_handoff -- --nocapture
 ```
 
@@ -2618,15 +2683,32 @@ Expected: the switch is non-restorable, the resident calendar/wake continues to
 drain, inherited timing matches baseline, and debug fields are projections only.
 
 ```bash
-git add crates/rem6-cpu/src/o3_runtime_writeback.rs \
-  crates/rem6-cpu/src/lib.rs \
+git add crates/rem6-cpu/src/lib.rs \
+  crates/rem6-cpu/src/o3_runtime.rs \
+  crates/rem6-cpu/src/o3_runtime_control_window_tests.rs \
+  crates/rem6-cpu/src/o3_runtime_helpers.rs \
+  crates/rem6-cpu/src/o3_runtime_live_window.rs \
+  crates/rem6-cpu/src/o3_runtime_memory.rs \
+  crates/rem6-cpu/src/o3_runtime_retire.rs \
+  crates/rem6-cpu/src/o3_runtime_snapshot_entries.rs \
+  crates/rem6-cpu/src/o3_runtime_trace.rs \
+  crates/rem6-cpu/src/o3_runtime_writeback.rs \
   crates/rem6-cpu/src/public_api.rs \
-  crates/rem6-system/src/riscv_checkpoint.rs \
+  crates/rem6-cpu/src/riscv_execution_mode_handoff.rs \
+  crates/rem6-cpu/tests/o3_runtime.rs \
   crates/rem6-system/src/host.rs \
   crates/rem6-system/src/host/execution_mode_handoff.rs \
   crates/rem6-system/src/host/execution_mode_transfer.rs \
+  crates/rem6-system/src/riscv_checkpoint.rs \
+  crates/rem6/src/artifact_json.rs \
+  crates/rem6/src/debug_output/host_action.rs \
   crates/rem6/src/host_actions.rs \
+  crates/rem6/src/host_actions/o3_checkpoint_decode.rs \
+  crates/rem6/src/stats_output/host_actions.rs \
+  crates/rem6/src/stats_output/host_actions/tests.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/lsq_fu_branch.rs \
   crates/rem6/tests/cli_run/m5_host_actions/o3/switch.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/switch/store_load_forwarding.rs \
   crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs
 git commit -m "debug: expose O3 writeback transfer state"
 ```
