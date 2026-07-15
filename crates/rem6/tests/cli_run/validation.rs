@@ -2775,6 +2775,48 @@ fn rem6_trace_replay_config_scan_treats_fabric_router_flags_as_value_taking() {
 }
 
 #[test]
+fn rem6_trace_replay_config_scan_treats_resource_and_qos_flags_as_value_taking() {
+    for (flag, expected) in [
+        ("--trace-resource", "invalid trace replay resource --config"),
+        (
+            "--data-cache-dram-qos-priority-levels",
+            "invalid trace replay data cache DRAM QoS priority levels --config",
+        ),
+        (
+            "--data-cache-dram-qos-default-priority",
+            "invalid trace replay data cache DRAM QoS default priority --config",
+        ),
+    ] {
+        let bogus_config = temp_output(&format!(
+            "trace-replay-resource-qos-prescan-{}",
+            flag.trim_start_matches("--").replace('-', "_")
+        ));
+
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "trace-replay",
+                flag,
+                "--config",
+                bogus_config.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "flag {flag} unexpectedly succeeded"
+        );
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(expected), "stderr for {flag}: {stderr}");
+        assert!(
+            !stderr.contains(&format!("failed to read config {}", bogus_config.display())),
+            "stderr for {flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_config_scan_treats_riscv_in_order_width_as_value_taking() {
     let bogus_config = temp_output("riscv-in-order-width-prescan-bogus-config");
 
