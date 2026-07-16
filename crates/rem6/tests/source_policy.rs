@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/coroutine_ownership.rs"]
+mod coroutine_ownership;
 #[path = "source_policy/data_cache_protocol_authority.rs"]
 mod data_cache_protocol_authority;
 #[path = "source_policy/execution_mode_lanes.rs"]
