@@ -278,10 +278,7 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
         ),
         (21, 21, 21, Some(0))
     );
-    assert_eq!(
-        coroutine_execution.producer_sequences,
-        vec![head_sequence, head_sequence]
-    );
+    assert_eq!(coroutine_execution.producer_sequences, vec![head_sequence]);
     assert_eq!(
         coroutine_execution.execution.register_writes(),
         &[RegisterWrite::new(reg(5), THIRD_PC)]
@@ -314,7 +311,7 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
     );
     assert_eq!(
         serializing_execution.producer_sequences,
-        vec![coroutine_sequence, coroutine_sequence]
+        vec![coroutine_sequence]
     );
     assert_eq!(
         serializing_execution.execution.register_writes(),

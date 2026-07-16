@@ -173,7 +173,9 @@ impl O3RuntimeState {
         let (mut producer_sequences, data_dependencies, forwarded_register_writes) =
             self.live_speculative_source_forwarding(index, &sources)?;
         if let Some(control_sequence) = control_sequence {
-            producer_sequences.push(control_sequence);
+            if !producer_sequences.contains(&control_sequence) {
+                producer_sequences.push(control_sequence);
+            }
         }
         Some(O3LiveSpeculativeIssueCandidate {
             sequence: entry.sequence(),
