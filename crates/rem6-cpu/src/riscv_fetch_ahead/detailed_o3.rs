@@ -11,7 +11,8 @@ use crate::{
     riscv_scalar_memory_window::{
         independent_scalar_load_destination, store_range_extends_overlap_prefix,
     },
-    CpuFetchEvent, CpuFetchEventKind, RiscvCoreState,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, ReturnAddressStackOperationKind,
+    RiscvCoreState,
 };
 
 pub(super) enum DetailedFetchAheadCandidate {
@@ -32,9 +33,19 @@ pub(super) enum DetailedFetchAheadCandidate {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PredictedControlTargetAuthority {
+pub(crate) enum PredictedControlTargetAuthority {
     Normal,
-    RasRequired,
+    RasRequired {
+        push_sequence: u64,
+        pushed_address: Address,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecordedPredictedPc {
+    Missing,
+    Invalid,
+    Ready(Address),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -257,7 +268,14 @@ fn scalar_integer_fu_window_candidate(
             .get()
             .wrapping_add(u64::from(current.decoded().bytes())),
     );
-    scalar_integer_window_candidate_from(state, fetch_events, previous_request, next_pc, window)
+    scalar_integer_window_candidate_from(
+        state,
+        fetch_events,
+        previous_request,
+        next_pc,
+        window,
+        Vec::new(),
+    )
 }
 
 fn scalar_integer_window_candidate_from(
@@ -266,6 +284,7 @@ fn scalar_integer_window_candidate_from(
     mut previous_request: rem6_memory::MemoryRequestId,
     mut next_pc: Address,
     mut window: RiscvScalarIntegerLiveWindow,
+    mut sequenced_return_addresses: Vec<(u64, Address)>,
 ) -> DetailedFetchAheadCandidate {
     while !window.is_full() {
         let younger = match completed_window_instruction_or_candidate(
@@ -277,7 +296,19 @@ fn scalar_integer_window_candidate_from(
             Ok(younger) => younger,
             Err(candidate) => return candidate,
         };
-        let decision = window.classify_younger(younger.decoded().instruction());
+        let prediction_request = younger.first_consumed_request();
+        let sequential_pc = Address::new(
+            younger
+                .pc()
+                .get()
+                .wrapping_add(u64::from(younger.decoded().bytes())),
+        );
+        sequenced_return_addresses.push((prediction_request.sequence(), sequential_pc));
+        let classification = window.classify_sequenced_younger(
+            younger.decoded().instruction(),
+            prediction_request.sequence(),
+        );
+        let decision = classification.decision();
         match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
@@ -286,21 +317,37 @@ fn scalar_integer_window_candidate_from(
                     decision,
                     RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
                 ) {
-                    PredictedControlTargetAuthority::RasRequired
+                    let Some(push_sequence) = classification.ras_push_sequence() else {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    };
+                    let Some(pushed_address) =
+                        sequenced_return_addresses
+                            .iter()
+                            .rev()
+                            .find_map(|(sequence, address)| {
+                                (*sequence == push_sequence).then_some(*address)
+                            })
+                    else {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    };
+                    PredictedControlTargetAuthority::RasRequired {
+                        push_sequence,
+                        pushed_address,
+                    }
                 } else {
                     PredictedControlTargetAuthority::Normal
                 };
-                let prediction_request = younger.first_consumed_request();
                 previous_request = younger.last_consumed_request();
-                let sequential_pc = Address::new(
-                    younger
-                        .pc()
-                        .get()
-                        .wrapping_add(u64::from(younger.decoded().bytes())),
-                );
-                next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc) {
-                    Some(predicted_pc) => predicted_pc,
-                    None if state.branch_speculations.len() < state.branch_lookahead => {
+                next_pc = match recorded_predicted_pc(
+                    state,
+                    prediction_request,
+                    sequential_pc,
+                    target_authority,
+                ) {
+                    RecordedPredictedPc::Ready(predicted_pc) => predicted_pc,
+                    RecordedPredictedPc::Missing
+                        if state.branch_speculations.len() < state.branch_lookahead =>
+                    {
                         return DetailedFetchAheadCandidate::ReadyPredictedControl {
                             request: prediction_request,
                             pc: younger.pc(),
@@ -309,7 +356,9 @@ fn scalar_integer_window_candidate_from(
                             target_authority,
                         };
                     }
-                    None => return DetailedFetchAheadCandidate::Blocked,
+                    RecordedPredictedPc::Missing | RecordedPredictedPc::Invalid => {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    }
                 };
                 continue;
             }
@@ -321,12 +370,7 @@ fn scalar_integer_window_candidate_from(
         }
 
         previous_request = younger.last_consumed_request();
-        next_pc = Address::new(
-            younger
-                .pc()
-                .get()
-                .wrapping_add(u64::from(younger.decoded().bytes())),
-        );
+        next_pc = sequential_pc;
     }
 
     DetailedFetchAheadCandidate::Blocked
@@ -403,21 +447,28 @@ fn scalar_memory_window_candidate(
         ) else {
             return DetailedFetchAheadCandidate::Blocked;
         };
-        let decision = alu_window.classify_younger(next.decoded().instruction());
+        let prediction_request = next.first_consumed_request();
+        let sequential_pc = Address::new(
+            next.pc()
+                .get()
+                .wrapping_add(u64::from(next.decoded().bytes())),
+        );
+        let sequenced_return_addresses = vec![(prediction_request.sequence(), sequential_pc)];
+        let classification = alu_window.classify_sequenced_younger(
+            next.decoded().instruction(),
+            prediction_request.sequence(),
+        );
+        let decision = classification.decision();
         match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {
                 let previous_request = next.last_consumed_request();
-                let next_pc = Address::new(
-                    next.pc()
-                        .get()
-                        .wrapping_add(u64::from(next.decoded().bytes())),
-                );
                 return scalar_integer_window_candidate_from(
                     state,
                     fetch_events,
                     previous_request,
-                    next_pc,
+                    sequential_pc,
                     alu_window,
+                    sequenced_return_addresses,
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
@@ -426,21 +477,37 @@ fn scalar_memory_window_candidate(
                     decision,
                     RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
                 ) {
-                    PredictedControlTargetAuthority::RasRequired
+                    let Some(push_sequence) = classification.ras_push_sequence() else {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    };
+                    let Some(pushed_address) =
+                        sequenced_return_addresses
+                            .iter()
+                            .rev()
+                            .find_map(|(sequence, address)| {
+                                (*sequence == push_sequence).then_some(*address)
+                            })
+                    else {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    };
+                    PredictedControlTargetAuthority::RasRequired {
+                        push_sequence,
+                        pushed_address,
+                    }
                 } else {
                     PredictedControlTargetAuthority::Normal
                 };
-                let prediction_request = next.first_consumed_request();
                 let previous_request = next.last_consumed_request();
-                let sequential_pc = Address::new(
-                    next.pc()
-                        .get()
-                        .wrapping_add(u64::from(next.decoded().bytes())),
-                );
-                let next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc)
-                {
-                    Some(predicted_pc) => predicted_pc,
-                    None if state.branch_speculations.len() < state.branch_lookahead => {
+                let next_pc = match recorded_predicted_pc(
+                    state,
+                    prediction_request,
+                    sequential_pc,
+                    target_authority,
+                ) {
+                    RecordedPredictedPc::Ready(predicted_pc) => predicted_pc,
+                    RecordedPredictedPc::Missing
+                        if state.branch_speculations.len() < state.branch_lookahead =>
+                    {
                         return DetailedFetchAheadCandidate::ReadyPredictedControl {
                             request: prediction_request,
                             pc: next.pc(),
@@ -449,7 +516,9 @@ fn scalar_memory_window_candidate(
                             target_authority,
                         };
                     }
-                    None => return DetailedFetchAheadCandidate::Blocked,
+                    RecordedPredictedPc::Missing | RecordedPredictedPc::Invalid => {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    }
                 };
                 return scalar_integer_window_candidate_from(
                     state,
@@ -457,6 +526,7 @@ fn scalar_memory_window_candidate(
                     previous_request,
                     next_pc,
                     alu_window,
+                    sequenced_return_addresses,
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitStop
@@ -503,14 +573,106 @@ pub(crate) fn recorded_predicted_pc(
     state: &RiscvCoreState,
     request: MemoryRequestId,
     sequential_pc: Address,
-) -> Option<Address> {
-    let speculation = state.branch_speculations.get(&request.sequence())?;
-    let pending = state.branch_predictor.pending_speculation(*speculation)?;
-    if pending.predicted_taken() {
-        pending.target()
-    } else {
-        Some(sequential_pc)
+    target_authority: PredictedControlTargetAuthority,
+) -> RecordedPredictedPc {
+    let Some(speculation) = state.branch_speculations.get(&request.sequence()) else {
+        return RecordedPredictedPc::Missing;
+    };
+    let Some(pending) = state.branch_predictor.pending_speculation(*speculation) else {
+        return RecordedPredictedPc::Invalid;
+    };
+    match target_authority {
+        PredictedControlTargetAuthority::Normal => {
+            if pending.predicted_taken() {
+                pending
+                    .target()
+                    .map_or(RecordedPredictedPc::Invalid, RecordedPredictedPc::Ready)
+            } else {
+                RecordedPredictedPc::Ready(sequential_pc)
+            }
+        }
+        PredictedControlTargetAuthority::RasRequired {
+            push_sequence,
+            pushed_address,
+        } => {
+            let Some(target) = recorded_ras_required_target(
+                state,
+                push_sequence,
+                pushed_address,
+                request.sequence(),
+            ) else {
+                return RecordedPredictedPc::Invalid;
+            };
+            if pending.predicted_taken() && pending.target() == Some(target) {
+                RecordedPredictedPc::Ready(target)
+            } else {
+                RecordedPredictedPc::Invalid
+            }
+        }
     }
+}
+
+pub(super) fn unconsumed_ras_required_target(
+    state: &RiscvCoreState,
+    push_sequence: u64,
+    pushed_address: Address,
+) -> Option<Address> {
+    if !matches!(
+        state.branch_speculation_kinds.get(&push_sequence),
+        Some(BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect)
+    ) {
+        return None;
+    }
+    let operation_id = state.return_address_stack_operations.get(&push_sequence)?;
+    let operation = state.return_address_stack.pending_operations().last()?;
+    if operation.id() != *operation_id
+        || operation.kind() != ReturnAddressStackOperationKind::Push
+        || operation.stack_after() != state.return_address_stack.stack_entries()
+    {
+        return None;
+    }
+    let target = operation.pushed_address()?;
+    (target == pushed_address && state.return_address_stack.top() == Some(target)).then_some(target)
+}
+
+fn recorded_ras_required_target(
+    state: &RiscvCoreState,
+    push_sequence: u64,
+    pushed_address: Address,
+    return_sequence: u64,
+) -> Option<Address> {
+    if !matches!(
+        state.branch_speculation_kinds.get(&push_sequence),
+        Some(BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect)
+    ) || state.branch_speculation_kinds.get(&return_sequence) != Some(&BranchTargetKind::Return)
+    {
+        return None;
+    }
+    let push_id = state.return_address_stack_operations.get(&push_sequence)?;
+    let pop_id = state
+        .return_address_stack_operations
+        .get(&return_sequence)?;
+    let operations = state.return_address_stack.pending_operations();
+    let push_index = operations
+        .iter()
+        .position(|operation| operation.id() == *push_id)?;
+    let pop_index = operations
+        .iter()
+        .position(|operation| operation.id() == *pop_id)?;
+    if pop_index != push_index + 1 {
+        return None;
+    }
+    let push = &operations[push_index];
+    let pop = &operations[pop_index];
+    if push.kind() != ReturnAddressStackOperationKind::Push
+        || pop.kind() != ReturnAddressStackOperationKind::Pop
+        || push.pushed_address() != Some(pushed_address)
+        || push.stack_after() != pop.stack_before()
+        || pop.predicted_return() != push.pushed_address()
+    {
+        return None;
+    }
+    pop.predicted_return()
 }
 
 fn completed_window_instruction_or_candidate(

@@ -20,7 +20,9 @@ mod detailed_o3;
 mod driver;
 mod speculation;
 
-pub(crate) use detailed_o3::recorded_predicted_pc;
+pub(crate) use detailed_o3::{
+    recorded_predicted_pc, PredictedControlTargetAuthority, RecordedPredictedPc,
+};
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
@@ -1439,20 +1441,27 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => return None,
     };
-    let ras_required =
-        target_authority == detailed_o3::PredictedControlTargetAuthority::RasRequired;
-    if ras_required && kind != BranchTargetKind::Return {
-        return None;
-    }
+    let ras_target = match target_authority {
+        detailed_o3::PredictedControlTargetAuthority::Normal => (kind == BranchTargetKind::Return)
+            .then(|| state.return_address_stack.top())
+            .flatten(),
+        detailed_o3::PredictedControlTargetAuthority::RasRequired {
+            push_sequence,
+            pushed_address,
+        } => {
+            if kind != BranchTargetKind::Return {
+                return None;
+            }
+            Some(detailed_o3::unconsumed_ras_required_target(
+                state,
+                push_sequence,
+                pushed_address,
+            )?)
+        }
+    };
     let target_lookup = state.branch_target_buffer.lookup(fetch_pc, kind);
     let branch_target_prediction =
         BranchTargetPrediction::new(target_lookup.hit(), target_lookup.target());
-    let ras_target = (kind == BranchTargetKind::Return)
-        .then(|| state.return_address_stack.top())
-        .flatten();
-    if ras_required && ras_target.is_none() {
-        return None;
-    }
     let target = match instruction {
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)

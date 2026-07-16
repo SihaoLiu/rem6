@@ -324,6 +324,132 @@ fn detailed_same_window_return_does_not_fall_back_without_ras() {
 }
 
 #[test]
+fn detailed_same_window_return_does_not_use_stale_ras_top() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_same_window_return_rejects_wrong_call_push_address() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(1).unwrap();
+        let wrong_push = state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+        state
+            .return_address_stack_operations
+            .insert(1, wrong_push.id());
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_recorded_same_window_return_requires_live_ras_lineage() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&return_decision)
+            .unwrap(),
+    );
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.discard_return_address_stack_speculations();
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_invalid_recorded_return_does_not_retry_as_fresh_prediction() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(3);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    let return_sequence = return_decision.branch_speculation().unwrap().sequence();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&return_decision)
+            .unwrap(),
+    );
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state
+            .squash_return_address_stack_speculation(return_sequence)
+            .unwrap();
+        assert!(state.return_address_stack_operations.contains_key(&1));
+        assert!(!state
+            .return_address_stack_operations
+            .contains_key(&return_sequence));
+        assert_eq!(state.return_address_stack.top(), Some(Address::new(0x8008)));
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
 fn detailed_split_control_keys_prediction_to_prefix_request() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let branch = b_type(8, 1, 2, 0x0).to_le_bytes();

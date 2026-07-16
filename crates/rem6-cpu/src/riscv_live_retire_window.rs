@@ -540,34 +540,65 @@ fn completed_scalar_integer_younger_window(
     limit: usize,
 ) -> Vec<RiscvCompletedFetchInstruction> {
     let mut instructions = Vec::new();
+    let mut sequenced_return_addresses = Vec::new();
     for _ in 0..limit {
         let Some(instruction) =
             completed_fetch_instruction_at(state, fetch_events, current_request, pc)
         else {
             break;
         };
-        let decision = window.classify_younger(instruction.decoded.instruction());
-        if decision == RiscvScalarIntegerYoungerDecision::Reject {
-            break;
-        }
         let prediction_request = instruction.first_consumed_request();
-        current_request = instruction.last_consumed_request();
         let sequential_pc = Address::new(
             instruction
                 .pc
                 .get()
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
+        sequenced_return_addresses.push((prediction_request.sequence(), sequential_pc));
+        let classification = window.classify_sequenced_younger(
+            instruction.decoded.instruction(),
+            prediction_request.sequence(),
+        );
+        let decision = classification.decision();
+        if decision == RiscvScalarIntegerYoungerDecision::Reject {
+            break;
+        }
+        current_request = instruction.last_consumed_request();
         let next_pc = if matches!(
             decision,
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
                 | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
         ) {
-            let Some(next_pc) = crate::riscv_fetch_ahead::recorded_predicted_pc(
-                state,
-                prediction_request,
-                sequential_pc,
-            ) else {
+            let target_authority =
+                if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
+                    let Some(push_sequence) = classification.ras_push_sequence() else {
+                        break;
+                    };
+                    let Some(pushed_address) =
+                        sequenced_return_addresses
+                            .iter()
+                            .rev()
+                            .find_map(|(sequence, address)| {
+                                (*sequence == push_sequence).then_some(*address)
+                            })
+                    else {
+                        break;
+                    };
+                    crate::riscv_fetch_ahead::PredictedControlTargetAuthority::RasRequired {
+                        push_sequence,
+                        pushed_address,
+                    }
+                } else {
+                    crate::riscv_fetch_ahead::PredictedControlTargetAuthority::Normal
+                };
+            let crate::riscv_fetch_ahead::RecordedPredictedPc::Ready(next_pc) =
+                crate::riscv_fetch_ahead::recorded_predicted_pc(
+                    state,
+                    prediction_request,
+                    sequential_pc,
+                    target_authority,
+                )
+            else {
                 break;
             };
             next_pc
@@ -734,6 +765,77 @@ mod tests {
         assert_eq!(window[1].pc, Address::new(0x8008));
         assert_eq!(window[0].consumed_requests, vec![request(7, 11)]);
         assert_eq!(window[1].consumed_requests, vec![request(7, 12)]);
+    }
+
+    #[test]
+    fn live_retire_replay_stops_before_return_without_recorded_ras_lineage() {
+        let load = i_type(0, 2, 0x2, 6, 0x03);
+        let call = j_type(8, 1);
+        let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+        let descendant = i_type(1, 0, 0x0, 7, 0x13);
+        let core = test_core();
+        {
+            let mut core_state = core.core.state.lock().expect("cpu core lock");
+            for (sequence, pc, raw) in [
+                (0, 0x8000, load),
+                (1, 0x8004, call),
+                (2, 0x800c, return_jump),
+                (3, 0x8008, descendant),
+            ] {
+                core_state.events.push(completed_fetch_with_data(
+                    7,
+                    sequence,
+                    Address::new(pc),
+                    raw.to_le_bytes().to_vec(),
+                ));
+            }
+        }
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_scalar_memory_depth(4);
+        core.set_branch_lookahead(2);
+
+        let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+        core.record_prepared_fetch_ahead_speculation(
+            core.prepare_fetch_ahead_speculation(&call_decision)
+                .unwrap(),
+        );
+        let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+        let return_sequence = 2;
+        core.record_prepared_fetch_ahead_speculation(
+            core.prepare_fetch_ahead_speculation(&return_decision)
+                .unwrap(),
+        );
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .squash_return_address_stack_speculation(return_sequence)
+                .unwrap();
+        }
+
+        let fetch_events = core.core.fetch_events();
+        let state = core.state.lock().expect("riscv core lock");
+        let window = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(6).unwrap()],
+            1,
+            4,
+        )
+        .unwrap();
+        let replayed = completed_scalar_integer_younger_window(
+            &state,
+            &fetch_events,
+            request(7, 0),
+            Address::new(0x8004),
+            window,
+            3,
+        );
+
+        assert_eq!(
+            replayed
+                .iter()
+                .map(RiscvCompletedFetchInstruction::pc)
+                .collect::<Vec<_>>(),
+            [Address::new(0x8004)]
+        );
     }
 
     #[test]
@@ -1141,6 +1243,24 @@ mod tests {
             | (funct3 << 12)
             | (u32::from(rd) << 7)
             | opcode
+    }
+
+    fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+        (((imm as u32) & 0x0fff) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | (u32::from(rd) << 7)
+            | opcode
+    }
+
+    fn j_type(offset: i32, rd: u8) -> u32 {
+        let imm = offset as u32;
+        ((imm & 0x0010_0000) << 11)
+            | (imm & 0x000f_f000)
+            | ((imm & 0x0000_0800) << 9)
+            | ((imm & 0x0000_07fe) << 20)
+            | (u32::from(rd) << 7)
+            | 0x6f
     }
 
     fn scalar_load_execution(

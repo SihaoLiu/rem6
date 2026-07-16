@@ -24,6 +24,7 @@ pub(crate) struct RiscvScalarIntegerLiveWindow {
     unresolved_destinations: Vec<Register>,
     live_destinations: Vec<Register>,
     forwardable_link_destination: Option<Register>,
+    forwardable_link_push_sequence: Option<u64>,
     rows: usize,
     row_limit: usize,
     admits_terminal_control: bool,
@@ -39,6 +40,22 @@ pub(crate) enum RiscvScalarIntegerYoungerDecision {
     AdmitPredictedControl,
     AdmitPredictedRasControl,
     Reject,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvSequencedScalarIntegerYoungerDecision {
+    decision: RiscvScalarIntegerYoungerDecision,
+    ras_push_sequence: Option<u64>,
+}
+
+impl RiscvSequencedScalarIntegerYoungerDecision {
+    pub(crate) const fn decision(self) -> RiscvScalarIntegerYoungerDecision {
+        self.decision
+    }
+
+    pub(crate) const fn ras_push_sequence(self) -> Option<u64> {
+        self.ras_push_sequence
+    }
 }
 
 impl RiscvScalarIntegerLiveWindow {
@@ -89,6 +106,7 @@ impl RiscvScalarIntegerLiveWindow {
             unresolved_destinations,
             live_destinations,
             forwardable_link_destination: None,
+            forwardable_link_push_sequence: None,
             rows,
             row_limit: row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS),
             admits_terminal_control,
@@ -105,15 +123,41 @@ impl RiscvScalarIntegerLiveWindow {
         &mut self,
         instruction: RiscvInstruction,
     ) -> RiscvScalarIntegerYoungerDecision {
+        self.classify_younger_with_sequence(instruction, None)
+            .decision()
+    }
+
+    pub(crate) fn classify_sequenced_younger(
+        &mut self,
+        instruction: RiscvInstruction,
+        sequence: u64,
+    ) -> RiscvSequencedScalarIntegerYoungerDecision {
+        self.classify_younger_with_sequence(instruction, Some(sequence))
+    }
+
+    fn classify_younger_with_sequence(
+        &mut self,
+        instruction: RiscvInstruction,
+        instruction_sequence: Option<u64>,
+    ) -> RiscvSequencedScalarIntegerYoungerDecision {
         if self.is_full() || self.control_closed {
-            return RiscvScalarIntegerYoungerDecision::Reject;
+            return RiscvSequencedScalarIntegerYoungerDecision {
+                decision: RiscvScalarIntegerYoungerDecision::Reject,
+                ras_push_sequence: None,
+            };
         }
         if self.admits_terminal_control {
             let Some(control) = o3_live_control_operands(instruction) else {
-                return self.classify_scalar_younger(instruction);
+                return RiscvSequencedScalarIntegerYoungerDecision {
+                    decision: self.classify_scalar_younger(instruction),
+                    ras_push_sequence: None,
+                };
             };
             if self.control_depth >= MAX_PREDICTED_CONTROL_DEPTH {
-                return RiscvScalarIntegerYoungerDecision::Reject;
+                return RiscvSequencedScalarIntegerYoungerDecision {
+                    decision: RiscvScalarIntegerYoungerDecision::Reject,
+                    ras_push_sequence: None,
+                };
             }
             self.rows += 1;
             let depends_on_unresolved = control
@@ -136,8 +180,16 @@ impl RiscvScalarIntegerLiveWindow {
                 && self.forwardable_link_destination == Some(control.sources()[0]);
             if depends_on_unresolved || (indirect_target_is_live && !forwardable_live_return) {
                 self.control_closed = true;
-                return RiscvScalarIntegerYoungerDecision::AdmitTerminalControl;
+                return RiscvSequencedScalarIntegerYoungerDecision {
+                    decision: RiscvScalarIntegerYoungerDecision::AdmitTerminalControl,
+                    ras_push_sequence: None,
+                };
             }
+            let ras_push_sequence = if forwardable_live_return {
+                self.forwardable_link_push_sequence
+            } else {
+                None
+            };
             if let Some(destination) = control
                 .destination()
                 .filter(|destination| !destination.is_zero())
@@ -147,20 +199,28 @@ impl RiscvScalarIntegerLiveWindow {
                     control.kind(),
                     BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect
                 ) {
-                    self.record_forwardable_link_destination(destination);
+                    self.record_forwardable_link_destination(destination, instruction_sequence);
                 }
             }
             if control.kind() == BranchTargetKind::Return {
                 self.forwardable_link_destination = None;
+                self.forwardable_link_push_sequence = None;
             }
             self.control_depth += 1;
-            return if forwardable_live_return {
+            let decision = if forwardable_live_return {
                 RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
             } else {
                 RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             };
+            return RiscvSequencedScalarIntegerYoungerDecision {
+                decision,
+                ras_push_sequence,
+            };
         }
-        self.classify_scalar_younger(instruction)
+        RiscvSequencedScalarIntegerYoungerDecision {
+            decision: self.classify_scalar_younger(instruction),
+            ras_push_sequence: None,
+        }
     }
 
     fn classify_scalar_younger(
@@ -206,12 +266,18 @@ impl RiscvScalarIntegerLiveWindow {
             .retain(|unresolved| *unresolved != destination);
         if self.forwardable_link_destination == Some(destination) {
             self.forwardable_link_destination = None;
+            self.forwardable_link_push_sequence = None;
         }
         self.record_live_destination(destination);
     }
 
-    fn record_forwardable_link_destination(&mut self, destination: Register) {
+    fn record_forwardable_link_destination(
+        &mut self,
+        destination: Register,
+        push_sequence: Option<u64>,
+    ) {
         self.forwardable_link_destination = Some(destination);
+        self.forwardable_link_push_sequence = push_sequence;
     }
 
     fn record_live_destination(&mut self, destination: Register) {
@@ -792,6 +858,55 @@ mod tests {
             RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
         );
         assert!(latest_link.is_full());
+    }
+
+    #[test]
+    fn sequenced_same_window_return_reports_latest_call_push() {
+        for (older, latest) in [(1, 5), (5, 1)] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window
+                    .classify_sequenced_younger(jal_with_destination(older), 41)
+                    .decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            assert_eq!(
+                window
+                    .classify_sequenced_younger(jal_with_destination(latest), 42)
+                    .decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            let return_decision =
+                window.classify_sequenced_younger(jalr_with_registers(0, latest), 43);
+            assert_eq!(
+                return_decision.decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            );
+            assert_eq!(return_decision.ras_push_sequence(), Some(42));
+        }
+    }
+
+    #[test]
+    fn unrelated_scalar_write_preserves_sequenced_call_owner() {
+        let mut window = scalar_load_window(4);
+
+        assert_eq!(
+            window
+                .classify_sequenced_younger(jal_with_destination(1), 51)
+                .decision(),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_sequenced_younger(addi(9, 0), 52).decision(),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        let return_decision = window.classify_sequenced_younger(jalr_with_registers(0, 1), 53);
+        assert_eq!(
+            return_decision.decision(),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+        );
+        assert_eq!(return_decision.ras_push_sequence(), Some(51));
     }
 
     #[test]
