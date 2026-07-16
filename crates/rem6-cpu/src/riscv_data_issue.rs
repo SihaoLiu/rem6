@@ -1,7 +1,4 @@
-use rem6_isa_riscv::{
-    AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, RiscvHartState,
-    RiscvPrivilegeMode, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
-};
+use rem6_isa_riscv::{AtomicMemoryOp, MemoryAccessKind, RiscvPrivilegeMode};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
@@ -19,15 +16,17 @@ use crate::{
     o3_runtime::O3StoreLoadForwardingPlan,
     riscv_checker,
     riscv_cross_line::supports_cross_line_data_access,
-    riscv_data_access, riscv_execute,
+    riscv_data_access,
+    riscv_data_completion::{apply_completed_data_access, RiscvDataCompletion},
+    riscv_execute,
     riscv_fu_latency::riscv_data_completion_execute_wait_cycles,
     riscv_live_retire_window::{
         stage_o3_scalar_memory_younger_window, wake_o3_scalar_memory_younger_window,
     },
-    CpuFetchEvent, CpuId, InOrderPipelineCycleRecord, InOrderPipelineStage,
-    InOrderPipelineStallCause, O3RuntimeError, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent, RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord,
-    RiscvDataAccessTarget, RiscvLoadReservation,
+    CpuFetchEvent, InOrderPipelineCycleRecord, InOrderPipelineStage, InOrderPipelineStallCause,
+    O3RuntimeError, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
+    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
+    RiscvLoadReservation,
 };
 
 mod buffered_store;
@@ -48,10 +47,10 @@ pub(crate) use request_helpers::{
     access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
     vector_store_request_payload,
 };
-use request_helpers::{
-    normalized_masked_indexed_load_data, normalized_masked_load_data,
-    normalized_masked_strided_load_data, pma_access_kind, pma_alignment_checks, pmp_access_kind,
-};
+use request_helpers::{pma_access_kind, pma_alignment_checks, pmp_access_kind};
+
+#[cfg(test)]
+use crate::CpuId;
 
 impl RiscvCore {
     pub fn issue_next_data_access<F>(
@@ -784,11 +783,11 @@ impl RiscvCore {
                     }
                 }
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
-                    record_load_completion(
+                    let completion = access.completion(data.clone());
+                    apply_completed_data_access(
                         &mut state,
                         self.id(),
-                        &access,
-                        data.as_deref(),
+                        &completion,
                         "load response data",
                     );
                     riscv_checker::sync_checker_hart(&mut state);
@@ -961,11 +960,11 @@ impl RiscvCore {
                     }
                 }
                 if !deferred_o3_scalar_load_writeback(&state, &access) {
-                    record_load_completion(
+                    let completion = access.completion(data.clone());
+                    apply_completed_data_access(
                         &mut state,
                         self.id(),
-                        &access,
-                        data.as_deref(),
+                        &completion,
                         "MMIO load response data",
                     );
                     riscv_checker::sync_checker_hart(&mut state);
@@ -1347,6 +1346,17 @@ pub(crate) struct IssuedDataAccess {
 }
 
 impl IssuedDataAccess {
+    fn completion(&self, bytes: Option<Vec<u8>>) -> RiscvDataCompletion {
+        RiscvDataCompletion::from_issued_response(
+            self.fetch_request,
+            self.access.clone(),
+            self.physical_address,
+            self.size,
+            self.request_byte_offset,
+            bytes,
+        )
+    }
+
     pub(crate) fn memory_range(&self) -> Option<AddressRange> {
         if !matches!(self.target, RiscvDataAccessTarget::Memory { .. }) {
             return None;
@@ -1369,310 +1379,9 @@ impl IssuedDataAccess {
     }
 }
 
-fn record_load_completion(
-    state: &mut RiscvCoreState,
-    cpu: CpuId,
-    access: &IssuedDataAccess,
-    data: Option<&[u8]>,
-    missing_data: &'static str,
-) {
-    match &access.access {
-        MemoryAccessKind::Load { .. }
-        | MemoryAccessKind::FloatLoad { .. }
-        | MemoryAccessKind::AtomicMemory { .. } => {
-            let writeback = access
-                .access
-                .read_response_writeback(data.expect(missing_data))
-                .expect("read response payload width")
-                .expect("read response writeback");
-            match writeback.target() {
-                MemoryResponseWritebackTarget::Integer(register) => {
-                    state.hart.write(register, writeback.value());
-                }
-                MemoryResponseWritebackTarget::Float(register) => {
-                    state.hart.write_float(register, writeback.value());
-                }
-            }
-        }
-        MemoryAccessKind::LoadReserved { .. } => {
-            let writeback = access
-                .access
-                .read_response_writeback(data.expect(missing_data))
-                .expect("read response payload width")
-                .expect("read response writeback");
-            state
-                .hart
-                .write(writeback.expect_integer_register(), writeback.value());
-            state.reservation = Some(RiscvLoadReservation::new(
-                access.physical_address,
-                access.size,
-            ));
-        }
-        MemoryAccessKind::StoreConditional { rd, .. } => {
-            state.hart.write(*rd, 0);
-            state.reservation = None;
-            state.sc_progress.record_success(cpu);
-        }
-        MemoryAccessKind::VectorLoadUnitStride {
-            vd,
-            width,
-            byte_len,
-            byte_mask,
-            group_registers,
-            fault_only_first,
-            ..
-        } => {
-            let data = data.expect(missing_data);
-            let data = normalized_masked_load_data(
-                *byte_len,
-                byte_mask.as_deref(),
-                access.request_byte_offset,
-                data,
-            );
-            assert_eq!(*byte_len, data.len(), "vector load response payload width");
-            let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
-            if let Some(byte_mask) = byte_mask {
-                assert_eq!(
-                    *byte_len,
-                    byte_mask.len(),
-                    "vector load byte mask payload width"
-                );
-                for (index, active) in byte_mask.iter().copied().enumerate() {
-                    if active {
-                        destination[index] = data[index];
-                    }
-                }
-            } else {
-                destination[..*byte_len].copy_from_slice(&data);
-            }
-            write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
-            if *fault_only_first {
-                let completed_vl = (*byte_len / width.bytes()) as u32;
-                let vector_config = state.hart.vector_config();
-                state
-                    .hart
-                    .set_vector_config(RiscvVectorConfig::new(completed_vl, vector_config.vtype()));
-            }
-        }
-        MemoryAccessKind::VectorLoadSegmentUnitStride {
-            vd,
-            fields,
-            element_count,
-            byte_len,
-            byte_mask,
-            group_registers,
-            ..
-        } => {
-            let data = data.expect(missing_data);
-            let data = normalized_masked_load_data(
-                *byte_len,
-                byte_mask.as_deref(),
-                access.request_byte_offset,
-                data,
-            );
-            assert_eq!(*byte_len, data.len(), "segment vector load response width");
-            if let Some(byte_mask) = byte_mask {
-                assert_eq!(
-                    *byte_len,
-                    byte_mask.len(),
-                    "segment vector load byte mask width"
-                );
-            }
-            scatter_segment_load(
-                &data,
-                &mut state.hart,
-                *vd,
-                *fields,
-                *element_count,
-                byte_mask.as_deref(),
-                *group_registers,
-            );
-        }
-        MemoryAccessKind::VectorLoadStrided {
-            vd,
-            width,
-            stride,
-            element_count,
-            span_len,
-            byte_mask,
-            group_registers,
-            ..
-        } => {
-            let data = data.expect(missing_data);
-            let data = normalized_masked_strided_load_data(
-                *span_len,
-                byte_mask.as_deref(),
-                *stride,
-                *element_count,
-                width.bytes(),
-                data,
-            );
-            assert_eq!(*span_len, data.len(), "strided vector load response width");
-            let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
-            scatter_strided_load(
-                &data,
-                &mut destination,
-                width.bytes(),
-                *stride,
-                *element_count,
-                byte_mask.as_deref(),
-            );
-            write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
-        }
-        MemoryAccessKind::VectorLoadIndexed {
-            vd,
-            width,
-            offsets,
-            span_len,
-            byte_mask,
-            group_registers,
-            ..
-        } => {
-            let data = data.expect(missing_data);
-            let data = normalized_masked_indexed_load_data(
-                *span_len,
-                byte_mask.as_deref(),
-                offsets,
-                width.bytes(),
-                data,
-            );
-            assert_eq!(*span_len, data.len(), "indexed vector load response width");
-            let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
-            scatter_indexed_load(
-                &data,
-                &mut destination,
-                width.bytes(),
-                offsets,
-                byte_mask.as_deref(),
-            );
-            write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
-        }
-        MemoryAccessKind::Store { .. }
-        | MemoryAccessKind::FloatStore { .. }
-        | MemoryAccessKind::VectorStoreUnitStride { .. }
-        | MemoryAccessKind::VectorStoreSegmentUnitStride { .. }
-        | MemoryAccessKind::VectorStoreStrided { .. }
-        | MemoryAccessKind::VectorStoreIndexed { .. } => {}
-    }
-    if let Some(data) = data {
-        state
-            .o3_runtime
-            .record_completed_load_data(access.fetch_request, &access.access, data);
-    }
-}
-
 #[cfg(test)]
 #[path = "riscv_data_issue_tests.rs"]
 mod tests;
-
-fn scatter_segment_load(
-    data: &[u8],
-    hart: &mut RiscvHartState,
-    register: VectorRegister,
-    fields: usize,
-    element_count: usize,
-    byte_mask: Option<&[bool]>,
-    group_registers: usize,
-) {
-    debug_assert!(element_count > 0);
-    let element_bytes = data.len() / fields / element_count;
-    for field in 0..fields {
-        let field_register = vector_register_at(register, field * group_registers);
-        let mut destination = read_vector_register_group(hart, field_register, group_registers);
-        for element_index in 0..element_count {
-            let source_offset = (element_index * fields + field) * element_bytes;
-            let active = byte_mask.map(|mask| mask[source_offset]).unwrap_or(true);
-            if !active {
-                continue;
-            }
-            let destination_offset = element_index * element_bytes;
-            destination[destination_offset..destination_offset + element_bytes]
-                .copy_from_slice(&data[source_offset..source_offset + element_bytes]);
-        }
-        write_vector_register_group(hart, field_register, group_registers, &destination);
-    }
-}
-
-fn scatter_strided_load(
-    data: &[u8],
-    destination: &mut [u8],
-    element_bytes: usize,
-    stride: usize,
-    element_count: usize,
-    byte_mask: Option<&[bool]>,
-) {
-    for element_index in 0..element_count {
-        let memory_offset = element_index * stride;
-        let destination_offset = element_index * element_bytes;
-        let active = byte_mask
-            .map(|mask| mask[destination_offset])
-            .unwrap_or(true);
-        if !active {
-            continue;
-        }
-        destination[destination_offset..destination_offset + element_bytes]
-            .copy_from_slice(&data[memory_offset..memory_offset + element_bytes]);
-    }
-}
-
-fn scatter_indexed_load(
-    data: &[u8],
-    destination: &mut [u8],
-    element_bytes: usize,
-    offsets: &[usize],
-    byte_mask: Option<&[bool]>,
-) {
-    for (element_index, memory_offset) in offsets.iter().copied().enumerate() {
-        let destination_offset = element_index * element_bytes;
-        let active = byte_mask
-            .map(|mask| mask[destination_offset])
-            .unwrap_or(true);
-        if !active {
-            continue;
-        }
-        destination[destination_offset..destination_offset + element_bytes]
-            .copy_from_slice(&data[memory_offset..memory_offset + element_bytes]);
-    }
-}
-
-fn read_vector_register_group(
-    hart: &RiscvHartState,
-    register: VectorRegister,
-    group_registers: usize,
-) -> Vec<u8> {
-    let group_bytes = group_registers * RISCV_VECTOR_REGISTER_BYTES;
-    let mut bytes = vec![0; group_bytes];
-    for group_index in 0..group_registers {
-        let vector = hart.read_vector(vector_register_at(register, group_index));
-        let offset = group_index * RISCV_VECTOR_REGISTER_BYTES;
-        bytes[offset..offset + RISCV_VECTOR_REGISTER_BYTES].copy_from_slice(&vector);
-    }
-    bytes
-}
-
-fn write_vector_register_group(
-    hart: &mut RiscvHartState,
-    register: VectorRegister,
-    group_registers: usize,
-    bytes: &[u8],
-) {
-    assert_eq!(
-        bytes.len(),
-        group_registers * RISCV_VECTOR_REGISTER_BYTES,
-        "vector register group payload width"
-    );
-    for group_index in 0..group_registers {
-        let offset = group_index * RISCV_VECTOR_REGISTER_BYTES;
-        let mut vector = [0; RISCV_VECTOR_REGISTER_BYTES];
-        vector.copy_from_slice(&bytes[offset..offset + RISCV_VECTOR_REGISTER_BYTES]);
-        hart.write_vector(vector_register_at(register, group_index), vector);
-    }
-}
-
-fn vector_register_at(register: VectorRegister, group_index: usize) -> VectorRegister {
-    let index = usize::from(register.index()) + group_index;
-    VectorRegister::new(index as u8).expect("validated vector register group")
-}
 
 pub(crate) fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
     value.to_le_bytes()[..size.bytes() as usize].to_vec()

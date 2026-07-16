@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, RiscvPmaAccessKind, RiscvPmpAccessKind,
     RISCV_VECTOR_REGISTER_BYTES,
@@ -324,92 +322,6 @@ fn active_byte_span(byte_mask: &[bool]) -> Option<(usize, usize)> {
     let first = byte_mask.iter().position(|active| *active)?;
     let last = byte_mask.iter().rposition(|active| *active)? + 1;
     Some((first, last))
-}
-
-pub(crate) fn normalized_masked_load_data<'a>(
-    expected_len: usize,
-    byte_mask: Option<&[bool]>,
-    request_byte_offset: usize,
-    data: &'a [u8],
-) -> Cow<'a, [u8]> {
-    if data.len() == expected_len {
-        return Cow::Borrowed(data);
-    }
-    let Some(byte_mask) = byte_mask else {
-        return Cow::Borrowed(data);
-    };
-    if byte_mask.len() != expected_len {
-        return Cow::Borrowed(data);
-    };
-    let Some(request_end) = request_byte_offset.checked_add(data.len()) else {
-        return Cow::Borrowed(data);
-    };
-    if request_end > expected_len {
-        return Cow::Borrowed(data);
-    }
-
-    let mut expanded = vec![0; expected_len];
-    expanded[request_byte_offset..request_end].copy_from_slice(data);
-    Cow::Owned(expanded)
-}
-
-pub(crate) fn normalized_masked_indexed_load_data<'a>(
-    expected_len: usize,
-    byte_mask: Option<&[bool]>,
-    offsets: &[usize],
-    element_bytes: usize,
-    data: &'a [u8],
-) -> Cow<'a, [u8]> {
-    if data.len() == expected_len {
-        return Cow::Borrowed(data);
-    }
-    let Some(byte_mask) = byte_mask else {
-        return Cow::Borrowed(data);
-    };
-    let Some((start, end)) =
-        indexed_active_byte_span(expected_len, byte_mask, offsets, element_bytes)
-    else {
-        return Cow::Borrowed(data);
-    };
-    if end - start != data.len() {
-        return Cow::Borrowed(data);
-    }
-
-    let mut expanded = vec![0; expected_len];
-    expanded[start..end].copy_from_slice(data);
-    Cow::Owned(expanded)
-}
-
-pub(crate) fn normalized_masked_strided_load_data<'a>(
-    expected_len: usize,
-    byte_mask: Option<&[bool]>,
-    stride: usize,
-    element_count: usize,
-    element_bytes: usize,
-    data: &'a [u8],
-) -> Cow<'a, [u8]> {
-    if data.len() == expected_len {
-        return Cow::Borrowed(data);
-    }
-    let Some(byte_mask) = byte_mask else {
-        return Cow::Borrowed(data);
-    };
-    let Some((start, end)) = strided_active_byte_span(
-        expected_len,
-        byte_mask,
-        stride,
-        element_count,
-        element_bytes,
-    ) else {
-        return Cow::Borrowed(data);
-    };
-    if end - start != data.len() {
-        return Cow::Borrowed(data);
-    }
-
-    let mut expanded = vec![0; expected_len];
-    expanded[start..end].copy_from_slice(data);
-    Cow::Owned(expanded)
 }
 
 pub(crate) fn vector_store_request_payload(
@@ -955,20 +867,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(checks, vec![pma_check(0x8004, 16)]);
-    }
-
-    #[test]
-    fn normalized_masked_load_data_expands_prefixed_response_from_request_offset() {
-        let mask = lane_mask(&[false, true, false], MemoryWidth::Word.bytes());
-        let data = [
-            0x11, 0x12, 0x13, 0x14, // active lane 1
-            0x21, 0x22, 0x23, 0x24, // inactive lane 2 included in the issued prefix
-        ];
-
-        let normalized = normalized_masked_load_data(12, Some(&mask), 4, &data);
-
-        assert_eq!(normalized.len(), 12);
-        assert_eq!(&normalized[4..12], &data);
     }
 
     #[test]

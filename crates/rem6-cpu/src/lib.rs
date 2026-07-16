@@ -57,6 +57,7 @@ mod riscv_cluster_scheduler;
 mod riscv_cluster_translation;
 mod riscv_cross_line;
 mod riscv_data_access;
+mod riscv_data_completion;
 mod riscv_data_issue;
 mod riscv_defaults;
 mod riscv_drive;

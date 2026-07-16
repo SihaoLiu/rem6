@@ -41,6 +41,75 @@ fn riscv_data_issue_lives_in_focused_module() {
 }
 
 #[test]
+fn riscv_data_completion_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
+    let data_issue = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_data_issue.rs")).unwrap(),
+    );
+    let request_helpers = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_data_issue/request_helpers.rs")).unwrap(),
+    );
+    let completion_path = crate_dir.join("src/riscv_data_completion.rs");
+
+    assert!(
+        lib_rs.contains("mod riscv_data_completion;"),
+        "src/lib.rs must declare the focused RISC-V data completion module"
+    );
+    assert!(
+        completion_path.exists(),
+        "RISC-V data response application belongs in src/riscv_data_completion.rs"
+    );
+    let completion = production_rust_source(&fs::read_to_string(completion_path).unwrap());
+    for anchor in [
+        "pub(crate) struct RiscvDataCompletion",
+        "pub(crate) fn apply_completed_data_access(",
+        "fn scatter_segment_load(",
+        "fn scatter_strided_load(",
+        "fn scatter_indexed_load(",
+        "fn read_vector_register_group(",
+        "fn write_vector_register_group(",
+    ] {
+        assert!(
+            completion.contains(anchor),
+            "src/riscv_data_completion.rs is missing completion owner `{anchor}`"
+        );
+        assert!(
+            !data_issue.contains(anchor),
+            "src/riscv_data_issue.rs still owns completion detail `{anchor}`"
+        );
+    }
+    assert!(
+        !data_issue.contains("fn record_load_completion("),
+        "src/riscv_data_issue.rs should delegate response application to src/riscv_data_completion.rs"
+    );
+    for anchor in [
+        "normalized_masked_load_data",
+        "normalized_masked_indexed_load_data",
+        "normalized_masked_strided_load_data",
+    ] {
+        assert!(
+            production_defines_exact_function(&completion, anchor),
+            "src/riscv_data_completion.rs is missing vector completion normalization owner `{anchor}`"
+        );
+    }
+    for anchor in [
+        "normalized_masked_load_data",
+        "normalized_masked_indexed_load_data",
+        "normalized_masked_strided_load_data",
+    ] {
+        assert!(
+            !data_issue.contains(anchor),
+            "src/riscv_data_issue.rs must not import or re-export completion normalization `{anchor}`"
+        );
+        assert!(
+            !request_helpers.contains(anchor),
+            "src/riscv_data_issue/request_helpers.rs must not own completion normalization `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn in_order_pipeline_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
