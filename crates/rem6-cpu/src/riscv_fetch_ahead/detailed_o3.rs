@@ -634,7 +634,10 @@ fn ras_required_producer_matches(
     pushed_address: Address,
     consumer: RequiredRasConsumer,
 ) -> bool {
-    if operation.pushed_address() != Some(pushed_address) {
+    if entries == 0
+        || operation.stack_before().len() > entries
+        || operation.pushed_address() != Some(pushed_address)
+    {
         return false;
     }
     let mut expected_after = operation.stack_before().to_vec();
@@ -661,9 +664,6 @@ fn ras_required_producer_matches(
             }
         }
         _ => return false,
-    }
-    if entries == 0 || expected_after.len() > entries {
-        return false;
     }
     if expected_after.len() == entries {
         expected_after.remove(0);

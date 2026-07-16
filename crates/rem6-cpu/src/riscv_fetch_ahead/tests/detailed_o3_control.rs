@@ -609,10 +609,21 @@ fn detailed_recorded_coroutine_round_trip_rejects_intervening_ras_operation() {
     {
         let mut state = core.state.lock().expect("riscv core lock");
         state.squash_return_address_stack_speculation(3).unwrap();
+        let producer_id = *state.return_address_stack_operations.get(&2).unwrap();
         state
             .return_address_stack
             .push_speculative(Address::new(0x9000));
+        state.return_address_stack.pop_speculative();
         let consumer = state.return_address_stack.pop_speculative();
+        let producer_stack_after = state
+            .return_address_stack
+            .pending_operations()
+            .iter()
+            .find(|operation| operation.id() == producer_id)
+            .unwrap()
+            .stack_after();
+        assert_eq!(producer_stack_after, consumer.stack_before());
+        assert_eq!(consumer.predicted_return(), Some(Address::new(0x8010)));
         state
             .return_address_stack_operations
             .insert(3, consumer.id());
@@ -651,6 +662,70 @@ fn detailed_recorded_coroutine_round_trip_rejects_stale_producer_stack() {
         let malformed_snapshot = crate::ReturnAddressStackSnapshot::from_checkpoint_parts(
             snapshot.config().clone(),
             snapshot.stack_entries().to_vec(),
+            snapshot.next_operation(),
+            pending_operations,
+        );
+        state
+            .return_address_stack
+            .restore(&malformed_snapshot)
+            .unwrap();
+    }
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_rejects_over_capacity_producer_stack() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let producer_id = *state.return_address_stack_operations.get(&2).unwrap();
+        let consumer_id = *state.return_address_stack_operations.get(&3).unwrap();
+        let snapshot = state.return_address_stack.snapshot();
+        let entries = snapshot.config().entries();
+        let mut producer_stack_before = (0..entries)
+            .map(|index| Address::new(0x9000 + index as u64 * 4))
+            .collect::<Vec<_>>();
+        producer_stack_before.push(Address::new(0x8008));
+        let mut producer_stack_after = producer_stack_before.clone();
+        assert_eq!(producer_stack_after.pop(), Some(Address::new(0x8008)));
+        producer_stack_after.remove(0);
+        producer_stack_after.push(Address::new(0x8010));
+        let mut consumer_stack_after = producer_stack_after.clone();
+        assert_eq!(consumer_stack_after.pop(), Some(Address::new(0x8010)));
+        let pending_operations = snapshot
+            .pending_operations()
+            .iter()
+            .map(|operation| {
+                if operation.id() == producer_id {
+                    return crate::ReturnAddressStackOperation::from_checkpoint_parts(
+                        operation.id(),
+                        operation.kind(),
+                        operation.pushed_address(),
+                        operation.predicted_return(),
+                        producer_stack_before.clone(),
+                        producer_stack_after.clone(),
+                    );
+                }
+                if operation.id() == consumer_id {
+                    return crate::ReturnAddressStackOperation::from_checkpoint_parts(
+                        operation.id(),
+                        operation.kind(),
+                        operation.pushed_address(),
+                        operation.predicted_return(),
+                        producer_stack_after.clone(),
+                        consumer_stack_after.clone(),
+                    );
+                }
+                operation.clone()
+            })
+            .collect();
+        let malformed_snapshot = crate::ReturnAddressStackSnapshot::from_checkpoint_parts(
+            snapshot.config().clone(),
+            consumer_stack_after,
             snapshot.next_operation(),
             pending_operations,
         );
