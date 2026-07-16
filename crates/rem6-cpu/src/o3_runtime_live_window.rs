@@ -557,6 +557,24 @@ impl O3RuntimeState {
             .is_some_and(|identity| identity.matches(instruction, consumed_requests))
     }
 
+    pub(crate) fn live_staged_sequence_for_fetch_identity(
+        &self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> Option<u64> {
+        self.snapshot
+            .reorder_buffer
+            .iter()
+            .filter(|entry| entry.is_live_staged() && entry.pc() == pc)
+            .map(|entry| entry.sequence())
+            .find(|sequence| {
+                self.live_staged_fetch_identities
+                    .get(sequence)
+                    .is_some_and(|identity| identity.matches_bound(instruction, consumed_requests))
+            })
+    }
+
     fn stage_live_instruction(
         &mut self,
         pc: Address,

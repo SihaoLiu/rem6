@@ -220,18 +220,18 @@ impl RiscvCore {
             .pc()
             .get()
             .wrapping_add(u64::from(execution.instruction_bytes()));
-        let live_control_sequence = o3_live_control_operands(instruction)
-            .is_some()
-            .then(|| {
-                state
-                    .o3_runtime
-                    .snapshot()
-                    .reorder_buffer()
-                    .iter()
-                    .find(|entry| entry.is_live_staged() && entry.pc() == fetch.pc())
-                    .map(|entry| entry.sequence())
-            })
-            .flatten();
+        let live_control_operands = o3_live_control_operands(instruction);
+        let live_coroutine_control = live_control_operands.as_ref().is_some_and(|operands| {
+            operands.kind() == BranchTargetKind::Return && operands.destination().is_some()
+        });
+        let live_control_sequence = live_control_operands.is_some().then(|| {
+            state.o3_runtime.live_staged_sequence_for_fetch_identity(
+                fetch.pc(),
+                instruction,
+                consumed_requests,
+            )
+        });
+        let live_control_sequence = live_control_sequence.flatten();
         let retired_branch = retire_branch_predictions(
             state,
             fetch.request_id().sequence(),
@@ -318,7 +318,7 @@ impl RiscvCore {
             fetch.clone(),
             instruction,
             execution,
-            retired_branch.into_updates(),
+            retired_branch.into_updates(live_coroutine_control && live_control_sequence.is_some()),
             pipeline_cycle,
             0,
             retires_instruction,
@@ -814,8 +814,8 @@ impl RiscvRetiredBranchResolution {
         })
     }
 
-    fn into_updates(mut self) -> RiscvRetiredBranchUpdates {
-        if let Some(prediction) = self.fetch_prediction {
+    fn into_updates(mut self, retain_selected_prediction: bool) -> RiscvRetiredBranchUpdates {
+        if let Some(prediction) = self.fetch_prediction.filter(|_| retain_selected_prediction) {
             self.updates.set_selected_branch_prediction(
                 prediction.predicted_taken(),
                 prediction.predicted_target(),

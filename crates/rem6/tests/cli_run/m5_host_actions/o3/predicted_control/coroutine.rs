@@ -492,19 +492,14 @@ fn rem6_run_o3_same_window_coroutine_wrong_target_repairs_descendants() {
         later_return
             .pointer("/branch_predicted_target")
             .and_then(Value::as_str),
-        Some("0x80000020")
+        None,
+        "ordinary return must retain basic-update trace semantics: {later_return}"
     );
     assert_eq!(
         later_return
             .pointer("/branch_resolved_target")
             .and_then(Value::as_str),
         Some("0x80000020")
-    );
-    assert_eq!(
-        later_return
-            .pointer("/branch_mispredicted")
-            .and_then(Value::as_bool),
-        Some(false)
     );
     assert!(
         event_at_pc_if_present(&completed, "0x80000014").is_none(),

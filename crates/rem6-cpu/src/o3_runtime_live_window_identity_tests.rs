@@ -236,6 +236,22 @@
             29,
             Some((Address::new(0x8004), younger_instruction)),
         );
+        let younger_sequence = runtime
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.pc() == Address::new(0x8004))
+            .expect("younger live row")
+            .sequence();
+        assert_eq!(
+            runtime.live_staged_sequence_for_fetch_identity(
+                Address::new(0x8004),
+                younger_instruction,
+                &[request(2)],
+            ),
+            None,
+            "unbound live rows must not claim selected prediction authority"
+        );
         assert!(runtime.bind_live_staged_fetch_identity(
             Address::new(0x8000),
             div_x3(),
@@ -246,6 +262,30 @@
             younger_instruction,
             &[request(2)],
         ));
+        assert_eq!(
+            runtime.live_staged_sequence_for_fetch_identity(
+                Address::new(0x8004),
+                younger_instruction,
+                &[request(2)],
+            ),
+            Some(younger_sequence)
+        );
+        assert_eq!(
+            runtime.live_staged_sequence_for_fetch_identity(
+                Address::new(0x8004),
+                addi(4, 1),
+                &[request(2)],
+            ),
+            None
+        );
+        assert_eq!(
+            runtime.live_staged_sequence_for_fetch_identity(
+                Address::new(0x8004),
+                younger_instruction,
+                &[request(3)],
+            ),
+            None
+        );
 
         let divide = execution_event(div_x3(), 0x8000, 1, 3);
         runtime.retire_live_staged_instruction(&divide, &[request(1)], 29);
