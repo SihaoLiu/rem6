@@ -7,7 +7,9 @@ use super::window_support::{
 use super::*;
 
 const DATA_START: i32 = 0x100;
+const INDIRECT_COROUTINE_TARGET_PC: i32 = 0x24;
 const DATA_ADDRESS: &str = "0x80000100";
+const SUCCESS_STORE_ADDRESS: &str = "0x80000104";
 const WRONG_STORE_ADDRESS: &str = "0x80000108";
 const DIRECT_WIDTH_ARGS: [&str; 4] = [
     "--riscv-o3-issue-width",
@@ -81,6 +83,7 @@ fn rem6_run_o3_same_window_coroutine_commits_direct() {
     assert_register_absent_or_zero(&resident, "x5");
     assert_integer_rename_maps_to_row_destination(&resident, "0x80000010", 1);
     assert_integer_rename_maps_to_row_destination(&resident, "0x8000001c", 5);
+    assert_direct_memory_activity(&resident);
 
     for (pointer, expected) in [
         ("/cores/0/branch_predictor/ras/pushes", 2),
@@ -92,10 +95,10 @@ fn rem6_run_o3_same_window_coroutine_commits_direct() {
     ] {
         assert_eq!(
             completed.pointer(pointer).and_then(Value::as_u64),
-            Some(expected)
+            Some(expected),
+            "expected {pointer}={expected}: {completed}"
         );
     }
-    assert_direct_memory_activity(&completed);
 }
 
 #[test]
@@ -171,11 +174,24 @@ fn rem6_run_o3_same_window_indirect_coroutine_commits_cache_fabric_dram() {
     assert_integer_rename_maps_to_row_destination(&resident, "0x80000018", 5);
     assert_integer_rename_maps_to_row_destination(&resident, "0x80000024", 1);
 
+    let response_resident = run_coroutine_json(
+        &path,
+        "cache-fabric-dram",
+        response_tick,
+        "detailed",
+        2,
+        &DIRECT_WIDTH_ARGS,
+    );
+    assert_no_data_address(&response_resident, SUCCESS_STORE_ADDRESS);
+    assert_no_data_address(&response_resident, WRONG_STORE_ADDRESS);
+    assert_hierarchy_activity(&response_resident);
+
     assert_eq!(
         completed
             .pointer("/cores/0/branch_predictor/target_provider/indirect")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(1),
+        "expected /cores/0/branch_predictor/target_provider/indirect=1: {completed}"
     );
     for (pointer, expected) in [
         ("/cores/0/branch_predictor/ras/pushes", 2),
@@ -187,10 +203,10 @@ fn rem6_run_o3_same_window_indirect_coroutine_commits_cache_fabric_dram() {
     ] {
         assert_eq!(
             completed.pointer(pointer).and_then(Value::as_u64),
-            Some(expected)
+            Some(expected),
+            "expected {pointer}={expected}: {completed}"
         );
     }
-    assert_hierarchy_activity(&completed);
 }
 
 fn run_coroutine_json(
@@ -246,7 +262,13 @@ fn indirect_coroutine_binary(name: &str) -> std::path::PathBuf {
     let target_auipc_pc = (words.len() * 4) as i32;
     words.extend([
         u_type(0, 11, 0x17),
-        i_type(0x24 - target_auipc_pc, 11, 0x0, 11, 0x13),
+        i_type(
+            INDIRECT_COROUTINE_TARGET_PC - target_auipc_pc,
+            11,
+            0x0,
+            11,
+            0x13,
+        ),
         i_type(0, 18, 0b010, 12, 0x03),
         i_type(0, 11, 0x0, 5, 0x67),
         i_type(0, 1, 0x0, 13, 0x13),

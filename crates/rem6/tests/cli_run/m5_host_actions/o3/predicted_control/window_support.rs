@@ -66,6 +66,11 @@ pub(super) fn run_control_window_json(
         "{memory_system} {execution_mode} lookahead={branch_lookahead}; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        output.stderr.is_empty(),
+        "{memory_system} {execution_mode} lookahead={branch_lookahead} succeeded with stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid control-window JSON: {error}"))
 }
