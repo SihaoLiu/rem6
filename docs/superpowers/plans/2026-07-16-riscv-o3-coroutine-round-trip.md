@@ -38,7 +38,8 @@ JALR x5, ... -> JALR x1, 0(x5) -> JALR x0, 0(x1)
 - Modify `crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control.rs`: recorded round-trip positive and malformed-provenance negatives.
 - Modify `crates/rem6-cpu/src/o3_runtime_control_window_tests/coroutine.rs`: four-row runtime ordering and cleanup evidence.
 - Modify `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs`: ordered includes only; preserve the 500-line root ratchet.
-- Create `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs`: case data, fixtures, positives, suppression, and repair.
+- Create `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs`: case data, base fixtures, and positives.
+- Create `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs`: suppression and repair fixtures/tests.
 - Create `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_lifecycle.rs`: switch, checkpoint, and timing evidence.
 - Modify `crates/rem6/tests/source_policy/coroutine_ownership.rs`: fifth include, split exact test ownership, line ratchets.
 - Modify `crates/rem6/tests/source_policy/core_test_anchors.txt`: eight exact CLI anchors.
@@ -1350,24 +1351,34 @@ git commit -m "test: prove coroutine round-trip positives"
 ### Task 5: Add Suppression And Repair Rows
 
 **Files:**
-- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs`
+- Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs`
 - Modify: `crates/rem6/tests/source_policy/coroutine_ownership.rs`
 
 - [ ] **Step 1: Add the lookahead-two suppression row**
 
-Replace the round-trip ownership anchors with the complete five-test execution/repair list:
+Append the focused repair include in `coroutine.rs`:
 
 ```rust
-anchors: &[
-    "rem6_run_o3_same_window_coroutine_round_trip_commits_direct",
-    "rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram",
-    "rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three",
-    "rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return",
-    "rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs",
-],
+include!("coroutine/round_trip_repair.rs");
 ```
 
-Then add:
+Change `COROUTINE_INCLUDES` to length five by appending
+`"coroutine/round_trip_repair.rs"`. Change `COROUTINE_CONCERNS` to length
+five and append:
+
+```rust
+CoroutineConcern {
+    relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs",
+    anchors: &[
+        "rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three",
+        "rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return",
+        "rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs",
+    ],
+},
+```
+
+Create `coroutine/round_trip_repair.rs` and add:
 
 ```rust
 #[test]
@@ -1435,7 +1446,7 @@ Calibrate the live tick from the completed artifact if `response_tick - 1` prece
 
 - [ ] **Step 2: Add exact middle-repair fixture**
 
-Add to `coroutine/round_trip.rs`:
+Add to `coroutine/round_trip_repair.rs`:
 
 ```rust
 fn middle_repair_coroutine_round_trip_binary(name: &str) -> std::path::PathBuf {
@@ -1555,7 +1566,7 @@ If the exact inverse-operation counters differ, first prove the operation sequen
 
 - [ ] **Step 4: Add terminal ordinary-return wrong-target fixture and test**
 
-Add to `coroutine/round_trip.rs`:
+Add to `coroutine/round_trip_repair.rs`:
 
 ```rust
 fn wrong_target_coroutine_round_trip_binary(name: &str) -> std::path::PathBuf {
@@ -1669,7 +1680,7 @@ Expected: all three real CLI rows pass with exact target, RAS, repair, and wrong
 - [ ] **Step 6: Commit suppression and repair**
 
 ```text
-git add crates/rem6/tests/source_policy/coroutine_ownership.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs
+git add crates/rem6/tests/source_policy/coroutine_ownership.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs
 git commit -m "test: cover coroutine round-trip repair"
 ```
 
@@ -1691,16 +1702,18 @@ include!("coroutine/round_trip_lifecycle.rs");
 Change the ownership include array to:
 
 ```rust
-const COROUTINE_INCLUDES: [&str; 5] = [
+const COROUTINE_INCLUDES: [&str; 6] = [
     "coroutine/suppression.rs",
     "coroutine/repair.rs",
     "coroutine/lifecycle.rs",
     "coroutine/round_trip.rs",
+    "coroutine/round_trip_repair.rs",
     "coroutine/round_trip_lifecycle.rs",
 ];
 ```
 
-Change `COROUTINE_CONCERNS` to length five and append this concern after the five-anchor `round_trip.rs` concern:
+Change `COROUTINE_CONCERNS` to length six and append this concern after the
+three-anchor `round_trip_repair.rs` concern:
 
 ```rust
 CoroutineConcern {
@@ -2191,7 +2204,10 @@ cargo test -p rem6 --test cli_run rem6_run_timing_suppresses_o3_same_window_coro
 cargo test -p rem6 --test source_policy coroutine_cli_evidence_uses_focused_same_namespace_includes -- --nocapture
 ```
 
-Expected: three named tests pass both directions; ownership confirms five execution/repair definitions in `round_trip.rs` and three lifecycle definitions in `round_trip_lifecycle.rs`, each exactly once.
+Expected: three named tests pass both directions; ownership confirms two
+positive definitions in `round_trip.rs`, three suppression/repair definitions
+in `round_trip_repair.rs`, and three lifecycle definitions in
+`round_trip_lifecycle.rs`, each exactly once.
 
 - [ ] **Step 6: Commit lifecycle evidence**
 

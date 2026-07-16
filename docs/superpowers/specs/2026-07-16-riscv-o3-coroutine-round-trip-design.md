@@ -130,7 +130,10 @@ The change must remain within existing owners:
   owns the existing shared constants, runner, and ordered child includes;
 - a new same-namespace
   `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs`
-  owns round-trip case data, fixtures, positives, suppression, and repair;
+  owns round-trip case data, base fixtures, and positive execution evidence;
+- a new same-namespace
+  `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs`
+  owns lookahead suppression and middle/terminal repair evidence;
 - a new same-namespace
   `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_lifecycle.rs`
   owns round-trip mode-switch, checkpoint, and timing evidence;
@@ -141,7 +144,9 @@ The change must remain within existing owners:
   evidence.
 
 The split keeps the existing root below its 500-line ratchet and each child
-below its 700-line ratchet without weakening exact test ownership. No
+below its 700-line ratchet without weakening exact test ownership. The repair
+child is required because exact positive transport, predictor, and LSQ evidence
+leaves the positive child without enough room for the repair matrix. No
 production runtime file may change unless a focused runtime test proves
 that the existing generic control dependency, branch resource, rename,
 writeback, or rollback machinery is insufficient.
@@ -348,13 +353,16 @@ debug trace schema aliases remain present when requested.
 
 ## CLI Matrix
 
-Add two focused same-namespace includes. `coroutine/round_trip.rs` owns:
+Add three focused same-namespace includes. `coroutine/round_trip.rs` owns:
 
 1. `rem6_run_o3_same_window_coroutine_round_trip_commits_direct`
 2. `rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram`
-3. `rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three`
-4. `rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return`
-5. `rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs`
+
+`coroutine/round_trip_repair.rs` owns:
+
+1. `rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three`
+2. `rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return`
+3. `rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs`
 
 `coroutine/round_trip_lifecycle.rs` owns:
 
@@ -419,13 +427,14 @@ coroutine/suppression.rs
 coroutine/repair.rs
 coroutine/lifecycle.rs
 coroutine/round_trip.rs
+coroutine/round_trip_repair.rs
 coroutine/round_trip_lifecycle.rs
 ```
 
-The execution/repair child owns the first five definitions and the lifecycle
-child owns the final three. Existing concern files must not duplicate those
-names. Preserve the 500-line root ceiling and keep every child below the
-existing 700-line focused-module ratchet.
+The positive child owns the first two definitions, the repair child owns the
+next three, and the lifecycle child owns the final three. Existing concern
+files must not duplicate those names. Preserve the 500-line root ceiling and
+keep every child below the existing 700-line focused-module ratchet.
 
 ## Migration Ledger Update
 
