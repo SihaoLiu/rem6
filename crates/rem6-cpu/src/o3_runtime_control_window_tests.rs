@@ -9,6 +9,9 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 
+#[path = "o3_runtime_control_window_tests/coroutine.rs"]
+mod coroutine;
+
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {
     let mut runtime = scalar_load_runtime_with_branch(beq(5, 6));
@@ -453,153 +456,6 @@ fn scalar_and_linked_control_candidates_expose_destinations() {
 
     assert_eq!(call_candidate.destination(), Some(call_destination));
     assert_eq!(scalar_candidate.destination(), Some(scalar_destination));
-}
-
-#[test]
-fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
-    let mut runtime = O3RuntimeState::default();
-    runtime.set_scalar_memory_window_limit(4);
-    assert!(runtime.set_writeback_width(1));
-    let load = scalar_load_event();
-    let call = jal_link(1, 8);
-    let coroutine = jalr_link(5, 1);
-    let descendant = addi(8, 5, 0);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
-    assert_eq!(
-        runtime.stage_live_scalar_memory_younger_window(
-            load.fetch().request_id(),
-            [
-                (Address::new(0x8004), call),
-                (Address::new(0x800c), coroutine),
-                (Address::new(0x8008), descendant),
-            ],
-        ),
-        3
-    );
-
-    let call_candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x8004), call)
-        .expect("linked call candidate");
-    let call_sequence = call_candidate.sequence();
-    assert!(runtime
-        .record_live_speculative_execution(
-            call_candidate,
-            &[request(11)],
-            20,
-            RiscvExecutionRecord::new(
-                call,
-                0x8004,
-                0x800c,
-                vec![RegisterWrite::new(reg(1), 0x8008)],
-                None,
-            ),
-        )
-        .unwrap());
-
-    let coroutine_candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x800c), coroutine)
-        .expect("same-window coroutine candidate");
-    let coroutine_sequence = coroutine_candidate.sequence();
-    assert_eq!(
-        coroutine_candidate.destination().unwrap().architectural(),
-        5
-    );
-    assert!(coroutine_candidate
-        .producer_sequences()
-        .contains(&call_sequence));
-    assert_eq!(
-        coroutine_candidate.forwarded_register_writes(),
-        &[RegisterWrite::new(reg(1), 0x8008)]
-    );
-    assert_eq!(coroutine_candidate.issue_tick(1), 20);
-    assert!(runtime
-        .record_live_speculative_execution(
-            coroutine_candidate,
-            &[request(12)],
-            1,
-            RiscvExecutionRecord::new(
-                coroutine,
-                0x800c,
-                0x8008,
-                vec![RegisterWrite::new(reg(5), 0x8010)],
-                None,
-            ),
-        )
-        .unwrap());
-    let issued = runtime
-        .live_speculative_executions
-        .iter()
-        .find(|issued| issued.sequence == coroutine_sequence)
-        .expect("recorded coroutine execution");
-    let coroutine_admitted_writeback_tick = issued.admitted_writeback_tick;
-    assert_eq!(issued.writeback_slot, Some(0));
-    assert!(coroutine_admitted_writeback_tick >= 20);
-    assert_eq!(
-        runtime
-            .writeback_reservation(coroutine_sequence)
-            .map(O3WritebackReservation::admitted_tick),
-        Some(coroutine_admitted_writeback_tick)
-    );
-
-    let descendant_candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x8008), descendant)
-        .expect("coroutine result should wake the staged descendant");
-    let descendant_sequence = descendant_candidate.sequence();
-    let descendant_producer_sequences = descendant_candidate.producer_sequences().to_vec();
-    assert!(descendant_producer_sequences.contains(&coroutine_sequence));
-    assert!(descendant_producer_sequences
-        .iter()
-        .all(|sequence| *sequence == coroutine_sequence));
-    assert_eq!(
-        descendant_candidate.forwarded_register_writes(),
-        &[RegisterWrite::new(reg(5), 0x8010)]
-    );
-    assert_eq!(
-        descendant_candidate.issue_tick(1),
-        coroutine_admitted_writeback_tick
-    );
-    assert!(runtime
-        .record_live_speculative_execution(
-            descendant_candidate,
-            &[request(13)],
-            1,
-            RiscvExecutionRecord::new(
-                descendant,
-                0x8008,
-                0x800c,
-                vec![RegisterWrite::new(reg(8), 0x8010)],
-                None,
-            ),
-        )
-        .unwrap());
-    let descendant_issued = runtime
-        .live_speculative_executions
-        .iter()
-        .find(|issued| issued.sequence == descendant_sequence)
-        .expect("recorded descendant execution");
-    assert_eq!(
-        descendant_issued.producer_sequences,
-        descendant_producer_sequences
-    );
-    assert_eq!(
-        descendant_issued.issue_tick,
-        coroutine_admitted_writeback_tick
-    );
-    assert_eq!(
-        descendant_issued.raw_ready_tick,
-        coroutine_admitted_writeback_tick
-    );
-    assert_eq!(
-        descendant_issued.admitted_writeback_tick,
-        coroutine_admitted_writeback_tick + 1
-    );
-    assert_eq!(descendant_issued.writeback_slot, Some(0));
-    assert_eq!(
-        runtime
-            .writeback_reservation(descendant_sequence)
-            .map(O3WritebackReservation::admitted_tick),
-        Some(descendant_issued.admitted_writeback_tick)
-    );
 }
 
 #[test]
