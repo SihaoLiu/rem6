@@ -20,6 +20,89 @@ fn assert_coroutine_round_trip_final_state(
     assert_no_data_address(json, WRONG_STORE_ADDRESS);
 }
 
+fn coroutine_o3_events_at_pc<'a>(json: &'a Value, pc: &str, context: &str) -> Vec<&'a Value> {
+    let events = json
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{context}: missing O3 events: {json}"));
+    events
+        .iter()
+        .filter(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        .collect()
+}
+
+fn exact_coroutine_o3_event_at_pc<'a>(
+    json: &'a Value,
+    pc: &str,
+    context: &str,
+) -> &'a Value {
+    let matches = coroutine_o3_events_at_pc(json, pc, context);
+    assert_eq!(
+        matches.len(),
+        1,
+        "{context}: expected exactly one O3 event at {pc}: {matches:?}"
+    );
+    matches[0]
+}
+
+fn exact_coroutine_timing_switch<'a>(json: &'a Value, context: &str) -> &'a Value {
+    let switches = json
+        .pointer("/host_actions/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{context}: missing execution-mode switches: {json}"));
+    let matches = switches
+        .iter()
+        .filter(|switch| {
+            switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
+                && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
+                && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "{context}: expected exactly one cpu0 detailed-to-timing switch: {switches:?}"
+    );
+    matches[0]
+}
+
+fn coroutine_data_trace_counts(json: &Value, context: &str) -> [usize; 2] {
+    let records = json
+        .pointer("/debug/data_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{context}: missing data trace: {json}"));
+    let count = |kind, address| {
+        records
+            .iter()
+            .filter(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some(kind)
+                    && record.pointer("/address").and_then(Value::as_str) == Some(address)
+            })
+            .count()
+    };
+    [count("load", DATA_ADDRESS), count("store", SUCCESS_STORE_ADDRESS)]
+}
+
+fn assert_coroutine_round_trip_resident_window(
+    json: &Value,
+    case: CoroutineRoundTripCase,
+    context: &str,
+) {
+    assert_eq!(
+        resident_rob_pcs(json),
+        [case.load_pc, case.call_pc, case.coroutine_pc, case.return_pc],
+        "{}: unexpected {context} round-trip ROB: {json}",
+        case.label
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(1),
+        "{}: expected one {context} LSQ row: {json}",
+        case.label
+    );
+}
+
 #[test]
 fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
     for case in COROUTINE_ROUND_TRIP_CASES {
@@ -35,8 +118,18 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
             3,
             &DIRECT_WIDTH_ARGS,
         );
-        let load = event_at_pc(&baseline, case.load_pc);
-        let return_jump = event_at_pc(&baseline, case.return_pc);
+        let event_pcs = [
+            case.load_pc,
+            case.call_pc,
+            case.coroutine_pc,
+            case.return_pc,
+            case.success_store_pc,
+        ];
+        let baseline_events = event_pcs.map(|pc| {
+            exact_coroutine_o3_event_at_pc(&baseline, pc, &format!("{} baseline", case.label))
+        });
+        let load = baseline_events[0];
+        let return_jump = baseline_events[3];
         let switch_source_tick = event_u64(return_jump, "issue_tick") + 1;
         let switch_tick = switch_source_tick + 1;
         assert!(
@@ -53,20 +146,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
             3,
             &DIRECT_WIDTH_ARGS,
         );
-        assert_eq!(
-            resident_rob_pcs(&resident),
-            [case.load_pc, case.call_pc, case.coroutine_pc, case.return_pc],
-            "{}: unexpected resident round-trip ROB: {resident}",
-            case.label
-        );
-        assert_eq!(
-            resident
-                .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
-                .and_then(Value::as_u64),
-            Some(1),
-            "{}: expected one resident LSQ row: {resident}",
-            case.label
-        );
+        assert_coroutine_round_trip_resident_window(&resident, case, "switch-source resident");
         for register in ["x1", "x5"] {
             assert_register_absent_or_zero_with_context(&resident, register, case.label);
         }
@@ -130,31 +210,10 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
             case.label
         );
 
-        let execution_mode_switches = switched
-            .pointer("/host_actions/execution_mode_switches")
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: missing round-trip execution-mode switches: {switched}",
-                    case.label
-                )
-            });
-        let timing_switches = execution_mode_switches
-            .iter()
-            .filter(|switch| {
-                    switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
-                        && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
-                        && switch.pointer("/previous_mode").and_then(Value::as_str)
-                            == Some("detailed")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            timing_switches.len(),
-            1,
-            "{}: expected exactly one cpu0 detailed-to-timing switch: {execution_mode_switches:?}",
-            case.label
+        let timing_switch = exact_coroutine_timing_switch(
+            &switched,
+            &format!("{} live switched", case.label),
         );
-        let timing_switch = timing_switches[0];
         assert_eq!(
             timing_switch.pointer("/tick").and_then(Value::as_u64),
             Some(switch_tick),
@@ -216,9 +275,13 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
                 case.label
             );
         }
-        for pc in [case.load_pc, case.call_pc, case.coroutine_pc, case.return_pc] {
-            let expected = event_at_pc(&baseline, pc);
-            let actual = event_at_pc(&switched, pc);
+        for (index, pc) in event_pcs[..4].iter().copied().enumerate() {
+            let expected = baseline_events[index];
+            let actual = exact_coroutine_o3_event_at_pc(
+                &switched,
+                pc,
+                &format!("{} live switched", case.label),
+            );
             for field in ["issue_tick", "writeback_tick", "commit_tick"] {
                 assert_eq!(
                     event_u64(actual, field),
@@ -228,6 +291,74 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
                 );
             }
         }
+        assert_eq!(
+            coroutine_o3_events_at_pc(
+                &switched,
+                case.success_store_pc,
+                &format!("{} live switched", case.label),
+            )
+            .len(),
+            0,
+            "{}: timing-executed success store must not be replayed as an O3 event: {switched}",
+            case.label
+        );
+        let baseline_data_counts = coroutine_data_trace_counts(&baseline, case.label);
+        assert_eq!(
+            baseline_data_counts,
+            [1, 1],
+            "{}: unexpected baseline [load, success store] data-trace counts",
+            case.label
+        );
+        assert_eq!(
+            coroutine_data_trace_counts(&switched, case.label),
+            baseline_data_counts,
+            "{}: live switch must not replay the architectural load or success store",
+            case.label
+        );
+        let (first_request, response_latency) = match case.memory_system {
+            "direct" => (9, 32),
+            "cache-fabric-dram" => (11, 34),
+            other => panic!("{}: unsupported memory system {other}", case.label),
+        };
+        let expected_memory = CoroutineMemoryTraceSnapshot {
+            kind_counts: [2, 2, 0, 2],
+            first_request,
+            first_request_kind_counts: [1, 1, 0, 1],
+            request_agents: vec![0],
+            routes: vec![1],
+            response_latencies: vec![response_latency; 2],
+        };
+        let baseline_memory = coroutine_memory_trace_snapshot(&baseline, case.label);
+        assert_eq!(
+            baseline_memory, expected_memory,
+            "{}: unexpected baseline data-channel memory trace",
+            case.label
+        );
+        assert_eq!(
+            coroutine_memory_trace_snapshot(&switched, case.label),
+            baseline_memory,
+            "{}: live switch must preserve exact data-channel memory events",
+            case.label
+        );
+        let counts = match case.memory_system {
+            "direct" => [2, 2, 2, 2, 64, 32],
+            "cache-fabric-dram" => [2, 2, 2, 2, 68, 34],
+            other => panic!("{}: unsupported memory system {other}", case.label),
+        };
+        let expected_transport = CoroutineTransportSnapshot {
+            route: 1,
+            source: "cpu0.dmem",
+            aggregate: counts,
+            per_route: counts,
+        };
+        let baseline_transport = coroutine_transport_snapshot(&baseline, case.label);
+        assert_eq!(baseline_transport, expected_transport);
+        assert_eq!(
+            coroutine_transport_snapshot(&switched, case.label),
+            baseline_transport,
+            "{}: live switch must preserve aggregate and per-route transport",
+            case.label
+        );
 
         let opposite_call_kind = match case.call_kind {
             "call_direct" => "call_indirect",
@@ -300,15 +431,42 @@ fn rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary() {
             &DIRECT_WIDTH_ARGS,
         );
         assert_coroutine_round_trip_final_state(&baseline, case, "baseline");
-        let load = event_at_pc(&baseline, case.load_pc);
-        let live_tick = event_u64(event_at_pc(&baseline, case.return_pc), "issue_tick") + 1;
+        let load = exact_coroutine_o3_event_at_pc(
+            &baseline,
+            case.load_pc,
+            &format!("{} checkpoint baseline", case.label),
+        );
+        let live_checkpoint_source_tick = event_u64(
+            exact_coroutine_o3_event_at_pc(
+                &baseline,
+                case.return_pc,
+                &format!("{} checkpoint baseline", case.label),
+            ),
+            "issue_tick",
+        ) + 1;
+        let live_checkpoint_tick = live_checkpoint_source_tick + 1;
         assert!(
-            live_tick < event_u64(load, "lsq_data_response_tick"),
-            "{}: live checkpoint tick must precede load response: load={load}, live_tick={live_tick}",
+            live_checkpoint_tick < event_u64(load, "lsq_data_response_tick"),
+            "{}: live checkpoint delivery tick must precede load response: load={load}, live_checkpoint_tick={live_checkpoint_tick}",
             case.label
         );
 
-        let live_arg = format!("{live_tick}:coroutine-round-trip-live");
+        let live_resident = run_coroutine_json(
+            &path,
+            case.memory_system,
+            live_checkpoint_tick,
+            "detailed",
+            3,
+            &DIRECT_WIDTH_ARGS,
+        );
+        assert_coroutine_round_trip_resident_window(
+            &live_resident,
+            case,
+            "live-checkpoint delivery",
+        );
+
+        let live_arg =
+            format!("{live_checkpoint_source_tick}:coroutine-round-trip-live");
         let mut live_command = control_window_command(
             &path,
             case.memory_system,
@@ -343,7 +501,14 @@ fn rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary() {
         );
 
         let checkpoint_source_tick =
-            event_u64(event_at_pc(&baseline, case.success_store_pc), "commit_tick") + 1;
+            event_u64(
+                exact_coroutine_o3_event_at_pc(
+                    &baseline,
+                    case.success_store_pc,
+                    &format!("{} checkpoint baseline", case.label),
+                ),
+                "commit_tick",
+            ) + 1;
         let checkpoint_tick = checkpoint_source_tick + 1;
         let restore_source_tick = checkpoint_source_tick + 1;
         let restore_tick = restore_source_tick + 1;

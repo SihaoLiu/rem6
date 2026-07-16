@@ -36,6 +36,105 @@ struct CoroutineTransportExpected {
     source: &'static str,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CoroutineMemoryTraceSnapshot {
+    kind_counts: [usize; 4],
+    first_request: u64,
+    first_request_kind_counts: [usize; 4],
+    request_agents: Vec<u64>,
+    routes: Vec<u64>,
+    response_latencies: Vec<u64>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CoroutineTransportSnapshot<'a> {
+    route: u64,
+    source: &'a str,
+    aggregate: [u64; 6],
+    per_route: [u64; 6],
+}
+
+fn coroutine_memory_trace_snapshot(json: &Value, context: &str) -> CoroutineMemoryTraceSnapshot {
+    let records = json
+        .pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{context}: missing memory trace: {json}"));
+    let mut snapshot = CoroutineMemoryTraceSnapshot {
+        kind_counts: [0; 4],
+        first_request: 0,
+        first_request_kind_counts: [0; 4],
+        request_agents: Vec::new(),
+        routes: Vec::new(),
+        response_latencies: Vec::new(),
+    };
+    for record in records
+        .iter()
+        .filter(|record| record.pointer("/channel").and_then(Value::as_str) == Some("data"))
+    {
+        let kind = record.pointer("/kind").and_then(Value::as_str);
+        let index = match kind {
+            Some("request_sent") => 0,
+            Some("request_arrived") => 1,
+            Some("response_sent") => 2,
+            Some("response_arrived") => 3,
+            _ => panic!("{context}: unexpected data-channel memory event: {record}"),
+        };
+        let request = event_u64(record, "request");
+        if index == 0 && snapshot.kind_counts[0] == 0 {
+            snapshot.first_request = request;
+        }
+        snapshot.kind_counts[index] += 1;
+        if request == snapshot.first_request {
+            snapshot.first_request_kind_counts[index] += 1;
+        }
+        snapshot.request_agents.push(event_u64(record, "request_agent"));
+        snapshot.routes.push(event_u64(record, "route"));
+        if index == 3 {
+            snapshot.response_latencies.push(event_u64(record, "response_latency_ticks"));
+        }
+    }
+    snapshot.request_agents.sort_unstable();
+    snapshot.request_agents.dedup();
+    snapshot.routes.sort_unstable();
+    snapshot.routes.dedup();
+    snapshot
+}
+
+fn coroutine_transport_snapshot<'a>(
+    json: &'a Value,
+    context: &str,
+) -> CoroutineTransportSnapshot<'a> {
+    let transport = json
+        .pointer("/transport/data")
+        .unwrap_or_else(|| panic!("{context}: missing data transport: {json}"));
+    let routes = transport
+        .pointer("/routes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("{context}: missing data transport routes: {transport}"));
+    assert_eq!(routes.len(), 1, "{context}: expected one route: {transport}");
+    let route = &routes[0];
+    let counts = |node: &Value| {
+        [
+            "requests",
+            "request_arrivals",
+            "responses",
+            "response_arrivals",
+            "round_trip_ticks",
+            "max_round_trip_ticks",
+        ]
+        .map(|field| event_u64(node, field))
+    };
+    CoroutineTransportSnapshot {
+        route: event_u64(route, "route"),
+        source: route
+            .pointer("/source")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("{context}: missing route source: {route}")),
+        aggregate: counts(transport),
+        per_route: counts(route),
+    }
+}
+
 const COROUTINE_ROUND_TRIP_CASES: [CoroutineRoundTripCase; 2] = [
     CoroutineRoundTripCase {
         label: "forward-direct",
@@ -59,11 +158,11 @@ const COROUTINE_ROUND_TRIP_CASES: [CoroutineRoundTripCase; 2] = [
             activity: 1,
             active: 1,
             requests: 1,
-            request_arrivals: 0,
-            responses: 0,
-            response_arrivals: 0,
-            round_trip_ticks: 0,
-            max_round_trip_ticks: 0,
+            request_arrivals: 1,
+            responses: 1,
+            response_arrivals: 1,
+            round_trip_ticks: 32,
+            max_round_trip_ticks: 32,
             route: 1,
             source: "cpu0.dmem",
         },
@@ -483,33 +582,25 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         );
     }
 
-    let response_resident = match case.memory_system {
-        "direct" => {
-            assert_direct_memory_activity(&resident);
-            None
-        }
-        "cache-fabric-dram" => {
-            let response_resident = run_coroutine_json(
-                &path,
-                case.memory_system,
-                response_tick,
-                "detailed",
-                3,
-                &DIRECT_WIDTH_ARGS,
-            );
-            assert_no_data_address(&response_resident, SUCCESS_STORE_ADDRESS);
-            assert_hierarchy_activity(&response_resident);
-            Some(response_resident)
-        }
+    let response_resident = run_coroutine_json(
+        &path,
+        case.memory_system,
+        response_tick,
+        "detailed",
+        3,
+        &DIRECT_WIDTH_ARGS,
+    );
+    assert_no_data_address(&response_resident, SUCCESS_STORE_ADDRESS);
+    match case.memory_system {
+        "direct" => assert_direct_memory_activity(&response_resident),
+        "cache-fabric-dram" => assert_hierarchy_activity(&response_resident),
         memory_system => panic!(
             "{}: unsupported coroutine round-trip memory system {memory_system}",
             case.label
         ),
-    };
-    let (transport_artifact, transport_artifact_label) = match response_resident.as_ref() {
-        Some(response) => (response, "response"),
-        None => (&resident, "live"),
-    };
+    }
+    let transport_artifact = &response_resident;
+    let transport_artifact_label = "response";
     for (field, expected) in [
         ("activity", case.transport.activity),
         ("active", case.transport.active),
