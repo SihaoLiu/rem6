@@ -660,60 +660,181 @@ fn events_at_pc<'a>(json: &'a Value, pc: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+#[test]
+#[should_panic(expected = "expected exactly one transfer component")]
+fn transfer_component_rejects_duplicate_component_entries() {
+    let transfer = serde_json::json!({
+        "components": [
+            { "component": "cpu0", "chunks": [] },
+            { "component": "cpu0", "chunks": [] },
+        ]
+    });
+
+    let _ = transfer_component(&transfer, "cpu0");
+}
+
+#[test]
+#[should_panic(expected = "expected exactly one transfer chunk")]
+fn transfer_o3_runtime_chunk_rejects_duplicate_named_chunks() {
+    let transfer = serde_json::json!({
+        "components": [{
+            "component": "cpu0",
+            "chunks": [
+                { "name": "o3-runtime-state", "o3_runtime": { "marker": 1 } },
+                { "name": "o3-runtime-state", "o3_runtime": { "marker": 2 } },
+            ]
+        }]
+    });
+
+    let _ = transfer_o3_runtime_chunk(&transfer, "cpu0");
+}
+
 fn transfer_component<'a>(transfer: &'a Value, component: &str) -> &'a Value {
-    transfer
+    transfer_component_with_context(transfer, component, "transfer artifact")
+}
+
+fn transfer_component_with_context<'a>(
+    transfer: &'a Value,
+    component: &str,
+    context: &str,
+) -> &'a Value {
+    let components = transfer
         .pointer("/components")
         .and_then(Value::as_array)
-        .and_then(|components| {
-            components.iter().find(|entry| {
-                entry.pointer("/component").and_then(Value::as_str) == Some(component)
-            })
-        })
-        .unwrap_or_else(|| panic!("missing transfer component {component}: {transfer}"))
+        .unwrap_or_else(|| panic!("{context}: missing transfer components: {transfer}"));
+    exact_one_by_string_field(
+        components,
+        "/component",
+        component,
+        "transfer component",
+        context,
+    )
 }
 
 fn transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
-    transfer_component(transfer, component)
+    transfer_o3_runtime_chunk_with_context(transfer, component, "transfer artifact")
+}
+
+fn transfer_o3_runtime_chunk_with_context<'a>(
+    transfer: &'a Value,
+    component: &str,
+    context: &str,
+) -> &'a Value {
+    let component_state = transfer_component_with_context(transfer, component, context);
+    let chunks = component_state
         .pointer("/chunks")
         .and_then(Value::as_array)
-        .and_then(|chunks| {
-            chunks.iter().find(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
-            })
-        })
-        .and_then(|chunk| chunk.pointer("/o3_runtime"))
-        .unwrap_or_else(|| panic!("missing decoded O3 runtime chunk: {transfer}"))
+        .unwrap_or_else(|| {
+            panic!(
+                "{context}: missing transfer chunks for component {component}: {component_state}"
+            )
+        });
+    let chunk = exact_one_by_string_field(
+        chunks,
+        "/name",
+        "o3-runtime-state",
+        "transfer chunk",
+        context,
+    );
+    chunk
+        .pointer("/o3_runtime")
+        .unwrap_or_else(|| panic!("{context}: missing decoded O3 runtime chunk: {transfer}"))
 }
 
 fn transfer_live_data_handoff_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
-    transfer_component(transfer, component)
+    transfer_live_data_handoff_chunk_with_context(transfer, component, "transfer artifact")
+}
+
+fn transfer_live_data_handoff_chunk_with_context<'a>(
+    transfer: &'a Value,
+    component: &str,
+    context: &str,
+) -> &'a Value {
+    let component_state = transfer_component_with_context(transfer, component, context);
+    let chunks = component_state
         .pointer("/chunks")
         .and_then(Value::as_array)
-        .and_then(|chunks| {
-            chunks.iter().find(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-live-data-handoff")
-            })
-        })
-        .and_then(|chunk| chunk.pointer("/o3_live_data_handoff"))
-        .unwrap_or_else(|| panic!("missing decoded live-data handoff chunk: {transfer}"))
+        .unwrap_or_else(|| {
+            panic!(
+                "{context}: missing transfer chunks for component {component}: {component_state}"
+            )
+        });
+    let chunk = exact_one_by_string_field(
+        chunks,
+        "/name",
+        "o3-live-data-handoff",
+        "transfer chunk",
+        context,
+    );
+    chunk
+        .pointer("/o3_live_data_handoff")
+        .unwrap_or_else(|| panic!("{context}: missing decoded live-data handoff chunk: {transfer}"))
 }
 
 fn checkpoint_component<'a>(checkpoint: &'a Value, component: &str) -> &'a Value {
-    checkpoint
+    checkpoint_component_with_context(checkpoint, component, "checkpoint artifact")
+}
+
+fn checkpoint_component_with_context<'a>(
+    checkpoint: &'a Value,
+    component: &str,
+    context: &str,
+) -> &'a Value {
+    let components = checkpoint
         .pointer("/components")
         .and_then(Value::as_array)
-        .and_then(|components| {
-            components.iter().find(|entry| {
-                entry.pointer("/component").and_then(Value::as_str) == Some(component)
-            })
-        })
-        .unwrap_or_else(|| panic!("missing checkpoint component {component}: {checkpoint}"))
+        .unwrap_or_else(|| panic!("{context}: missing checkpoint components: {checkpoint}"));
+    exact_one_by_string_field(
+        components,
+        "/component",
+        component,
+        "checkpoint component",
+        context,
+    )
 }
 
 fn checkpoint_component_chunks(component: &Value) -> &[Value] {
+    checkpoint_component_chunks_with_context(component, "checkpoint artifact")
+}
+
+fn checkpoint_component_chunks_with_context<'a>(
+    component: &'a Value,
+    context: &str,
+) -> &'a [Value] {
     component
         .pointer("/chunks")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
-        .unwrap_or_else(|| panic!("missing checkpoint chunks: {component}"))
+        .unwrap_or_else(|| panic!("{context}: missing checkpoint chunks: {component}"))
+}
+
+fn checkpoint_component_chunk_with_context<'a>(
+    chunks: &'a [Value],
+    name: &str,
+    context: &str,
+) -> &'a Value {
+    exact_one_by_string_field(chunks, "/name", name, "checkpoint chunk", context)
+}
+
+fn exact_one_by_string_field<'a>(
+    values: &'a [Value],
+    field: &str,
+    expected: &str,
+    artifact: &str,
+    context: &str,
+) -> &'a Value {
+    let mut matched = None;
+    let mut count = 0;
+    for value in values {
+        if value.pointer(field).and_then(Value::as_str) == Some(expected) {
+            matched = Some(value);
+            count += 1;
+        }
+    }
+    match (matched, count) {
+        (Some(value), 1) => value,
+        _ => panic!(
+            "{context}: expected exactly one {artifact} with {field}={expected}, found {count}: {values:?}"
+        ),
+    }
 }

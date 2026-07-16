@@ -125,7 +125,8 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
             "{}: live coroutine transfer must not be restorable: {transfer}",
             case.label
         );
-        let runtime = transfer_o3_runtime_chunk(transfer, "cpu0");
+        let runtime =
+            transfer_o3_runtime_chunk_with_context(transfer, "cpu0", case.label);
         assert_eq!(
             runtime
                 .pointer("/snapshot_rob_entries")
@@ -142,7 +143,8 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
             "{}: unexpected transferred LSQ snapshot: {runtime}",
             case.label
         );
-        let handoff = transfer_live_data_handoff_chunk(transfer, "cpu0");
+        let handoff =
+            transfer_live_data_handoff_chunk_with_context(transfer, "cpu0", case.label);
         for (pointer, expected) in [
             ("/schema_version", 7),
             ("/outstanding_requests", 1),
@@ -429,8 +431,8 @@ fn rem6_run_o3_same_window_coroutine_checkpoint_boundary() {
         let checkpoint = restored
             .pointer("/host_actions/checkpoints/0")
             .unwrap_or_else(|| panic!("{}: missing drained coroutine checkpoint", case.label));
-        let cpu0 = checkpoint_component(checkpoint, "cpu0");
-        let chunks = checkpoint_component_chunks(cpu0);
+        let cpu0 = checkpoint_component_with_context(checkpoint, "cpu0", case.label);
+        let chunks = checkpoint_component_chunks_with_context(cpu0, case.label);
         assert!(
             chunks.iter().all(|chunk| {
                 chunk.pointer("/name").and_then(Value::as_str)
@@ -439,12 +441,10 @@ fn rem6_run_o3_same_window_coroutine_checkpoint_boundary() {
             "{}: drained checkpoint must not contain a live-data handoff: {cpu0}",
             case.label
         );
-        let runtime = chunks
-            .iter()
-            .find(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str) == Some("o3-runtime-state")
-            })
-            .and_then(|chunk| chunk.pointer("/o3_runtime"))
+        let runtime_chunk =
+            checkpoint_component_chunk_with_context(chunks, "o3-runtime-state", case.label);
+        let runtime = runtime_chunk
+            .pointer("/o3_runtime")
             .unwrap_or_else(|| {
                 panic!(
                     "{}: missing decoded drained coroutine O3 runtime checkpoint: {cpu0}",
