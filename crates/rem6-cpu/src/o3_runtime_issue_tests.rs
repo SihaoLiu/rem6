@@ -110,6 +110,32 @@ fn scoped_issue_orders_same_window_call_return_and_descendant() {
 }
 
 #[test]
+fn scoped_issue_orders_same_window_call_coroutine_and_descendant() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowCoroutine);
+    assert!(fixture.runtime.set_writeback_width(1));
+
+    fixture.schedule_all(20);
+
+    let call = fixture.execution_at(BRANCH_PC);
+    let coroutine = fixture.execution_at(SECOND_PC);
+    let descendant = fixture.execution_at(THIRD_PC);
+    assert_eq!(call.issue_tick, 20);
+    assert_eq!(call.raw_ready_tick, 20);
+    assert_eq!(call.admitted_writeback_tick, 20);
+    assert_eq!(call.writeback_slot, Some(0));
+    assert_eq!(coroutine.issue_tick, call.admitted_writeback_tick + 1);
+    assert_eq!(coroutine.raw_ready_tick, 21);
+    assert_eq!(coroutine.admitted_writeback_tick, 21);
+    assert_eq!(coroutine.writeback_slot, Some(0));
+    assert_eq!(descendant.issue_tick, coroutine.admitted_writeback_tick + 1);
+    assert_eq!(descendant.raw_ready_tick, 22);
+    assert_eq!(descendant.admitted_writeback_tick, 22);
+    assert_eq!(descendant.writeback_slot, Some(0));
+    assert!(coroutine.producer_sequences.contains(&call.sequence));
+    assert!(descendant.producer_sequences.contains(&coroutine.sequence));
+}
+
+#[test]
 fn scoped_issue_waits_for_register_producer_ready_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
 
@@ -512,6 +538,7 @@ enum ScalarIssueCase {
     MixedControls,
     LinkedControls,
     SameWindowLinkReturn,
+    SameWindowCoroutine,
 }
 
 struct ScalarIssueFixture {
@@ -535,6 +562,7 @@ impl ScalarIssueFixture {
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
             ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],
             ScalarIssueCase::SameWindowLinkReturn => [jal_link(1), jalr_return(1), addi(14, 0, 7)],
+            ScalarIssueCase::SameWindowCoroutine => [jal_link(1), jalr_link(5, 1), addi(14, 5, 0)],
         };
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -732,6 +760,14 @@ fn jalr() -> RiscvInstruction {
 fn jalr_return(rs1: u8) -> RiscvInstruction {
     RiscvInstruction::Jalr {
         rd: reg(0),
+        rs1: reg(rs1),
+        offset: Immediate::new(0),
+    }
+}
+
+fn jalr_link(rd: u8, rs1: u8) -> RiscvInstruction {
+    RiscvInstruction::Jalr {
+        rd: reg(rd),
         rs1: reg(rs1),
         offset: Immediate::new(0),
     }

@@ -549,6 +549,15 @@ enum O3LiveIssueDependencyReadiness {
 }
 
 impl O3LiveIssueDependencyReadiness {
+    const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Unresolved, _) | (_, Self::Unresolved) => Self::Unresolved,
+            (Self::ReadyAt(left), Self::ReadyAt(right)) => {
+                Self::ReadyAt(if left > right { left } else { right })
+            }
+        }
+    }
+
     const fn is_ready_at(self, tick: u64) -> bool {
         matches!(self, Self::ReadyAt(ready_tick) if ready_tick <= tick)
     }
@@ -597,10 +606,10 @@ fn live_issue_dependencies_ready_at(
         .all(|dependency| dependency.readiness.is_ready_at(tick))
 }
 
-fn live_issue_scheduling_dependencies<'a>(
-    candidate: &'a O3LiveSpeculativeIssueCandidate,
-    serializing_controls: &'a BTreeMap<u64, O3LiveIssueDependencyReadiness>,
-) -> impl Iterator<Item = O3LiveIssueSchedulingDependency> + 'a {
+fn live_issue_scheduling_dependencies(
+    candidate: &O3LiveSpeculativeIssueCandidate,
+    serializing_controls: &BTreeMap<u64, O3LiveIssueDependencyReadiness>,
+) -> impl Iterator<Item = O3LiveIssueSchedulingDependency> {
     let data_dependencies =
         candidate
             .data_dependencies()
@@ -609,24 +618,34 @@ fn live_issue_scheduling_dependencies<'a>(
                 sequence: dependency.sequence,
                 readiness: O3LiveIssueDependencyReadiness::ReadyAt(dependency.ready_tick),
             });
-    let control_dependency = candidate
-        .control_dependency()
-        .filter(|control_sequence| {
-            !candidate
-                .data_dependencies()
-                .iter()
-                .any(|dependency| dependency.sequence == *control_sequence)
+    let control_dependency = candidate.control_dependency().and_then(|control_sequence| {
+        serializing_controls
+            .get(&control_sequence)
+            .copied()
+            .map(|readiness| O3LiveIssueSchedulingDependency {
+                sequence: control_sequence,
+                readiness,
+            })
+    });
+    data_dependencies
+        .chain(control_dependency)
+        .fold(
+            BTreeMap::<u64, O3LiveIssueDependencyReadiness>::new(),
+            |mut dependencies, dependency| {
+                dependencies
+                    .entry(dependency.sequence)
+                    .and_modify(|readiness| {
+                        *readiness = readiness.merge(dependency.readiness);
+                    })
+                    .or_insert(dependency.readiness);
+                dependencies
+            },
+        )
+        .into_iter()
+        .map(|(sequence, readiness)| O3LiveIssueSchedulingDependency {
+            sequence,
+            readiness,
         })
-        .and_then(|control_sequence| {
-            serializing_controls
-                .get(&control_sequence)
-                .copied()
-                .map(|readiness| O3LiveIssueSchedulingDependency {
-                    sequence: control_sequence,
-                    readiness,
-                })
-        });
-    data_dependencies.chain(control_dependency)
 }
 
 fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {
