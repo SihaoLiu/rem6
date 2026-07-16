@@ -3,7 +3,8 @@ use super::window_support::{
     assert_hierarchy_activity, assert_integer_rename_maps_to_row_destination,
     assert_no_data_address, assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits,
     assert_pointer_u64_gt, assert_register_absent_or_zero, assert_stopped_by_host,
-    control_window_command, resident_rob_pcs, run_control_window_json,
+    control_window_command, finish_control_window_binary, resident_rob_pcs,
+    run_control_window_json,
 };
 use super::*;
 
@@ -526,7 +527,7 @@ fn direct_call_binary(name: &str, exit_padding_words: usize) -> std::path::PathB
         exit_padding_words,
     ));
     words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn indirect_call_binary(name: &str) -> std::path::PathBuf {
@@ -552,7 +553,7 @@ fn indirect_call_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn return_ras_binary(name: &str) -> std::path::PathBuf {
@@ -575,7 +576,7 @@ fn return_ras_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn older_branch_discards_call_binary(name: &str) -> std::path::PathBuf {
@@ -598,7 +599,7 @@ fn older_branch_discards_call_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn load_produced_target_binary(name: &str) -> std::path::PathBuf {
@@ -617,7 +618,7 @@ fn load_produced_target_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_kind_binary(name, words, [0x8000_0020, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [0x8000_0020, 0, 0, 0])
 }
 
 fn live_alu_target_binary(name: &str) -> std::path::PathBuf {
@@ -642,21 +643,7 @@ fn live_alu_target_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_kind_binary(name, words, [42, 0, 0, 0])
-}
-
-fn finish_link_kind_binary(
-    name: &str,
-    mut words: Vec<u32>,
-    data_words: [u32; 4],
-) -> std::path::PathBuf {
-    while words.len() * 4 < DATA_START as usize {
-        words.push(0);
-    }
-    words.extend(data_words);
-    let program = riscv64_program(&words);
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    temp_binary(name, &elf)
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn run_link_kind_json(

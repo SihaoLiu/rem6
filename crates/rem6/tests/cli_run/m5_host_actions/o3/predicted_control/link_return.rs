@@ -3,7 +3,8 @@ use super::window_support::{
     assert_final_execution_mode, assert_hierarchy_activity,
     assert_integer_rename_maps_to_row_destination, assert_no_data_address, assert_no_fetch_pc,
     assert_no_o3_stats, assert_ordered_commits, assert_register_absent_or_zero,
-    assert_stopped_by_host, control_window_command, resident_rob_pcs, run_control_window_json,
+    assert_stopped_by_host, control_window_command, finish_control_window_binary, resident_rob_pcs,
+    run_control_window_json,
 };
 use super::*;
 
@@ -659,7 +660,7 @@ fn direct_link_return_binary(name: &str, exit_padding_words: usize) -> std::path
         exit_padding_words,
     ));
     words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
-    finish_link_return_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn indirect_link_return_binary(name: &str) -> std::path::PathBuf {
@@ -685,7 +686,7 @@ fn indirect_link_return_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_return_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn overwritten_link_return_binary(name: &str) -> std::path::PathBuf {
@@ -708,7 +709,7 @@ fn overwritten_link_return_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_return_binary(name, words, [42, 0, 0, 0])
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
 fn older_branch_link_return_binary(name: &str) -> std::path::PathBuf {
@@ -731,19 +732,5 @@ fn older_branch_link_return_binary(name: &str) -> std::path::PathBuf {
         m5op(M5_EXIT),
         m5op(M5_FAIL),
     ]);
-    finish_link_return_binary(name, words, [42, 0, 0, 0])
-}
-
-fn finish_link_return_binary(
-    name: &str,
-    mut words: Vec<u32>,
-    data_words: [u32; 4],
-) -> std::path::PathBuf {
-    while words.len() * 4 < DATA_START as usize {
-        words.push(0);
-    }
-    words.extend(data_words);
-    let program = riscv64_program(&words);
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    temp_binary(name, &elf)
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }

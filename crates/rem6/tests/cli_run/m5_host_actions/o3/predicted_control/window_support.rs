@@ -70,6 +70,35 @@ pub(super) fn run_control_window_json(
         .unwrap_or_else(|error| panic!("invalid control-window JSON: {error}"))
 }
 
+pub(super) fn finish_control_window_binary(
+    name: &str,
+    mut words: Vec<u32>,
+    data_start: usize,
+    data_words: [u32; 4],
+) -> std::path::PathBuf {
+    let word_bytes = std::mem::size_of::<u32>();
+    let code_bytes = words.len().checked_mul(word_bytes).unwrap_or_else(|| {
+        panic!(
+            "control-window binary `{name}` code byte length overflow for {} words",
+            words.len()
+        )
+    });
+    assert!(
+        code_bytes <= data_start,
+        "control-window binary `{name}` has {code_bytes} code bytes, exceeding data start {data_start:#x}"
+    );
+    assert_eq!(
+        data_start % word_bytes,
+        0,
+        "control-window binary `{name}` data start {data_start:#x} must be word-aligned"
+    );
+    words.resize(data_start / word_bytes, 0);
+    words.extend(data_words);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 pub(super) fn resident_rob_pcs(json: &Value) -> Vec<&str> {
     json.pointer("/cores/0/o3_runtime/snapshot/rob/entries")
         .and_then(Value::as_array)
