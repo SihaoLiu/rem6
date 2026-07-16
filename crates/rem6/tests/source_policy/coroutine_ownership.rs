@@ -1,12 +1,13 @@
 use super::*;
 
 const COROUTINE_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs";
-const COROUTINE_INCLUDES: [&str; 3] = [
+const COROUTINE_INCLUDES: [&str; 4] = [
     "coroutine/suppression.rs",
     "coroutine/repair.rs",
     "coroutine/lifecycle.rs",
+    "coroutine/round_trip.rs",
 ];
-const COROUTINE_CONCERNS: [CoroutineConcern; 3] = [
+const COROUTINE_CONCERNS: [CoroutineConcern; 4] = [
     CoroutineConcern {
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/suppression.rs",
         anchors: &[
@@ -31,6 +32,13 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 3] = [
             "rem6_run_host_switch_transfers_o3_same_window_coroutine",
             "rem6_run_o3_same_window_coroutine_checkpoint_boundary",
             "rem6_run_timing_suppresses_o3_same_window_coroutine",
+        ],
+    },
+    CoroutineConcern {
+        relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs",
+        anchors: &[
+            "rem6_run_o3_same_window_coroutine_round_trip_commits_direct",
+            "rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram",
         ],
     },
 ];

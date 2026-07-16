@@ -331,6 +331,7 @@ fn rem6_run_o3_same_window_indirect_coroutine_commits_cache_fabric_dram() {
 include!("coroutine/suppression.rs");
 include!("coroutine/repair.rs");
 include!("coroutine/lifecycle.rs");
+include!("coroutine/round_trip.rs");
 
 fn run_coroutine_json(
     path: &Path,
