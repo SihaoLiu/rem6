@@ -435,51 +435,6 @@ fn overwritten_indirect_coroutine_binary(name: &str) -> std::path::PathBuf {
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
-fn older_branch_coroutine_binary(name: &str) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-        i_type(1, 0, 0x0, 7, 0x13),
-        i_type(0x11, 0, 0x0, 1, 0x13),
-        i_type(0x55, 0, 0x0, 5, 0x13),
-        i_type(0, 18, 0b010, 12, 0x03),
-        b_type(28, 7, 7, 0b000),
-        j_type(12, 1),
-        i_type(0, 5, 0x0, 13, 0x13),
-        s_type(8, 7, 18, 0b010),
-        i_type(0, 1, 0x0, 5, 0x67),
-        s_type(12, 7, 18, 0b010),
-        m5op(M5_FAIL),
-        i_type(0x33, 0, 0x0, 15, 0x13),
-        s_type(4, 15, 18, 0b010),
-        m5op(M5_EXIT),
-        m5op(M5_FAIL),
-    ]);
-    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
-}
-
-fn wrong_target_coroutine_binary(name: &str) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-        i_type(0, 18, 0b010, 12, 0x03),
-        j_type(12, 1),
-        i_type(99, 0, 0x0, 14, 0x13),
-        s_type(8, 7, 18, 0b010),
-        i_type(20, 1, 0x0, 5, 0x67),
-        s_type(4, 13, 18, 0b010),
-        m5op(M5_EXIT),
-        i_type(0, 5, 0x0, 13, 0x13),
-        i_type(0, 5, 0x0, 0, 0x67),
-        m5op(M5_FAIL),
-    ]);
-    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
-}
-
 fn indirect_coroutine_binary(name: &str, exit_padding_words: usize) -> std::path::PathBuf {
     let mut words = indirect_coroutine_prefix();
     words.extend([

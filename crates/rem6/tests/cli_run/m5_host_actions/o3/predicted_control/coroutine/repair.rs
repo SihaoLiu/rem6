@@ -1,3 +1,97 @@
+fn older_branch_coroutine_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let data_auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 18, 0x17),
+        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
+        i_type(1, 0, 0x0, 7, 0x13),
+        i_type(0x11, 0, 0x0, 1, 0x13),
+        i_type(0x55, 0, 0x0, 5, 0x13),
+        i_type(0, 18, 0b010, 12, 0x03),
+        b_type(28, 7, 7, 0b000),
+        j_type(12, 1),
+        i_type(0, 5, 0x0, 13, 0x13),
+        s_type(8, 7, 18, 0b010),
+        i_type(0, 1, 0x0, 5, 0x67),
+        s_type(12, 7, 18, 0b010),
+        m5op(M5_FAIL),
+        i_type(0x33, 0, 0x0, 15, 0x13),
+        s_type(4, 15, 18, 0b010),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
+}
+
+fn older_branch_indirect_coroutine_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let data_auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 18, 0x17),
+        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
+        i_type(1, 0, 0x0, 7, 0x13),
+        i_type(0x11, 0, 0x0, 1, 0x13),
+        i_type(0x55, 0, 0x0, 5, 0x13),
+    ]);
+    let target_auipc_pc = (words.len() * 4) as i32;
+    assert_eq!(target_auipc_pc, 0x18);
+    words.extend([
+        u_type(0, 11, 0x17),
+        i_type(0x34 - target_auipc_pc, 11, 0x0, 11, 0x13),
+        i_type(0, 18, 0b010, 12, 0x03),
+        b_type(0x1c, 7, 7, 0b000),
+        i_type(0, 11, 0x0, 5, 0x67),
+        i_type(0, 1, 0x0, 13, 0x13),
+        s_type(8, 7, 18, 0b010),
+        i_type(0, 5, 0x0, 1, 0x67),
+        s_type(12, 7, 18, 0b010),
+        m5op(M5_FAIL),
+        i_type(0x33, 0, 0x0, 15, 0x13),
+        s_type(4, 15, 18, 0b010),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    assert_eq!(words.len() * 4, 0x50);
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
+}
+
+fn wrong_target_coroutine_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let data_auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 18, 0x17),
+        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
+        i_type(0, 18, 0b010, 12, 0x03),
+        j_type(12, 1),
+        i_type(99, 0, 0x0, 14, 0x13),
+        s_type(8, 7, 18, 0b010),
+        i_type(20, 1, 0x0, 5, 0x67),
+        s_type(4, 13, 18, 0b010),
+        m5op(M5_EXIT),
+        i_type(0, 5, 0x0, 13, 0x13),
+        i_type(0, 5, 0x0, 0, 0x67),
+        m5op(M5_FAIL),
+    ]);
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
+}
+
+fn wrong_target_indirect_coroutine_binary(name: &str) -> std::path::PathBuf {
+    let mut words = indirect_coroutine_prefix();
+    assert_eq!(words.len() * 4, 0x1c);
+    words.extend([
+        i_type(99, 0, 0x0, 14, 0x13),
+        s_type(8, 7, 18, 0b010),
+        i_type(20, 5, 0x0, 1, 0x67),
+        s_type(4, 13, 18, 0b010),
+        m5op(M5_EXIT),
+        i_type(0, 1, 0x0, 13, 0x13),
+        i_type(0, 1, 0x0, 0, 0x67),
+        m5op(M5_FAIL),
+    ]);
+    assert_eq!(words.len() * 4, 0x3c);
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
+}
+
 #[test]
 fn rem6_run_o3_older_branch_discards_same_window_coroutine_chain() {
     let path = older_branch_coroutine_binary("o3-older-branch-coroutine-chain");
@@ -122,6 +216,148 @@ fn rem6_run_o3_older_branch_discards_same_window_coroutine_chain() {
     assert_no_data_address(&response_resident, SUCCESS_STORE_ADDRESS);
     assert_no_data_address(&response_resident, WRONG_STORE_ADDRESS);
     assert_no_data_address(&response_resident, WRONG_STORE_12_ADDRESS);
+    assert_hierarchy_activity(&response_resident);
+}
+
+#[test]
+fn rem6_run_o3_older_branch_discards_same_window_indirect_coroutine_chain() {
+    let path = older_branch_indirect_coroutine_binary(
+        "o3-older-branch-indirect-coroutine-chain",
+    );
+    let completed = run_coroutine_json(
+        &path,
+        "cache-fabric-dram",
+        3_000,
+        "detailed",
+        3,
+        &DIRECT_WIDTH_ARGS,
+    );
+
+    assert_stopped_by_host(&completed);
+    assert_eq!(register_value(&completed, "x1"), 0x11);
+    assert_eq!(register_value(&completed, "x5"), 0x55);
+    assert_eq!(register_value(&completed, "x11"), 0x8000_0034);
+    assert_register_absent_or_zero(&completed, "x13");
+    assert_eq!(register_value(&completed, "x15"), 0x33);
+    assert_eq!(
+        completed.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a000000330000000000000000000000")
+    );
+    assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
+    assert_no_data_address(&completed, WRONG_STORE_12_ADDRESS);
+
+    let load = event_at_pc(&completed, "0x80000020");
+    let branch = event_at_pc(&completed, "0x80000024");
+    assert_branch_kind_and_link(branch, "direct_conditional", false);
+    for (field, expected) in [
+        ("branch_predicted_taken", false),
+        ("branch_resolved_taken", true),
+        ("branch_mispredicted", true),
+        ("branch_squash", true),
+    ] {
+        assert_eq!(
+            branch
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_bool),
+            Some(expected),
+            "unexpected reverse older-branch repair field {field}: {branch}"
+        );
+    }
+    assert_eq!(
+        branch.pointer("/branch_repair").and_then(Value::as_str),
+        Some("direction_only")
+    );
+    assert_eq!(
+        branch
+            .pointer("/branch_squashed_target")
+            .and_then(Value::as_str),
+        Some("0x80000028")
+    );
+    for pc in ["0x80000028", "0x8000002c", "0x80000034"] {
+        assert!(
+            event_at_pc_if_present(&completed, pc).is_none(),
+            "wrong-path event {pc} must not retire: {completed}"
+        );
+    }
+    for (pointer, expected) in [
+        ("/cores/0/branch_predictor/lookups/direct_conditional", 1),
+        ("/cores/0/branch_predictor/lookups/call_indirect", 1),
+        ("/cores/0/branch_predictor/lookups/return", 1),
+        ("/cores/0/branch_predictor/committed/direct_conditional", 1),
+        ("/cores/0/branch_predictor/committed/call_indirect", 0),
+        ("/cores/0/branch_predictor/committed/return", 0),
+        ("/cores/0/branch_predictor/squashes/direct_conditional", 0),
+        ("/cores/0/branch_predictor/squashes/call_indirect", 1),
+        ("/cores/0/branch_predictor/squashes/return", 1),
+        ("/cores/0/branch_predictor/squashes/total", 2),
+        ("/cores/0/branch_predictor/target_provider/no_target", 1),
+        ("/cores/0/branch_predictor/target_provider/btb", 0),
+        ("/cores/0/branch_predictor/target_provider/ras", 1),
+        ("/cores/0/branch_predictor/target_provider/indirect", 1),
+        ("/cores/0/branch_predictor/target_provider/total", 3),
+        ("/cores/0/branch_predictor/ras/pushes", 3),
+        ("/cores/0/branch_predictor/ras/pops", 3),
+        ("/cores/0/branch_predictor/ras/squashes", 2),
+        ("/cores/0/branch_predictor/ras/used", 0),
+        ("/cores/0/branch_predictor/ras/correct", 0),
+        ("/cores/0/branch_predictor/ras/incorrect", 0),
+    ] {
+        assert_eq!(
+            completed.pointer(pointer).and_then(Value::as_u64),
+            Some(expected),
+            "unexpected reverse repair counter {pointer}: {completed}"
+        );
+    }
+
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    let live_tick = event_u64(branch, "issue_tick") + 2;
+    assert!(live_tick < response_tick, "branch={branch}, load={load}");
+    let resident = run_coroutine_json(
+        &path,
+        "cache-fabric-dram",
+        live_tick,
+        "detailed",
+        3,
+        &DIRECT_WIDTH_ARGS,
+    );
+    assert_eq!(
+        resident_rob_pcs(&resident),
+        ["0x80000020", "0x80000024", "0x80000028", "0x80000034"]
+    );
+    assert_eq!(
+        resident
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(register_value(&resident, "x1"), 0x11);
+    assert_eq!(register_value(&resident, "x5"), 0x55);
+    assert_eq!(register_value(&resident, "x11"), 0x8000_0034);
+    assert_integer_rename_maps_to_row_destination(&resident, "0x80000028", 5);
+    assert_integer_rename_maps_to_row_destination(&resident, "0x80000034", 1);
+    for address in [
+        SUCCESS_STORE_ADDRESS,
+        WRONG_STORE_ADDRESS,
+        WRONG_STORE_12_ADDRESS,
+    ] {
+        assert_no_data_address(&resident, address);
+    }
+
+    let response_resident = run_coroutine_json(
+        &path,
+        "cache-fabric-dram",
+        response_tick,
+        "detailed",
+        3,
+        &DIRECT_WIDTH_ARGS,
+    );
+    for address in [
+        SUCCESS_STORE_ADDRESS,
+        WRONG_STORE_ADDRESS,
+        WRONG_STORE_12_ADDRESS,
+    ] {
+        assert_no_data_address(&response_resident, address);
+    }
     assert_hierarchy_activity(&response_resident);
 }
 
@@ -272,4 +508,145 @@ fn rem6_run_o3_same_window_coroutine_wrong_target_repairs_descendants() {
             .and_then(Value::as_u64),
         "the two return lookups must exhaust the two RAS-provided targets: {completed}"
     );
+}
+
+#[test]
+fn rem6_run_o3_same_window_indirect_coroutine_wrong_target_repairs_descendants() {
+    let path = wrong_target_indirect_coroutine_binary(
+        "o3-same-window-indirect-coroutine-wrong-target",
+    );
+    let completed = run_coroutine_json(&path, "direct", 2_500, "detailed", 2, &DIRECT_WIDTH_ARGS);
+
+    assert_stopped_by_host(&completed);
+    assert_eq!(register_value(&completed, "x5"), 0x8000_001c);
+    assert_eq!(register_value(&completed, "x1"), 0x8000_0028);
+    assert_eq!(register_value(&completed, "x13"), 0x8000_0028);
+    assert_register_absent_or_zero(&completed, "x14");
+    assert_eq!(
+        completed.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("2a000000280000800000000000000000")
+    );
+    assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
+
+    let load = event_at_pc(&completed, "0x80000014");
+    let call = event_at_pc(&completed, "0x80000018");
+    let coroutine = event_at_pc(&completed, "0x80000024");
+    let repaired_descendant = event_at_pc(&completed, "0x80000030");
+    let later_return = event_at_pc(&completed, "0x80000034");
+    let response_tick = event_u64(load, "lsq_data_response_tick");
+    assert_branch_kind_and_link(call, "call_indirect", true);
+    assert_branch_kind_and_link(coroutine, "return", true);
+    assert_branch_kind_and_link(later_return, "return", false);
+    for event in [call, coroutine] {
+        assert!(
+            event_u64(event, "issue_tick") < response_tick,
+            "speculative reverse coroutine chain must issue before load response: {event}"
+        );
+    }
+    assert!(
+        event_u64(repaired_descendant, "issue_tick") > event_u64(coroutine, "commit_tick"),
+        "repaired descendant must issue after coroutine commit: coroutine={coroutine}, descendant={repaired_descendant}"
+    );
+    assert!(
+        event_u64(later_return, "issue_tick") > event_u64(repaired_descendant, "writeback_tick"),
+        "later return must issue after repaired descendant writeback: descendant={repaired_descendant}, return={later_return}"
+    );
+    for (pointer, expected) in [
+        ("/branch_predicted_target", "0x8000001c"),
+        ("/branch_resolved_target", "0x80000030"),
+        ("/branch_squashed_target", "0x8000001c"),
+    ] {
+        assert_eq!(
+            coroutine.pointer(pointer).and_then(Value::as_str),
+            Some(expected),
+            "unexpected reverse wrong-target field {pointer}: {coroutine}"
+        );
+    }
+    for field in [
+        "branch_predicted_taken",
+        "branch_resolved_taken",
+        "branch_wrong_target",
+        "branch_mispredicted",
+        "branch_squash",
+    ] {
+        assert_eq!(
+            coroutine
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_bool),
+            Some(true),
+            "unexpected reverse wrong-target flag {field}: {coroutine}"
+        );
+    }
+    assert_eq!(
+        coroutine
+            .pointer("/branch_repair")
+            .and_then(Value::as_str),
+        Some("wrong_target")
+    );
+    assert_eq!(
+        later_return
+            .pointer("/branch_predicted_target")
+            .and_then(Value::as_str),
+        None
+    );
+    assert_eq!(
+        later_return
+            .pointer("/branch_resolved_target")
+            .and_then(Value::as_str),
+        Some("0x80000028")
+    );
+    let wrong_target_fetches = completed
+        .pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .expect("reverse wrong-target coroutine fetch trace")
+        .iter()
+        .filter(|record| record.pointer("/pc").and_then(Value::as_str) == Some("0x8000001c"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        wrong_target_fetches.len(),
+        1,
+        "reverse wrong-target descendant must be fetched exactly once: {completed}"
+    );
+    assert!(
+        event_u64(wrong_target_fetches[0], "tick") <= event_u64(coroutine, "issue_tick"),
+        "wrong-target fetch must precede coroutine issue: fetch={} coroutine={coroutine}",
+        wrong_target_fetches[0]
+    );
+    assert!(
+        event_at_pc_if_present(&completed, "0x8000001c").is_none(),
+        "reverse wrong-target descendant must not retire: {completed}"
+    );
+    assert_ordered_commits([load, call, coroutine, repaired_descendant, later_return]);
+
+    for (pointer, expected) in [
+        ("/cores/0/branch_predictor/lookups/call_indirect", 1),
+        ("/cores/0/branch_predictor/lookups/return", 2),
+        ("/cores/0/branch_predictor/committed/call_indirect", 1),
+        ("/cores/0/branch_predictor/committed/return", 2),
+        ("/cores/0/branch_predictor/squashes/call_indirect", 0),
+        ("/cores/0/branch_predictor/squashes/return", 0),
+        ("/cores/0/branch_predictor/squashes/total", 0),
+        ("/cores/0/branch_predictor/target_provider/no_target", 0),
+        ("/cores/0/branch_predictor/target_provider/btb", 0),
+        ("/cores/0/branch_predictor/target_provider/indirect", 1),
+        ("/cores/0/branch_predictor/target_provider/ras", 2),
+        ("/cores/0/branch_predictor/target_provider/total", 3),
+        ("/cores/0/branch_predictor/ras/pushes", 2),
+        ("/cores/0/branch_predictor/ras/pops", 2),
+        ("/cores/0/branch_predictor/ras/squashes", 0),
+        ("/cores/0/branch_predictor/ras/used", 2),
+        ("/cores/0/branch_predictor/ras/correct", 1),
+        ("/cores/0/branch_predictor/ras/incorrect", 1),
+        ("/cores/0/o3_runtime/branch_repair/wrong_targets", 1),
+        (
+            "/cores/0/o3_runtime/branch_repair/wrong_target_kind/return",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            completed.pointer(pointer).and_then(Value::as_u64),
+            Some(expected),
+            "unexpected reverse wrong-target counter {pointer}: {completed}"
+        );
+    }
 }

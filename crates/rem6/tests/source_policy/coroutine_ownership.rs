@@ -20,7 +20,9 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 3] = [
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/repair.rs",
         anchors: &[
             "rem6_run_o3_older_branch_discards_same_window_coroutine_chain",
+            "rem6_run_o3_older_branch_discards_same_window_indirect_coroutine_chain",
             "rem6_run_o3_same_window_coroutine_wrong_target_repairs_descendants",
+            "rem6_run_o3_same_window_indirect_coroutine_wrong_target_repairs_descendants",
         ],
     },
     CoroutineConcern {
