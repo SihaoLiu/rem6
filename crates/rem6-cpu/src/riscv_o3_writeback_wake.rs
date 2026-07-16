@@ -144,7 +144,7 @@ impl RiscvCore {
         state.o3_runtime.prune_writeback_calendar_before(now);
         let desired = state
             .o3_runtime
-            .earliest_unpublished_scalar_load_writeback_tick();
+            .earliest_unpublished_memory_result_writeback_tick();
         state.o3_writeback_wake.set_desired_tick(desired, now);
         state.o3_writeback_wake.requested_tick(now)
     }
@@ -183,7 +183,7 @@ impl RiscvCore {
         if state.o3_runtime.has_live_writeback_owner()
             || state
                 .o3_runtime
-                .earliest_unpublished_scalar_load_writeback_tick()
+                .earliest_unpublished_memory_result_writeback_tick()
                 .is_some()
             || state.o3_writeback_wake.has_desired_tick()
             || state.o3_writeback_wake.has_scheduled_wake_authority()
@@ -199,7 +199,7 @@ impl RiscvCoreState {
     pub(crate) fn refresh_o3_writeback_wake(&mut self, now: Tick) {
         let desired = self
             .o3_runtime
-            .earliest_unpublished_scalar_load_writeback_tick();
+            .earliest_unpublished_memory_result_writeback_tick();
         self.o3_writeback_wake.set_desired_tick(desired, now);
     }
 }
@@ -317,7 +317,7 @@ mod tests {
 
         core.mark_o3_writeback_wake_fired(20);
         assert!(core
-            .record_ready_o3_scalar_memory_event_with_trace(20, false)
+            .record_ready_o3_data_access_event_with_trace(20, false)
             .is_some());
         {
             let state = core.state.lock().expect("riscv core lock");
@@ -329,7 +329,7 @@ mod tests {
         core.mark_o3_writeback_wake_scheduled(second_scheduler, second_event);
         core.mark_o3_writeback_wake_fired(22);
         assert!(core
-            .record_ready_o3_scalar_memory_event_with_trace(22, false)
+            .record_ready_o3_data_access_event_with_trace(22, false)
             .is_some());
         {
             let state = core.state.lock().expect("riscv core lock");
@@ -369,8 +369,8 @@ mod tests {
         let older = scalar_load_event(0x8000, 10, 12, 0x9000);
         let younger = scalar_load_event(0x8004, 11, 13, 0x9040);
         let mut runtime = crate::o3_runtime::O3RuntimeState::default();
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 10));
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 11));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 10));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 11));
         complete_scalar_load(&mut runtime, &older, memory_request(20), 19, 0x2a);
         complete_scalar_load(&mut runtime, &younger, memory_request(21), 21, 0x63);
         let core = core();
@@ -394,7 +394,7 @@ mod tests {
         let mut completed = execution.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(runtime
-            .complete_live_scalar_memory_response(
+            .complete_live_data_access_response(
                 &completed,
                 request,
                 response_tick,

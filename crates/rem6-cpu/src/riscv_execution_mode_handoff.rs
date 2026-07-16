@@ -809,7 +809,7 @@ impl RiscvCore {
     }
 
     fn has_o3_live_data_authority(state: &RiscvCoreState) -> bool {
-        !state.o3_runtime.scalar_memory_lifecycle_is_quiescent()
+        !state.o3_runtime.live_data_access_lifecycle_is_quiescent()
             || !state.outstanding_data.is_empty()
             || !state.buffered_o3_stores.is_empty()
             || !state.pending_data_translations.is_empty()

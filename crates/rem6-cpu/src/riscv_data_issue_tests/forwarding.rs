@@ -130,14 +130,14 @@ fn detailed_store_then_aliasing_load_completes_without_transport() {
     }
     assert_eq!(core.read_register(reg(6)), 0);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
 
     scheduler.run_until_idle_conservative();
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older store should retire first");
     assert_eq!(core.read_register(reg(6)), 0);
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("forwarded load should retire second");
     assert_eq!(core.read_register(reg(6)), 0x2a);
 }
@@ -194,17 +194,17 @@ fn detailed_word_store_forwards_contained_signed_and_unsigned_loads() {
         }
         assert_eq!(core.read_register(reg(6)), 0);
         assert!(core
-            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+            .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
             .is_none());
 
         scheduler.run_until_idle_conservative();
         let store = core
-            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+            .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
             .expect("older store should retire first");
         assert_eq!(store.fetch_pc(), Address::new(0x8000));
         assert_eq!(core.read_register(reg(6)), 0);
         let load = core
-            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+            .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
             .expect("contained forwarded load should retire second");
         assert_eq!(load.fetch_pc(), Address::new(0x8004));
         assert_eq!(
@@ -275,17 +275,17 @@ fn detailed_partial_store_load_merges_transport_response_before_retirement() {
     assert_eq!(completed.data(), Some([0x11, 0x5a, 0x33, 0x80].as_slice()));
     assert_eq!(core.read_register(reg(6)), 0);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
 
     scheduler.run_until_idle_conservative();
     let store = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older store should retire first");
     assert_eq!(store.fetch_pc(), Address::new(0x8000));
     assert_eq!(core.read_register(reg(6)), 0);
     let load = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("partially forwarded load should retire second");
     assert_eq!(load.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0xffff_ffff_8033_5a11);
@@ -344,7 +344,7 @@ fn older_store_retry_cancels_issued_partial_overlay_request() {
             && event.kind() == RiscvDataAccessEventKind::Completed
     }));
     let retry = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older store retry should drain before replay");
     assert_eq!(
         retry.data_access_event_kind(),
@@ -367,7 +367,7 @@ fn older_store_retry_cancels_issued_partial_overlay_request() {
     .expect("cancelled partial load should replay through transport");
     scheduler.run_until_idle_conservative();
     assert_eq!(core.read_register(reg(6)), 0);
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should retire");
     assert_eq!(core.read_register(reg(6)), 0x8033_2211);
 }
@@ -493,7 +493,10 @@ fn htm_abort_cancels_forwarded_load_before_or_after_local_completion() {
 
         let state = core.state.lock().expect("riscv core lock");
         assert!(state.outstanding_data.is_empty());
-        assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 0);
+        assert_eq!(
+            state.o3_runtime.pending_live_data_access_retirement_count(),
+            0
+        );
         assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
         drop(state);
         assert_eq!(core.read_register(reg(6)), 0);
@@ -541,17 +544,17 @@ fn younger_disjoint_load_writeback_waits_for_older_store_retirement() {
     }
     assert_eq!(core.read_register(reg(6)), 0);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
 
     scheduler.run_until_idle_conservative();
     let store = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older store should retire first");
     assert_eq!(store.fetch_pc(), Address::new(0x8000));
     assert_eq!(core.read_register(reg(6)), 0);
     let load = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("younger load should retire second");
     assert_eq!(load.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0x63);
@@ -608,11 +611,14 @@ fn older_detailed_scalar_store_failure_replays_younger_cancelled_contained_load(
         .find(|event| event.fetch_pc() == Address::new(0x8004))
         .expect("cancelled younger load event");
     assert_eq!(younger.data_access_event_kind(), None);
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
     drop(state);
 
     let failed = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older failed store should drain before replay");
     assert_eq!(
         failed.data_access_event_kind(),
@@ -635,7 +641,7 @@ fn older_detailed_scalar_store_failure_replays_younger_cancelled_contained_load(
 
     assert_eq!(core.read_register(reg(6)), 0);
     let replayed = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should complete");
     assert_eq!(replayed.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0x63);
@@ -669,7 +675,7 @@ fn older_store_failure_cancels_issued_disjoint_younger_request() {
     assert!(!state.outstanding_data.contains_key(&younger_request));
     assert!(!state.issued_data_for_fetches.contains(&younger_fetch));
     drop(state);
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("failed older store should drain");
     assert!(core.has_unissued_data_access());
 }
@@ -729,7 +735,7 @@ fn older_detailed_scalar_store_retry_replays_younger_cancelled_contained_load() 
         .outstanding_data
         .is_empty());
     let retry = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older store retry should drain before replay");
     assert_eq!(
         retry.data_access_event_kind(),
@@ -751,7 +757,7 @@ fn older_detailed_scalar_store_retry_replays_younger_cancelled_contained_load() 
     .unwrap();
     scheduler.run_until_idle_conservative();
     assert_eq!(core.read_register(reg(6)), 0);
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should complete");
     assert_eq!(core.read_register(reg(6)), 0x63);
 }

@@ -59,7 +59,7 @@ pub(super) fn record_o3_data_access_outcome(
             .younger_live_scalar_memory_requests(access.fetch_request, access.request)
     })
     .unwrap_or_default();
-    let completed_live_scalar_memory = if let Some(forwarding_plan) = forwarding_plan {
+    let completed_live_data_access = if let Some(forwarding_plan) = forwarding_plan {
         match load_data {
             Some(data) => state.o3_runtime.complete_live_scalar_memory_forwarding(
                 &execution,
@@ -72,7 +72,7 @@ pub(super) fn record_o3_data_access_outcome(
             None => false,
         }
     } else {
-        state.o3_runtime.complete_live_scalar_memory_response(
+        state.o3_runtime.complete_live_data_access_response(
             &execution,
             access.request,
             response_tick,
@@ -81,7 +81,7 @@ pub(super) fn record_o3_data_access_outcome(
         )?
     };
     state.refresh_o3_writeback_wake(response_tick);
-    if completed_live_scalar_memory {
+    if completed_live_data_access {
         state.buffered_o3_stores.remove(&access.request);
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);

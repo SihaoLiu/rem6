@@ -797,7 +797,7 @@ impl ScalarIssueFixture {
         runtime.set_issue_width(issue_width);
         runtime.set_scalar_memory_window_limit(4);
         let load = scalar_load_event();
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 20));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 20));
         let younger = match case {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],

@@ -390,16 +390,16 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
     let oldest_request = memory_request(20);
     let boundary_request = memory_request(21);
     let discarded_request = memory_request(22);
-    assert!(runtime.stage_live_scalar_memory_issue(&oldest, oldest_request, 31));
-    assert!(runtime.stage_live_scalar_memory_issue(&boundary, boundary_request, 32));
-    assert!(runtime.stage_live_scalar_memory_issue(&discarded, discarded_request, 33));
-    let oldest_sequence = runtime.live_scalar_memories[0].sequence;
-    let discarded_sequence = runtime.live_scalar_memories[2].sequence;
+    assert!(runtime.stage_live_data_access_issue(&oldest, oldest_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&boundary, boundary_request, 32));
+    assert!(runtime.stage_live_data_access_issue(&discarded, discarded_request, 33));
+    let oldest_sequence = runtime.live_data_accesses[0].sequence;
+    let discarded_sequence = runtime.live_data_accesses[2].sequence;
 
     let mut oldest_completed = oldest.clone();
     oldest_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &oldest_completed,
             oldest_request,
             39,
@@ -410,7 +410,7 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
     let mut discarded_completed = discarded.clone();
     discarded_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &discarded_completed,
             discarded_request,
             40,
@@ -419,27 +419,27 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
         )
         .unwrap());
     assert_eq!(
-        runtime.live_scalar_memories[0].admitted_writeback_tick,
+        runtime.live_data_accesses[0].admitted_writeback_tick,
         Some(40)
     );
     assert_eq!(
-        runtime.live_scalar_memories[2].admitted_writeback_tick,
+        runtime.live_data_accesses[2].admitted_writeback_tick,
         Some(41)
     );
 
     let mut boundary_outcome = boundary.clone();
     boundary_outcome.set_data_access_event_kind(kind);
     assert!(runtime
-        .complete_live_scalar_memory_response(&boundary_outcome, boundary_request, 40, 8, None,)
+        .complete_live_data_access_response(&boundary_outcome, boundary_request, 40, 8, None,)
         .unwrap());
 
-    assert_eq!(runtime.live_scalar_memories.len(), 2);
+    assert_eq!(runtime.live_data_accesses.len(), 2);
     assert_eq!(
-        runtime.live_scalar_memories[0].admitted_writeback_tick,
+        runtime.live_data_accesses[0].admitted_writeback_tick,
         Some(40)
     );
     assert!(runtime
-        .live_scalar_memories
+        .live_data_accesses
         .iter()
         .all(|live| live.sequence != discarded_sequence));
     assert_eq!(

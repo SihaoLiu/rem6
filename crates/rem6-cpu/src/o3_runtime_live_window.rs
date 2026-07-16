@@ -84,7 +84,7 @@ impl O3RuntimeState {
         current_ready_tick: u64,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) -> Option<u64> {
-        if is_deferred_o3_scalar_memory_instruction(current) {
+        if is_deferred_o3_data_instruction(current) {
             return None;
         }
         let head_sequence =
@@ -95,7 +95,7 @@ impl O3RuntimeState {
             self.live_control_window_sequences.insert(sequence);
         }
         for (pc, instruction) in younger {
-            if is_deferred_o3_scalar_memory_instruction(instruction) {
+            if is_deferred_o3_data_instruction(instruction) {
                 break;
             }
             let Some(sequence) = self.stage_or_existing_live_instruction(pc, instruction, 0) else {
@@ -129,7 +129,7 @@ impl O3RuntimeState {
             return 0;
         };
         let live_sequence = self
-            .live_scalar_memories
+            .live_data_accesses
             .last()
             .expect("scalar memory integer window has a live tail")
             .sequence;
@@ -252,7 +252,7 @@ impl O3RuntimeState {
             self.record_untrusted_live_retirement(execution, entry.sequence(), retire_tick);
             return;
         }
-        if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
+        if is_deferred_o3_data_access(execution.execution().memory_access()) {
             let boundary_sequence = entry.sequence();
             self.snapshot.reorder_buffer.drain(index..);
             self.discard_future_writeback_from_sequence(boundary_sequence, retire_tick);
@@ -360,7 +360,7 @@ impl O3RuntimeState {
 
     pub(crate) fn discard_live_staged_instructions(&mut self) {
         self.discard_all_writeback_reservations();
-        self.discard_live_scalar_memory_lifecycle();
+        self.discard_live_data_access_lifecycle();
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -376,7 +376,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
-        self.discard_live_scalar_memory_lifecycle_at(now);
+        self.discard_live_data_access_lifecycle_at(now);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -414,7 +414,7 @@ impl O3RuntimeState {
         if self.live_scalar_memory_younger_sequences.is_empty() {
             return None;
         }
-        let tail = self.live_scalar_memories.last()?;
+        let tail = self.live_data_accesses.last()?;
         let younger_pcs = self
             .snapshot
             .reorder_buffer
@@ -768,7 +768,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         let load = scalar_load_event();
         let independent = addi(5, 0);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -787,7 +787,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         let load = scalar_load_event();
         let dependent = addi(5, 4);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -808,7 +808,7 @@ mod tests {
         let first = addi(5, 0);
         let second = addi(6, 5);
         let third = add(7, 5, 6);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -839,7 +839,7 @@ mod tests {
             rs2: Register::new(2).unwrap(),
             offset: Immediate::new(-4),
         };
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         let staged = runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -860,7 +860,7 @@ mod tests {
         runtime.set_scalar_memory_window_limit(4);
         let load = scalar_load_event();
         let branch = RiscvInstruction::decode(0x00b2_0463).unwrap();
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -897,7 +897,7 @@ mod tests {
         let first = addi(5, 0);
         let second = addi(6, 5);
         let third = add(7, 5, 6);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
             [
@@ -964,7 +964,7 @@ mod tests {
         let load = scalar_load_event();
         let independent = addi(5, 0);
         let dependent = addi(6, 4);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
             [
@@ -987,7 +987,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         let load = scalar_load_event();
         let dependent = addi(5, 4);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
             [(Address::new(0x8004), dependent)],
@@ -999,7 +999,7 @@ mod tests {
         let mut completed = load.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(runtime
-            .complete_live_scalar_memory_response(
+            .complete_live_data_access_response(
                 &completed,
                 request(20),
                 41,
@@ -1011,11 +1011,11 @@ mod tests {
         assert!(runtime
             .live_speculative_issue_candidate(Address::new(0x8004), dependent)
             .is_none());
-        assert!(runtime.take_ready_live_scalar_memory_event(41).is_none());
+        assert!(runtime.take_ready_live_data_access_event(41).is_none());
         assert!(runtime
             .live_speculative_issue_candidate(Address::new(0x8004), dependent)
             .is_none());
-        assert!(runtime.take_ready_live_scalar_memory_event(42).is_some());
+        assert!(runtime.take_ready_live_data_access_event(42).is_some());
 
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), dependent)
@@ -1034,8 +1034,8 @@ mod tests {
         let store = scalar_store_event();
         let load = scalar_load_event();
         let dependent = addi(5, 4);
-        assert!(runtime.stage_live_scalar_memory_issue(&store, request(19), 30));
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&store, request(19), 30));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -1055,7 +1055,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         runtime.set_scalar_memory_window_limit(4);
         let load = scalar_load_event();
-        assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
             [

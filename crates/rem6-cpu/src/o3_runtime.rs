@@ -80,8 +80,8 @@ use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
 use o3_runtime_memory::{
-    is_deferred_o3_scalar_memory_access, is_deferred_o3_scalar_memory_instruction,
-    is_terminal_o3_scalar_memory_event, O3LiveScalarMemory, O3LiveScalarMemoryOutcome,
+    is_deferred_o3_data_access, is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
+    O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
@@ -219,8 +219,8 @@ pub struct O3RuntimeState {
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
-    deferred_scalar_memory_execution: Option<MemoryRequestId>,
-    live_scalar_memories: Vec<O3LiveScalarMemory>,
+    deferred_live_data_access_execution: Option<MemoryRequestId>,
+    live_data_accesses: Vec<O3LiveDataAccess>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
     scalar_memory_window_limit_explicit: bool,
@@ -263,8 +263,8 @@ impl O3RuntimeState {
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
-        self.deferred_scalar_memory_execution = None;
-        self.live_scalar_memories.clear();
+        self.deferred_live_data_access_execution = None;
+        self.live_data_accesses.clear();
         self.live_scalar_memory_younger_sequences.clear();
         self.last_live_commit_tick = None;
         Ok(())
@@ -435,24 +435,23 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
         trace_enabled: bool,
     ) {
-        let live_scalar_memory = self.consume_live_scalar_memory_retirement(execution);
-        if live_scalar_memory.is_none() && is_terminal_o3_scalar_memory_event(execution) {
+        let live_data_access = self.consume_live_data_access_retirement(execution);
+        if live_data_access.is_none() && is_terminal_o3_data_access_event(execution) {
             return;
         }
-        if live_scalar_memory.as_ref().is_some_and(|live| {
+        if live_data_access.as_ref().is_some_and(|live| {
             matches!(
                 live.outcome,
-                O3LiveScalarMemoryOutcome::Retried | O3LiveScalarMemoryOutcome::Failed
+                O3LiveDataAccessOutcome::Retried | O3LiveDataAccessOutcome::Failed
             )
         }) {
             return;
         }
-        let completed_live_scalar_memory = live_scalar_memory
+        let completed_live_data_access = live_data_access
             .as_ref()
-            .filter(|live| live.outcome == O3LiveScalarMemoryOutcome::Completed);
-        let mut trace_record = self.record_runtime_state(execution, completed_live_scalar_memory);
-        if let Some(tick) =
-            completed_live_scalar_memory.and_then(|live| live.admitted_writeback_tick)
+            .filter(|live| live.outcome == O3LiveDataAccessOutcome::Completed);
+        let mut trace_record = self.record_runtime_state(execution, completed_live_data_access);
+        if let Some(tick) = completed_live_data_access.and_then(|live| live.admitted_writeback_tick)
         {
             trace_record.set_admitted_writeback_tick(tick);
         }
@@ -461,7 +460,7 @@ impl O3RuntimeState {
         let observation = self.record_store_forwarding_window(
             execution,
             trace_enabled.then_some(trace_record.sequence()),
-            completed_live_scalar_memory.and_then(|live| live.forwarding_plan),
+            completed_live_data_access.and_then(|live| live.forwarding_plan),
         );
         trace_record.set_store_load_forwarding(
             observation.candidate,
@@ -474,7 +473,7 @@ impl O3RuntimeState {
             observation.partial,
             observation.forwarded_bytes,
         );
-        if completed_live_scalar_memory.is_none() {
+        if completed_live_data_access.is_none() {
             self.record_pending_data_access(
                 execution,
                 trace_enabled.then_some(trace_record.sequence()),
@@ -483,7 +482,7 @@ impl O3RuntimeState {
         if trace_enabled {
             self.trace_records.push(trace_record);
         }
-        if let Some(live) = completed_live_scalar_memory {
+        if let Some(live) = completed_live_data_access {
             if let (Some(access), Some(data)) = (
                 execution.execution().memory_access(),
                 live.load_data.as_deref(),
@@ -630,8 +629,8 @@ impl Default for O3RuntimeState {
             live_serializing_control_sequences: BTreeSet::new(),
             live_staged_fetch_identities: BTreeMap::new(),
             invalidated_live_staged_fetch_identities: BTreeMap::new(),
-            deferred_scalar_memory_execution: None,
-            live_scalar_memories: Vec::new(),
+            deferred_live_data_access_execution: None,
+            live_data_accesses: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
             scalar_memory_window_limit_explicit: false,
@@ -1074,7 +1073,7 @@ impl crate::RiscvCore {
         });
     }
 
-    pub fn record_ready_o3_scalar_memory_event_with_trace(
+    pub fn record_ready_o3_data_access_event_with_trace(
         &self,
         current_tick: u64,
         trace_enabled: bool,
@@ -1083,14 +1082,13 @@ impl crate::RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         if !state
             .o3_runtime
-            .live_scalar_memory_publication_is_admitted(current_tick)
+            .live_data_access_publication_is_admitted(current_tick)
         {
             return None;
         }
         let mut wake_tick = current_tick;
-        if let Some((fetch_request, issue_tick, publication_tick)) = state
-            .o3_runtime
-            .ready_live_scalar_memory_completion_timing()
+        if let Some((fetch_request, issue_tick, publication_tick)) =
+            state.o3_runtime.ready_live_data_access_completion_timing()
         {
             wake_tick = publication_tick;
             let execution = crate::riscv_data_issue::record_deferred_o3_data_retire_cycle(
@@ -1099,18 +1097,18 @@ impl crate::RiscvCore {
                 issue_tick,
                 publication_tick,
             )
-            .expect("completed O3 scalar memory has a matching execution event");
+            .expect("completed O3 data access has a matching execution event");
             assert!(
                 state
                     .o3_runtime
-                    .replace_ready_live_scalar_memory_execution(&execution),
-                "completed O3 scalar memory accepts its ordered pipeline retirement"
+                    .replace_ready_live_data_access_execution(&execution),
+                "completed O3 data access accepts its ordered pipeline retirement"
             );
         }
-        let writeback = state.o3_runtime.ready_live_scalar_load_writeback();
+        let writeback = state.o3_runtime.ready_live_memory_result_completion();
         let execution = state
             .o3_runtime
-            .take_ready_live_scalar_memory_event(current_tick)?;
+            .take_ready_live_data_access_event(current_tick)?;
         state.wake_ready_o3_scalar_memory_younger_window(wake_tick, &fetch_events);
         state
             .o3_runtime

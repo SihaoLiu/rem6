@@ -320,10 +320,10 @@ impl RiscvCore {
             if state.o3_runtime.has_live_retirement_authority() {
                 return;
             }
-            if state.o3_runtime.has_live_scalar_memory_window() {
+            if state.o3_runtime.has_live_data_access_window() {
                 state.o3_runtime.discard_live_retire_window();
             } else {
-                state.o3_runtime.discard_live_scalar_memory_lifecycle();
+                state.o3_runtime.discard_live_data_access_lifecycle();
                 state.o3_runtime.discard_live_speculative_executions();
             }
             state.o3_writeback_wake.clear();
@@ -355,7 +355,7 @@ impl RiscvCore {
     pub(crate) fn live_retire_gate_blocks_new_work(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.blocks_new_work()
-            || state.o3_runtime.has_pending_scalar_memory_retirement()
+            || state.o3_runtime.has_pending_live_data_access_retirement()
     }
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {

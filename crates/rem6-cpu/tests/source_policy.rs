@@ -338,13 +338,13 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
 
     assert!(
         root.contains("mod o3_runtime_memory;"),
-        "src/o3_runtime.rs must delegate scalar memory lifecycle state to src/o3_runtime_memory.rs"
+        "src/o3_runtime.rs must delegate live data-access lifecycle state to src/o3_runtime_memory.rs"
     );
 
     let module_path = crate_dir.join("src/o3_runtime_memory.rs");
     assert!(
         module_path.exists(),
-        "scalar O3 memory lifecycle code belongs in src/o3_runtime_memory.rs"
+        "live data-access lifecycle code belongs in src/o3_runtime_memory.rs"
     );
     let module = fs::read_to_string(module_path).unwrap();
     let lines = module.lines().count();
@@ -354,11 +354,11 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
     );
 
     for anchor in [
-        "struct O3LiveScalarMemory",
-        "fn stage_live_scalar_memory_issue",
-        "fn complete_live_scalar_memory_response",
-        "fn take_ready_live_scalar_memory_event",
-        "fn consume_live_scalar_memory_retirement",
+        "struct O3LiveDataAccess",
+        "fn stage_live_data_access_issue",
+        "fn complete_live_data_access_response",
+        "fn take_ready_live_data_access_event",
+        "fn consume_live_data_access_retirement",
     ] {
         assert!(
             module.contains(anchor),
@@ -366,9 +366,92 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
         );
         assert!(
             !root.contains(anchor),
-            "src/o3_runtime.rs still owns scalar memory lifecycle `{anchor}`"
+            "src/o3_runtime.rs still owns live data-access lifecycle `{anchor}`"
         );
     }
+}
+
+#[test]
+fn generic_o3_live_data_owner_uses_data_access_names() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let stale = [
+        "O3LiveScalarMemory",
+        "O3LiveScalarMemoryOutcome",
+        "live_scalar_memories",
+        "deferred_scalar_memory_execution",
+        "is_deferred_o3_scalar_memory_access",
+        "is_deferred_o3_scalar_memory_instruction",
+        "is_terminal_o3_scalar_memory_event",
+        "stage_live_scalar_memory_issue",
+        "complete_live_scalar_memory_response",
+        "take_ready_live_scalar_memory_event",
+        "consume_live_scalar_memory_retirement",
+        "record_ready_o3_scalar_memory_event_with_trace",
+        "scalar_memory_lifecycle_is_quiescent",
+        "has_pending_scalar_memory_retirement",
+        "pending_scalar_memory_retirement_count",
+        "owns_pending_scalar_memory_retirement",
+        "defer_scalar_memory_execution",
+        "defer_scalar_memory_if_detailed",
+        "abort_deferred_scalar_memory_execution",
+        "clear_deferred_scalar_memory_execution",
+        "has_live_scalar_memory",
+        "has_live_scalar_memory_window",
+        "has_ready_live_scalar_memory_event",
+        "earliest_unpublished_scalar_load_writeback_tick",
+        "ready_live_scalar_memory_event_kind",
+        "ready_live_scalar_memory_completion_timing",
+        "replace_ready_live_scalar_memory_execution",
+        "live_scalar_memory_publication_is_admitted",
+        "ready_live_scalar_load_writeback",
+        "discard_live_scalar_memory_lifecycle",
+        "remove_live_scalar_memory_rows",
+        "o3_scalar_memory_lifecycle_is_quiescent",
+        "has_pending_o3_scalar_memory_retirement",
+        "pending_o3_scalar_memory_retirement_count",
+        "owns_pending_o3_scalar_memory_retirement",
+        "ready_o3_scalar_memory_event_kind",
+        "clear_deferred_o3_scalar_memory_execution",
+        "deferred_o3_scalar_memory_retirement",
+        "completed_live_scalar_memory",
+        "live_scalar_memory: Option<&O3LiveDataAccess>",
+        "let live_scalar_memory",
+        "completed O3 scalar memory",
+        "completed live scalar memory",
+        "taken live scalar memory",
+        "pending_retirement_tracks_deferred_and_live_scalar_memory",
+        "stages_two_live_scalar_memory_rows",
+        "rejects_live_scalar_memory",
+    ];
+    let rem6_system_dir = crate_dir
+        .parent()
+        .expect("rem6-cpu has a workspace crates parent")
+        .join("rem6-system");
+    let roots = [
+        crate_dir.join("src"),
+        crate_dir.join("tests"),
+        rem6_system_dir.join("src"),
+        rem6_system_dir.join("tests"),
+    ];
+    let policy_path = crate_dir.join("tests/source_policy.rs");
+    let offenders = roots
+        .into_iter()
+        .flat_map(|root| rust_source_files(&root))
+        .filter(|path| path != &policy_path)
+        .filter_map(|path| {
+            let source = fs::read_to_string(&path).unwrap();
+            let names = stale
+                .iter()
+                .filter(|name| source.contains(**name))
+                .copied()
+                .collect::<Vec<_>>();
+            (!names.is_empty()).then_some((path, names))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        offenders.is_empty(),
+        "stale generic live-data names: {offenders:?}"
+    );
 }
 
 #[test]

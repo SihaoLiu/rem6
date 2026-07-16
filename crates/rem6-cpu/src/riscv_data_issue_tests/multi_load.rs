@@ -57,7 +57,7 @@ fn three_load_responses_write_back_in_program_order() {
     );
     for (pc, register, value) in [(0x8000, 16, 0x2a), (0x8004, 17, 0x63), (0x8008, 18, 0x77)] {
         let retired = core
-            .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+            .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
             .expect("completed scalar load should retire in program order");
         assert_eq!(retired.fetch_pc(), Address::new(pc));
         assert_eq!(core.read_register(reg(register)), value);
@@ -75,7 +75,10 @@ fn oldest_load_failure_cancels_two_younger_requests() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.outstanding_data.is_empty());
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     assert!(!state.issued_data_for_fetches.contains(&requests[1].0));
@@ -93,7 +96,10 @@ fn oldest_of_four_loads_failure_cancels_three_younger_requests() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.outstanding_data.is_empty());
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     for (fetch, _) in &requests[1..] {
@@ -113,7 +119,10 @@ fn middle_load_failure_preserves_older_request_and_cancels_only_third() {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 1);
     assert!(state.outstanding_data.contains_key(&requests[0].1));
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 2);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        2
+    );
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
     assert!(state.issued_data_for_fetches.contains(&requests[1].0));
@@ -133,7 +142,10 @@ fn third_of_four_loads_failure_preserves_two_older_requests_and_cancels_fourth()
     assert_eq!(state.outstanding_data.len(), 2);
     assert!(state.outstanding_data.contains_key(&requests[0].1));
     assert!(state.outstanding_data.contains_key(&requests[1].1));
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 3);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        3
+    );
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 2);
     assert!(state.issued_data_for_fetches.contains(&requests[2].0));
@@ -153,7 +165,10 @@ fn htm_abort_cancels_three_outstanding_scalar_loads() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.outstanding_data.is_empty());
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 0);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        0
+    );
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
 }
@@ -171,7 +186,10 @@ fn htm_abort_cancels_four_outstanding_scalar_loads() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.outstanding_data.is_empty());
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 0);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        0
+    );
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
 }

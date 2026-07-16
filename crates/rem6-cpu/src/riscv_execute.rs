@@ -70,7 +70,7 @@ impl RiscvCore {
         mut gate_scheduler: Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
         let state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some() || state.o3_runtime.has_ready_live_scalar_memory_event() {
+        if state.pending_trap.is_some() || state.o3_runtime.has_ready_live_data_access_event() {
             return Ok(None);
         }
         drop(state);
@@ -330,7 +330,7 @@ impl RiscvCore {
             let detailed = state.live_retire_gate.detailed_policy_enabled();
             assert!(state
                 .o3_runtime
-                .defer_scalar_memory_if_detailed(detailed, &event));
+                .defer_live_data_access_if_detailed(detailed, &event));
         }
         if redirects_fetch {
             if event.execution().trap().is_none() {

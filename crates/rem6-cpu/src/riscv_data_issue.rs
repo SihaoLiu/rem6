@@ -250,7 +250,7 @@ impl RiscvCore {
     ) -> Result<T, RiscvCpuError> {
         let result = attempt();
         if result.is_err() {
-            self.clear_deferred_o3_scalar_memory_execution();
+            self.clear_deferred_o3_live_data_access_execution();
         }
         result
     }
@@ -549,7 +549,7 @@ impl RiscvCore {
                 && (detailed
                     || state
                         .o3_runtime
-                        .owns_pending_scalar_memory_retirement(issue.fetch_request));
+                        .owns_pending_live_data_access_retirement(issue.fetch_request));
             let o3_scalar_load_younger_window = o3_scalar_memory
                 && matches!(issue.access, MemoryAccessKind::Load { .. })
                 && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
@@ -587,7 +587,7 @@ impl RiscvCore {
             let execution = execution
                 .as_ref()
                 .expect("issued scalar data access has a matching execution event");
-            let staged = state.o3_runtime.stage_live_scalar_memory_issue(
+            let staged = state.o3_runtime.stage_live_data_access_issue(
                 execution,
                 issue.request_id,
                 issue.tick,
@@ -733,7 +733,7 @@ impl RiscvCore {
                             .as_mut()
                             .is_some_and(|data| plan.overlay_response_data(data))
                 });
-                let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                let deferred_retirement = deferred_o3_live_data_access_retirement(&state, &access);
                 let completed_event = if deferred_retirement {
                     cloned_data_access_event_with_kind(
                         &state,
@@ -910,7 +910,7 @@ impl RiscvCore {
         match completion.response() {
             Ok(response) => {
                 let data = response.data().map(ToOwned::to_owned);
-                let deferred_retirement = deferred_o3_scalar_memory_retirement(&state, &access);
+                let deferred_retirement = deferred_o3_live_data_access_retirement(&state, &access);
                 let completed_event = if deferred_retirement {
                     cloned_data_access_event_with_kind(
                         &state,
@@ -1082,15 +1082,18 @@ fn record_data_retire_cycle_for_fetch(
     Some(state.events[index].clone())
 }
 
-fn deferred_o3_scalar_memory_retirement(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
+fn deferred_o3_live_data_access_retirement(
+    state: &RiscvCoreState,
+    access: &IssuedDataAccess,
+) -> bool {
     state
         .o3_runtime
-        .owns_pending_scalar_memory_retirement(access.fetch_request)
+        .owns_pending_live_data_access_retirement(access.fetch_request)
 }
 
 fn deferred_o3_scalar_load_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
     matches!(access.access, MemoryAccessKind::Load { .. })
-        && deferred_o3_scalar_memory_retirement(state, access)
+        && deferred_o3_live_data_access_retirement(state, access)
 }
 
 fn retag_existing_fetch_wait_cycles_for_data_access(

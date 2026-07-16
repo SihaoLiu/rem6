@@ -46,7 +46,7 @@ impl RiscvCore {
         if state.pending_trap.is_some() || state.pending_fetch_prefix.is_some() {
             return None;
         }
-        if state.o3_runtime.has_ready_live_scalar_memory_event() {
+        if state.o3_runtime.has_ready_live_data_access_event() {
             return None;
         }
         if hart_has_enabled_pending_interrupt(&state.hart) {

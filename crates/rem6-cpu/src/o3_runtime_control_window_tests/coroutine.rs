@@ -9,7 +9,7 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
     let call = jal_link(1, 8);
     let coroutine = jalr_link(5, 1);
     let descendant = addi(8, 5, 0);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -192,7 +192,7 @@ fn same_window_coroutine_round_trip_serializes_three_controls() {
     let call = jal_link(1, 8);
     let coroutine = jalr_link(5, 1);
     let return_jump = jalr_return(5);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -344,7 +344,7 @@ fn same_window_reverse_coroutine_forwards_both_links_and_discards_descendant() {
     let call = jalr_link(5, 11);
     let coroutine = jalr_link(1, 5);
     let descendant = addi(8, 1, 0);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),

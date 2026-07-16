@@ -68,7 +68,10 @@ fn failed_middle_load_cancels_only_the_store_led_younger_request() {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 1);
     assert!(state.outstanding_data.contains_key(&requests[0].1));
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 2);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        2
+    );
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
     assert!(state.issued_data_for_fetches.contains(&requests[1].0));
@@ -86,7 +89,10 @@ fn failed_leading_store_cancels_both_younger_load_requests() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.outstanding_data.is_empty());
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     assert!(!state.issued_data_for_fetches.contains(&requests[1].0));

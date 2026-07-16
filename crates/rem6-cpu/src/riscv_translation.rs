@@ -614,7 +614,7 @@ impl RiscvCoreState {
                 .map(|access| (event, fetch_request, access.clone()))
         });
         let (event, fetch_request, access) = candidate?;
-        if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_scalar_memory() {
+        if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_data_access() {
             return Some((fetch_request, access));
         }
         (self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
@@ -1077,8 +1077,9 @@ impl RiscvCore {
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
         let inherited_o3_retirement =
             !detailed_o3_fetch && self.o3_retirement_suppresses_normal_pipeline();
-        let pending_o3_scalar_memory_retirement = self.has_pending_o3_scalar_memory_retirement();
-        if !detailed_o3_fetch && pending_o3_scalar_memory_retirement {
+        let pending_o3_live_data_access_retirement =
+            self.has_pending_o3_live_data_access_retirement();
+        if !detailed_o3_fetch && pending_o3_live_data_access_retirement {
             return Ok(None);
         }
         let fetch_admission = if detailed_o3_fetch {

@@ -268,7 +268,7 @@ fn detailed_scalar_memory_blocks_execution(
     raw: u32,
 ) -> Result<bool, RiscvCpuError> {
     if !state.live_retire_gate.detailed_policy_enabled()
-        || !state.o3_runtime.has_pending_scalar_memory_retirement()
+        || !state.o3_runtime.has_pending_live_data_access_retirement()
     {
         return Ok(false);
     }
@@ -377,7 +377,7 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     if !state.live_retire_gate.detailed_policy_enabled()
         && !state
             .o3_runtime
-            .owns_pending_scalar_memory_retirement(execution.fetch().request_id())
+            .owns_pending_live_data_access_retirement(execution.fetch().request_id())
     {
         return;
     }
@@ -1034,7 +1034,7 @@ mod tests {
         state.o3_runtime.set_scalar_memory_window_limit(4);
         assert!(state
             .o3_runtime
-            .stage_live_scalar_memory_issue(&execution, request(7, 20), 31));
+            .stage_live_data_access_issue(&execution, request(7, 20), 31));
 
         stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
 
@@ -1096,7 +1096,7 @@ mod tests {
         state.branch_speculations.insert(11, prediction.id());
         assert!(state
             .o3_runtime
-            .stage_live_scalar_memory_issue(&execution, request(7, 20), 31));
+            .stage_live_data_access_issue(&execution, request(7, 20), 31));
 
         stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
 

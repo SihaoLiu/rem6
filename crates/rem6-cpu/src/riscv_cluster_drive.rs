@@ -419,7 +419,7 @@ pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {
         return false;
     }
     core.detailed_o3_window_prefers_fetch_ahead()
-        || (!core.has_pending_o3_scalar_memory_retirement()
+        || (!core.has_pending_o3_live_data_access_retirement()
             && core.in_order_fetch_admission().allows_fetch())
 }
 
@@ -440,7 +440,7 @@ pub(crate) fn push_prepared_pipeline_cycle_drive_event(
     if core.detailed_o3_window_prefers_fetch_ahead() {
         return Ok(false);
     }
-    if core.has_pending_o3_scalar_memory_retirement() {
+    if core.has_pending_o3_live_data_access_retirement() {
         return Ok(true);
     }
     match core
@@ -482,7 +482,7 @@ pub(crate) fn push_pipeline_cycle_drive_event(
     if core.detailed_o3_window_prefers_fetch_ahead() {
         return Ok(false);
     }
-    if core.has_pending_o3_scalar_memory_retirement() {
+    if core.has_pending_o3_live_data_access_retirement() {
         return Ok(true);
     }
     match core

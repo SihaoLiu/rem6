@@ -1,4 +1,4 @@
-use super::{O3LiveScalarMemoryOutcome, O3RuntimeState};
+use super::{O3LiveDataAccessOutcome, O3RuntimeState};
 use rem6_isa_riscv::MemoryAccessKind;
 
 use crate::riscv_execution_mode_handoff::{
@@ -15,18 +15,19 @@ impl O3RuntimeState {
         Vec<RiscvCompletedPartialScalarLoadHandoff>,
         usize,
     )> {
-        if self.deferred_scalar_memory_execution.is_some() || self.live_scalar_memories.is_empty() {
+        if self.deferred_live_data_access_execution.is_some() || self.live_data_accesses.is_empty()
+        {
             return None;
         }
         let mut resident_rows = Vec::new();
         let mut forwarded_rows = Vec::new();
         let mut completed_partial_rows = Vec::new();
-        for live in &self.live_scalar_memories {
+        for live in &self.live_data_accesses {
             let trace_sequence = self
                 .pending_data_accesses
                 .get(&live.fetch_request)
                 .and_then(|pending| pending.trace_sequence);
-            if live.outcome == O3LiveScalarMemoryOutcome::Resident
+            if live.outcome == O3LiveDataAccessOutcome::Resident
                 && !live.event_taken
                 && live.response_tick.is_none()
                 && live.latency_ticks.is_none()
@@ -50,7 +51,7 @@ impl O3RuntimeState {
                 continue;
             }
             let forwarding_plan = live.forwarding_plan?;
-            if live.outcome != O3LiveScalarMemoryOutcome::Completed
+            if live.outcome != O3LiveDataAccessOutcome::Completed
                 || live.event_taken
                 || live.commit_tick.is_some()
                 || !matches!(
@@ -122,7 +123,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         let store = scalar_store_event(0x8000, 10, 0x9001);
         let load = scalar_load_event(0x8004, 11, 0x9000);
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
         let plan = runtime
             .scalar_load_forwarding_plan(
                 load.instruction(),
@@ -130,7 +131,7 @@ mod tests {
             )
             .expect("byte store should partially overlay the word load");
         assert!(plan.is_partial());
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
         let mut completed = load.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(runtime

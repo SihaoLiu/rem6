@@ -4,7 +4,7 @@ use super::O3RuntimeState;
 
 impl O3RuntimeState {
     pub(crate) fn has_live_retirement_authority(&self) -> bool {
-        self.has_pending_scalar_memory_retirement()
+        self.has_pending_live_data_access_retirement()
             || self
                 .snapshot
                 .reorder_buffer
@@ -30,13 +30,13 @@ impl O3RuntimeState {
                     .is_some()
             })
             || self
-                .live_scalar_memories
+                .live_data_accesses
                 .iter()
                 .any(|live| live.admitted_writeback_tick.is_some())
     }
 
     pub(crate) fn owns_pending_retirement_authority(&self, fetch_request: MemoryRequestId) -> bool {
-        self.owns_pending_scalar_memory_retirement(fetch_request)
+        self.owns_pending_live_data_access_retirement(fetch_request)
             || self
                 .live_retired_instructions
                 .iter()

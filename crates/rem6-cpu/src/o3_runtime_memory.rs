@@ -2,7 +2,7 @@ use super::o3_runtime_writeback::O3LiveWritebackReady;
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct O3LiveScalarMemory {
+pub(super) struct O3LiveDataAccess {
     pub(super) fetch_request: MemoryRequestId,
     pub(super) data_request: MemoryRequestId,
     pub(super) execution: RiscvCpuExecutionEvent,
@@ -18,33 +18,33 @@ pub(super) struct O3LiveScalarMemory {
     pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
     pub(super) forwarding_plan: Option<O3StoreLoadForwardingPlan>,
-    pub(super) outcome: O3LiveScalarMemoryOutcome,
+    pub(super) outcome: O3LiveDataAccessOutcome,
     pub(super) event_taken: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum O3LiveScalarMemoryOutcome {
+pub(super) enum O3LiveDataAccessOutcome {
     Resident,
     Completed,
     Retried,
     Failed,
 }
 
-pub(super) fn is_deferred_o3_scalar_memory_access(access: Option<&MemoryAccessKind>) -> bool {
+pub(super) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
     matches!(
         access,
         Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
     )
 }
 
-pub(super) fn is_deferred_o3_scalar_memory_instruction(instruction: RiscvInstruction) -> bool {
+pub(super) fn is_deferred_o3_data_instruction(instruction: RiscvInstruction) -> bool {
     matches!(
         instruction,
         RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
     )
 }
 
-pub(super) fn is_terminal_o3_scalar_memory_event(execution: &RiscvCpuExecutionEvent) -> bool {
+pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEvent) -> bool {
     execution.is_scalar_memory_access()
         && matches!(
             execution.data_access_event_kind(),
@@ -57,67 +57,66 @@ pub(super) fn is_terminal_o3_scalar_memory_event(execution: &RiscvCpuExecutionEv
 }
 
 impl O3RuntimeState {
-    pub(crate) fn scalar_memory_lifecycle_is_quiescent(&self) -> bool {
-        self.deferred_scalar_memory_execution.is_none()
-            && self.live_scalar_memories.is_empty()
+    pub(crate) fn live_data_access_lifecycle_is_quiescent(&self) -> bool {
+        self.deferred_live_data_access_execution.is_none()
+            && self.live_data_accesses.is_empty()
             && self.live_scalar_memory_younger_sequences.is_empty()
     }
 
-    pub(crate) fn has_pending_scalar_memory_retirement(&self) -> bool {
-        self.pending_scalar_memory_retirement_count() > 0
+    pub(crate) fn has_pending_live_data_access_retirement(&self) -> bool {
+        self.pending_live_data_access_retirement_count() > 0
     }
 
-    pub(crate) fn pending_scalar_memory_retirement_count(&self) -> usize {
-        self.live_scalar_memories.len()
-            + usize::from(self.deferred_scalar_memory_execution.is_some())
+    pub(crate) fn pending_live_data_access_retirement_count(&self) -> usize {
+        self.live_data_accesses.len()
+            + usize::from(self.deferred_live_data_access_execution.is_some())
     }
 
-    pub(crate) fn owns_pending_scalar_memory_retirement(
+    pub(crate) fn owns_pending_live_data_access_retirement(
         &self,
         fetch_request: MemoryRequestId,
     ) -> bool {
-        self.deferred_scalar_memory_execution == Some(fetch_request)
+        self.deferred_live_data_access_execution == Some(fetch_request)
             || self
-                .live_scalar_memories
+                .live_data_accesses
                 .iter()
                 .any(|live| live.fetch_request == fetch_request)
     }
 
-    pub(crate) fn has_live_scalar_memory(&self) -> bool {
-        !self.live_scalar_memories.is_empty()
+    pub(crate) fn has_live_data_access(&self) -> bool {
+        !self.live_data_accesses.is_empty()
     }
 
-    pub(crate) fn has_live_scalar_memory_window(&self) -> bool {
-        !self.live_scalar_memories.is_empty()
-            || !self.live_scalar_memory_younger_sequences.is_empty()
+    pub(crate) fn has_live_data_access_window(&self) -> bool {
+        !self.live_data_accesses.is_empty() || !self.live_scalar_memory_younger_sequences.is_empty()
     }
 
-    pub(crate) fn has_ready_live_scalar_memory_event(&self) -> bool {
-        self.live_scalar_memories.first().is_some_and(|live| {
-            live.outcome != O3LiveScalarMemoryOutcome::Resident && !live.event_taken
+    pub(crate) fn has_ready_live_data_access_event(&self) -> bool {
+        self.live_data_accesses.first().is_some_and(|live| {
+            live.outcome != O3LiveDataAccessOutcome::Resident && !live.event_taken
         })
     }
 
-    pub(crate) fn earliest_unpublished_scalar_load_writeback_tick(&self) -> Option<u64> {
-        let live = self.live_scalar_memories.first()?;
-        (live.outcome == O3LiveScalarMemoryOutcome::Completed && !live.event_taken)
+    pub(crate) fn earliest_unpublished_memory_result_writeback_tick(&self) -> Option<u64> {
+        let live = self.live_data_accesses.first()?;
+        (live.outcome == O3LiveDataAccessOutcome::Completed && !live.event_taken)
             .then_some(live.admitted_writeback_tick)
             .flatten()
     }
 
-    pub(crate) fn ready_live_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
-        let live = self.live_scalar_memories.first()?;
-        if live.outcome == O3LiveScalarMemoryOutcome::Resident || live.event_taken {
+    pub(crate) fn ready_live_data_access_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        let live = self.live_data_accesses.first()?;
+        if live.outcome == O3LiveDataAccessOutcome::Resident || live.event_taken {
             return None;
         }
         live.execution.data_access_event_kind()
     }
 
-    pub(crate) fn ready_live_scalar_memory_completion_timing(
+    pub(crate) fn ready_live_data_access_completion_timing(
         &self,
     ) -> Option<(MemoryRequestId, u64, u64)> {
-        let live = self.live_scalar_memories.first()?;
-        if live.outcome != O3LiveScalarMemoryOutcome::Completed || live.event_taken {
+        let live = self.live_data_accesses.first()?;
+        if live.outcome != O3LiveDataAccessOutcome::Completed || live.event_taken {
             return None;
         }
         Some((
@@ -125,20 +124,20 @@ impl O3RuntimeState {
             live.issue_tick,
             live.admitted_writeback_tick.unwrap_or_else(|| {
                 live.response_tick
-                    .expect("completed live scalar memory has a response tick")
+                    .expect("completed live data access has a response tick")
             }),
         ))
     }
 
-    pub(crate) fn replace_ready_live_scalar_memory_execution(
+    pub(crate) fn replace_ready_live_data_access_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
-        let Some(live) = self.live_scalar_memories.first_mut() else {
+        let Some(live) = self.live_data_accesses.first_mut() else {
             return false;
         };
         if live.fetch_request != execution.fetch().request_id()
-            || live.outcome != O3LiveScalarMemoryOutcome::Completed
+            || live.outcome != O3LiveDataAccessOutcome::Completed
             || live.event_taken
         {
             return false;
@@ -147,7 +146,7 @@ impl O3RuntimeState {
         true
     }
 
-    pub(crate) fn defer_scalar_memory_execution(
+    pub(crate) fn defer_live_data_access_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
@@ -155,46 +154,45 @@ impl O3RuntimeState {
             return false;
         }
         let fetch_request = execution.fetch().request_id();
-        match self.deferred_scalar_memory_execution {
+        match self.deferred_live_data_access_execution {
             Some(pending) => pending == fetch_request,
             None => {
-                if !self.live_scalar_memories.is_empty() && !self.can_stage_scalar_memory(execution)
-                {
+                if !self.live_data_accesses.is_empty() && !self.can_stage_scalar_memory(execution) {
                     return false;
                 }
-                self.deferred_scalar_memory_execution = Some(fetch_request);
+                self.deferred_live_data_access_execution = Some(fetch_request);
                 true
             }
         }
     }
 
-    pub(crate) fn defer_scalar_memory_if_detailed(
+    pub(crate) fn defer_live_data_access_if_detailed(
         &mut self,
         detailed: bool,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
         !detailed
             || !execution.is_scalar_memory_access()
-            || self.defer_scalar_memory_execution(execution)
+            || self.defer_live_data_access_execution(execution)
     }
 
-    pub(crate) fn abort_deferred_scalar_memory_execution(
+    pub(crate) fn abort_deferred_live_data_access_execution(
         &mut self,
         fetch_request: MemoryRequestId,
     ) -> bool {
-        if self.deferred_scalar_memory_execution == Some(fetch_request) {
-            self.deferred_scalar_memory_execution = None;
+        if self.deferred_live_data_access_execution == Some(fetch_request) {
+            self.deferred_live_data_access_execution = None;
             true
         } else {
             false
         }
     }
 
-    pub(crate) fn clear_deferred_scalar_memory_execution(&mut self) -> bool {
-        self.deferred_scalar_memory_execution.take().is_some()
+    pub(crate) fn clear_deferred_live_data_access_execution(&mut self) -> bool {
+        self.deferred_live_data_access_execution.take().is_some()
     }
 
-    pub(crate) fn stage_live_scalar_memory_issue(
+    pub(crate) fn stage_live_data_access_issue(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         data_request: MemoryRequestId,
@@ -206,19 +204,19 @@ impl O3RuntimeState {
         let Some(access) = execution.execution().memory_access() else {
             return false;
         };
-        if !is_deferred_o3_scalar_memory_access(Some(access)) {
+        if !is_deferred_o3_data_access(Some(access)) {
             return false;
         }
-        if !self.live_scalar_memories.is_empty() && !self.can_stage_scalar_memory(execution) {
+        if !self.live_data_accesses.is_empty() && !self.can_stage_scalar_memory(execution) {
             return false;
         }
         if self
-            .deferred_scalar_memory_execution
+            .deferred_live_data_access_execution
             .is_some_and(|pending| pending != execution.fetch().request_id())
         {
             return false;
         }
-        self.deferred_scalar_memory_execution = None;
+        self.deferred_live_data_access_execution = None;
 
         let sequence = self.allocate_sequence();
         let rename_destination = o3_memory_destination_registers(access).into_iter().next();
@@ -245,7 +243,7 @@ impl O3RuntimeState {
         self.stats.observe_lsq_occupancy(issue_lsq_occupancy);
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
-        self.live_scalar_memories.push(O3LiveScalarMemory {
+        self.live_data_accesses.push(O3LiveDataAccess {
             fetch_request: execution.fetch().request_id(),
             data_request,
             execution: execution.clone(),
@@ -261,13 +259,13 @@ impl O3RuntimeState {
             commit_tick: None,
             load_data: None,
             forwarding_plan: None,
-            outcome: O3LiveScalarMemoryOutcome::Resident,
+            outcome: O3LiveDataAccessOutcome::Resident,
             event_taken: false,
         });
         true
     }
 
-    pub(crate) fn complete_live_scalar_memory_response(
+    pub(crate) fn complete_live_data_access_response(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         data_request: MemoryRequestId,
@@ -275,7 +273,7 @@ impl O3RuntimeState {
         latency_ticks: u64,
         load_data: Option<&[u8]>,
     ) -> Result<bool, O3RuntimeError> {
-        self.complete_live_scalar_memory(
+        self.complete_live_data_access(
             execution,
             data_request,
             response_tick,
@@ -294,7 +292,7 @@ impl O3RuntimeState {
         load_data: &[u8],
         forwarding_plan: O3StoreLoadForwardingPlan,
     ) -> Result<bool, O3RuntimeError> {
-        self.complete_live_scalar_memory(
+        self.complete_live_data_access(
             execution,
             data_request,
             response_tick,
@@ -304,7 +302,7 @@ impl O3RuntimeState {
         )
     }
 
-    fn complete_live_scalar_memory(
+    fn complete_live_data_access(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         data_request: MemoryRequestId,
@@ -313,14 +311,14 @@ impl O3RuntimeState {
         load_data: Option<&[u8]>,
         forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     ) -> Result<bool, O3RuntimeError> {
-        let Some(index) = self.live_scalar_memories.iter().position(|live| {
+        let Some(index) = self.live_data_accesses.iter().position(|live| {
             live.data_request == data_request
                 && live.fetch_request == execution.fetch().request_id()
-                && live.outcome == O3LiveScalarMemoryOutcome::Resident
+                && live.outcome == O3LiveDataAccessOutcome::Resident
         }) else {
             return Ok(false);
         };
-        let sequence = self.live_scalar_memories[index].sequence;
+        let sequence = self.live_data_accesses[index].sequence;
 
         let outcome = match execution.data_access_event_kind() {
             Some(RiscvDataAccessEventKind::Completed) => {
@@ -365,21 +363,21 @@ impl O3RuntimeState {
                     (None, None)
                 };
                 self.snapshot.load_store_queue[lsq_index].mark_completed();
-                let live = &mut self.live_scalar_memories[index];
+                let live = &mut self.live_data_accesses[index];
                 live.raw_ready_tick = raw_ready_tick;
                 live.admitted_writeback_tick = reservation.map(|row| row.admitted_tick());
                 live.writeback_slot = reservation.map(|row| row.slot());
-                O3LiveScalarMemoryOutcome::Completed
+                O3LiveDataAccessOutcome::Completed
             }
-            Some(RiscvDataAccessEventKind::Retry) => O3LiveScalarMemoryOutcome::Retried,
-            Some(RiscvDataAccessEventKind::Failed) => O3LiveScalarMemoryOutcome::Failed,
+            Some(RiscvDataAccessEventKind::Retry) => O3LiveDataAccessOutcome::Retried,
+            Some(RiscvDataAccessEventKind::Failed) => O3LiveDataAccessOutcome::Failed,
             Some(
                 RiscvDataAccessEventKind::Issued | RiscvDataAccessEventKind::ConditionalFailed,
             )
             | None => return Ok(false),
         };
 
-        let live = &mut self.live_scalar_memories[index];
+        let live = &mut self.live_data_accesses[index];
         live.execution = execution.clone();
         live.response_tick = Some(response_tick);
         live.latency_ticks = Some(latency_ticks);
@@ -390,13 +388,13 @@ impl O3RuntimeState {
         live.event_taken = false;
         let remove_rows = matches!(
             outcome,
-            O3LiveScalarMemoryOutcome::Retried | O3LiveScalarMemoryOutcome::Failed
+            O3LiveDataAccessOutcome::Retried | O3LiveDataAccessOutcome::Failed
         );
         if remove_rows {
-            for stale in self.live_scalar_memories.iter().skip(index + 1) {
+            for stale in self.live_data_accesses.iter().skip(index + 1) {
                 self.pending_data_accesses.remove(&stale.fetch_request);
             }
-            self.live_scalar_memories.truncate(index + 1);
+            self.live_data_accesses.truncate(index + 1);
             self.discard_live_scalar_memory_window_rows_at(sequence, response_tick);
         }
         Ok(true)
@@ -407,31 +405,31 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
         data_request: MemoryRequestId,
     ) -> Vec<(MemoryRequestId, MemoryRequestId)> {
-        let Some(index) = self.live_scalar_memories.iter().position(|live| {
+        let Some(index) = self.live_data_accesses.iter().position(|live| {
             live.fetch_request == fetch_request && live.data_request == data_request
         }) else {
             return Vec::new();
         };
-        self.live_scalar_memories
+        self.live_data_accesses
             .iter()
             .skip(index + 1)
             .map(|live| (live.data_request, live.fetch_request))
             .collect()
     }
 
-    pub(crate) fn take_ready_live_scalar_memory_event(
+    pub(crate) fn take_ready_live_data_access_event(
         &mut self,
         current_tick: u64,
     ) -> Option<RiscvCpuExecutionEvent> {
-        let live = self.live_scalar_memories.first_mut()?;
-        if live.outcome == O3LiveScalarMemoryOutcome::Resident || live.event_taken {
+        let live = self.live_data_accesses.first_mut()?;
+        if live.outcome == O3LiveDataAccessOutcome::Resident || live.event_taken {
             return None;
         }
         let event = live.execution.clone();
-        if live.outcome == O3LiveScalarMemoryOutcome::Completed {
+        if live.outcome == O3LiveDataAccessOutcome::Completed {
             let response_tick = live
                 .response_tick
-                .expect("completed live scalar memory has a response tick");
+                .expect("completed live data access has a response tick");
             let publication_tick = live.admitted_writeback_tick.unwrap_or(response_tick);
             if publication_tick > current_tick {
                 return None;
@@ -449,43 +447,45 @@ impl O3RuntimeState {
         Some(event)
     }
 
-    pub(crate) fn live_scalar_memory_publication_is_admitted(&self, current_tick: u64) -> bool {
-        let Some(live) = self.live_scalar_memories.first() else {
+    pub(crate) fn live_data_access_publication_is_admitted(&self, current_tick: u64) -> bool {
+        let Some(live) = self.live_data_accesses.first() else {
             return false;
         };
-        live.outcome != O3LiveScalarMemoryOutcome::Resident
+        live.outcome != O3LiveDataAccessOutcome::Resident
             && !live.event_taken
-            && (live.outcome != O3LiveScalarMemoryOutcome::Completed
+            && (live.outcome != O3LiveDataAccessOutcome::Completed
                 || live.admitted_writeback_tick.unwrap_or_else(|| {
                     live.response_tick
-                        .expect("completed live scalar memory has response tick")
+                        .expect("completed live data access has response tick")
                 }) <= current_tick)
     }
 
-    pub(super) fn consume_live_scalar_memory_retirement(
+    pub(super) fn consume_live_data_access_retirement(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
-    ) -> Option<O3LiveScalarMemory> {
-        let live = self.live_scalar_memories.first()?;
+    ) -> Option<O3LiveDataAccess> {
+        let live = self.live_data_accesses.first()?;
         if live.fetch_request != execution.fetch().request_id()
             || live.execution != *execution
             || !live.event_taken
-            || live.outcome == O3LiveScalarMemoryOutcome::Resident
+            || live.outcome == O3LiveDataAccessOutcome::Resident
         {
             return None;
         }
         let fetch_request = live.fetch_request;
         self.pending_data_accesses.remove(&fetch_request);
-        let live = self.live_scalar_memories.remove(0);
-        if live.outcome == O3LiveScalarMemoryOutcome::Completed {
+        let live = self.live_data_accesses.remove(0);
+        if live.outcome == O3LiveDataAccessOutcome::Completed {
             self.last_live_commit_tick = live.commit_tick;
         }
         Some(live)
     }
 
-    pub(crate) fn ready_live_scalar_load_writeback(&self) -> Option<(MemoryAccessKind, Vec<u8>)> {
-        let live = self.live_scalar_memories.first()?;
-        if live.outcome != O3LiveScalarMemoryOutcome::Completed || live.event_taken {
+    pub(crate) fn ready_live_memory_result_completion(
+        &self,
+    ) -> Option<(MemoryAccessKind, Vec<u8>)> {
+        let live = self.live_data_accesses.first()?;
+        if live.outcome != O3LiveDataAccessOutcome::Completed || live.event_taken {
             return None;
         }
         let access = live.execution.execution().memory_access()?.clone();
@@ -495,10 +495,10 @@ impl O3RuntimeState {
         Some((access, live.load_data.clone()?))
     }
 
-    pub(crate) fn discard_live_scalar_memory_lifecycle(&mut self) {
+    pub(crate) fn discard_live_data_access_lifecycle(&mut self) {
         self.discard_all_writeback_reservations();
-        self.deferred_scalar_memory_execution = None;
-        let live = std::mem::take(&mut self.live_scalar_memories);
+        self.deferred_live_data_access_execution = None;
+        let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
             self.pending_data_accesses.remove(&live.fetch_request);
         }
@@ -511,9 +511,9 @@ impl O3RuntimeState {
         }
     }
 
-    pub(super) fn discard_live_scalar_memory_lifecycle_at(&mut self, now: u64) {
-        self.deferred_scalar_memory_execution = None;
-        let live = std::mem::take(&mut self.live_scalar_memories);
+    pub(super) fn discard_live_data_access_lifecycle_at(&mut self, now: u64) {
+        self.deferred_live_data_access_execution = None;
+        let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
             self.pending_data_accesses.remove(&live.fetch_request);
         }
@@ -540,7 +540,7 @@ impl O3RuntimeState {
             .retain(|entry| entry.sequence() < sequence);
     }
 
-    pub(super) fn remove_live_scalar_memory_rows(&mut self, sequence: u64) {
+    pub(super) fn remove_live_data_access_rows(&mut self, sequence: u64) {
         self.snapshot
             .reorder_buffer
             .retain(|entry| entry.sequence() != sequence);
@@ -554,27 +554,32 @@ impl O3RuntimeState {
 }
 
 impl crate::RiscvCore {
-    pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool {
-        self.with_o3_runtime(|runtime| runtime.scalar_memory_lifecycle_is_quiescent())
+    pub fn o3_live_data_access_lifecycle_is_quiescent(&self) -> bool {
+        self.with_o3_runtime(|runtime| runtime.live_data_access_lifecycle_is_quiescent())
     }
 
-    pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool {
-        self.with_o3_runtime(|runtime| runtime.has_pending_scalar_memory_retirement())
+    pub fn has_pending_o3_live_data_access_retirement(&self) -> bool {
+        self.with_o3_runtime(|runtime| runtime.has_pending_live_data_access_retirement())
     }
 
-    pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize {
-        self.with_o3_runtime(|runtime| runtime.pending_scalar_memory_retirement_count())
+    pub fn pending_o3_live_data_access_retirement_count(&self) -> usize {
+        self.with_o3_runtime(|runtime| runtime.pending_live_data_access_retirement_count())
     }
 
-    pub fn owns_pending_o3_scalar_memory_retirement(&self, fetch_request: MemoryRequestId) -> bool {
-        self.with_o3_runtime(|runtime| runtime.owns_pending_scalar_memory_retirement(fetch_request))
+    pub fn owns_pending_o3_live_data_access_retirement(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> bool {
+        self.with_o3_runtime(|runtime| {
+            runtime.owns_pending_live_data_access_retirement(fetch_request)
+        })
     }
 
-    pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
-        self.with_o3_runtime(|runtime| runtime.ready_live_scalar_memory_event_kind())
+    pub fn ready_o3_live_data_access_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        self.with_o3_runtime(|runtime| runtime.ready_live_data_access_event_kind())
     }
 
-    pub(crate) fn clear_deferred_o3_scalar_memory_execution(&self) -> bool {
-        self.with_o3_runtime(O3RuntimeState::clear_deferred_scalar_memory_execution)
+    pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
+        self.with_o3_runtime(O3RuntimeState::clear_deferred_live_data_access_execution)
     }
 }

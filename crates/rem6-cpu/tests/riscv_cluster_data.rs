@@ -329,7 +329,7 @@ fn parallel_driver_clears_prepared_scalar_marker_when_later_fetch_prepare_fails(
     .unwrap();
     scheduler.run_until_idle_parallel().unwrap();
     cpu0.execute_next_completed_fetch().unwrap().unwrap();
-    assert!(!cpu0.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu0.o3_live_data_access_lifecycle_is_quiescent());
 
     let error = cluster
         .drive_ready_cores_parallel(
@@ -352,7 +352,7 @@ fn parallel_driver_clears_prepared_scalar_marker_when_later_fetch_prepare_fails(
         error,
         RiscvClusterError::Core { cpu, .. } if cpu == CpuId::new(1)
     ));
-    assert!(cpu0.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(cpu0.o3_live_data_access_lifecycle_is_quiescent());
     assert!(cpu0.has_unissued_data_access());
     assert!(!cpu0.has_pending_data_access());
 }
@@ -513,7 +513,7 @@ fn parallel_driver_registers_later_data_while_earlier_fetch_admission_is_deferre
     );
     assert!(cpu1.has_pending_data_access());
     assert_eq!(cpu1.o3_runtime_snapshot().load_store_queue().len(), 1);
-    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu1.o3_live_data_access_lifecycle_is_quiescent());
     assert!(!scheduler.is_idle());
 }
 
@@ -624,7 +624,7 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
     assert!(cpu
-        .record_ready_o3_scalar_memory_event_with_trace(admitted_tick, false)
+        .record_ready_o3_data_access_event_with_trace(admitted_tick, false)
         .is_some());
     assert_eq!(cpu.read_register(reg(5)), 41);
 

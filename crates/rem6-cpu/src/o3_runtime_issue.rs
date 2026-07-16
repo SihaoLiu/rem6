@@ -72,7 +72,7 @@ impl O3RuntimeState {
         &self,
         fetch_request: MemoryRequestId,
     ) -> Option<O3LiveIssueHeadReservation> {
-        self.live_scalar_memories
+        self.live_data_accesses
             .iter()
             .find(|live| live.fetch_request == fetch_request)
             .map(|live| O3LiveIssueHeadReservation::memory(live.sequence, live.issue_tick))

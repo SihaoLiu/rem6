@@ -545,7 +545,7 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::InstructionExecuted(_))
     ));
-    assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
 
     let action = drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map)
         .expect("translation fault should be reported as a trap event");
@@ -577,7 +577,7 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
     assert_eq!(core.pc(), Address::new(0xa000));
     assert_eq!(core.read_register(reg(5)), 0);
     assert!(!core.has_pending_data_access());
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     let execution_events = core.execution_events();
     assert_eq!(execution_events.len(), 1);
     assert_eq!(

@@ -17,7 +17,7 @@ fn scalar_load_issue_allocates_same_sequence_rob_and_lsq_rows() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
 
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(20), 31));
 
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.reorder_buffer().len(), 1);
@@ -29,7 +29,7 @@ fn scalar_load_issue_allocates_same_sequence_rob_and_lsq_rows() {
     assert!(!lsq.is_completed());
     assert_eq!(runtime.stats().max_rob_occupancy(), 1);
     assert_eq!(runtime.stats().max_lsq_occupancy(), 1);
-    assert_eq!(runtime.live_scalar_memories.first().unwrap().issue_tick, 31);
+    assert_eq!(runtime.live_data_accesses.first().unwrap().issue_tick, 31);
 }
 
 #[test]
@@ -37,15 +37,15 @@ fn scalar_store_issue_records_real_issue_tick_and_single_occupancy() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_store_event(0x8004, 11);
 
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(21), 37));
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(21), 37));
 
-    let live = runtime.live_scalar_memories.first().unwrap();
+    let live = runtime.live_data_accesses.first().unwrap();
     assert_eq!(live.fetch_request, execution.fetch().request_id());
     assert_eq!(live.data_request, memory_request(21));
     assert_eq!(live.issue_tick, 37);
     assert_eq!(live.issue_rob_occupancy, 1);
     assert_eq!(live.issue_lsq_occupancy, 1);
-    assert_eq!(live.outcome, O3LiveScalarMemoryOutcome::Resident);
+    assert_eq!(live.outcome, O3LiveDataAccessOutcome::Resident);
     assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
 }
 
@@ -54,10 +54,10 @@ fn excluded_memory_kinds_do_not_stage_live_scalar_rows() {
     let mut runtime = O3RuntimeState::default();
     let execution = store_conditional_event(0x8008, 12);
 
-    assert!(!runtime.stage_live_scalar_memory_issue(&execution, memory_request(22), 41));
+    assert!(!runtime.stage_live_data_access_issue(&execution, memory_request(22), 41));
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn completed_response_marks_only_matching_rows_ready() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
-    let live_sequence = runtime.live_scalar_memories.first().unwrap().sequence;
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
+    let live_sequence = runtime.live_data_accesses.first().unwrap().sequence;
     let unrelated_sequence = runtime.allocate_sequence();
     runtime.snapshot.reorder_buffer.insert(
         0,
@@ -80,7 +80,7 @@ fn completed_response_marks_only_matching_rows_ready() {
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
 
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -114,14 +114,14 @@ fn completed_response_marks_only_matching_rows_ready() {
     assert!(!unrelated_lsq.is_completed());
     assert!(!live_rob.is_ready());
     assert!(live_lsq.is_completed());
-    let live = runtime.live_scalar_memories.first().unwrap();
-    assert_eq!(live.outcome, O3LiveScalarMemoryOutcome::Completed);
+    let live = runtime.live_data_accesses.first().unwrap();
+    assert_eq!(live.outcome, O3LiveDataAccessOutcome::Completed);
     assert_eq!(live.response_tick, Some(41));
     assert_eq!(live.admitted_writeback_tick, Some(42));
     assert_eq!(live.latency_ticks, Some(10));
     assert_eq!(live.load_data.as_deref(), Some(&[0x2a, 0, 0, 0][..]));
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed)
     );
     let snapshot = runtime.snapshot();
@@ -133,14 +133,14 @@ fn completed_response_marks_only_matching_rows_ready() {
     assert!(live_rob.is_ready());
     assert_eq!(live_rob.ready_tick(), 42);
     assert!(runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .is_none());
 }
 
 #[test]
 fn completed_scalar_load_reserves_writeback_before_marking_rob_ready() {
     let runtime = completed_live_load_runtime(41);
-    let live = &runtime.live_scalar_memories[0];
+    let live = &runtime.live_data_accesses[0];
     assert_eq!(live.raw_ready_tick, Some(42));
     assert_eq!(live.admitted_writeback_tick, Some(42));
     assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
@@ -150,9 +150,9 @@ fn completed_scalar_load_reserves_writeback_before_marking_rob_ready() {
 #[test]
 fn scalar_load_publication_waits_until_admitted_tick() {
     let mut runtime = completed_live_load_runtime(41);
-    assert!(runtime.take_ready_live_scalar_memory_event(41).is_none());
+    assert!(runtime.take_ready_live_data_access_event(41).is_none());
     assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
-    assert!(runtime.take_ready_live_scalar_memory_event(42).is_some());
+    assert!(runtime.take_ready_live_data_access_event(42).is_some());
     assert!(runtime.snapshot().reorder_buffer()[0].is_ready());
     assert_eq!(runtime.snapshot().reorder_buffer()[0].ready_tick(), 42);
 }
@@ -176,15 +176,15 @@ fn scalar_load_reservation_failure_does_not_partially_commit_response() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
-    let sequence = runtime.live_scalar_memories[0].sequence;
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
+    let sequence = runtime.live_data_accesses[0].sequence;
     runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(sequence, 40)])
         .unwrap();
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(matches!(
-        runtime.complete_live_scalar_memory_response(
+        runtime.complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -193,8 +193,8 @@ fn scalar_load_reservation_failure_does_not_partially_commit_response() {
         ),
         Err(O3RuntimeError::WritebackReservationMismatch { .. })
     ));
-    let live = &runtime.live_scalar_memories[0];
-    assert_eq!(live.outcome, O3LiveScalarMemoryOutcome::Resident);
+    let live = &runtime.live_data_accesses[0];
+    assert_eq!(live.outcome, O3LiveDataAccessOutcome::Resident);
     assert_eq!(live.response_tick, None);
     assert_eq!(live.raw_ready_tick, None);
     assert_eq!(live.admitted_writeback_tick, None);
@@ -210,8 +210,8 @@ fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
     let older_data_request = memory_request(20);
     let younger_data_request = memory_request(21);
 
-    assert!(runtime.stage_live_scalar_memory_issue(&older, older_data_request, 31));
-    assert!(runtime.stage_live_scalar_memory_issue(&younger, younger_data_request, 32));
+    assert!(runtime.stage_live_data_access_issue(&older, older_data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&younger, younger_data_request, 32));
 
     let sequences = runtime
         .snapshot()
@@ -223,7 +223,7 @@ fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
     let mut younger_completed = younger.clone();
     younger_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &younger_completed,
             younger_data_request,
             40,
@@ -238,13 +238,13 @@ fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
     assert!(!snapshot.load_store_queue()[0].is_completed());
     assert!(snapshot.load_store_queue()[1].is_completed());
     assert!(runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .is_none());
 
     let mut older_completed = older.clone();
     older_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &older_completed,
             older_data_request,
             45,
@@ -254,14 +254,14 @@ fn two_live_scalar_loads_complete_out_of_order_and_retire_in_order() {
         .unwrap());
 
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(older_completed.clone())
     );
     runtime.record_retired_instruction_with_trace(&older_completed, true);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
     assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(younger_completed.clone())
     );
     runtime.record_retired_instruction_with_trace(&younger_completed, true);
@@ -285,13 +285,13 @@ fn writeback_wake_tracks_oldest_unpublished_scalar_load() {
     let younger = scalar_load_event_with(0x8004, 11, 13, 10, 0x9040);
     let older_data_request = memory_request(20);
     let younger_data_request = memory_request(21);
-    assert!(runtime.stage_live_scalar_memory_issue(&older, older_data_request, 31));
-    assert!(runtime.stage_live_scalar_memory_issue(&younger, younger_data_request, 32));
+    assert!(runtime.stage_live_data_access_issue(&older, older_data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&younger, younger_data_request, 32));
 
     let mut younger_completed = younger.clone();
     younger_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &younger_completed,
             younger_data_request,
             40,
@@ -300,14 +300,14 @@ fn writeback_wake_tracks_oldest_unpublished_scalar_load() {
         )
         .unwrap());
     assert_eq!(
-        runtime.earliest_unpublished_scalar_load_writeback_tick(),
+        runtime.earliest_unpublished_memory_result_writeback_tick(),
         None
     );
 
     let mut older_completed = older.clone();
     older_completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &older_completed,
             older_data_request,
             45,
@@ -316,7 +316,7 @@ fn writeback_wake_tracks_oldest_unpublished_scalar_load() {
         )
         .unwrap());
     assert_eq!(
-        runtime.earliest_unpublished_scalar_load_writeback_tick(),
+        runtime.earliest_unpublished_memory_result_writeback_tick(),
         Some(46)
     );
 }
@@ -326,28 +326,28 @@ fn retry_response_removes_load_head_younger_rows_and_readies_one_abort_event() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8004, 11);
     let data_request = memory_request(21);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 37));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 37));
     stage_independent_younger(&mut runtime, &execution);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
     let mut retry = execution.clone();
     retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
 
     assert!(runtime
-        .complete_live_scalar_memory_response(&retry, data_request, 44, 7, None,)
+        .complete_live_data_access_response(&retry, data_request, 44, 7, None,)
         .unwrap());
 
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
     assert_eq!(
-        runtime.live_scalar_memories.first().unwrap().outcome,
-        O3LiveScalarMemoryOutcome::Retried
+        runtime.live_data_accesses.first().unwrap().outcome,
+        O3LiveDataAccessOutcome::Retried
     );
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(retry)
     );
     assert!(runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .is_none());
 }
 
@@ -356,49 +356,49 @@ fn failed_response_drains_rows_and_never_counts_o3_retirement() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     stage_independent_younger(&mut runtime, &execution);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
     let mut failed = execution.clone();
     failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
     assert!(runtime
-        .complete_live_scalar_memory_response(&failed, data_request, 43, 12, None,)
+        .complete_live_data_access_response(&failed, data_request, 43, 12, None,)
         .unwrap());
 
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
     assert_eq!(
-        runtime.live_scalar_memories.first().unwrap().outcome,
-        O3LiveScalarMemoryOutcome::Failed
+        runtime.live_data_accesses.first().unwrap().outcome,
+        O3LiveDataAccessOutcome::Failed
     );
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(failed.clone())
     );
     assert!(runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .is_none());
 
     runtime.record_retired_instruction_with_trace(&failed, true);
 
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
     assert_eq!(runtime.stats().instructions(), 0);
     assert_eq!(runtime.stats().lsq_loads(), 0);
     assert!(runtime.trace_records().is_empty());
 }
 
 #[test]
-fn pending_retirement_tracks_deferred_and_live_scalar_memory() {
+fn pending_retirement_tracks_deferred_and_live_data_access() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
-    assert!(!runtime.has_pending_scalar_memory_retirement());
-    assert!(runtime.defer_scalar_memory_execution(&execution));
-    assert!(runtime.has_pending_scalar_memory_retirement());
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
-    assert!(runtime.has_pending_scalar_memory_retirement());
-    runtime.discard_live_scalar_memory_lifecycle();
-    assert!(!runtime.has_pending_scalar_memory_retirement());
+    assert!(!runtime.has_pending_live_data_access_retirement());
+    assert!(runtime.defer_live_data_access_execution(&execution));
+    assert!(runtime.has_pending_live_data_access_retirement());
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(20), 31));
+    assert!(runtime.has_pending_live_data_access_retirement());
+    runtime.discard_live_data_access_lifecycle();
+    assert!(!runtime.has_pending_live_data_access_retirement());
 }
 
 #[test]
@@ -406,13 +406,13 @@ fn stats_reset_preserves_live_rows_and_request_identity() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_store_event(0x8004, 11);
     let data_request = memory_request(21);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 37));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 37));
 
     runtime.reset_stats();
 
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
     assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
-    let live = runtime.live_scalar_memories.first().unwrap();
+    let live = runtime.live_data_accesses.first().unwrap();
     assert_eq!(live.fetch_request, execution.fetch().request_id());
     assert_eq!(live.data_request, data_request);
     assert_eq!(runtime.stats().max_rob_occupancy(), 1);
@@ -424,12 +424,12 @@ fn stats_reset_preserves_completed_scalar_younger_window_provenance() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     stage_independent_younger(&mut runtime, &execution);
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -438,7 +438,7 @@ fn stats_reset_preserves_completed_scalar_younger_window_provenance() {
         )
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed.clone())
     );
     runtime.record_retired_instruction_with_trace(&completed, true);
@@ -448,7 +448,7 @@ fn stats_reset_preserves_completed_scalar_younger_window_provenance() {
 
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
     assert!(runtime.snapshot().load_store_queue().is_empty());
-    assert!(!runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(!runtime.live_data_access_lifecycle_is_quiescent());
     assert_eq!(runtime.stats().max_rob_occupancy(), 1);
     assert_eq!(runtime.stats().max_lsq_occupancy(), 0);
 }
@@ -458,13 +458,13 @@ fn completed_retirement_uses_issue_and_response_ticks_then_drains_rows() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     let sequence = runtime.snapshot().reorder_buffer()[0].sequence();
     let destination = runtime.snapshot().reorder_buffer()[0].destination();
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -473,13 +473,13 @@ fn completed_retirement_uses_issue_and_response_ticks_then_drains_rows() {
         )
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed.clone())
     );
 
     runtime.record_retired_instruction_with_trace(&completed, true);
 
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
     assert_eq!(runtime.stats().instructions(), 1);
@@ -509,13 +509,13 @@ fn completed_load_retirement_preserves_staged_younger_row() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     stage_independent_younger(&mut runtime, &execution);
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -524,13 +524,13 @@ fn completed_load_retirement_preserves_staged_younger_row() {
         )
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed.clone())
     );
 
     runtime.record_retired_instruction_with_trace(&completed, true);
 
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
     assert_eq!(
@@ -539,12 +539,12 @@ fn completed_load_retirement_preserves_staged_younger_row() {
     );
     assert!(runtime.snapshot().reorder_buffer()[0].is_live_staged());
     assert_eq!(runtime.stats().max_rob_occupancy(), 2);
-    assert!(!runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(!runtime.live_data_access_lifecycle_is_quiescent());
 
     let younger = independent_younger_event();
     runtime.retire_live_staged_instruction(&younger, &[younger.fetch().request_id()], 42);
     runtime.record_retired_instruction_with_trace(&younger, true);
-    assert!(runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(runtime.live_data_access_lifecycle_is_quiescent());
 }
 
 #[test]
@@ -552,12 +552,12 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     stage_independent_younger(&mut runtime, &execution);
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -566,7 +566,7 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
         )
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed.clone())
     );
     runtime.record_retired_instruction_with_trace(&completed, true);
@@ -581,7 +581,7 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
     let younger = independent_younger_event();
     let mut state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
-    assert!(!state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(!state.o3_runtime.live_data_access_lifecycle_is_quiescent());
 
     state
         .o3_runtime
@@ -591,7 +591,7 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
         .record_retired_instruction_with_trace(&younger, true);
 
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
-    assert!(state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
     assert!(state.o3_runtime.has_pending_retirement_authority());
     state.o3_runtime.prune_writeback_calendar_before(43);
     assert!(!state.o3_runtime.has_pending_retirement_authority());
@@ -602,20 +602,20 @@ fn retry_retirement_clears_lifecycle_without_counting_instruction() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_store_event(0x8004, 11);
     let data_request = memory_request(21);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 37));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 37));
     let mut retry = execution.clone();
     retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
     assert!(runtime
-        .complete_live_scalar_memory_response(&retry, data_request, 44, 7, None,)
+        .complete_live_data_access_response(&retry, data_request, 44, 7, None,)
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(retry.clone())
     );
 
     runtime.record_retired_instruction_with_trace(&retry, true);
 
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
     assert_eq!(runtime.stats().instructions(), 0);
@@ -628,11 +628,11 @@ fn cleanup_after_ready_event_prevents_stale_terminal_retirement() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             41,
@@ -641,11 +641,11 @@ fn cleanup_after_ready_event_prevents_stale_terminal_retirement() {
         )
         .unwrap());
     assert_eq!(
-        runtime.take_ready_live_scalar_memory_event(u64::MAX),
+        runtime.take_ready_live_data_access_event(u64::MAX),
         Some(completed.clone())
     );
 
-    runtime.discard_live_scalar_memory_lifecycle();
+    runtime.discard_live_data_access_lifecycle();
     runtime.record_retired_instruction_with_trace(&completed, true);
 
     assert_eq!(runtime.stats().instructions(), 0);
@@ -658,11 +658,11 @@ fn cleanup_after_ready_event_prevents_stale_terminal_retirement() {
 fn cleanup_discard_removes_resident_scalar_rows_and_identity() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(20), 31));
 
     runtime.discard_live_staged_instructions();
 
-    assert!(runtime.live_scalar_memories.is_empty());
+    assert!(runtime.live_data_accesses.is_empty());
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
 }
@@ -671,14 +671,14 @@ fn cleanup_discard_removes_resident_scalar_rows_and_identity() {
 fn cleanup_pc_redirect_removes_resident_scalar_rows_and_identity() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(20), 31));
     stage_independent_younger(&mut runtime, &execution);
     let core = core_with_runtime(runtime);
 
     core.redirect_pc(Address::new(0x9000));
 
     let state = core.state.lock().expect("riscv core lock");
-    assert!(state.o3_runtime.live_scalar_memories.is_empty());
+    assert!(state.o3_runtime.live_data_accesses.is_empty());
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
 }
@@ -687,7 +687,7 @@ fn cleanup_pc_redirect_removes_resident_scalar_rows_and_identity() {
 fn cleanup_hart_reset_removes_scalar_lifecycle_without_reissuing_stale_event() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, memory_request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, memory_request(20), 31));
     let core = core_with_runtime(runtime);
     {
         let mut state = core.state.lock().expect("riscv core lock");
@@ -701,7 +701,7 @@ fn cleanup_hart_reset_removes_scalar_lifecycle_without_reissuing_stale_event() {
 
     assert!(!core.has_unissued_data_access());
     let state = core.state.lock().expect("riscv core lock");
-    assert!(state.o3_runtime.scalar_memory_lifecycle_is_quiescent());
+    assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
 }
@@ -714,11 +714,11 @@ fn completed_live_load_runtime(response_tick: u64) -> O3RuntimeState {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
     let data_request = memory_request(20);
-    assert!(runtime.stage_live_scalar_memory_issue(&execution, data_request, 31));
+    assert!(runtime.stage_live_data_access_issue(&execution, data_request, 31));
     let mut completed = execution.clone();
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed,
             data_request,
             response_tick,

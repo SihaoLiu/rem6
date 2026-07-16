@@ -101,7 +101,7 @@ impl RiscvSystemRunDriver {
                         .map_err(SystemError::RiscvCluster)?;
                     let detailed = detailed_cpus.contains(&event.cpu());
                     let deferred_scalar_memory = instruction.is_scalar_memory_access()
-                        && core.owns_pending_o3_scalar_memory_retirement(
+                        && core.owns_pending_o3_live_data_access_retirement(
                             instruction.fetch().request_id(),
                         );
                     let owns_inherited_retirement =
@@ -133,7 +133,7 @@ impl RiscvSystemRunDriver {
                     let core = cluster
                         .core(event.cpu())
                         .map_err(SystemError::RiscvCluster)?;
-                    if !core.o3_scalar_memory_lifecycle_is_quiescent() {
+                    if !core.o3_live_data_access_lifecycle_is_quiescent() {
                         updated_cpus.insert(event.cpu());
                     }
                 }
@@ -150,13 +150,13 @@ impl RiscvSystemRunDriver {
         for cpu in o3_authority_cpus {
             let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
             loop {
-                let kind = core.ready_o3_scalar_memory_event_kind();
+                let kind = core.ready_o3_live_data_access_event_kind();
                 if kind == Some(RiscvDataAccessEventKind::Completed)
                     && remaining_scalar_retirements == 0
                 {
                     break;
                 }
-                let Some(instruction) = core.record_ready_o3_scalar_memory_event_with_trace(
+                let Some(instruction) = core.record_ready_o3_data_access_event_with_trace(
                     tick,
                     self.o3_runtime_trace_enabled,
                 ) else {

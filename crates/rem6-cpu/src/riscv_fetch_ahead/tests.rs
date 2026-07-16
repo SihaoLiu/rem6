@@ -927,7 +927,7 @@ fn detailed_scalar_load_window_depth_two_counts_live_older_row() {
         state.hart.set_pc(0x8004);
         assert!(state
             .o3_runtime
-            .stage_live_scalar_memory_issue(&older, request(20), 31));
+            .stage_live_data_access_issue(&older, request(20), 31));
     }
 
     assert_eq!(core.next_fetch_ahead_before_retire(), None);
@@ -947,7 +947,7 @@ fn detailed_store_led_window_fetches_a_second_younger_load() {
         state.hart.write(Register::new(10).unwrap(), 0x9000);
         assert!(state
             .o3_runtime
-            .stage_live_scalar_memory_issue(&store, request(20), 31));
+            .stage_live_data_access_issue(&store, request(20), 31));
     }
 
     let decision = core.next_fetch_ahead_before_retire().unwrap();
@@ -969,7 +969,7 @@ fn detailed_resident_store_accepts_a_same_range_store_and_fetches_the_load() {
         state.hart.write(Register::new(10).unwrap(), 0x9000);
         assert!(state
             .o3_runtime
-            .stage_live_scalar_memory_issue(&store, request(20), 31));
+            .stage_live_data_access_issue(&store, request(20), 31));
     }
 
     let decision = core.next_fetch_ahead_before_retire().unwrap();

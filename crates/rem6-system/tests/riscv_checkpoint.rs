@@ -218,7 +218,7 @@ fn fetch_and_execute_one(
 }
 
 #[test]
-fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
+fn riscv_core_checkpoint_rejects_live_data_access_before_any_bank_writes() {
     let cpu0_component = CheckpointComponentId::new("cpu0").unwrap();
     let cpu1_component = CheckpointComponentId::new("cpu1").unwrap();
     let mut cpu0_scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
@@ -349,7 +349,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert_eq!(registry.chunk(&cpu1_component, "pc"), None);
 
     cpu1.set_detailed_live_retire_gate_enabled(false);
-    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu1.o3_live_data_access_lifecycle_is_quiescent());
     assert_eq!(
         bank.capture_all_into(&mut registry),
         Err(CheckpointError::ComponentNotQuiescent {
@@ -416,7 +416,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     cpu0.redirect_pc(Address::new(0x8100));
     assert!(cpu0.data_access_lifecycle_is_quiescent());
     cpu1.set_detailed_live_retire_gate_enabled(false);
-    assert!(!cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!cpu1.o3_live_data_access_lifecycle_is_quiescent());
     assert_eq!(
         bank.capture_all_into(&mut registry),
         Err(CheckpointError::ComponentNotQuiescent {
@@ -429,7 +429,7 @@ fn riscv_core_checkpoint_rejects_live_scalar_memory_before_any_bank_writes() {
     assert!(cpu1.has_pending_data_access());
     cpu1.redirect_pc(Address::new(0x9100));
     assert!(!cpu1.has_pending_data_access());
-    assert!(cpu1.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(cpu1.o3_live_data_access_lifecycle_is_quiescent());
     cpu1_port.capture_into(&mut handoff_registry).unwrap();
     assert_eq!(
         handoff_registry.chunk(&cpu1_component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK),

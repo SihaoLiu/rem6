@@ -333,7 +333,7 @@ impl RiscvSystemRunDriver {
             self.snapshot_live_retire_gate_policy(cluster)?;
             let remaining_instructions = max_instructions
                 .saturating_sub(committed_instructions)
-                .saturating_sub(pending_scalar_memory_retirement_count(cluster)?);
+                .saturating_sub(pending_live_data_access_retirement_count(cluster)?);
             let Some(turn) = cluster
                 .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
                     scheduler,
@@ -524,7 +524,7 @@ impl RiscvSystemRunDriver {
             self.snapshot_live_retire_gate_policy(cluster)?;
             let remaining_instructions = max_instructions
                 .saturating_sub(committed_instructions)
-                .saturating_sub(pending_scalar_memory_retirement_count(cluster)?);
+                .saturating_sub(pending_live_data_access_retirement_count(cluster)?);
             let Some(turn) = cluster
                 .drive_turn_parallel_with_instruction_budget_until_tick(
                     scheduler,
@@ -645,13 +645,13 @@ fn cluster_has_data_work(cluster: &RiscvCluster) -> Result<bool, SystemError> {
     Ok(false)
 }
 
-fn pending_scalar_memory_retirement_count(cluster: &RiscvCluster) -> Result<u64, SystemError> {
+fn pending_live_data_access_retirement_count(cluster: &RiscvCluster) -> Result<u64, SystemError> {
     let mut pending = 0u64;
     for cpu in cluster.core_ids() {
         let count = cluster
             .core(cpu)
             .map_err(SystemError::RiscvCluster)?
-            .pending_o3_scalar_memory_retirement_count();
+            .pending_o3_live_data_access_retirement_count();
         pending = pending.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
     }
     Ok(pending)
@@ -685,7 +685,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pending_scalar_memory_retirement_count_counts_two_same_core_loads() {
+    fn pending_live_data_access_retirement_count_counts_two_same_core_loads() {
         let (core, cluster, mut scheduler, transport) = scalar_memory_cluster();
         core.write_register(Register::new(2).unwrap(), 0x9000);
 
@@ -714,7 +714,10 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(pending_scalar_memory_retirement_count(&cluster).unwrap(), 2);
+        assert_eq!(
+            pending_live_data_access_retirement_count(&cluster).unwrap(),
+            2
+        );
     }
 
     fn issue_fetch(

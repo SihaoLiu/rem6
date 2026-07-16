@@ -55,7 +55,7 @@ fn scalar_load_stages_predicted_branch_and_two_descendants() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
 
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
@@ -85,7 +85,7 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
     let first = addi(5, 0, 1);
     let second = addi(6, 0, 2);
     let branch = beq(0, 0);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -145,8 +145,8 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
 
     let mut completed_load = load.clone();
     completed_load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
-    assert_eq!(runtime.live_scalar_memories.len(), 1);
-    let load_sequence = runtime.live_scalar_memories[0].sequence;
+    assert_eq!(runtime.live_data_accesses.len(), 1);
+    let load_sequence = runtime.live_data_accesses[0].sequence;
     assert!(runtime
         .snapshot()
         .reorder_buffer()
@@ -158,7 +158,7 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
         .iter()
         .any(|entry| entry.sequence() == load_sequence));
     assert!(runtime
-        .complete_live_scalar_memory_response(
+        .complete_live_data_access_response(
             &completed_load,
             request(20),
             50,
@@ -167,7 +167,7 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
         )
         .unwrap());
     let retired_load = runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .expect("completed load should retire");
     runtime.record_retired_instruction_with_trace(&retired_load, true);
 
@@ -218,7 +218,7 @@ fn blocked_prefix_dependency_chain_uses_preceding_staged_rename_across_stats_res
     let producer = addi(5, 5, 1);
     let consumer = addi(6, 5, 1);
     let younger_writer = addi(5, 0, 2);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -436,7 +436,7 @@ fn scalar_and_linked_control_candidates_expose_destinations() {
     let load = scalar_load_event();
     let call = jal_link(1, 4);
     let scalar = addi(8, 0, 7);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), call), (Address::new(0x8008), scalar)],
@@ -466,7 +466,7 @@ fn same_window_return_candidate_uses_link_call_forwarding() {
     let call = jal_link(1, 8);
     let return_jump = jalr_return(1);
     let descendant = addi(8, 0, 7);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     assert_eq!(
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
@@ -699,7 +699,7 @@ fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
     let load = scalar_load_event();
     let outer = beq(5, 6);
     let inner = beq(4, 0);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), outer), (Address::new(0x8008), inner)],
@@ -768,12 +768,12 @@ fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
     let load_sequence = rob[0].sequence();
     let branch_sequence = rob[1].sequence();
     let descendant_sequence = rob[3].sequence();
-    let mut load = runtime.live_scalar_memories[0].execution.clone();
+    let mut load = runtime.live_data_accesses[0].execution.clone();
     load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_scalar_memory_response(&load, request(20), 10, 0, Some(&[0x2a, 0, 0, 0]),)
+        .complete_live_data_access_response(&load, request(20), 10, 0, Some(&[0x2a, 0, 0, 0]),)
         .unwrap());
-    let load_admitted_tick = runtime.live_scalar_memories[0]
+    let load_admitted_tick = runtime.live_data_accesses[0]
         .admitted_writeback_tick
         .unwrap();
     let descendant_admitted_tick = runtime
@@ -787,7 +787,7 @@ fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
     runtime.discard_live_control_descendants_from_at(branch_sequence, 12);
 
     assert_eq!(
-        runtime.live_scalar_memories[0].admitted_writeback_tick,
+        runtime.live_data_accesses[0].admitted_writeback_tick,
         Some(load_admitted_tick)
     );
     assert!(runtime
@@ -1008,7 +1008,7 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1142,7 +1142,7 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1232,7 +1232,7 @@ fn discarding_older_branch_removes_linked_call_descendant_state() {
     let branch = beq(5, 6);
     let call = jal_link(1, 4);
     let descendant = addi(8, 1, 1);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1340,7 +1340,7 @@ fn linked_call_rollback_restores_prior_committed_rename() {
     let load = scalar_load_event();
     let branch = beq(5, 6);
     let call = jal_link(1, 4);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), branch), (Address::new(0x8008), call)],
@@ -1409,7 +1409,7 @@ fn staged_window_truncation_prunes_control_dependencies() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1431,7 +1431,7 @@ fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), branch)],
@@ -1451,7 +1451,7 @@ fn nested_control_runtime() -> (
     let outer = beq(5, 6);
     let inner = beq(7, 8);
     let descendant = mul(9, 1, 2);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1526,7 +1526,7 @@ fn three_deep_control_runtime() -> (
     let outer = bne(5, 6);
     let middle = blt(7, 8);
     let inner = bgeu(9, 10);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [
@@ -1577,7 +1577,7 @@ fn mixed_control_runtime() -> (
     let direct_jump = jal(4);
     let conditional = beq(5, 6);
     let indirect_jump = jalr(9);
-    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
     runtime.stage_live_scalar_memory_younger_window(
         load.fetch().request_id(),
         [

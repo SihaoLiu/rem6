@@ -177,7 +177,7 @@ fn detailed_scalar_load_submission_stages_live_o3_rob_and_lsq_rows() {
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
     let retry = state
         .o3_runtime
-        .take_ready_live_scalar_memory_event(u64::MAX)
+        .take_ready_live_data_access_event(u64::MAX)
         .expect("retry response should ready one deferred O3 event");
     assert_eq!(
         retry.data_access_event_kind(),
@@ -277,14 +277,14 @@ fn completed_scalar_load_blocks_younger_execution_until_o3_event_is_consumed() {
     assert!(core.execute_next_completed_fetch().unwrap().is_none());
     assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 2);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_some());
 
     let younger = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
     core.record_o3_retired_instruction_with_trace(&younger, true);
     assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
 }
 
 #[test]
@@ -381,7 +381,7 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
         .is_none());
     assert!(core.execute_next_completed_fetch().unwrap().is_none());
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_some());
     let younger = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
@@ -623,7 +623,10 @@ fn younger_mmio_load_does_not_issue_while_store_is_outstanding() {
     assert!(actions.is_empty());
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 1);
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
 }
 
 #[test]
@@ -700,13 +703,16 @@ fn older_detailed_scalar_load_failure_replays_younger_cancelled_request() {
 
     let state = core.state.lock().expect("riscv core lock");
     assert!(!state.outstanding_data.contains_key(&younger_request));
-    assert_eq!(state.o3_runtime.pending_scalar_memory_retirement_count(), 1);
+    assert_eq!(
+        state.o3_runtime.pending_live_data_access_retirement_count(),
+        1
+    );
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 0);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 0);
     drop(state);
 
     let failed = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older failed load should drain before replay");
     assert_eq!(
         failed.data_access_event_kind(),
@@ -729,7 +735,7 @@ fn older_detailed_scalar_load_failure_replays_younger_cancelled_request() {
 
     assert_eq!(core.read_register(reg(6)), 0);
     let replayed = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should complete");
     assert_eq!(replayed.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0x63);
@@ -774,7 +780,7 @@ fn older_detailed_scalar_load_retry_replays_younger_cancelled_request() {
         .outstanding_data
         .is_empty());
     let retry = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older retry should drain before replay");
     assert_eq!(
         retry.data_access_event_kind(),
@@ -796,7 +802,7 @@ fn older_detailed_scalar_load_retry_replays_younger_cancelled_request() {
     .unwrap();
     scheduler.run_until_idle_conservative();
     assert_eq!(core.read_register(reg(6)), 0);
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should complete");
     assert_eq!(core.read_register(reg(6)), 0x63);
 }
@@ -847,7 +853,7 @@ fn younger_completed_load_replay_replaces_cancelled_timing_provenance() {
     };
 
     core.record_data_failure(older_request, scheduler.now());
-    core.record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+    core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older failed load should drain before replay");
 
     {
@@ -876,7 +882,7 @@ fn younger_completed_load_replay_replaces_cancelled_timing_provenance() {
     .unwrap();
     scheduler.run_until_idle_conservative();
     let replayed = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("replayed younger load should retire");
 
     assert_eq!(replayed.fetch_pc(), Address::new(0x8004));
@@ -934,7 +940,7 @@ fn younger_detailed_scalar_load_response_waits_for_older_retirement() {
     assert_eq!(core.read_register(reg(5)), 0);
     assert_eq!(core.read_register(reg(6)), 0);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
 
     scheduler.run_until_idle_conservative();
@@ -942,14 +948,14 @@ fn younger_detailed_scalar_load_response_waits_for_older_retirement() {
     assert_eq!(core.read_register(reg(6)), 0);
 
     let older = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older completed load should retire first");
     assert_eq!(older.fetch_pc(), Address::new(0x8000));
     assert_eq!(core.read_register(reg(5)), 0x2a);
     assert_eq!(core.read_register(reg(6)), 0);
 
     let younger = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("younger completed load should retire second");
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(5)), 0x2a);
@@ -1003,24 +1009,24 @@ fn disabling_detailed_mode_preserves_ordered_pending_load_retirement() {
 
     assert_eq!(core.read_register(reg(5)), 0);
     assert_eq!(core.read_register(reg(6)), 0);
-    assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 2);
+    assert_eq!(core.pending_o3_live_data_access_retirement_count(), 2);
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
     scheduler.run_until_idle_conservative();
 
     let older = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("older load should retire first after mode disable");
     assert_eq!(older.fetch_pc(), Address::new(0x8000));
     assert_eq!(core.read_register(reg(5)), 0x2a);
     assert_eq!(core.read_register(reg(6)), 0);
     let younger = core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, true)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("younger completed load should retire second after mode disable");
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0x63);
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
 }
 
 #[test]
@@ -1052,7 +1058,7 @@ fn completed_data_request_blocks_second_issue_until_o3_retirement() {
         .unwrap()
         .is_none());
     assert!(core
-        .record_ready_o3_scalar_memory_event_with_trace(u64::MAX, false)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, false)
         .is_some());
     assert!(core
         .issue_next_data_access(
@@ -1101,7 +1107,7 @@ fn failed_issue_attempt_clears_deferred_marker_and_allows_retry() {
         .lock()
         .expect("riscv core lock")
         .o3_runtime
-        .defer_scalar_memory_execution(&event));
+        .defer_live_data_access_execution(&event));
 
     let empty_transport = MemoryTransport::new();
     assert!(core
@@ -1113,7 +1119,7 @@ fn failed_issue_attempt_clears_deferred_marker_and_allows_retry() {
         )
         .is_err());
 
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     assert!(!core.data_access_lifecycle_is_quiescent());
     assert!(core
         .issue_next_data_access(
@@ -1153,8 +1159,8 @@ fn dropped_prepared_parallel_data_access_clears_deferred_marker_and_allows_retry
 
     drop(prepared);
 
-    assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 0);
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert_eq!(core.pending_o3_live_data_access_retirement_count(), 0);
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     assert!(core.has_unissued_data_access());
     assert!(!core.has_pending_data_access());
 
@@ -1214,8 +1220,8 @@ fn dropped_prepared_translated_parallel_data_access_clears_deferred_marker_and_a
 
     drop(prepared);
 
-    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
-    assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+    assert!(!core.owns_pending_o3_live_data_access_retirement(fetch_request));
+    assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     assert!(core.has_unissued_data_access());
     assert!(!core.has_pending_data_access());
 
@@ -1255,7 +1261,7 @@ fn failed_parallel_data_submission_clears_deferred_marker_and_allows_retry() {
         .unwrap_err();
     assert!(matches!(error, RiscvCpuError::Transport(_)));
     assert!(rejecting_scheduler.is_idle());
-    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
+    assert!(!core.owns_pending_o3_live_data_access_retirement(fetch_request));
     assert!(core.has_unissued_data_access());
     assert!(!core.has_pending_data_access());
 
@@ -1305,7 +1311,7 @@ fn failed_parallel_translated_data_submission_clears_deferred_marker_and_allows_
         .unwrap_err();
     assert!(matches!(error, RiscvCpuError::Transport(_)));
     assert!(rejecting_scheduler.is_idle());
-    assert!(!core.owns_pending_o3_scalar_memory_retirement(fetch_request));
+    assert!(!core.owns_pending_o3_live_data_access_retirement(fetch_request));
     assert!(core.has_unissued_data_access());
     assert!(!core.has_pending_data_access());
 
@@ -1357,7 +1363,7 @@ fn dropped_prepared_parallel_data_access_tolerates_poisoned_core_state() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .o3_runtime
-        .owns_pending_scalar_memory_retirement(fetch_request));
+        .owns_pending_live_data_access_retirement(fetch_request));
 }
 
 #[test]
@@ -1638,7 +1644,7 @@ fn defer_scalar_load(core: &RiscvCore, address: u64) -> MemoryRequestId {
     let fetch_request = event.fetch().request_id();
     let mut state = core.state.lock().expect("riscv core lock");
     state.events.push(event.clone());
-    assert!(state.o3_runtime.defer_scalar_memory_execution(&event));
+    assert!(state.o3_runtime.defer_live_data_access_execution(&event));
     fetch_request
 }
 

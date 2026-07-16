@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(core.o3_runtime_stats().instructions(), 0);
         assert_eq!(core.o3_runtime_stats().lsq_loads(), 0);
         assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
-        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
 
         let component = CheckpointComponentId::new("cpu0").unwrap();
         let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(registry.chunk(&component, "pc"), None);
 
         core.set_detailed_live_retire_gate_enabled(false);
-        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
     }
 
     #[test]
@@ -605,7 +605,7 @@ mod tests {
         assert_eq!(core.o3_runtime_stats().instructions(), 0);
         assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 1);
         assert_eq!(core.o3_runtime_snapshot().load_store_queue().len(), 1);
-        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
         assert_eq!(
             driver_stat_value(
                 &driver,
@@ -647,7 +647,7 @@ mod tests {
         assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
         assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
         assert!(core.o3_runtime_trace_records().is_empty());
-        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(core.o3_live_data_access_lifecycle_is_quiescent());
         assert_eq!(
             driver_stat_value(
                 &driver,
@@ -724,7 +724,7 @@ mod tests {
                 );
         }
         core.set_detailed_live_retire_gate_enabled(false);
-        assert!(core.has_pending_o3_scalar_memory_retirement());
+        assert!(core.has_pending_o3_live_data_access_retirement());
 
         let response_event = core
             .issue_next_data_access(
@@ -772,7 +772,7 @@ mod tests {
         assert_eq!(retired_instruction_count(&driver), 1);
         assert_eq!(core.read_register(Register::new(12).unwrap()), 0x2a);
         assert_eq!(core.o3_runtime_stats().instructions(), 1);
-        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     }
 
     #[test]
@@ -893,7 +893,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.count(), 1);
         assert_eq!(retired_instruction_count(&driver), 1);
-        assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 1);
+        assert_eq!(core.pending_o3_live_data_access_retirement_count(), 1);
         assert_eq!(core.read_register(Register::new(12).unwrap()), 0x2a);
         assert_eq!(core.read_register(Register::new(13).unwrap()), 0);
 
@@ -907,7 +907,7 @@ mod tests {
             .unwrap();
         assert_eq!(second.count(), 1);
         assert_eq!(retired_instruction_count(&driver), 2);
-        assert_eq!(core.pending_o3_scalar_memory_retirement_count(), 0);
+        assert_eq!(core.pending_o3_live_data_access_retirement_count(), 0);
         assert_eq!(core.read_register(Register::new(13).unwrap()), 0x63);
     }
 
@@ -986,7 +986,7 @@ mod tests {
         assert_eq!(core.o3_runtime_stats().max_lsq_occupancy(), 1);
         assert_eq!(core.o3_runtime_snapshot().reorder_buffer().len(), 1);
         assert_eq!(core.o3_runtime_snapshot().load_store_queue().len(), 1);
-        assert!(!core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
         let handoff = core
             .capture_o3_live_data_handoff()
             .expect("resident MMIO load should have typed live handoff authority");
@@ -1053,7 +1053,7 @@ mod tests {
         assert_eq!(core.o3_runtime_stats().lsq_loads(), 1);
         assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
         assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
-        assert!(core.o3_scalar_memory_lifecycle_is_quiescent());
+        assert!(core.o3_live_data_access_lifecycle_is_quiescent());
     }
 
     #[test]

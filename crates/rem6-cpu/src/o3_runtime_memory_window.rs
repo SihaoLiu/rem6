@@ -64,9 +64,9 @@ impl O3RuntimeState {
     pub(crate) fn scalar_memory_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
         if !self.live_scalar_memory_younger_sequences.is_empty()
             || self
-                .live_scalar_memories
+                .live_data_accesses
                 .iter()
-                .any(|live| live.outcome != O3LiveScalarMemoryOutcome::Resident)
+                .any(|live| live.outcome != O3LiveDataAccessOutcome::Resident)
         {
             return None;
         }
@@ -74,7 +74,7 @@ impl O3RuntimeState {
         let mut stores = Vec::new();
         let mut store_ranges = Vec::new();
         let mut load_destinations = Vec::new();
-        for live in &self.live_scalar_memories {
+        for live in &self.live_data_accesses {
             let access = live.execution.execution().memory_access()?;
             match access {
                 MemoryAccessKind::Store { .. } if load_destinations.is_empty() => {
@@ -99,14 +99,14 @@ impl O3RuntimeState {
         }
 
         Some(O3ScalarMemoryWindowState {
-            rows: self.live_scalar_memories.len(),
+            rows: self.live_data_accesses.len(),
             stores,
             load_destinations,
         })
     }
 
     pub(crate) fn scalar_memory_fetch_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
-        if self.deferred_scalar_memory_execution.is_some() {
+        if self.deferred_live_data_access_execution.is_some() {
             return None;
         }
         self.scalar_memory_window_state()
@@ -116,9 +116,9 @@ impl O3RuntimeState {
         &self,
         fetch_request: MemoryRequestId,
     ) -> Option<RiscvScalarIntegerLiveWindow> {
-        let tail = self.live_scalar_memories.last()?;
+        let tail = self.live_data_accesses.last()?;
         if tail.fetch_request != fetch_request
-            || tail.outcome != O3LiveScalarMemoryOutcome::Resident
+            || tail.outcome != O3LiveDataAccessOutcome::Resident
             || !matches!(tail.execution.instruction(), RiscvInstruction::Load { .. })
         {
             return None;
@@ -132,16 +132,16 @@ impl O3RuntimeState {
     }
 
     pub(super) fn has_scalar_memory_window_capacity(&self) -> bool {
-        self.live_scalar_memories.len() < self.scalar_memory_window_limit
+        self.live_data_accesses.len() < self.scalar_memory_window_limit
     }
 
     pub(crate) fn can_consider_scalar_memory_younger(&self) -> bool {
-        !self.live_scalar_memories.is_empty()
+        !self.live_data_accesses.is_empty()
             && self.has_scalar_memory_window_capacity()
             && self.scalar_memory_window_state().is_some()
     }
 
-    pub(crate) fn can_defer_scalar_memory_instruction(
+    pub(crate) fn can_admit_scalar_memory_window_instruction(
         &self,
         instruction: RiscvInstruction,
         younger_range: AddressRange,
@@ -238,7 +238,7 @@ impl O3RuntimeState {
         {
             return None;
         }
-        self.live_scalar_memories
+        self.live_data_accesses
             .last()
             .map(|store| store.data_request)
     }
@@ -257,7 +257,7 @@ impl O3RuntimeState {
             _ => None,
         };
         range.is_some_and(|range| {
-            self.can_defer_scalar_memory_instruction(execution.instruction(), range)
+            self.can_admit_scalar_memory_window_instruction(execution.instruction(), range)
         })
     }
 }
@@ -275,12 +275,12 @@ mod tests {
     use crate::{CpuFetchEvent, CpuFetchRecord};
 
     #[test]
-    fn disjoint_store_then_load_stages_two_live_scalar_memory_rows() {
+    fn disjoint_scalar_store_then_load_stages_two_live_data_access_rows() {
         let mut runtime = O3RuntimeState::default();
         let older = scalar_store_event(0x8000, 10, 0x9000);
         let younger = scalar_load_event(0x8004, 11, 13, 10, 0x9004);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
         assert_eq!(
             runtime.forwarded_scalar_load_data(
                 younger.instruction(),
@@ -288,9 +288,9 @@ mod tests {
             ),
             None
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.live_data_accesses.len(), 2);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
         assert_eq!(
@@ -309,10 +309,10 @@ mod tests {
         let store = scalar_store_event(0x8000, 10, 0x9000);
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.defer_scalar_memory_execution(&load));
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.defer_live_data_access_execution(&load));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
+        assert_eq!(runtime.live_data_accesses.len(), 2);
     }
 
     #[test]
@@ -323,11 +323,11 @@ mod tests {
         let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(22), 33));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 3);
     }
@@ -345,15 +345,15 @@ mod tests {
         ];
 
         for (index, load) in loads[..4].iter().enumerate() {
-            assert!(runtime.stage_live_scalar_memory_issue(
+            assert!(runtime.stage_live_data_access_issue(
                 load,
                 memory_request(20 + index as u64),
                 31 + index as u64,
             ));
         }
-        assert!(!runtime.stage_live_scalar_memory_issue(&loads[4], memory_request(24), 35,));
+        assert!(!runtime.stage_live_data_access_issue(&loads[4], memory_request(24), 35,));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 4);
+        assert_eq!(runtime.live_data_accesses.len(), 4);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 4);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 4);
     }
@@ -366,11 +366,11 @@ mod tests {
         let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let dependent = scalar_load_event(0x8008, 12, 14, 13, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-        assert!(!runtime.stage_live_scalar_memory_issue(&dependent, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+        assert!(!runtime.stage_live_data_access_issue(&dependent, memory_request(22), 33));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.live_data_accesses.len(), 2);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
     }
@@ -384,12 +384,12 @@ mod tests {
         let third = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
         let dependent = scalar_load_event(0x800c, 13, 15, 13, 0x90c0);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-        assert!(runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
-        assert!(!runtime.stage_live_scalar_memory_issue(&dependent, memory_request(23), 34));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&third, memory_request(22), 33));
+        assert!(!runtime.stage_live_data_access_issue(&dependent, memory_request(23), 34));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 3);
     }
@@ -408,7 +408,7 @@ mod tests {
             (&middle, requests[1], 32),
             (&younger, requests[2], 33),
         ] {
-            assert!(runtime.stage_live_scalar_memory_issue(event, request, issue_tick));
+            assert!(runtime.stage_live_data_access_issue(event, request, issue_tick));
         }
 
         let mut completed = [younger.clone(), middle.clone(), older.clone()];
@@ -420,7 +420,7 @@ mod tests {
             (&completed[1], requests[1], 42, 10, [0x63, 0, 0, 0]),
         ] {
             assert!(runtime
-                .complete_live_scalar_memory_response(
+                .complete_live_data_access_response(
                     event,
                     request,
                     response_tick,
@@ -429,11 +429,11 @@ mod tests {
                 )
                 .unwrap());
             assert!(runtime
-                .take_ready_live_scalar_memory_event(u64::MAX)
+                .take_ready_live_data_access_event(u64::MAX)
                 .is_none());
         }
         assert!(runtime
-            .complete_live_scalar_memory_response(
+            .complete_live_data_access_response(
                 &completed[2],
                 requests[0],
                 45,
@@ -444,13 +444,13 @@ mod tests {
 
         for expected in [&completed[2], &completed[1], &completed[0]] {
             let retired = runtime
-                .take_ready_live_scalar_memory_event(u64::MAX)
+                .take_ready_live_data_access_event(u64::MAX)
                 .expect("completed scalar load should retire in program order");
             assert_eq!(&retired, expected);
             runtime.record_retired_instruction_with_trace(&retired, true);
         }
 
-        assert!(runtime.scalar_memory_lifecycle_is_quiescent());
+        assert!(runtime.live_data_access_lifecycle_is_quiescent());
         assert_eq!(
             runtime
                 .trace_records()
@@ -483,7 +483,7 @@ mod tests {
             memory_request(23),
         ];
         for (index, event) in issued.iter().enumerate() {
-            assert!(runtime.stage_live_scalar_memory_issue(
+            assert!(runtime.stage_live_data_access_issue(
                 event,
                 requests[index],
                 31 + index as u64,
@@ -505,7 +505,7 @@ mod tests {
             (&completed[2], requests[1], 42, [0x63, 0, 0, 0]),
         ] {
             assert!(runtime
-                .complete_live_scalar_memory_response(
+                .complete_live_data_access_response(
                     event,
                     request,
                     response_tick,
@@ -514,11 +514,11 @@ mod tests {
                 )
                 .unwrap());
             assert!(runtime
-                .take_ready_live_scalar_memory_event(u64::MAX)
+                .take_ready_live_data_access_event(u64::MAX)
                 .is_none());
         }
         assert!(runtime
-            .complete_live_scalar_memory_response(
+            .complete_live_data_access_response(
                 &completed[3],
                 requests[0],
                 45,
@@ -529,13 +529,13 @@ mod tests {
 
         for expected in [&completed[3], &completed[2], &completed[1], &completed[0]] {
             let retired = runtime
-                .take_ready_live_scalar_memory_event(u64::MAX)
+                .take_ready_live_data_access_event(u64::MAX)
                 .expect("completed scalar load should retire in program order");
             assert_eq!(&retired, expected);
             runtime.record_retired_instruction_with_trace(&retired, true);
         }
 
-        assert!(runtime.scalar_memory_lifecycle_is_quiescent());
+        assert!(runtime.live_data_access_lifecycle_is_quiescent());
         assert!(runtime
             .trace_records()
             .windows(2)
@@ -550,23 +550,23 @@ mod tests {
         let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(22), 33));
         let mut failed = middle.clone();
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
         assert!(runtime
-            .complete_live_scalar_memory_response(&failed, memory_request(21), 40, 8, None,)
+            .complete_live_data_access_response(&failed, memory_request(21), 40, 8, None,)
             .unwrap());
 
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.live_data_accesses.len(), 2);
         assert_eq!(
-            runtime.live_scalar_memories[0].fetch_request,
+            runtime.live_data_accesses[0].fetch_request,
             older.fetch().request_id()
         );
         assert_eq!(
-            runtime.live_scalar_memories[1].fetch_request,
+            runtime.live_data_accesses[1].fetch_request,
             middle.fetch().request_id()
         );
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 1);
@@ -584,7 +584,7 @@ mod tests {
             scalar_load_event(0x800c, 13, 15, 10, 0x90c0),
         ];
         for (index, load) in loads.iter().enumerate() {
-            assert!(runtime.stage_live_scalar_memory_issue(
+            assert!(runtime.stage_live_data_access_issue(
                 load,
                 memory_request(20 + index as u64),
                 31 + index as u64,
@@ -594,10 +594,10 @@ mod tests {
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
         assert!(runtime
-            .complete_live_scalar_memory_response(&failed, memory_request(22), 40, 7, None,)
+            .complete_live_data_access_response(&failed, memory_request(22), 40, 7, None,)
             .unwrap());
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
     }
@@ -613,7 +613,7 @@ mod tests {
             scalar_load_event(0x800c, 13, 15, 10, 0x90c0),
         ];
         for (index, load) in loads.iter().enumerate() {
-            assert!(runtime.stage_live_scalar_memory_issue(
+            assert!(runtime.stage_live_data_access_issue(
                 load,
                 memory_request(20 + index as u64),
                 31 + index as u64,
@@ -622,7 +622,7 @@ mod tests {
         let mut completed_fourth = loads[3].clone();
         completed_fourth.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(runtime
-            .complete_live_scalar_memory_response(
+            .complete_live_data_access_response(
                 &completed_fourth,
                 memory_request(23),
                 40,
@@ -634,12 +634,12 @@ mod tests {
         failed_third.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
         assert!(runtime
-            .complete_live_scalar_memory_response(&failed_third, memory_request(22), 41, 8, None,)
+            .complete_live_data_access_response(&failed_third, memory_request(22), 41, 8, None,)
             .unwrap());
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert!(runtime
-            .live_scalar_memories
+            .live_data_accesses
             .iter()
             .all(|live| live.fetch_request != loads[3].fetch().request_id()));
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
@@ -654,12 +654,12 @@ mod tests {
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let third = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
         assert!(runtime.can_consider_scalar_memory_younger());
-        assert!(runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&third, memory_request(22), 33));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 3);
         assert_eq!(
@@ -689,14 +689,14 @@ mod tests {
         ];
 
         for (index, event) in events.iter().enumerate() {
-            assert!(runtime.stage_live_scalar_memory_issue(
+            assert!(runtime.stage_live_data_access_issue(
                 event,
                 memory_request(20 + u64::try_from(index).unwrap()),
                 31 + u64::try_from(index).unwrap(),
             ));
         }
 
-        assert_eq!(runtime.live_scalar_memories.len(), 4);
+        assert_eq!(runtime.live_data_accesses.len(), 4);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 4);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 4);
         assert!(!runtime.can_consider_scalar_memory_younger());
@@ -714,9 +714,9 @@ mod tests {
             let third = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
             let younger = scalar_load_event(0x800c, 13, 15, 10, younger_address);
 
-            assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-            assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-            assert!(runtime.stage_live_scalar_memory_issue(&third, memory_request(22), 33));
+            assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+            assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+            assert!(runtime.stage_live_data_access_issue(&third, memory_request(22), 33));
             let access = younger.execution().memory_access().unwrap();
             assert_eq!(
                 runtime
@@ -730,8 +730,8 @@ mod tests {
                     .is_some(),
                 fully_forwarded
             );
-            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(23), 34));
-            assert_eq!(runtime.live_scalar_memories.len(), 4);
+            assert!(runtime.stage_live_data_access_issue(&younger, memory_request(23), 34));
+            assert_eq!(runtime.live_data_accesses.len(), 4);
         }
     }
 
@@ -743,8 +743,8 @@ mod tests {
         let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9000);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
         assert_eq!(
             runtime.forwarded_scalar_load_data(
                 younger.instruction(),
@@ -752,7 +752,7 @@ mod tests {
             ),
             Some(vec![0x2a, 0, 0, 0])
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(22), 33));
     }
 
     #[test]
@@ -763,20 +763,20 @@ mod tests {
         let middle = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let younger = scalar_load_event(0x8008, 12, 14, 10, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(22), 33));
         let mut failed = middle.clone();
         failed.set_data_access_event_kind(RiscvDataAccessEventKind::Failed);
 
         assert!(runtime
-            .complete_live_scalar_memory_response(&failed, memory_request(21), 40, 8, None,)
+            .complete_live_data_access_response(&failed, memory_request(21), 40, 8, None,)
             .unwrap());
 
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.live_data_accesses.len(), 2);
         assert_eq!(
             runtime
-                .live_scalar_memories
+                .live_data_accesses
                 .iter()
                 .map(|live| live.fetch_request)
                 .collect::<Vec<_>>(),
@@ -796,8 +796,8 @@ mod tests {
             scalar_store_event_with_width_and_value(0x8004, 11, 0x9000, MemoryWidth::Word, 0x63);
         let load = scalar_load_event(0x8008, 12, 13, 10, 0x9000);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&younger_store, memory_request(21), 32,));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&younger_store, memory_request(21), 32,));
         assert_eq!(
             runtime.forwarded_scalar_load_data(
                 load.instruction(),
@@ -805,9 +805,9 @@ mod tests {
             ),
             Some(vec![0x63, 0, 0, 0])
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(22), 33));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(22), 33));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 3);
+        assert_eq!(runtime.live_data_accesses.len(), 3);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
         assert_eq!(
             runtime
@@ -842,17 +842,17 @@ mod tests {
         let load =
             scalar_load_event_with_width(0x800c, 13, 14, 10, 0x9000, MemoryWidth::Doubleword);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
         assert_eq!(
             runtime.scalar_store_predecessor(&middle),
             Some(memory_request(20))
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&middle, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&middle, memory_request(21), 32));
         assert_eq!(
             runtime.scalar_store_predecessor(&younger_store),
             Some(memory_request(21))
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&younger_store, memory_request(22), 33,));
+        assert!(runtime.stage_live_data_access_issue(&younger_store, memory_request(22), 33,));
 
         let access = load.execution().memory_access().unwrap();
         let plan = runtime
@@ -862,8 +862,8 @@ mod tests {
         let mut data = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
         assert!(plan.overlay_response_data(&mut data));
         assert_eq!(data, vec![0xaa, 0x00, 0xdd, 0xcc, 0x55, 0x66, 0x77, 0x88]);
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(23), 34));
-        assert_eq!(runtime.live_scalar_memories.len(), 4);
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(23), 34));
+        assert_eq!(runtime.live_data_accesses.len(), 4);
     }
 
     #[test]
@@ -873,10 +873,10 @@ mod tests {
         let older = scalar_store_event(0x8000, 10, 0x9000);
         let younger = scalar_store_event(0x8004, 11, 0x9004);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
         assert_eq!(runtime.scalar_store_predecessor(&younger), None);
-        assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 1);
+        assert!(!runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
+        assert_eq!(runtime.live_data_accesses.len(), 1);
     }
 
     #[test]
@@ -887,10 +887,10 @@ mod tests {
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let younger_store = scalar_store_event(0x8008, 12, 0x9000);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
-        assert!(!runtime.stage_live_scalar_memory_issue(&younger_store, memory_request(22), 33,));
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
+        assert!(!runtime.stage_live_data_access_issue(&younger_store, memory_request(22), 33,));
+        assert_eq!(runtime.live_data_accesses.len(), 2);
     }
 
     #[test]
@@ -901,10 +901,10 @@ mod tests {
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
         let dependent = scalar_load_event(0x8008, 12, 14, 13, 0x9080);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
-        assert!(!runtime.stage_live_scalar_memory_issue(&dependent, memory_request(22), 33,));
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
+        assert!(!runtime.stage_live_data_access_issue(&dependent, memory_request(22), 33,));
+        assert_eq!(runtime.live_data_accesses.len(), 2);
     }
 
     #[test]
@@ -914,9 +914,9 @@ mod tests {
         let store = scalar_store_event(0x8000, 10, 0x9000);
         let load = scalar_load_event(0x8004, 11, 13, 10, 0x9040);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
-        assert!(!runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 1);
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(!runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
+        assert_eq!(runtime.live_data_accesses.len(), 1);
     }
 
     #[test]
@@ -925,7 +925,7 @@ mod tests {
         let older = scalar_store_event(0x8000, 10, 0x9000);
         let younger = scalar_load_event(0x8004, 11, 13, 10, 0x9000);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
         assert_eq!(
             runtime.forwarded_scalar_load_data(
                 younger.instruction(),
@@ -933,9 +933,9 @@ mod tests {
             ),
             Some(vec![0x2a, 0, 0, 0])
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
 
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert_eq!(runtime.live_data_accesses.len(), 2);
         assert_eq!(runtime.snapshot().reorder_buffer().len(), 2);
         assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
     }
@@ -957,7 +957,7 @@ mod tests {
             );
             let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, address, width);
 
-            assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+            assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
             assert_eq!(
                 runtime.forwarded_scalar_load_data(
                     younger.instruction(),
@@ -966,8 +966,8 @@ mod tests {
                 Some(expected),
                 "contained load at {address:#x} with {width:?} should receive selected store bytes"
             );
-            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-            assert_eq!(runtime.live_scalar_memories.len(), 2);
+            assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
+            assert_eq!(runtime.live_data_accesses.len(), 2);
         }
     }
 
@@ -978,7 +978,7 @@ mod tests {
             let older = scalar_store_event(0x8000, 10, 0x9000);
             let younger = scalar_load_event(0x8004, 11, 13, 10, younger_address);
 
-            assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+            assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
             let access = younger.execution().memory_access().unwrap();
             assert_eq!(
                 runtime
@@ -992,8 +992,8 @@ mod tests {
                 None,
                 "partial forwarding still requires a transport response"
             );
-            assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-            assert_eq!(runtime.live_scalar_memories.len(), 2);
+            assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
+            assert_eq!(runtime.live_data_accesses.len(), 2);
         }
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
             scalar_store_event_with_width_and_value(0x8000, 10, 0x9000, MemoryWidth::Byte, 0x2a);
         let younger = scalar_load_event_with_width(0x8004, 11, 13, 10, 0x9000, MemoryWidth::Word);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
         let access = younger.execution().memory_access().unwrap();
         assert_eq!(
             runtime
@@ -1016,8 +1016,8 @@ mod tests {
             runtime.forwarded_scalar_load_data(younger.instruction(), access),
             None
         );
-        assert!(runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 2);
+        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
+        assert_eq!(runtime.live_data_accesses.len(), 2);
     }
 
     #[test]
@@ -1026,9 +1026,9 @@ mod tests {
         let older = scalar_load_event(0x8000, 10, 12, 10, 0x9000);
         let younger = scalar_store_event(0x8004, 11, 0x9040);
 
-        assert!(runtime.stage_live_scalar_memory_issue(&older, memory_request(20), 31));
-        assert!(!runtime.stage_live_scalar_memory_issue(&younger, memory_request(21), 32));
-        assert_eq!(runtime.live_scalar_memories.len(), 1);
+        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 31));
+        assert!(!runtime.stage_live_data_access_issue(&younger, memory_request(21), 32));
+        assert_eq!(runtime.live_data_accesses.len(), 1);
     }
 
     #[test]
@@ -1042,14 +1042,14 @@ mod tests {
             rs1: reg(12),
             imm: Immediate::new(1),
         };
-        assert!(runtime.stage_live_scalar_memory_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
         let forwarding_plan = runtime
             .scalar_load_forwarding_plan(
                 load.instruction(),
                 load.execution().memory_access().unwrap(),
             )
             .expect("load should forward from the resident store");
-        assert!(runtime.stage_live_scalar_memory_issue(&load, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),
             [(Address::new(0x8008), dependent)],
@@ -1074,7 +1074,7 @@ mod tests {
         let mut retry = store.clone();
         retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
         assert!(runtime
-            .complete_live_scalar_memory_response(&retry, memory_request(20), 40, 9, None,)
+            .complete_live_data_access_response(&retry, memory_request(20), 40, 9, None,)
             .unwrap());
 
         assert!(runtime.snapshot.reorder_buffer.is_empty());

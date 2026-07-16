@@ -360,8 +360,8 @@ impl O3RuntimeState {
         sequence: u64,
         source: rem6_isa_riscv::Register,
     ) -> Option<(RegisterWrite, u64)> {
-        let live = self.live_scalar_memories.iter().find(|live| {
-            live.sequence == sequence && live.outcome == O3LiveScalarMemoryOutcome::Completed
+        let live = self.live_data_accesses.iter().find(|live| {
+            live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
         })?;
         let rob = self
             .snapshot

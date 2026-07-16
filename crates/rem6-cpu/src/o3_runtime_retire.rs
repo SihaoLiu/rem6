@@ -20,24 +20,24 @@ impl O3RuntimeState {
     pub(super) fn record_runtime_state(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
-        live_scalar_memory: Option<&O3LiveScalarMemory>,
+        live_data_access: Option<&O3LiveDataAccess>,
     ) -> O3RuntimeTraceRecord {
         let record = execution.execution();
-        let live_retired = live_scalar_memory
+        let live_retired = live_data_access
             .is_none()
             .then(|| self.take_live_retired_instruction(execution.fetch().request_id()))
             .flatten();
-        let observation = if let Some(live) = live_scalar_memory {
+        let observation = if let Some(live) = live_data_access {
             let commit_tick = live
                 .commit_tick
-                .expect("taken live scalar memory has an ordered commit tick");
+                .expect("taken live data access has an ordered commit tick");
             let rob = self
                 .snapshot
                 .reorder_buffer
                 .iter()
                 .find(|entry| entry.sequence() == live.sequence)
                 .copied()
-                .expect("completed live scalar memory keeps its ROB row until retirement");
+                .expect("completed live data access keeps its ROB row until retirement");
             assert!(rob.is_ready());
             let dependencies = self.record_scalar_integer_dependencies(&record.instruction());
             O3RobRetireObservation {
@@ -156,7 +156,7 @@ impl O3RuntimeState {
         let fu_latency_cycles =
             crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());
 
-        if live_scalar_memory.is_none() {
+        if live_data_access.is_none() {
             for entry in &mut self.snapshot.load_store_queue {
                 entry.mark_completed();
             }
@@ -168,10 +168,10 @@ impl O3RuntimeState {
                     .observe_lsq_occupancy(self.snapshot.load_store_queue.len());
             }
         }
-        let lsq_occupancy = live_scalar_memory
+        let lsq_occupancy = live_data_access
             .map(|live| live.issue_lsq_occupancy)
             .unwrap_or(self.snapshot.load_store_queue.len());
-        if let Some(live) = live_scalar_memory {
+        if let Some(live) = live_data_access {
             let rename_destination = self
                 .snapshot
                 .reorder_buffer
@@ -179,7 +179,7 @@ impl O3RuntimeState {
                 .find(|entry| entry.sequence() == live.sequence)
                 .copied()
                 .and_then(staged_rename_entry);
-            self.remove_live_scalar_memory_rows(live.sequence);
+            self.remove_live_data_access_rows(live.sequence);
             if let Some(rename_destination) = rename_destination {
                 self.publish_live_rename_entry(rename_destination);
             }
@@ -225,13 +225,13 @@ impl O3RuntimeState {
             trace_record.set_admitted_writeback_tick(admitted_writeback_tick);
         }
 
-        if let Some(live) = live_scalar_memory {
+        if let Some(live) = live_data_access {
             let response_tick = live
                 .response_tick
-                .expect("completed live scalar memory has a response tick");
+                .expect("completed live data access has a response tick");
             let latency_ticks = live
                 .latency_ticks
-                .expect("completed live scalar memory has response latency");
+                .expect("completed live data access has response latency");
             trace_record.set_lsq_data_response(response_tick, latency_ticks);
             if let Some(access) = record.memory_access() {
                 self.stats

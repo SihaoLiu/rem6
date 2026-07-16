@@ -35,7 +35,7 @@ impl RiscvCoreState {
             return false;
         };
         self.o3_runtime
-            .can_defer_scalar_memory_instruction(instruction, range)
+            .can_admit_scalar_memory_window_instruction(instruction, range)
     }
 
     pub(super) fn cacheable_scalar_memory_instruction_range(
