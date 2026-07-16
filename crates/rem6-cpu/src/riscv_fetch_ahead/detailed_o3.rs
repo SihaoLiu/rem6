@@ -14,8 +14,8 @@ use crate::{
     riscv_scalar_memory_window::{
         independent_scalar_load_destination, store_range_extends_overlap_prefix,
     },
-    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, ReturnAddressStackOperationKind,
-    RiscvCoreState,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, ReturnAddressStackOperation,
+    ReturnAddressStackOperationKind, RiscvCoreState,
 };
 
 pub(super) enum DetailedFetchAheadCandidate {
@@ -627,27 +627,60 @@ pub(crate) fn recorded_predicted_pc(
     }
 }
 
+fn ras_required_producer_matches(
+    producer_kind: BranchTargetKind,
+    operation: &ReturnAddressStackOperation,
+    pushed_address: Address,
+    consumer: RequiredRasConsumer,
+) -> bool {
+    if operation.pushed_address() != Some(pushed_address) {
+        return false;
+    }
+    let mut expected_after = operation.stack_before().to_vec();
+    match (producer_kind, operation.kind(), consumer) {
+        (
+            BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect,
+            ReturnAddressStackOperationKind::Push,
+            _,
+        ) => {
+            if operation.predicted_return().is_some() {
+                return false;
+            }
+        }
+        (
+            BranchTargetKind::Return,
+            ReturnAddressStackOperationKind::PopThenPush,
+            RequiredRasConsumer::Pop,
+        ) => {
+            let Some(predicted_return) = expected_after.pop() else {
+                return false;
+            };
+            if operation.predicted_return() != Some(predicted_return) {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+    expected_after.push(pushed_address);
+    operation.stack_after() == expected_after
+}
+
 pub(super) fn unconsumed_ras_required_target(
     state: &RiscvCoreState,
     push_sequence: u64,
     pushed_address: Address,
+    consumer: RequiredRasConsumer,
 ) -> Option<Address> {
-    if !matches!(
-        state.branch_speculation_kinds.get(&push_sequence),
-        Some(BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect)
-    ) {
-        return None;
-    }
+    let producer_kind = *state.branch_speculation_kinds.get(&push_sequence)?;
     let operation_id = state.return_address_stack_operations.get(&push_sequence)?;
     let operation = state.return_address_stack.pending_operations().last()?;
     if operation.id() != *operation_id
-        || operation.kind() != ReturnAddressStackOperationKind::Push
+        || !ras_required_producer_matches(producer_kind, operation, pushed_address, consumer)
         || operation.stack_after() != state.return_address_stack.stack_entries()
     {
         return None;
     }
-    let target = operation.pushed_address()?;
-    (target == pushed_address && state.return_address_stack.top() == Some(target)).then_some(target)
+    (state.return_address_stack.top() == Some(pushed_address)).then_some(pushed_address)
 }
 
 fn recorded_ras_required_target(
@@ -657,32 +690,28 @@ fn recorded_ras_required_target(
     consumer: RequiredRasConsumer,
     return_sequence: u64,
 ) -> Option<Address> {
-    if !matches!(
-        state.branch_speculation_kinds.get(&push_sequence),
-        Some(BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect)
-    ) || state.branch_speculation_kinds.get(&return_sequence) != Some(&BranchTargetKind::Return)
-    {
+    let producer_kind = *state.branch_speculation_kinds.get(&push_sequence)?;
+    if state.branch_speculation_kinds.get(&return_sequence) != Some(&BranchTargetKind::Return) {
         return None;
     }
-    let push_id = state.return_address_stack_operations.get(&push_sequence)?;
-    let pop_id = state
+    let producer_id = state.return_address_stack_operations.get(&push_sequence)?;
+    let consumer_id = state
         .return_address_stack_operations
         .get(&return_sequence)?;
     let operations = state.return_address_stack.pending_operations();
-    let push_index = operations
+    let producer_index = operations
         .iter()
-        .position(|operation| operation.id() == *push_id)?;
-    let pop_index = operations
+        .position(|operation| operation.id() == *producer_id)?;
+    let consumer_index = operations
         .iter()
-        .position(|operation| operation.id() == *pop_id)?;
-    if pop_index != push_index + 1 {
+        .position(|operation| operation.id() == *consumer_id)?;
+    if consumer_index != producer_index + 1 {
         return None;
     }
-    let push = &operations[push_index];
-    let consumer_operation = &operations[pop_index];
-    if push.kind() != ReturnAddressStackOperationKind::Push
-        || push.pushed_address() != Some(pushed_address)
-        || push.stack_after() != consumer_operation.stack_before()
+    let producer = &operations[producer_index];
+    let consumer_operation = &operations[consumer_index];
+    if !ras_required_producer_matches(producer_kind, producer, pushed_address, consumer)
+        || producer.stack_after() != consumer_operation.stack_before()
     {
         return None;
     }

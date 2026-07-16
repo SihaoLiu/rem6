@@ -1449,7 +1449,7 @@ fn direct_jump_fetch_ahead_target(
         PredictedControlTargetAuthority::RasRequired {
             push_sequence,
             pushed_address,
-            ..
+            consumer,
         } => {
             if kind != BranchTargetKind::Return {
                 return None;
@@ -1458,6 +1458,7 @@ fn direct_jump_fetch_ahead_target(
                 state,
                 push_sequence,
                 pushed_address,
+                consumer,
             )?)
         }
     };

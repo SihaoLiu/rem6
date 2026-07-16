@@ -93,6 +93,94 @@ fn recorded_same_window_coroutine_pc(core: &RiscvCore) -> RecordedPredictedPc {
     )
 }
 
+fn unconsumed_same_window_coroutine_round_trip_core() -> RiscvCore {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let coroutine = i_type(0, 1, 0x0, 5, 0x67);
+    let return_jump = i_type(0, 5, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, coroutine.to_le_bytes().to_vec()),
+        (3, 0x8008, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(3);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let coroutine_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(coroutine_decision.pc(), Address::new(0x8008));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&coroutine_decision)
+            .unwrap(),
+    );
+
+    core
+}
+
+fn recorded_same_window_coroutine_round_trip_core() -> RiscvCore {
+    let core = unconsumed_same_window_coroutine_round_trip_core();
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(return_decision.pc(), Address::new(0x8010));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&return_decision)
+            .unwrap(),
+    );
+    core
+}
+
+fn recorded_same_window_round_trip_target_authority() -> PredictedControlTargetAuthority {
+    let call = RiscvInstruction::decode(j_type(8, 1)).unwrap();
+    let coroutine = RiscvInstruction::decode(i_type(0, 1, 0x0, 5, 0x67)).unwrap();
+    let return_jump = RiscvInstruction::decode(i_type(0, 5, 0x0, 0, 0x67)).unwrap();
+    let mut window =
+        crate::riscv_o3_window_policy::RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(6).unwrap()],
+            1,
+            4,
+        )
+        .unwrap();
+    let call_classification = window.classify_sequenced_younger(call, 1);
+    assert_eq!(
+        call_classification.decision(),
+        crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    let coroutine_classification = window.classify_sequenced_younger(coroutine, 2);
+    assert_eq!(
+        coroutine_classification.decision(),
+        crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    );
+    assert_eq!(coroutine_classification.ras_push_sequence(), Some(1));
+    let return_classification = window.classify_sequenced_younger(return_jump, 3);
+    assert_eq!(
+        return_classification.decision(),
+        crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    );
+    assert_eq!(return_classification.ras_push_sequence(), Some(2));
+    predicted_control_target_authority(
+        return_jump,
+        Address::new(0x800c),
+        return_classification,
+        &[(1, Address::new(0x8008)), (2, Address::new(0x8010))],
+    )
+    .unwrap()
+}
+
+fn recorded_same_window_round_trip_pc(core: &RiscvCore) -> RecordedPredictedPc {
+    let state = core.state.lock().expect("riscv core lock");
+    recorded_predicted_pc(
+        &state,
+        request(3),
+        Address::new(0x800c),
+        recorded_same_window_round_trip_target_authority(),
+    )
+}
+
 fn detailed_nested_control_core(split_inner: bool) -> RiscvCore {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let outer = b_type(12, 1, 2, 0x0);
@@ -318,6 +406,172 @@ fn detailed_recorded_coroutine_accepts_exact_pop_then_push() {
     let decision = core.next_fetch_ahead_before_retire().unwrap();
 
     assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_unconsumed_coroutine_round_trip_opens_exact_replacement_pop() {
+    let core = unconsumed_same_window_coroutine_round_trip_core();
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8010));
+    let speculation = decision.branch_speculation().unwrap();
+    assert_eq!(speculation.pc(), Address::new(0x8008));
+    assert_eq!(speculation.target(), Some(Address::new(0x8010)));
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_accepts_exact_replacement_pop() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Ready(Address::new(0x8010))
+    );
+}
+
+#[test]
+fn detailed_unconsumed_coroutine_round_trip_rejects_newer_ras_operation() {
+    let core = unconsumed_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_unconsumed_coroutine_round_trip_rejects_linked_consumer() {
+    let core = unconsumed_same_window_coroutine_round_trip_core();
+    let state = core.state.lock().expect("riscv core lock");
+
+    assert_eq!(
+        detailed_o3::unconsumed_ras_required_target(
+            &state,
+            2,
+            Address::new(0x8010),
+            detailed_o3::RequiredRasConsumer::PopThenPush {
+                pushed_address: Address::new(0x8014),
+            },
+        ),
+        None
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_rejects_plain_push_producer() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(3).unwrap();
+        state.squash_return_address_stack_speculation(2).unwrap();
+        let producer = state
+            .return_address_stack
+            .push_speculative(Address::new(0x8010));
+        state
+            .return_address_stack_operations
+            .insert(2, producer.id());
+        let consumer = state.return_address_stack.pop_speculative();
+        state
+            .return_address_stack_operations
+            .insert(3, consumer.id());
+    }
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_rejects_wrong_replacement_address() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(3).unwrap();
+        state.squash_return_address_stack_speculation(2).unwrap();
+        let producer = state
+            .return_address_stack
+            .pop_then_push_speculative(Address::new(0x9000));
+        state
+            .return_address_stack_operations
+            .insert(2, producer.id());
+        let consumer = state.return_address_stack.pop_speculative();
+        state
+            .return_address_stack_operations
+            .insert(3, consumer.id());
+    }
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_rejects_intervening_ras_operation() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(3).unwrap();
+        state
+            .return_address_stack
+            .push_speculative(Address::new(0x9000));
+        let consumer = state.return_address_stack.pop_speculative();
+        state
+            .return_address_stack_operations
+            .insert(3, consumer.id());
+    }
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_round_trip_rejects_stale_producer_stack() {
+    let core = recorded_same_window_coroutine_round_trip_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let producer_id = *state.return_address_stack_operations.get(&2).unwrap();
+        let snapshot = state.return_address_stack.snapshot();
+        let pending_operations = snapshot
+            .pending_operations()
+            .iter()
+            .map(|operation| {
+                if operation.id() != producer_id {
+                    return operation.clone();
+                }
+                crate::ReturnAddressStackOperation::from_checkpoint_parts(
+                    operation.id(),
+                    operation.kind(),
+                    operation.pushed_address(),
+                    operation.predicted_return(),
+                    operation.stack_before().to_vec(),
+                    vec![Address::new(0x9000)],
+                )
+            })
+            .collect();
+        let malformed_snapshot = crate::ReturnAddressStackSnapshot::from_checkpoint_parts(
+            snapshot.config().clone(),
+            snapshot.stack_entries().to_vec(),
+            snapshot.next_operation(),
+            pending_operations,
+        );
+        state
+            .return_address_stack
+            .restore(&malformed_snapshot)
+            .unwrap();
+    }
+
+    assert_eq!(
+        recorded_same_window_round_trip_pc(&core),
+        RecordedPredictedPc::Invalid
+    );
 }
 
 #[test]
