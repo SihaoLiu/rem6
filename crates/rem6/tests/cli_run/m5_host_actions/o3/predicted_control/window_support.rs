@@ -145,24 +145,24 @@ pub(super) fn assert_register_absent_or_zero(json: &Value, register: &str) {
     }
 }
 
-pub(super) fn assert_link_rename_maps_to_call_destination(
+pub(super) fn assert_integer_rename_maps_to_row_destination(
     json: &Value,
-    call_pc: &str,
+    row_pc: &str,
     register: u64,
 ) {
-    let call_entry = json
+    let row = json
         .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
         .and_then(Value::as_array)
         .and_then(|entries| {
             entries
                 .iter()
-                .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(call_pc))
+                .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(row_pc))
         })
-        .unwrap_or_else(|| panic!("missing resident linked call row {call_pc}: {json}"));
-    let destination = call_entry
+        .unwrap_or_else(|| panic!("missing resident integer row {row_pc}: {json}"));
+    let destination = row
         .pointer("/destination")
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| panic!("linked call row should own a destination: {call_entry}"));
+        .unwrap_or_else(|| panic!("integer row should own a destination: {row}"));
     let rename_entry = json
         .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
         .and_then(Value::as_array)
@@ -176,7 +176,7 @@ pub(super) fn assert_link_rename_maps_to_call_destination(
     assert_eq!(
         rename_entry.pointer("/physical").and_then(Value::as_u64),
         Some(destination),
-        "x{register} should map to the linked call destination"
+        "x{register} should map to the destination owned by {row_pc}"
     );
 }
 
@@ -197,6 +197,21 @@ pub(super) fn assert_hierarchy_activity(json: &Value) {
         "/memory_resources/dram/activity",
     ] {
         assert_pointer_u64_gt(json, pointer, 0);
+    }
+}
+
+pub(super) fn assert_direct_memory_activity(json: &Value) {
+    assert_pointer_u64_gt(json, "/memory_resources/transport/data/activity", 0);
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert_eq!(
+            json.pointer(pointer).and_then(Value::as_u64),
+            Some(0),
+            "direct memory route should bypass hierarchy resource {pointer}: {json}"
+        );
     }
 }
 

@@ -373,25 +373,53 @@ Add to `detailed_o3.rs`:
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PredictedControlTargetAuthority {
+pub(crate) enum PredictedControlTargetAuthority {
     Normal,
-    RasRequired,
+    RasRequired {
+        push_sequence: u64,
+        pushed_address: Address,
+    },
 }
 ```
 
 Add `target_authority: PredictedControlTargetAuthority` to `ReadyPredictedControl`.
+Add sequenced policy classification that stores the latest supported call's
+first fetch-request sequence beside `forwardable_link_destination` and returns
+that sequence when `AdmitPredictedRasControl` consumes the owner. Keep the
+unsequenced classifier for runtime-only row classification. Detailed and
+live-retire traversal retain each sequenced instruction's sequential PC so the
+returned call sequence can be paired with the exact address that call must have
+pushed.
 
 In the first scalar-window loop, replace the current `match window.classify_younger(...)` opening with:
 
 ```rust
-let decision = window.classify_younger(younger.decoded().instruction());
+let prediction_request = younger.first_consumed_request();
+let sequential_pc = Address::new(
+    younger.pc().get().wrapping_add(u64::from(younger.decoded().bytes())),
+);
+sequenced_return_addresses.push((prediction_request.sequence(), sequential_pc));
+let classification = window.classify_sequenced_younger(
+    younger.decoded().instruction(),
+    prediction_request.sequence(),
+);
+let decision = classification.decision();
 match decision {
 ```
 
 In the second loop, replace the current `match alu_window.classify_younger(...)` opening with:
 
 ```rust
-let decision = alu_window.classify_younger(next.decoded().instruction());
+let prediction_request = next.first_consumed_request();
+let sequential_pc = Address::new(
+    next.pc().get().wrapping_add(u64::from(next.decoded().bytes())),
+);
+let sequenced_return_addresses = vec![(prediction_request.sequence(), sequential_pc)];
+let classification = alu_window.classify_sequenced_younger(
+    next.decoded().instruction(),
+    prediction_request.sequence(),
+);
+let decision = classification.decision();
 match decision {
 ```
 
@@ -404,21 +432,35 @@ RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
         decision,
         RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
     ) {
-        PredictedControlTargetAuthority::RasRequired
+        let Some(push_sequence) = classification.ras_push_sequence() else {
+            return DetailedFetchAheadCandidate::Blocked;
+        };
+        let Some(pushed_address) = sequenced_return_addresses
+            .iter()
+            .rev()
+            .find_map(|(sequence, address)| {
+                (*sequence == push_sequence).then_some(*address)
+            })
+        else {
+            return DetailedFetchAheadCandidate::Blocked;
+        };
+        PredictedControlTargetAuthority::RasRequired {
+            push_sequence,
+            pushed_address,
+        }
     } else {
         PredictedControlTargetAuthority::Normal
     };
-    let prediction_request = younger.first_consumed_request();
     previous_request = younger.last_consumed_request();
-    let sequential_pc = Address::new(
-        younger
-            .pc()
-            .get()
-            .wrapping_add(u64::from(younger.decoded().bytes())),
-    );
-    next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc) {
-        Some(predicted_pc) => predicted_pc,
-        None if state.branch_speculations.len() < state.branch_lookahead => {
+    next_pc = match recorded_predicted_pc(
+        state,
+        prediction_request,
+        sequential_pc,
+        target_authority,
+    ) {
+        RecordedPredictedPc::Ready(predicted_pc) => predicted_pc,
+        RecordedPredictedPc::Missing
+            if state.branch_speculations.len() < state.branch_lookahead => {
             return DetailedFetchAheadCandidate::ReadyPredictedControl {
                 request: prediction_request,
                 pc: younger.pc(),
@@ -427,7 +469,9 @@ RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
                 target_authority,
             };
         }
-        None => return DetailedFetchAheadCandidate::Blocked,
+        RecordedPredictedPc::Missing | RecordedPredictedPc::Invalid => {
+            return DetailedFetchAheadCandidate::Blocked;
+        }
     };
     continue;
 }
@@ -442,20 +486,35 @@ RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
         decision,
         RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
     ) {
-        PredictedControlTargetAuthority::RasRequired
+        let Some(push_sequence) = classification.ras_push_sequence() else {
+            return DetailedFetchAheadCandidate::Blocked;
+        };
+        let Some(pushed_address) = sequenced_return_addresses
+            .iter()
+            .rev()
+            .find_map(|(sequence, address)| {
+                (*sequence == push_sequence).then_some(*address)
+            })
+        else {
+            return DetailedFetchAheadCandidate::Blocked;
+        };
+        PredictedControlTargetAuthority::RasRequired {
+            push_sequence,
+            pushed_address,
+        }
     } else {
         PredictedControlTargetAuthority::Normal
     };
-    let prediction_request = next.first_consumed_request();
     let previous_request = next.last_consumed_request();
-    let sequential_pc = Address::new(
-        next.pc()
-            .get()
-            .wrapping_add(u64::from(next.decoded().bytes())),
-    );
-    let next_pc = match recorded_predicted_pc(state, prediction_request, sequential_pc) {
-        Some(predicted_pc) => predicted_pc,
-        None if state.branch_speculations.len() < state.branch_lookahead => {
+    let next_pc = match recorded_predicted_pc(
+        state,
+        prediction_request,
+        sequential_pc,
+        target_authority,
+    ) {
+        RecordedPredictedPc::Ready(predicted_pc) => predicted_pc,
+        RecordedPredictedPc::Missing
+            if state.branch_speculations.len() < state.branch_lookahead => {
             return DetailedFetchAheadCandidate::ReadyPredictedControl {
                 request: prediction_request,
                 pc: next.pc(),
@@ -464,7 +523,9 @@ RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
                 target_authority,
             };
         }
-        None => return DetailedFetchAheadCandidate::Blocked,
+        RecordedPredictedPc::Missing | RecordedPredictedPc::Invalid => {
+            return DetailedFetchAheadCandidate::Blocked;
+        }
     };
     return scalar_integer_window_candidate_from(
         state,
@@ -495,15 +556,48 @@ Use that expression in both the `live_control_window_sequences` insertion condit
 In `riscv_live_retire_window.rs`, add `AdmitPredictedRasControl` beside `AdmitPredictedControl` in `accepted_scalar_integer_younger_window`. In `completed_scalar_integer_younger_window`, replace the equality check with:
 
 ```rust
+let prediction_request = instruction.first_consumed_request();
+let sequential_pc = Address::new(
+    instruction
+        .pc
+        .get()
+        .wrapping_add(u64::from(instruction.decoded.bytes())),
+);
+sequenced_return_addresses.push((prediction_request.sequence(), sequential_pc));
+let classification = window.classify_sequenced_younger(
+    instruction.decoded.instruction(),
+    prediction_request.sequence(),
+);
+let decision = classification.decision();
 let next_pc = if matches!(
     decision,
     RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
         | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
 ) {
-    let Some(next_pc) = crate::riscv_fetch_ahead::recorded_predicted_pc(
-        state,
-        prediction_request,
-        sequential_pc,
+    let target_authority = if decision
+        == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    {
+        let Some(push_sequence) = classification.ras_push_sequence() else {
+            break;
+        };
+        let Some(pushed_address) = sequenced_return_addresses
+            .iter()
+            .rev()
+            .find_map(|(sequence, address)| {
+                (*sequence == push_sequence).then_some(*address)
+            })
+        else {
+            break;
+        };
+        PredictedControlTargetAuthority::RasRequired {
+            push_sequence,
+            pushed_address,
+        }
+    } else {
+        PredictedControlTargetAuthority::Normal
+    };
+    let RecordedPredictedPc::Ready(next_pc) = recorded_predicted_pc(
+        state, prediction_request, sequential_pc, target_authority,
     ) else {
         break;
     };
@@ -555,34 +649,53 @@ leave the branch-decision construction below it unchanged.
 Implement the fail-closed target choice:
 
 ```rust
-let ras_required =
-    target_authority == detailed_o3::PredictedControlTargetAuthority::RasRequired;
-if ras_required && kind != BranchTargetKind::Return {
-    return None;
-}
-let ras_target = (kind == BranchTargetKind::Return)
-    .then(|| state.return_address_stack.top())
-    .flatten();
-if ras_required && ras_target.is_none() {
-    return None;
-}
+let ras_target = match target_authority {
+    PredictedControlTargetAuthority::Normal => (kind == BranchTargetKind::Return)
+        .then(|| state.return_address_stack.top())
+        .flatten(),
+    PredictedControlTargetAuthority::RasRequired {
+        push_sequence,
+        pushed_address,
+    } => {
+        if kind != BranchTargetKind::Return {
+            return None;
+        }
+        Some(unconsumed_ras_required_target(
+            state,
+            push_sequence,
+            pushed_address,
+        )?)
+    }
+};
 let target = match instruction {
     RiscvInstruction::Jal { offset, .. } => {
         checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
     }
     RiscvInstruction::Jalr { rs1, offset, .. } => ras_target.or_else(|| {
-        if ras_required {
-            None
-        } else {
-            checked_add_signed(state.hart.read(rs1), offset.value())
-                .map(|target| Address::new(target & !1))
-        }
+        checked_add_signed(state.hart.read(rs1), offset.value())
+            .map(|target| Address::new(target & !1))
     }),
     _ => None,
 }?;
 ```
 
-Keep target-provider selection unchanged; a RAS-required success therefore records `BranchTargetProvider::RAS`.
+`unconsumed_ras_required_target` must resolve `push_sequence` through
+the active branch-kind and `return_address_stack_operations` maps, require it to
+identify a supported call whose mapped operation is the latest pending `Push`,
+and require its pushed address to equal both `pushed_address` and the current RAS
+top. Perform this check before the target-buffer lookup. The `RasRequired` match
+always supplies `ras_target`, so the architectural fallback is unreachable for
+that authority. Keep target-provider selection unchanged; a RAS-required success
+therefore records `BranchTargetProvider::RAS`.
+
+Extend `recorded_predicted_pc` with the same authority. For a recorded
+RAS-required return, require the return sequence to map to a pending `Pop`
+immediately following the referenced pending `Push`, require exact stack
+lineage and predicted-return equality, and require the recorded branch target to
+equal that popped address. Missing or stale lineage returns `Invalid`.
+Return a typed `RecordedPredictedPc::{Missing, Invalid, Ready}` result. Only
+`Missing` may allocate a fresh prediction when lookahead permits; `Invalid`
+always blocks so a malformed active speculation cannot be retried as fresh.
 
 - [ ] **Step 8: Run focused GREEN gates**
 
@@ -598,7 +711,10 @@ cargo test -p rem6-cpu riscv_live_retire_window -- --nocapture
 cargo test -p rem6-cpu --test source_policy --quiet
 ```
 
-Expected: all pass. Confirm the policy count increases by two tests and the detailed frontend now records two pending RAS operations.
+Expected: all pass. Confirm policy coverage includes both link-register replacement
+directions and unrelated-write preservation; confirm detailed frontend coverage
+includes stale-top, wrong-push-address, invalid-recorded retry suppression, and
+two pending RAS operations on the positive path.
 
 - [ ] **Step 9: Commit policy and frontend behavior**
 
@@ -612,8 +728,13 @@ git commit -m "cpu: classify same-window link returns"
 **Files:**
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_live_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_live_window_identity_tests.rs`
 
-No production runtime file is changed in this task. The existing generic staged-rename and source-forwarding path is the behavior under test.
+The existing generic staged-rename and source-forwarding path remains the main
+behavior under test. Retirement must additionally bind a staged row to its
+sequence-scoped instruction and consumed-fetch identity before using staged
+timing or rename ownership.
 
 - [ ] **Step 1: Add a focused return-candidate forwarding test**
 
@@ -731,6 +852,23 @@ fn scoped_issue_orders_same_window_call_return_and_descendant() {
 
 - [ ] **Step 3: Run runtime proof gates**
 
+Add wrong-same-PC and post-restore retirement regressions. When a resident live
+row lacks an exact transient identity match, discard that row and its younger
+live-staged suffix while preserving older rows. Retain exact bound identities for
+discarded descendants until their architectural events arrive, and queue
+current-tick fallback retirement metadata before the generic recorder runs. The
+retained identities must count as live retirement authority and preserve their
+primary fetch-request ownership so checkpoint capture remains nonquiescent and
+mode handoff still routes the later architectural event through O3 retirement.
+Fallback keeps the discarded row's ordering sequence while rebuilding
+current-tick timing, dependencies, and rename ownership, without readying or
+committing preserved staged rows. Each regression must invoke the real generic
+recorder, prove one ROB commit at that tick, and prove no stale staged physical
+destination was published. Add regressions proving same-event redirect cleanup
+retains the current fallback until recording and redirected older-control cleanup
+removes invalidated identities beyond its sequence, so squashed fetches cannot
+strand retirement authority.
+
 Run:
 
 ```text
@@ -738,15 +876,18 @@ cargo test -p rem6-cpu same_window_return_candidate_uses_link_call_forwarding --
 cargo test -p rem6-cpu scoped_issue_orders_same_window_call_return_and_descendant -- --nocapture
 cargo test -p rem6-cpu o3_runtime_control_window -- --nocapture
 cargo test -p rem6-cpu o3_runtime_issue -- --nocapture
+cargo test -p rem6-cpu wrong_same_pc_retirement -- --nocapture
+cargo test -p rem6-cpu restored_live_staged_row -- --nocapture
 ```
 
-Expected: all pass without production runtime changes. A failure is an ownership defect; reduce it before changing runtime code and keep any fix in the focused runtime module that owns the missing behavior.
+Expected: all pass. Keep any identity repair in the focused live-window runtime
+owner and preserve the generic recorder for the actual architectural event.
 
 - [ ] **Step 4: Commit runtime proof**
 
 ```bash
-git add crates/rem6-cpu/src/o3_runtime_control_window_tests.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs
-git commit -m "test: prove same-window link return runtime"
+git add crates/rem6-cpu/src/o3_runtime_control_window_tests.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs crates/rem6-cpu/src/o3_runtime_live_window.rs crates/rem6-cpu/src/o3_runtime_live_window_identity_tests.rs
+git commit -m "cpu: validate live retirement fetch identity"
 ```
 
 ### Task 3: Add The Eight-Row Real CLI Matrix
@@ -804,24 +945,24 @@ pub(super) fn assert_register_absent_or_zero(json: &Value, register: &str) {
     }
 }
 
-pub(super) fn assert_link_rename_maps_to_call_destination(
+pub(super) fn assert_integer_rename_maps_to_row_destination(
     json: &Value,
-    call_pc: &str,
+    row_pc: &str,
     register: u64,
 ) {
-    let call_entry = json
+    let row = json
         .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
         .and_then(Value::as_array)
         .and_then(|entries| {
             entries
                 .iter()
-                .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(call_pc))
+                .find(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(row_pc))
         })
-        .unwrap_or_else(|| panic!("missing resident linked call row {call_pc}: {json}"));
-    let destination = call_entry
+        .unwrap_or_else(|| panic!("missing resident integer row {row_pc}: {json}"));
+    let destination = row
         .pointer("/destination")
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| panic!("linked call row should own a destination: {call_entry}"));
+        .unwrap_or_else(|| panic!("integer row should own a destination: {row}"));
     let rename_entry = json
         .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
         .and_then(Value::as_array)
@@ -836,7 +977,7 @@ pub(super) fn assert_link_rename_maps_to_call_destination(
     assert_eq!(
         rename_entry.pointer("/physical").and_then(Value::as_u64),
         Some(destination),
-        "x{register} should map to the linked call destination"
+        "x{register} should map to the destination owned by {row_pc}"
     );
 }
 
@@ -857,6 +998,17 @@ pub(super) fn assert_hierarchy_activity(json: &Value) {
         "/memory_resources/dram/activity",
     ] {
         assert_pointer_u64_gt(json, pointer, 0);
+    }
+}
+
+pub(super) fn assert_direct_memory_activity(json: &Value) {
+    assert_pointer_u64_gt(json, "/memory_resources/transport/data/activity", 0);
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert_eq!(json.pointer(pointer).and_then(Value::as_u64), Some(0));
     }
 }
 
@@ -942,8 +1094,9 @@ Start the file with:
 ```rust
 use super::window_support::{
     assert_branch_kind_and_link, assert_drained_control_runtime,
-    assert_final_execution_mode, assert_hierarchy_activity,
-    assert_link_rename_maps_to_call_destination, assert_no_data_address,
+    assert_direct_memory_activity, assert_final_execution_mode,
+    assert_hierarchy_activity, assert_integer_rename_maps_to_row_destination,
+    assert_no_data_address,
     assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits,
     assert_pointer_u64_gt, assert_register_absent_or_zero,
     assert_stopped_by_host, control_window_command, resident_rob_pcs,
@@ -1035,9 +1188,9 @@ assert_eq!(
 assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
 ```
 
-Use `event_at_pc` for all four PCs. Assert call kind/link `call_direct/true`, return kind/link `return/false`, return target provider `ras`, call/return/descendant issue before load response, return issue no earlier than call admitted writeback, descendant issue no earlier than return issue, and ordered commits.
+Use `event_at_pc` for all four PCs. Assert call kind/link `call_direct/true`, return kind/link `return/false`, return target provider `ras`, call/return/descendant issue before load response, return issue strictly after call admitted writeback, descendant issue strictly after return admitted writeback, and ordered commits.
 
-At `descendant.issue_tick + 1`, assert the tick remains before load response, exact resident PCs `[0x0c, 0x10, 0x1c, 0x14]`, LSQ count one, `assert_register_absent_or_zero(&resident, "x1")`, and the live rename entry for architectural register 1 matches the call ROB destination. Assert RAS pushes, pops, used, correct, and target-provider RAS counters are positive.
+At `descendant.issue_tick + 1`, assert the tick remains before load response, exact resident PCs `[0x0c, 0x10, 0x1c, 0x14]`, LSQ count one, `assert_register_absent_or_zero(&resident, "x1")`, and the live rename entry for architectural register 1 matches the call ROB destination. Assert RAS pushes, pops, used, correct, and target-provider RAS counters are positive. Assert direct-memory transport activity is positive while cache, fabric, and DRAM activity remain zero.
 
 - [ ] **Step 6: Build and test the hierarchy indirect-call/return fixture**
 
@@ -1100,7 +1253,7 @@ Use:
 3c m5_fail
 ```
 
-Implement `rem6_run_o3_same_window_overwritten_link_return_stays_terminal`. Assert final `x1=0x8000_0030`, `x13=42`, exact success memory, no stores at offsets 8 or 12, live PCs `[0x0c, 0x10, 0x20, 0x24]`, and no fetch at stale target `0x14` or live target `0x30` before the load response.
+Implement `rem6_run_o3_same_window_overwritten_link_return_stays_terminal`. Assert final `x1=0x8000_0030`, `x13=42`, exact success memory, no stores at offsets 8 or 12, live PCs `[0x0c, 0x10, 0x20, 0x24]`, return issue at or after overwrite writeback, live `x1` mapped to the overwrite row destination, and no fetch at stale target `0x14` or live target `0x30` before the load response.
 
 - [ ] **Step 9: Add older-branch rollback with call and return**
 
@@ -1125,7 +1278,7 @@ Use branch lookahead three and this layout:
 3c m5_fail
 ```
 
-Implement `rem6_run_o3_older_branch_discards_same_window_link_return_chain`. Assert resident PCs `[0x14, 0x18, 0x1c, 0x28]` before repair, final `x1=0x11`, `x15=0x33`, exact memory `2a000000330000000000000000000000`, no wrong-path Data/Memory stores, branch misprediction/squash evidence, no retired call/return rows, and RAS push plus pop squashes.
+Implement `rem6_run_o3_older_branch_discards_same_window_link_return_chain`. Assert resident PCs `[0x14, 0x18, 0x1c, 0x28]` before repair, live `x1` mapped to the wrong-path call row destination, final `x1=0x11`, `x15=0x33`, exact memory `2a000000330000000000000000000000`, no wrong-path Data/Memory stores, branch misprediction/squash evidence, no retired call/return rows, and RAS push plus pop squashes.
 
 - [ ] **Step 10: Add mode-transfer row**
 
@@ -1152,9 +1305,12 @@ Assert:
 1. final mode is timing;
 2. final `x1`, `x13`, and memory match baseline;
 3. transfer is non-restorable and carries four ROB/one LSQ rows;
-4. all four events preserve baseline issue, admitted-writeback, writeback, and commit ticks;
-5. no wrong store occurs;
-6. inherited call/return RAS and control state drains exactly once.
+4. live-data handoff reports one outstanding resident load, three younger rows,
+   and the exact first load operation, memory target, source partition, address,
+   and width;
+5. all four events preserve baseline issue, admitted-writeback, writeback, and commit ticks;
+6. no wrong store occurs;
+7. inherited call/return RAS and control state drains exactly once.
 
 - [ ] **Step 11: Add checkpoint boundary**
 

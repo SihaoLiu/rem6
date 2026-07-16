@@ -1,9 +1,9 @@
 use super::window_support::{
     assert_branch_kind_and_link, assert_drained_control_runtime, assert_final_execution_mode,
-    assert_hierarchy_activity, assert_link_rename_maps_to_call_destination, assert_no_data_address,
-    assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits, assert_pointer_u64_gt,
-    assert_register_absent_or_zero, assert_stopped_by_host, control_window_command,
-    resident_rob_pcs, run_control_window_json,
+    assert_hierarchy_activity, assert_integer_rename_maps_to_row_destination,
+    assert_no_data_address, assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits,
+    assert_pointer_u64_gt, assert_register_absent_or_zero, assert_stopped_by_host,
+    control_window_command, resident_rob_pcs, run_control_window_json,
 };
 use super::*;
 
@@ -101,7 +101,7 @@ fn rem6_run_o3_link_kind_direct_call_commits_direct() {
         Some(1)
     );
     assert_eq!(register_value(&resident, "x1"), 0x11);
-    assert_link_rename_maps_to_call_destination(&resident, DIRECT_CALL_PC, 1);
+    assert_integer_rename_maps_to_row_destination(&resident, DIRECT_CALL_PC, 1);
     assert_json_stat(
         &completed,
         "sim.cpu0.o3.max_rob_occupancy",

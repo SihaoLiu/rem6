@@ -1,7 +1,8 @@
 use super::window_support::{
-    assert_branch_kind_and_link, assert_drained_control_runtime, assert_final_execution_mode,
-    assert_hierarchy_activity, assert_link_rename_maps_to_call_destination, assert_no_data_address,
-    assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits, assert_register_absent_or_zero,
+    assert_branch_kind_and_link, assert_direct_memory_activity, assert_drained_control_runtime,
+    assert_final_execution_mode, assert_hierarchy_activity,
+    assert_integer_rename_maps_to_row_destination, assert_no_data_address, assert_no_fetch_pc,
+    assert_no_o3_stats, assert_ordered_commits, assert_register_absent_or_zero,
     assert_stopped_by_host, control_window_command, resident_rob_pcs, run_control_window_json,
 };
 use super::*;
@@ -41,8 +42,8 @@ fn rem6_run_o3_same_window_link_return_commits_direct() {
     for event in [call, ret, descendant] {
         assert!(event_u64(event, "issue_tick") < response_tick, "{event}");
     }
-    assert!(event_u64(ret, "issue_tick") >= event_u64(call, "writeback_tick"));
-    assert!(event_u64(descendant, "issue_tick") >= event_u64(ret, "issue_tick"));
+    assert!(event_u64(ret, "issue_tick") > event_u64(call, "writeback_tick"));
+    assert!(event_u64(descendant, "issue_tick") > event_u64(ret, "writeback_tick"));
     assert_ordered_commits([load, call, ret, descendant]);
     assert_eq!(
         completed
@@ -80,7 +81,7 @@ fn rem6_run_o3_same_window_link_return_commits_direct() {
         Some(1)
     );
     assert_register_absent_or_zero(&resident, "x1");
-    assert_link_rename_maps_to_call_destination(&resident, "0x80000010", 1);
+    assert_integer_rename_maps_to_row_destination(&resident, "0x80000010", 1);
     let resident_return = resident
         .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
         .and_then(Value::as_array)
@@ -107,6 +108,7 @@ fn rem6_run_o3_same_window_link_return_commits_direct() {
             "expected one committed same-window RAS operation at {pointer}: {completed}"
         );
     }
+    assert_direct_memory_activity(&completed);
 }
 
 #[test]
@@ -133,8 +135,8 @@ fn rem6_run_o3_same_window_indirect_link_return_commits_cache_fabric_dram() {
     for event in [call, ret, descendant] {
         assert!(event_u64(event, "issue_tick") < response_tick, "{event}");
     }
-    assert!(event_u64(ret, "issue_tick") >= event_u64(call, "writeback_tick"));
-    assert!(event_u64(descendant, "issue_tick") >= event_u64(ret, "issue_tick"));
+    assert!(event_u64(ret, "issue_tick") > event_u64(call, "writeback_tick"));
+    assert!(event_u64(descendant, "issue_tick") > event_u64(ret, "writeback_tick"));
     assert_ordered_commits([load, call, ret, descendant]);
 
     let live_tick = event_u64(descendant, "issue_tick") + 1;
@@ -151,7 +153,7 @@ fn rem6_run_o3_same_window_indirect_link_return_commits_cache_fabric_dram() {
         Some(1)
     );
     assert_register_absent_or_zero(&resident, "x5");
-    assert_link_rename_maps_to_call_destination(&resident, "0x80000018", 5);
+    assert_integer_rename_maps_to_row_destination(&resident, "0x80000018", 5);
     for pointer in [
         "/cores/0/branch_predictor/target_provider/indirect",
         "/cores/0/branch_predictor/target_provider/ras",
@@ -273,6 +275,7 @@ fn rem6_run_o3_same_window_overwritten_link_return_stays_terminal() {
     for event in [call, overwrite, ret] {
         assert!(event_u64(event, "issue_tick") < response_tick, "{event}");
     }
+    assert!(event_u64(ret, "issue_tick") >= event_u64(overwrite, "writeback_tick"));
 
     let live_tick = event_u64(ret, "issue_tick") + 1;
     assert!(live_tick < response_tick);
@@ -295,6 +298,7 @@ fn rem6_run_o3_same_window_overwritten_link_return_stays_terminal() {
         Some(1)
     );
     assert_register_absent_or_zero(&resident, "x1");
+    assert_integer_rename_maps_to_row_destination(&resident, "0x80000020", 1);
     assert_no_fetch_pc(&resident, "0x80000014");
     assert_no_fetch_pc(&resident, "0x80000030");
 }
@@ -376,6 +380,7 @@ fn rem6_run_o3_older_branch_discards_same_window_link_return_chain() {
             .and_then(Value::as_u64),
         Some(1)
     );
+    assert_integer_rename_maps_to_row_destination(&resident, "0x8000001c", 1);
 }
 
 #[test]
@@ -438,8 +443,42 @@ fn rem6_run_host_switch_transfers_o3_same_window_link_return() {
         Some(7)
     );
     assert_eq!(
+        handoff
+            .pointer("/outstanding_requests")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        handoff.pointer("/resident_rows").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
         handoff.pointer("/younger_rows").and_then(Value::as_u64),
         Some(3)
+    );
+    assert_eq!(
+        handoff.pointer("/first_operation").and_then(Value::as_str),
+        Some("load")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_target/kind")
+            .and_then(Value::as_str),
+        Some("memory")
+    );
+    assert_eq!(
+        handoff
+            .pointer("/first_target/source_partition")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        handoff.pointer("/first_address").and_then(Value::as_str),
+        Some(DATA_ADDRESS)
+    );
+    assert_eq!(
+        handoff.pointer("/first_bytes").and_then(Value::as_u64),
+        Some(4)
     );
     for pc in ["0x8000000c", "0x80000010", "0x8000001c", "0x80000014"] {
         let expected = event_at_pc(&baseline, pc);

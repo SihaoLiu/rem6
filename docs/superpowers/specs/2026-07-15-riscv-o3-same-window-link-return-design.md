@@ -205,12 +205,18 @@ normal or RAS-required through one internal typed authority:
 ```rust
 enum PredictedControlTargetAuthority {
     Normal,
-    RasRequired,
+    RasRequired {
+        push_sequence: u64,
+        pushed_address: Address,
+    },
 }
 ```
 
 `DetailedFetchAheadCandidate::ReadyPredictedControl` carries this authority to
-the fetch-ahead driver.
+the fetch-ahead driver. Sequenced policy classification associates each
+supported call owner with the call instruction's first fetch-request sequence;
+candidate traversal also retains that call's sequential PC. The admitted return
+consumes the owner but carries both values in its typed authority.
 
 For `Normal`:
 
@@ -219,18 +225,27 @@ For `Normal`:
 3. a committed return may use RAS first and architectural `rs1` fallback as it
    does today.
 
-For `RasRequired`:
+For `RasRequired { push_sequence, pushed_address }`:
 
 1. the instruction must classify as `Return`;
-2. the RAS top must exist before the return's speculative pop is recorded;
-3. the target provider must be `RAS`;
-4. target selection must not read committed `hart.read(rs1)` as fallback;
-5. a missing RAS target returns no fetch-ahead decision and opens no descendant
-   fetch.
+2. `push_sequence` must still identify an active supported direct or indirect
+   call speculation;
+3. `push_sequence` must map to the latest pending RAS operation;
+4. that operation must be a `Push` whose pushed address equals both
+   `pushed_address` and the current RAS top;
+5. the target provider must be `RAS`;
+6. target selection must not read committed `hart.read(rs1)` as fallback;
+7. missing or stale push provenance returns no fetch-ahead decision and opens no
+   descendant fetch.
 
 Once the RAS-required prediction is recorded, repeated candidate evaluation may
-reuse that recorded predicted PC. The original prediction remains the typed
-proof that stale architectural state was not used.
+reuse it only after revalidating the recorded return sequence. Its pending RAS
+`Pop` must immediately follow the referenced pending `Push`, the pop's
+`stack_before` must equal the push's `stack_after`, and the recorded branch
+target must equal the address consumed by that pop. A generic recorded branch or
+indirect prediction cannot bypass this proof. Recorded lookup distinguishes a
+missing speculation from an invalid existing speculation; only the missing case
+may create a fresh prediction, while invalid lineage blocks the window.
 
 Live-row staging and completed-fetch replay treat
 `AdmitPredictedRasControl` as a predicted control for row ownership, control
@@ -267,6 +282,24 @@ The existing flow is authoritative:
 7. the return consumes branch issue authority and no integer writeback slot;
 8. the fallthrough descendant remains control-dependent on the return;
 9. all rows commit in program order behind the delayed load.
+
+Every staged row also owns transient fetch identity: instruction plus optional
+consumed-request binding keyed by O3 sequence. Retirement may use staged timing
+and rename ownership only after that identity matches the architectural event.
+On a wrong same-PC instruction, mismatched consumed requests, or restored live
+row without transient identity, retirement discards that row and its younger
+live-staged suffix while preserving older rows. Exact bound identities for
+discarded descendants remain transiently available so their later architectural
+events also retire through current-tick fallback metadata. Those identities count
+as live retirement authority, blocking checkpoint quiescence and preserving
+per-fetch inherited ownership across mode handoff. Fallback metadata keeps the
+discarded row's ordering sequence but rebuilds current-tick timing, dependencies,
+and rename ownership for the actual event, without readying, committing, or
+publishing any preserved or discarded staged row. This also lets same-event
+control redirect cleanup retain the current fallback while pruning younger rows.
+If an older control later redirects, descendant cleanup must prune retained
+invalidated identities beyond that control sequence because their fetch requests
+are no longer eligible to retire.
 
 Focused runtime tests must prove these relationships. Production runtime changes
 are permitted only if the red tests expose a missing generic behavior.
@@ -465,8 +498,15 @@ Add failing detailed fetch tests proving:
 1. call push feeds same-window return prediction;
 2. return prediction uses RAS and opens the fallthrough descendant;
 3. missing RAS authority does not fall back to committed `x1` or `x5`;
-4. call and return create two pending RAS operations;
-5. existing committed-return behavior is unchanged.
+4. a stale non-owner RAS top cannot satisfy the return;
+5. a call-sequence mapping to a Push with the wrong return address cannot satisfy
+   the return;
+6. a recorded predicted PC is rejected after its push/pop lineage disappears and
+   is not retried as a fresh prediction;
+7. completed-fetch live-retire replay stops before the return and descendant when
+   recorded RAS lineage disappears;
+8. call and return create two pending RAS operations;
+9. existing committed-return behavior is unchanged.
 
 ### Runtime red tests
 
