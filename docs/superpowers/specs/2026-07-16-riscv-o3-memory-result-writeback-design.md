@@ -52,8 +52,10 @@ accesses when they have one architectural destination:
 - `MemoryAccessKind::LoadReserved` with a nonzero integer destination.
 - `MemoryAccessKind::AtomicMemory` with a nonzero integer destination.
 - `MemoryAccessKind::VectorLoadUnitStride` with `group_registers == 1`,
-  `byte_len == 8`, 64-bit elements, no fault-only-first reduction, and at least
-  one active byte.
+  64-bit elements, `byte_len` no greater than one architectural vector
+  register, no fault-only-first reduction, and at least one active byte. This
+  includes a masked two-element row with an inactive leading element so the
+  trimmed request carries a nonzero byte offset.
 - Readfile-backed MMIO `Load`, which uses the same integer-load access kind but
   a typed MMIO target.
 
@@ -82,8 +84,12 @@ The following remain outside this increment:
 Rename the internal scalar-memory lifecycle owner to a data-access name that
 matches its actual responsibility. The owner continues to track fetch and data
 request identity, one ROB sequence, LSQ rows, response and latency ticks,
-optional response bytes, writeback reservation, retry/failure outcome, and
-ordered retirement.
+a typed completion payload, writeback reservation, retry/failure outcome, and
+ordered retirement. The completion payload preserves the architectural access,
+fetch identity, translated physical address, access size, trimmed request byte
+offset, and optional response bytes. LR reservation installation and vector
+response normalization must not reconstruct those values from the virtual
+instruction access at publication time.
 
 Atomic memory remains one ROB instruction but owns a two-entry LSQ sequence
 span. Live admission must reserve both sequence IDs atomically, mark both LSQ
@@ -111,10 +117,11 @@ memory scheduler.
 ### Shared Response Application
 
 Move response-to-architectural-state logic from `riscv_data_issue.rs` into a
-focused CPU module. The module owns integer and floating-point response writes,
-load-reservation installation, atomic old-value publication, vector register
-group merge, and fault-only-first vector configuration updates. Immediate
-timing/non-O3 responses and admitted detailed-O3 responses call the same helper.
+focused CPU module. That module defines the typed completion payload and owns
+integer and floating-point response writes, load-reservation installation,
+atomic old-value publication, vector register group merge, and fault-only-first
+vector configuration updates. Immediate timing/non-O3 responses and admitted
+detailed-O3 responses construct and apply the same payload.
 
 The helper does not own transport callbacks, ROB/LSQ state, or writeback-port
 planning. Those remain with data issue and O3 runtime respectively.
@@ -151,10 +158,11 @@ the admitted tick, the normal live data-access retirement path:
 
 1. marks the ROB row ready at the admitted tick;
 2. records the ordered data-retire cycle;
-3. applies the response through the shared completion helper;
+3. applies the stored typed completion through the shared completion helper;
 4. synchronizes the checker hart;
-5. records O3 trace and retirement evidence exactly once; and
-6. removes the writeback reservation and live row during retirement.
+5. wakes any existing scalar-load younger window from the admitted result;
+6. records O3 trace and retirement evidence exactly once; and
+7. removes the writeback reservation and live row during retirement.
 
 The architectural destination must be absent or retain its prior value before
 admission and contain the response value at admission. LR reservation state is
@@ -189,6 +197,8 @@ Real `rem6 run --execute` tests use table-driven fixtures and assert:
 - width two admits both raw-ready rows in the same cycle;
 - register or vector state is unpublished before admission and visible at
   admission;
+- a masked one-register e64 vector row with an inactive leading element applies
+  the trimmed response at its preserved nonzero request byte offset;
 - direct memory uses transport without cache/fabric/DRAM activity;
 - hierarchy memory exercises cache, transport, fabric, and DRAM activity;
 - MMIO uses the device route without ordinary memory hierarchy activity;
