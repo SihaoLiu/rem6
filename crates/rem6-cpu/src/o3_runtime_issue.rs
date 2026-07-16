@@ -227,6 +227,15 @@ impl O3RuntimeState {
                 continue;
             }
 
+            let (dependency_ready_candidates, dependency_blocked_candidates): (Vec<_>, Vec<_>) =
+                candidates.into_iter().partition(|(_, candidate, _)| {
+                    live_issue_dependencies_ready_at(candidate, &serializing_controls, tick)
+                });
+            let dependency_blocked_rows = dependency_blocked_candidates.len();
+            let dependency_blocked_sequences = dependency_blocked_candidates
+                .iter()
+                .map(|(_, candidate, _)| candidate.sequence())
+                .collect::<BTreeSet<_>>();
             let remaining_width = self.issue_width - reservations.width;
             let scheduler = O3ScopedIssueScheduler::new(
                 remaining_width,
@@ -252,34 +261,19 @@ impl O3RuntimeState {
                 }),
             )
             .expect("configured live O3 issue width is nonzero");
-            let resolved_scopes = candidates
+            let ready = dependency_ready_candidates
                 .iter()
-                .flat_map(|(_, candidate, _)| {
-                    live_issue_scheduling_dependencies(candidate, &serializing_controls)
-                })
-                .filter(|dependency| dependency.readiness.is_ready_at(tick))
-                .map(|dependency| O3DependencyScopeId::new(dependency.sequence));
-            let ready = candidates.iter().map(|(_, candidate, op_class)| {
-                O3ScopedReadyInstruction::new(candidate.sequence(), LIVE_ISSUE_QUEUE, *op_class)
-                    .with_waits_on(
-                        live_issue_scheduling_dependencies(candidate, &serializing_controls)
-                            .map(|dependency| O3DependencyScopeId::new(dependency.sequence)),
-                    )
-                    .with_produces([O3DependencyScopeId::new(candidate.sequence())])
-            });
+                .map(|(_, candidate, op_class)| {
+                    O3ScopedReadyInstruction::new(candidate.sequence(), LIVE_ISSUE_QUEUE, *op_class)
+                        .with_produces([O3DependencyScopeId::new(candidate.sequence())])
+                });
             let plan = scheduler
-                .try_plan(resolved_scopes, ready)
+                .try_plan(std::iter::empty::<O3DependencyScopeId>(), ready)
                 .expect("live O3 issue candidates have unique producer scopes");
             let issued_sequences = plan.issued_sequences().collect::<BTreeSet<_>>();
             let resource_blocked_rows = plan.resource_blocked().len();
-            let dependency_blocked_rows = plan.dependency_blocked().len();
-            let dependency_blocked_sequences = plan
-                .dependency_blocked()
-                .iter()
-                .map(O3ScopedReadyInstruction::sequence)
-                .collect::<BTreeSet<_>>();
 
-            let mut selected = candidates
+            let mut selected = dependency_ready_candidates
                 .into_iter()
                 .filter(|(_, candidate, _)| issued_sequences.contains(&candidate.sequence()))
                 .collect::<Vec<_>>();
@@ -344,13 +338,10 @@ impl O3RuntimeState {
                     .filter(|(_, candidate, _)| {
                         dependency_blocked_sequences.contains(&candidate.sequence())
                     })
-                    .flat_map(|(_, candidate, _)| {
-                        live_issue_scheduling_dependencies(
-                            candidate,
-                            &remaining_serializing_controls,
-                        )
+                    .filter_map(|(_, candidate, _)| {
+                        live_issue_dependency_readiness(candidate, &remaining_serializing_controls)
+                            .ready_tick()
                     })
-                    .filter_map(|dependency| dependency.readiness.ready_tick())
                     .filter(|ready_tick| *ready_tick > tick)
                     .min();
                 let Some(next_tick) = next_tick else {
@@ -537,12 +528,6 @@ impl O3LiveIssueTickDecision {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct O3LiveIssueSchedulingDependency {
-    sequence: u64,
-    readiness: O3LiveIssueDependencyReadiness,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveIssueDependencyReadiness {
     Unresolved,
     ReadyAt(u64),
@@ -589,10 +574,9 @@ fn earliest_dependency_tick(
 ) -> Option<u64> {
     candidates
         .iter()
-        .flat_map(|(_, candidate, _)| {
-            live_issue_scheduling_dependencies(candidate, serializing_controls)
+        .filter_map(|(_, candidate, _)| {
+            live_issue_dependency_readiness(candidate, serializing_controls).ready_tick()
         })
-        .filter_map(|dependency| dependency.readiness.ready_tick())
         .filter(|ready_tick| *ready_tick > tick)
         .min()
 }
@@ -602,49 +586,26 @@ fn live_issue_dependencies_ready_at(
     serializing_controls: &BTreeMap<u64, O3LiveIssueDependencyReadiness>,
     tick: u64,
 ) -> bool {
-    live_issue_scheduling_dependencies(candidate, serializing_controls)
-        .all(|dependency| dependency.readiness.is_ready_at(tick))
+    live_issue_dependency_readiness(candidate, serializing_controls).is_ready_at(tick)
 }
 
-fn live_issue_scheduling_dependencies(
+fn live_issue_dependency_readiness(
     candidate: &O3LiveSpeculativeIssueCandidate,
     serializing_controls: &BTreeMap<u64, O3LiveIssueDependencyReadiness>,
-) -> impl Iterator<Item = O3LiveIssueSchedulingDependency> {
-    let data_dependencies =
-        candidate
-            .data_dependencies()
-            .iter()
-            .map(|dependency| O3LiveIssueSchedulingDependency {
-                sequence: dependency.sequence,
-                readiness: O3LiveIssueDependencyReadiness::ReadyAt(dependency.ready_tick),
-            });
-    let control_dependency = candidate.control_dependency().and_then(|control_sequence| {
-        serializing_controls
-            .get(&control_sequence)
-            .copied()
-            .map(|readiness| O3LiveIssueSchedulingDependency {
-                sequence: control_sequence,
-                readiness,
-            })
-    });
-    data_dependencies
-        .chain(control_dependency)
-        .fold(
-            BTreeMap::<u64, O3LiveIssueDependencyReadiness>::new(),
-            |mut dependencies, dependency| {
-                dependencies
-                    .entry(dependency.sequence)
-                    .and_modify(|readiness| {
-                        *readiness = readiness.merge(dependency.readiness);
-                    })
-                    .or_insert(dependency.readiness);
-                dependencies
-            },
-        )
-        .into_iter()
-        .map(|(sequence, readiness)| O3LiveIssueSchedulingDependency {
-            sequence,
-            readiness,
+) -> O3LiveIssueDependencyReadiness {
+    let data_readiness = candidate.data_dependencies().iter().fold(
+        O3LiveIssueDependencyReadiness::ReadyAt(0),
+        |readiness, dependency| {
+            readiness.merge(O3LiveIssueDependencyReadiness::ReadyAt(
+                dependency.ready_tick,
+            ))
+        },
+    );
+    candidate
+        .control_dependency()
+        .and_then(|control_sequence| serializing_controls.get(&control_sequence).copied())
+        .map_or(data_readiness, |control_readiness| {
+            data_readiness.merge(control_readiness)
         })
 }
 

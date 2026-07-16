@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
-    Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction, RiscvHartState,
-    RiscvInstruction,
+    Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite, RiscvDecodedInstruction,
+    RiscvHartState, RiscvInstruction,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
@@ -133,6 +133,193 @@ fn scoped_issue_orders_same_window_call_coroutine_and_descendant() {
     assert_eq!(descendant.writeback_slot, Some(0));
     assert!(coroutine.producer_sequences.contains(&call.sequence));
     assert!(descendant.producer_sequences.contains(&coroutine.sequence));
+}
+
+#[test]
+fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_issue_width(4);
+    assert!(runtime.set_writeback_width(4));
+    let call = jal_link(1);
+    let coroutine = jalr_link(5, 1);
+    let data_only = addi(14, 5, 0);
+    let serializing = addi(15, 5, 0);
+    let head_sequence = runtime
+        .stage_live_retire_window(
+            Address::new(BRANCH_PC),
+            call,
+            20,
+            [
+                (Address::new(SECOND_PC), coroutine),
+                (Address::new(THIRD_PC), data_only),
+                (Address::new(FOURTH_PC), serializing),
+            ],
+        )
+        .unwrap();
+    let coroutine_sequence = runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .find(|entry| entry.pc() == Address::new(SECOND_PC))
+        .unwrap()
+        .sequence();
+    let data_only_sequence = runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .find(|entry| entry.pc() == Address::new(THIRD_PC))
+        .unwrap()
+        .sequence();
+    let serializing_sequence = runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .find(|entry| entry.pc() == Address::new(FOURTH_PC))
+        .unwrap()
+        .sequence();
+    runtime
+        .live_serializing_control_sequences
+        .insert(coroutine_sequence);
+    assert_eq!(
+        runtime
+            .live_control_dependencies
+            .remove(&data_only_sequence),
+        Some(coroutine_sequence)
+    );
+    assert_eq!(
+        runtime.live_control_dependencies.get(&serializing_sequence),
+        Some(&coroutine_sequence)
+    );
+    for (pc, instruction, request_sequence) in [
+        (BRANCH_PC, call, 10),
+        (SECOND_PC, coroutine, 11),
+        (THIRD_PC, data_only, 12),
+        (FOURTH_PC, serializing, 13),
+    ] {
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(pc),
+            instruction,
+            &[request(request_sequence)],
+        ));
+    }
+    let head = O3LiveIssueHeadReservation::for_instruction(head_sequence, 20, call);
+    let hart = RiscvHartState::new(BRANCH_PC);
+    let mut head_hart = hart.clone();
+    let head_execution = head_hart.execute_decoded(decoded(call)).unwrap();
+    assert_eq!(
+        head_execution.register_writes(),
+        &[RegisterWrite::new(reg(1), SECOND_PC)]
+    );
+    assert!(runtime
+        .record_live_issue_head_execution(head, &[request(10)], head_execution)
+        .unwrap());
+    let requests = [
+        O3LiveIssueRequest::new(
+            Address::new(SECOND_PC),
+            vec![request(11)],
+            decoded(coroutine),
+        ),
+        O3LiveIssueRequest::new(
+            Address::new(THIRD_PC),
+            vec![request(12)],
+            decoded(data_only),
+        ),
+        O3LiveIssueRequest::new(
+            Address::new(FOURTH_PC),
+            vec![request(13)],
+            decoded(serializing),
+        ),
+    ];
+
+    runtime
+        .schedule_live_speculative_issues(&hart, head, 20, &requests)
+        .unwrap();
+
+    let call_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|execution| execution.sequence == head_sequence)
+        .unwrap();
+    let coroutine_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|execution| execution.sequence == coroutine_sequence)
+        .unwrap();
+    let data_only_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|execution| execution.sequence == data_only_sequence)
+        .unwrap();
+    let serializing_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|execution| execution.sequence == serializing_sequence)
+        .unwrap();
+    assert_eq!(
+        (
+            call_execution.issue_tick,
+            call_execution.raw_ready_tick,
+            call_execution.admitted_writeback_tick,
+            call_execution.writeback_slot,
+        ),
+        (20, 20, 20, Some(0))
+    );
+    assert!(call_execution.producer_sequences.is_empty());
+    assert_eq!(
+        call_execution.execution.register_writes(),
+        &[RegisterWrite::new(reg(1), SECOND_PC)]
+    );
+    assert_eq!(
+        (
+            coroutine_execution.issue_tick,
+            coroutine_execution.raw_ready_tick,
+            coroutine_execution.admitted_writeback_tick,
+            coroutine_execution.writeback_slot,
+        ),
+        (21, 21, 21, Some(0))
+    );
+    assert_eq!(
+        coroutine_execution.producer_sequences,
+        vec![head_sequence, head_sequence]
+    );
+    assert_eq!(
+        coroutine_execution.execution.register_writes(),
+        &[RegisterWrite::new(reg(5), THIRD_PC)]
+    );
+    assert_eq!(
+        (
+            data_only_execution.issue_tick,
+            data_only_execution.raw_ready_tick,
+            data_only_execution.admitted_writeback_tick,
+            data_only_execution.writeback_slot,
+        ),
+        (21, 21, 21, Some(1))
+    );
+    assert_eq!(
+        data_only_execution.producer_sequences,
+        vec![coroutine_sequence]
+    );
+    assert_eq!(
+        data_only_execution.execution.register_writes(),
+        &[RegisterWrite::new(reg(14), THIRD_PC)]
+    );
+    assert_eq!(
+        (
+            serializing_execution.issue_tick,
+            serializing_execution.raw_ready_tick,
+            serializing_execution.admitted_writeback_tick,
+            serializing_execution.writeback_slot,
+        ),
+        (22, 22, 22, Some(0))
+    );
+    assert_eq!(
+        serializing_execution.producer_sequences,
+        vec![coroutine_sequence, coroutine_sequence]
+    );
+    assert_eq!(
+        serializing_execution.execution.register_writes(),
+        &[RegisterWrite::new(reg(15), THIRD_PC)]
+    );
 }
 
 #[test]
@@ -529,6 +716,7 @@ const LOAD_PC: u64 = 0x8000;
 const BRANCH_PC: u64 = 0x8004;
 const SECOND_PC: u64 = 0x8008;
 const THIRD_PC: u64 = 0x800c;
+const FOURTH_PC: u64 = 0x8010;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScalarIssueCase {
