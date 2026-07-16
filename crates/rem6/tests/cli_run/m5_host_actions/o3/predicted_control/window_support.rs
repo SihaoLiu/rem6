@@ -166,15 +166,30 @@ pub(super) fn assert_ordered_commits<const N: usize>(events: [&Value; N]) {
 }
 
 pub(super) fn assert_register_absent_or_zero(json: &Value, register: &str) {
+    assert_register_absent_or_zero_with_context(json, register, "");
+}
+
+pub(super) fn assert_register_absent_or_zero_with_context(
+    json: &Value,
+    register: &str,
+    context: &str,
+) {
+    let context = if context.is_empty() {
+        String::new()
+    } else {
+        format!("{context}: ")
+    };
     let registers = json
         .pointer("/cores/0/registers")
         .and_then(Value::as_object)
-        .unwrap_or_else(|| panic!("missing register object: {json}"));
+        .unwrap_or_else(|| panic!("{context}missing register object: {json}"));
     match registers.get(register) {
         None => {}
         Some(value) if value.as_str() == Some("0x0") => {}
         Some(value) => {
-            panic!("expected {register} to be absent or explicitly zero, got {value}: {json}")
+            panic!(
+                "{context}expected {register} to be absent or explicitly zero, got {value}: {json}"
+            )
         }
     }
 }
@@ -281,6 +296,10 @@ pub(super) fn assert_drained_control_runtime(json: &Value) {
 }
 
 pub(super) fn assert_no_o3_stats(json: &Value) {
+    assert_no_o3_stats_with_context(json, "timing mode");
+}
+
+pub(super) fn assert_no_o3_stats_with_context(json: &Value, context: &str) {
     let unexpected = json
         .pointer("/stats")
         .and_then(Value::as_array)
@@ -306,6 +325,6 @@ pub(super) fn assert_no_o3_stats(json: &Value) {
         .collect::<Vec<_>>();
     assert!(
         unexpected.is_empty(),
-        "timing mode leaked control-window O3 stats: {unexpected:?}"
+        "{context} leaked control-window O3 stats: {unexpected:?}"
     );
 }
