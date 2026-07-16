@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
-use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
+use crate::branch_predictor::BranchTargetKind;
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
@@ -709,16 +709,15 @@ fn o3_execution_writes_link_register(record: &rem6_isa_riscv::RiscvExecutionReco
 
 fn o3_branch_squashed_target(
     branch_kind: BranchTargetKind,
-    update: &BranchUpdate,
+    predicted_taken: bool,
+    predicted_target: Option<Address>,
+    resolved_taken: bool,
+    resolved_target: Option<Address>,
     fallthrough_target: Address,
 ) -> Option<Address> {
     if matches!(branch_kind, BranchTargetKind::NoBranch) {
         return None;
     }
-    let predicted_taken = update.predicted_taken();
-    let resolved_taken = update.actual_taken();
-    let predicted_target = update.predicted_target();
-    let resolved_target = update.actual_target();
     let mispredicted = predicted_taken != resolved_taken
         || (predicted_taken && predicted_target != resolved_target);
     if !mispredicted {

@@ -16,6 +16,8 @@ pub struct RiscvCpuExecutionEvent {
     instruction: RiscvInstruction,
     execution: RiscvExecutionRecord,
     branch_update: Option<BranchUpdate>,
+    selected_branch_predicted_taken: Option<bool>,
+    selected_branch_predicted_target: Option<Address>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
@@ -115,6 +117,8 @@ pub struct RiscvMultiperspectivePerceptronBranchUpdate {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RiscvRetiredBranchUpdates {
     branch_update: Option<BranchUpdate>,
+    selected_branch_predicted_taken: Option<bool>,
+    selected_branch_predicted_target: Option<Address>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
@@ -133,6 +137,8 @@ impl RiscvRetiredBranchUpdates {
     ) -> Self {
         Self {
             branch_update: Some(branch_update),
+            selected_branch_predicted_taken: None,
+            selected_branch_predicted_target: None,
             gshare_branch_update: Some(gshare_branch_update),
             bimode_branch_update: Some(bimode_branch_update),
             tournament_branch_update: Some(tournament_branch_update),
@@ -145,6 +151,15 @@ impl RiscvRetiredBranchUpdates {
 
     pub(crate) const fn branch_update(&self) -> Option<&BranchUpdate> {
         self.branch_update.as_ref()
+    }
+
+    pub(crate) fn set_selected_branch_prediction(
+        &mut self,
+        predicted_taken: bool,
+        predicted_target: Option<Address>,
+    ) {
+        self.selected_branch_predicted_taken = Some(predicted_taken);
+        self.selected_branch_predicted_target = predicted_target;
     }
 }
 
@@ -252,6 +267,8 @@ impl RiscvCpuExecutionEvent {
             instruction,
             execution,
             branch_update,
+            selected_branch_predicted_taken: None,
+            selected_branch_predicted_target: None,
             gshare_branch_update,
             bimode_branch_update: None,
             tournament_branch_update: None,
@@ -315,6 +332,8 @@ impl RiscvCpuExecutionEvent {
             instruction,
             execution,
             branch_update,
+            selected_branch_predicted_taken: None,
+            selected_branch_predicted_target: None,
             gshare_branch_update,
             bimode_branch_update: None,
             tournament_branch_update: None,
@@ -338,6 +357,8 @@ impl RiscvCpuExecutionEvent {
     ) -> Self {
         let RiscvRetiredBranchUpdates {
             branch_update,
+            selected_branch_predicted_taken,
+            selected_branch_predicted_target,
             gshare_branch_update,
             bimode_branch_update,
             tournament_branch_update,
@@ -349,6 +370,8 @@ impl RiscvCpuExecutionEvent {
             instruction,
             execution,
             branch_update,
+            selected_branch_predicted_taken,
+            selected_branch_predicted_target,
             gshare_branch_update,
             bimode_branch_update,
             tournament_branch_update,
@@ -379,6 +402,13 @@ impl RiscvCpuExecutionEvent {
 
     pub fn branch_update(&self) -> Option<&BranchUpdate> {
         self.branch_update.as_ref()
+    }
+
+    pub(crate) const fn selected_branch_prediction(&self) -> Option<(bool, Option<Address>)> {
+        match self.selected_branch_predicted_taken {
+            Some(predicted_taken) => Some((predicted_taken, self.selected_branch_predicted_target)),
+            None => None,
+        }
     }
 
     pub fn gshare_branch_update(&self) -> Option<&RiscvGShareBranchUpdate> {

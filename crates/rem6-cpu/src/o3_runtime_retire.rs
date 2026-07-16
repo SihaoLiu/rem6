@@ -127,19 +127,31 @@ impl O3RuntimeState {
         let branch_kind = branch_update
             .map(|_| riscv_branch_target_kind(record.instruction()))
             .unwrap_or(BranchTargetKind::NoBranch);
-        let branch_predicted_taken = branch_update.is_some_and(|update| update.predicted_taken());
+        let selected_branch_prediction = execution.selected_branch_prediction();
+        let branch_predicted_taken = selected_branch_prediction
+            .map(|(predicted_taken, _)| predicted_taken)
+            .unwrap_or_else(|| branch_update.is_some_and(|update| update.predicted_taken()));
         let branch_resolved_taken = branch_update.is_some_and(|update| update.actual_taken());
         let branch_link_register_write =
             branch_update.is_some() && o3_execution_writes_link_register(record);
-        let branch_predicted_target = branch_update.and_then(|update| update.predicted_target());
+        let branch_predicted_target = selected_branch_prediction
+            .map(|(_, predicted_target)| predicted_target)
+            .unwrap_or_else(|| branch_update.and_then(|update| update.predicted_target()));
         let branch_resolved_target = branch_update.and_then(|update| update.actual_target());
         let branch_fallthrough_target = Address::new(
             record
                 .pc()
                 .saturating_add(u64::from(record.instruction_bytes())),
         );
-        let branch_squashed_target = branch_update.and_then(|update| {
-            o3_branch_squashed_target(branch_kind, update, branch_fallthrough_target)
+        let branch_squashed_target = branch_update.and_then(|_| {
+            o3_branch_squashed_target(
+                branch_kind,
+                branch_predicted_taken,
+                branch_predicted_target,
+                branch_resolved_taken,
+                branch_resolved_target,
+                branch_fallthrough_target,
+            )
         });
         let fu_latency_cycles =
             crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());

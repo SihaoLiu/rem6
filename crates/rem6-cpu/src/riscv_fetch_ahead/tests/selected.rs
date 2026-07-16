@@ -51,6 +51,10 @@ fn selected_gshare_speculation_controls_retire_branch_prediction() {
     let event = core.execute_next_completed_fetch().unwrap().unwrap();
     let basic_update = event.branch_update().unwrap();
     assert!(!basic_update.predicted_taken());
+    assert_eq!(
+        event.selected_branch_prediction(),
+        Some((true, Some(Address::new(0x8008))))
+    );
 
     let cycle = event.in_order_pipeline_cycle().unwrap();
     let prediction = cycle.branch_predictions().first().unwrap();

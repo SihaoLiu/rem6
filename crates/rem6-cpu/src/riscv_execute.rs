@@ -814,7 +814,13 @@ impl RiscvRetiredBranchResolution {
         })
     }
 
-    fn into_updates(self) -> RiscvRetiredBranchUpdates {
+    fn into_updates(mut self) -> RiscvRetiredBranchUpdates {
+        if let Some(prediction) = self.fetch_prediction {
+            self.updates.set_selected_branch_prediction(
+                prediction.predicted_taken(),
+                prediction.predicted_target(),
+            );
+        }
         self.updates
     }
 }
