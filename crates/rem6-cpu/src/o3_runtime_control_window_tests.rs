@@ -456,6 +456,92 @@ fn scalar_and_linked_control_candidates_expose_destinations() {
 }
 
 #[test]
+fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.set_scalar_memory_window_limit(4);
+    assert!(runtime.set_writeback_width(1));
+    let load = scalar_load_event();
+    let call = jal_link(1, 8);
+    let coroutine = jalr_link(5, 1);
+    let descendant = addi(8, 5, 0);
+    assert!(runtime.stage_live_scalar_memory_issue(&load, request(20), 31));
+    assert_eq!(
+        runtime.stage_live_scalar_memory_younger_window(
+            load.fetch().request_id(),
+            [
+                (Address::new(0x8004), call),
+                (Address::new(0x800c), coroutine),
+                (Address::new(0x8008), descendant),
+            ],
+        ),
+        3
+    );
+
+    let call_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), call)
+        .expect("linked call candidate");
+    let call_sequence = call_candidate.sequence();
+    assert!(runtime
+        .record_live_speculative_execution(
+            call_candidate,
+            &[request(11)],
+            20,
+            RiscvExecutionRecord::new(
+                call,
+                0x8004,
+                0x800c,
+                vec![RegisterWrite::new(reg(1), 0x8008)],
+                None,
+            ),
+        )
+        .unwrap());
+
+    let coroutine_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x800c), coroutine)
+        .expect("same-window coroutine candidate");
+    let coroutine_sequence = coroutine_candidate.sequence();
+    assert_eq!(
+        coroutine_candidate.destination().unwrap().architectural(),
+        5
+    );
+    assert!(coroutine_candidate
+        .producer_sequences()
+        .contains(&call_sequence));
+    assert_eq!(
+        coroutine_candidate.forwarded_register_writes(),
+        &[RegisterWrite::new(reg(1), 0x8008)]
+    );
+    assert_eq!(coroutine_candidate.issue_tick(1), 20);
+    assert!(runtime
+        .record_live_speculative_execution(
+            coroutine_candidate,
+            &[request(12)],
+            1,
+            RiscvExecutionRecord::new(
+                coroutine,
+                0x800c,
+                0x8008,
+                vec![RegisterWrite::new(reg(5), 0x8010)],
+                None,
+            ),
+        )
+        .unwrap());
+    let issued = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == coroutine_sequence)
+        .expect("recorded coroutine execution");
+    assert_eq!(issued.writeback_slot, Some(0));
+    assert!(issued.admitted_writeback_tick >= 20);
+    assert_eq!(
+        runtime
+            .writeback_reservation(coroutine_sequence)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(issued.admitted_writeback_tick)
+    );
+}
+
+#[test]
 fn same_window_return_candidate_uses_link_call_forwarding() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);

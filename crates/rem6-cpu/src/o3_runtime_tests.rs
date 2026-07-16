@@ -53,6 +53,39 @@ fn o3_issue_width_survives_snapshot_restore() {
 }
 
 #[test]
+fn branch_link_write_uses_actual_coroutine_register_write() {
+    let coroutine = RiscvInstruction::Jalr {
+        rd: rem6_isa_riscv::Register::new(5).unwrap(),
+        rs1: rem6_isa_riscv::Register::new(1).unwrap(),
+        offset: rem6_isa_riscv::Immediate::new(0),
+    };
+    let record = RiscvExecutionRecord::new(
+        coroutine,
+        0x800c,
+        0x8008,
+        vec![rem6_isa_riscv::RegisterWrite::new(
+            rem6_isa_riscv::Register::new(5).unwrap(),
+            0x8010,
+        )],
+        None,
+    );
+
+    assert!(o3_branch_link_register_write(&record));
+}
+
+#[test]
+fn branch_link_write_keeps_plain_return_false() {
+    let plain_return = RiscvInstruction::Jalr {
+        rd: rem6_isa_riscv::Register::new(0).unwrap(),
+        rs1: rem6_isa_riscv::Register::new(1).unwrap(),
+        offset: rem6_isa_riscv::Immediate::new(0),
+    };
+    let record = RiscvExecutionRecord::new(plain_return, 0x800c, 0x8008, vec![], None);
+
+    assert!(!o3_branch_link_register_write(&record));
+}
+
+#[test]
 fn failed_store_conditional_stats_count_failed_operation() {
     let mut runtime = O3RuntimeState::default();
     let mut event = store_conditional_event(0x8000, 10);

@@ -701,12 +701,6 @@ fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
 }
 
 fn o3_branch_link_register_write(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {
-    if !matches!(
-        riscv_branch_target_kind(record.instruction()),
-        BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect
-    ) {
-        return false;
-    }
     record
         .register_writes()
         .iter()
