@@ -20,8 +20,6 @@ mod detailed_o3;
 mod driver;
 mod speculation;
 
-#[allow(unused_imports)]
-pub(crate) use detailed_o3::RequiredRasConsumer;
 pub(crate) use detailed_o3::{
     predicted_control_target_authority, recorded_predicted_pc, PredictedControlTargetAuthority,
     RecordedPredictedPc,

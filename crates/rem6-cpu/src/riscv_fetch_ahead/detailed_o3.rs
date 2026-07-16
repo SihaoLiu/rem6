@@ -57,8 +57,15 @@ pub(crate) fn predicted_control_target_authority(
     classification: RiscvSequencedScalarIntegerYoungerDecision,
     sequenced_return_addresses: &[(u64, Address)],
 ) -> Option<PredictedControlTargetAuthority> {
-    if classification.decision() != RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
-        return Some(PredictedControlTargetAuthority::Normal);
+    match classification.decision() {
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedControl => {
+            return Some(PredictedControlTargetAuthority::Normal);
+        }
+        RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl => {}
+        RiscvScalarIntegerYoungerDecision::AdmitContinue
+        | RiscvScalarIntegerYoungerDecision::AdmitStop
+        | RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        | RiscvScalarIntegerYoungerDecision::Reject => return None,
     }
     let push_sequence = classification.ras_push_sequence()?;
     let pushed_address = sequenced_return_addresses
@@ -673,26 +680,40 @@ fn recorded_ras_required_target(
     }
     let push = &operations[push_index];
     let consumer_operation = &operations[pop_index];
-    let consumer_matches = match consumer {
-        RequiredRasConsumer::Pop => {
-            consumer_operation.kind() == ReturnAddressStackOperationKind::Pop
-                && consumer_operation.pushed_address().is_none()
-        }
-        RequiredRasConsumer::PopThenPush { pushed_address } => {
-            consumer_operation.kind() == ReturnAddressStackOperationKind::PopThenPush
-                && consumer_operation.pushed_address() == Some(pushed_address)
-                && consumer_operation.stack_after().last().copied() == Some(pushed_address)
-        }
-    };
     if push.kind() != ReturnAddressStackOperationKind::Push
-        || !consumer_matches
         || push.pushed_address() != Some(pushed_address)
         || push.stack_after() != consumer_operation.stack_before()
-        || consumer_operation.predicted_return() != push.pushed_address()
     {
         return None;
     }
-    consumer_operation.predicted_return()
+    let mut expected_after = consumer_operation.stack_before().to_vec();
+    let consumed_address = expected_after.pop()?;
+    if consumed_address != pushed_address
+        || consumer_operation.predicted_return() != Some(consumed_address)
+    {
+        return None;
+    }
+    match consumer {
+        RequiredRasConsumer::Pop => {
+            if consumer_operation.kind() != ReturnAddressStackOperationKind::Pop
+                || consumer_operation.pushed_address().is_some()
+            {
+                return None;
+            }
+        }
+        RequiredRasConsumer::PopThenPush { pushed_address } => {
+            if consumer_operation.kind() != ReturnAddressStackOperationKind::PopThenPush
+                || consumer_operation.pushed_address() != Some(pushed_address)
+            {
+                return None;
+            }
+            expected_after.push(pushed_address);
+        }
+    }
+    if consumer_operation.stack_after() != expected_after {
+        return None;
+    }
+    Some(consumed_address)
 }
 
 fn completed_window_instruction_or_candidate(
