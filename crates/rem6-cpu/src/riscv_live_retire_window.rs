@@ -569,28 +569,16 @@ fn completed_scalar_integer_younger_window(
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
                 | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
         ) {
-            let target_authority =
-                if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
-                    let Some(push_sequence) = classification.ras_push_sequence() else {
-                        break;
-                    };
-                    let Some(pushed_address) =
-                        sequenced_return_addresses
-                            .iter()
-                            .rev()
-                            .find_map(|(sequence, address)| {
-                                (*sequence == push_sequence).then_some(*address)
-                            })
-                    else {
-                        break;
-                    };
-                    crate::riscv_fetch_ahead::PredictedControlTargetAuthority::RasRequired {
-                        push_sequence,
-                        pushed_address,
-                    }
-                } else {
-                    crate::riscv_fetch_ahead::PredictedControlTargetAuthority::Normal
-                };
+            let Some(target_authority) =
+                crate::riscv_fetch_ahead::predicted_control_target_authority(
+                    instruction.decoded.instruction(),
+                    sequential_pc,
+                    classification,
+                    &sequenced_return_addresses,
+                )
+            else {
+                break;
+            };
             let crate::riscv_fetch_ahead::RecordedPredictedPc::Ready(next_pc) =
                 crate::riscv_fetch_ahead::recorded_predicted_pc(
                     state,

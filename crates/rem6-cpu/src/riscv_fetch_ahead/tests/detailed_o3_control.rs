@@ -26,6 +26,34 @@ fn detailed_linked_control_core(
     core
 }
 
+fn recorded_same_window_coroutine_core() -> RiscvCore {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let coroutine = i_type(0, 1, 0x0, 5, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, coroutine.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let coroutine_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(coroutine_decision.pc(), Address::new(0x8008));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&coroutine_decision)
+            .unwrap(),
+    );
+
+    core
+}
+
 fn detailed_nested_control_core(split_inner: bool) -> RiscvCore {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let outer = b_type(12, 1, 2, 0x0);
@@ -162,6 +190,110 @@ fn detailed_scalar_window_forwards_call_ras_to_same_window_return() {
             .value(BranchTargetProvider::RAS),
         1
     );
+}
+
+#[test]
+fn detailed_scalar_window_forwards_call_ras_to_same_window_coroutine() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let coroutine = i_type(0, 1, 0x0, 5, 0x67);
+    let descendant = i_type(1, 0, 0x0, 7, 0x13);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, coroutine.to_le_bytes().to_vec()),
+        (3, 0x8008, descendant.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let coroutine_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(coroutine_decision.pc(), Address::new(0x8008));
+    let speculation = coroutine_decision.branch_speculation().unwrap();
+    assert_eq!(speculation.pc(), Address::new(0x800c));
+    assert_eq!(speculation.target(), Some(Address::new(0x8008)));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&coroutine_decision)
+            .unwrap(),
+    );
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state.return_address_stack.stack_entries(),
+        &[Address::new(0x8010)]
+    );
+    assert_eq!(state.return_address_stack.pending_operation_count(), 2);
+    let coroutine_operation = &state.return_address_stack.pending_operations()[1];
+    assert_eq!(
+        coroutine_operation.kind(),
+        crate::ReturnAddressStackOperationKind::PopThenPush
+    );
+    assert_eq!(
+        coroutine_operation.pushed_address(),
+        Some(Address::new(0x8010))
+    );
+}
+
+#[test]
+fn detailed_recorded_coroutine_accepts_exact_pop_then_push() {
+    let core = recorded_same_window_coroutine_core();
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_recorded_coroutine_rejects_wrong_replacement_address() {
+    let core = recorded_same_window_coroutine_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(2).unwrap();
+        let replacement = state
+            .return_address_stack
+            .pop_then_push_speculative(Address::new(0x9000));
+        state
+            .return_address_stack_operations
+            .insert(2, replacement.id());
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_recorded_coroutine_rejects_plain_pop_consumer() {
+    let core = recorded_same_window_coroutine_core();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(2).unwrap();
+        let replacement = state.return_address_stack.pop_speculative();
+        state
+            .return_address_stack_operations
+            .insert(2, replacement.id());
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+}
+
+#[test]
+fn detailed_invalid_recorded_coroutine_does_not_retry_as_fresh_prediction() {
+    let core = recorded_same_window_coroutine_core();
+    core.set_branch_lookahead(3);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.squash_return_address_stack_speculation(2).unwrap();
+        assert!(state.return_address_stack_operations.contains_key(&1));
+        assert!(!state.return_address_stack_operations.contains_key(&2));
+        assert_eq!(state.return_address_stack.top(), Some(Address::new(0x8008)));
+    }
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
 
 #[test]

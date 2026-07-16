@@ -20,8 +20,11 @@ mod detailed_o3;
 mod driver;
 mod speculation;
 
+#[allow(unused_imports)]
+pub(crate) use detailed_o3::RequiredRasConsumer;
 pub(crate) use detailed_o3::{
-    recorded_predicted_pc, PredictedControlTargetAuthority, RecordedPredictedPc,
+    predicted_control_target_authority, recorded_predicted_pc, PredictedControlTargetAuthority,
+    RecordedPredictedPc,
 };
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
@@ -810,7 +813,7 @@ fn fetch_ahead_decision(
     fetch_pc: Address,
     sequential_pc: Address,
     instruction: RiscvInstruction,
-    target_authority: detailed_o3::PredictedControlTargetAuthority,
+    target_authority: PredictedControlTargetAuthority,
     translated: detailed_o3::TranslatedMemoryFetchAhead,
 ) -> Option<RiscvFetchAheadDecision> {
     let scalar_memory_head =
@@ -1442,12 +1445,13 @@ fn direct_jump_fetch_ahead_target(
         _ => return None,
     };
     let ras_target = match target_authority {
-        detailed_o3::PredictedControlTargetAuthority::Normal => (kind == BranchTargetKind::Return)
+        PredictedControlTargetAuthority::Normal => (kind == BranchTargetKind::Return)
             .then(|| state.return_address_stack.top())
             .flatten(),
-        detailed_o3::PredictedControlTargetAuthority::RasRequired {
+        PredictedControlTargetAuthority::RasRequired {
             push_sequence,
             pushed_address,
+            ..
         } => {
             if kind != BranchTargetKind::Return {
                 return None;
