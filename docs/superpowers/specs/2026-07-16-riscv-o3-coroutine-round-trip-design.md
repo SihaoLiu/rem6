@@ -83,8 +83,10 @@ the coroutine's recorded `PopThenPush` operation to the next adjacent `Pop`.
    state.
 8. Do not allow a fourth same-window linked/control consumer after the ordinary
    return.
-9. Do not add a checkpoint schema or widen live transport ownership.
-10. Do not raise the migration score from bounded evidence.
+9. Do not add an older unresolved branch around the full round trip; that would
+   require four simultaneous control speculations and exceed lookahead three.
+10. Do not add a checkpoint schema or widen live transport ownership.
+11. Do not raise the migration score from bounded evidence.
 
 ## Alternatives Considered
 
@@ -269,17 +271,23 @@ but the ordinary return must not open the round-trip target. The pre-response
 artifact must retain the bounded terminal row while suppressing target fetch
 and later success-path activity.
 
-### Older branch repair
+### Middle coroutine target mismatch
 
-An older conditional-branch misprediction must discard the call, coroutine,
-and ordinary return; restore both link-register mappings; remove all three
-pending RAS operations; suppress wrong-path memory traffic; and retire none of
-the three controls.
+A nonzero immediate on the coroutine may make its RAS target differ from the
+architectural target. The predicted call fallthrough contains the ordinary
+return, so that return may already have consumed the coroutine replacement
+with a speculative `Pop` before the coroutine resolves.
 
-For one `Push`, one `PopThenPush`, and one `Pop`, rollback accounting must be
-locked from the generated artifact rather than inferred loosely. The expected
-operation-level shape is three squashed RAS operations with balanced inverse
-push/pop cleanup and zero `used`, `correct`, or `incorrect` commits.
+Repair must discard the ordinary-return row, remove its control dependency,
+reverse its speculative `Pop`, suppress its predicted-target traffic, and
+redirect to the coroutine's resolved target. The call and coroutine remain in
+program order, both link writes remain owned, and the coroutine's
+`PopThenPush` replacement remains valid for a later ordinary return after
+ordered repair and drain.
+
+This path uses exactly three control speculations: call, coroutine, and the
+discarded ordinary return. Exact rollback counters must be calibrated from the
+generated artifact rather than inferred loosely.
 
 ### Ordinary-return target mismatch
 
@@ -325,7 +333,7 @@ Add a focused `coroutine/round_trip.rs` same-namespace include with these tests:
 1. `rem6_run_o3_same_window_coroutine_round_trip_commits_direct`
 2. `rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram`
 3. `rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three`
-4. `rem6_run_o3_older_branch_discards_same_window_coroutine_round_trip`
+4. `rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return`
 5. `rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs`
 6. `rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip`
 7. `rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary`
@@ -360,8 +368,9 @@ but together they must exercise both directions.
 - lookahead two does not fetch the ordinary-return target;
 - malformed or stale coroutine replacement producers fail closed in focused
   frontend tests;
-- older repair removes all three controls, both rename destinations, pending
-  RAS state, wrong-path fetches, and wrong-path data traffic;
+- middle coroutine repair removes the ordinary return, its dependency and
+  speculative `Pop`, plus wrong-path fetches and data traffic, while preserving
+  the coroutine replacement for later ordered consumption;
 - ordinary-return wrong-target repair records predicted, resolved, squashed,
   and redirect targets exactly;
 - repair leaves no reusable same-window replacement authority;
