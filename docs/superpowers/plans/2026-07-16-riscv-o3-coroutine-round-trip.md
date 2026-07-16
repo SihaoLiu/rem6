@@ -804,7 +804,8 @@ Run:
 cargo test -p rem6-cpu detailed_unconsumed_coroutine_round_trip -- --nocapture
 cargo test -p rem6-cpu detailed_recorded_coroutine_round_trip -- --nocapture
 cargo test -p rem6-cpu detailed_recorded_coroutine -- --nocapture
-cargo test -p rem6-cpu detailed_recorded_return -- --nocapture
+cargo test -p rem6-cpu detailed_recorded_same_window_return_requires_live_ras_lineage -- --nocapture
+cargo test -p rem6-cpu detailed_invalid_recorded_return_does_not_retry_as_fresh_prediction -- --nocapture
 ```
 
 Expected: new round-trip positive and negatives pass; existing call-to-coroutine and call-to-return validation remains green.
@@ -2312,6 +2313,7 @@ git commit -m "test: cover coroutine round-trip lifecycle"
 **Files:**
 - Modify: `crates/rem6/tests/source_policy/core_test_anchors.txt`
 - Modify: `docs/architecture/gem5-to-rem6-migration.md`
+- Modify: `docs/superpowers/plans/2026-07-16-riscv-o3-coroutine-round-trip.md`
 
 - [ ] **Step 1: Add exact CLI anchors**
 
@@ -2330,11 +2332,18 @@ rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip
 
 - [ ] **Step 2: Update only bounded CPU prose and test-map evidence**
 
-State that the exact adjacent call `Push` -> distinct-link coroutine
-`PopThenPush` -> ordinary return `Pop` round trip is proven in both directions
-with direct/hierarchy positives, lookahead-two suppression, middle wrong-target
-repair, terminal direction-only repair, mode switch, live/drained checkpoint,
-and timing suppression.
+State the exact adjacent call `Push` -> distinct-link coroutine `PopThenPush`
+-> ordinary return `Pop` evidence matrix without widening any row:
+
+- The forward `x1->x5` positive runs on direct memory.
+- The reverse `x5->x1` positive runs on `cache-fabric-dram` hierarchy memory.
+- Lookahead-two suppression, mode switch, live/drained checkpoint, and timing
+  suppression iterate both cases and directions.
+- Middle wrong-target repair and terminal direction-only repair are focused
+  direct-only fixtures.
+
+Keep the positive routes and focused repair coverage case-specific; do not
+widen either row to the other direction or memory route.
 
 Remove only:
 
@@ -2371,7 +2380,7 @@ Expected: rem6 and CPU source-policy suites pass; ledger is exactly `1200` lines
 - [ ] **Step 4: Commit documentation evidence**
 
 ```text
-git add crates/rem6/tests/source_policy/core_test_anchors.txt docs/architecture/gem5-to-rem6-migration.md
+git add crates/rem6/tests/source_policy/core_test_anchors.txt docs/architecture/gem5-to-rem6-migration.md docs/superpowers/plans/2026-07-16-riscv-o3-coroutine-round-trip.md
 git commit -m "docs: record coroutine round trip"
 ```
 
