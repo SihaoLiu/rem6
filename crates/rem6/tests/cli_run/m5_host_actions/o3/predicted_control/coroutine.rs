@@ -86,35 +86,6 @@ const COROUTINE_LIFECYCLE_CASES: [CoroutineLifecycleCase; 2] = [
     },
 ];
 
-fn assert_terminal_coroutine_frontend(resident: &Value, fetched_pc: &str, suppressed_pcs: &[&str]) {
-    for (pointer, expected) in [
-        ("/cores/0/branch_predictor/lookups/call_direct", 1),
-        ("/cores/0/branch_predictor/ras/pushes", 1),
-        ("/cores/0/branch_predictor/lookups/return", 0),
-        ("/cores/0/branch_predictor/ras/pops", 0),
-        ("/cores/0/branch_predictor/ras/used", 0),
-        ("/cores/0/branch_predictor/target_provider/ras", 0),
-    ] {
-        assert_eq!(
-            resident.pointer(pointer).and_then(Value::as_u64),
-            Some(expected),
-            "unexpected terminal-coroutine predictor evidence at {pointer}: {resident}"
-        );
-    }
-    assert!(
-        resident
-            .pointer("/debug/fetch_trace")
-            .and_then(Value::as_array)
-            .is_some_and(|records| records.iter().any(|record| {
-                record.pointer("/pc").and_then(Value::as_str) == Some(fetched_pc)
-            })),
-        "expected positive fetch witness for {fetched_pc}: {resident}"
-    );
-    for pc in suppressed_pcs {
-        assert_no_fetch_pc(resident, pc);
-    }
-}
-
 #[test]
 fn rem6_run_o3_same_window_coroutine_commits_direct() {
     let case = COROUTINE_LIFECYCLE_CASES[0];
@@ -429,6 +400,41 @@ fn overwritten_coroutine_binary(name: &str) -> std::path::PathBuf {
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
+fn indirect_coroutine_prefix() -> Vec<u32> {
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
+    let data_auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 18, 0x17),
+        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
+    ]);
+    let target_auipc_pc = (words.len() * 4) as i32;
+    let target_offset = INDIRECT_COROUTINE_TARGET_PC - target_auipc_pc;
+    words.extend([
+        u_type(0, 11, 0x17),
+        i_type(target_offset, 11, 0x0, 11, 0x13),
+        i_type(0, 18, 0b010, 12, 0x03),
+        i_type(0, 11, 0x0, 5, 0x67),
+    ]);
+    words
+}
+
+fn overwritten_indirect_coroutine_binary(name: &str) -> std::path::PathBuf {
+    let mut words = indirect_coroutine_prefix();
+    words.extend([
+        s_type(8, 7, 18, 0b010),
+        m5op(M5_FAIL),
+        i_type(24, 5, 0x0, 5, 0x13),
+        i_type(0, 5, 0x0, 1, 0x67),
+        s_type(12, 7, 18, 0b010),
+        m5op(M5_FAIL),
+        i_type(0, 1, 0x0, 13, 0x13),
+        s_type(4, 13, 18, 0b010),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ]);
+    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
+}
+
 fn older_branch_coroutine_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let data_auipc_pc = (words.len() * 4) as i32;
@@ -475,24 +481,8 @@ fn wrong_target_coroutine_binary(name: &str) -> std::path::PathBuf {
 }
 
 fn indirect_coroutine_binary(name: &str, exit_padding_words: usize) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
+    let mut words = indirect_coroutine_prefix();
     words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-    ]);
-    let target_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 11, 0x17),
-        i_type(
-            INDIRECT_COROUTINE_TARGET_PC - target_auipc_pc,
-            11,
-            0x0,
-            11,
-            0x13,
-        ),
-        i_type(0, 18, 0b010, 12, 0x03),
-        i_type(0, 11, 0x0, 5, 0x67),
         i_type(0, 1, 0x0, 13, 0x13),
         j_type(16, 0),
         i_type(0, 5, 0x0, 1, 0x67),

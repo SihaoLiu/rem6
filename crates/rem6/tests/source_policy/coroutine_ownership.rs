@@ -11,7 +11,9 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 3] = [
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/suppression.rs",
         anchors: &[
             "rem6_run_o3_same_window_coroutine_requires_branch_lookahead_two",
+            "rem6_run_o3_same_window_indirect_coroutine_requires_branch_lookahead_two",
             "rem6_run_o3_same_window_overwritten_coroutine_source_stays_terminal",
+            "rem6_run_o3_same_window_indirect_overwritten_coroutine_source_stays_terminal",
         ],
     },
     CoroutineConcern {
