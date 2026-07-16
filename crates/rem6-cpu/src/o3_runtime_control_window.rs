@@ -236,6 +236,13 @@ impl O3RuntimeState {
         if !valid_kind {
             return Ok(false);
         }
+        if !self.bind_live_staged_fetch_identity_at_sequence(
+            candidate.sequence,
+            candidate.instruction,
+            consumed_requests,
+        ) {
+            return Ok(false);
+        }
         let raw_ready_tick = issue_tick
             .checked_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
                 execution.instruction(),
@@ -453,6 +460,8 @@ impl O3RuntimeState {
         self.live_serializing_control_sequences
             .retain(|sequence| *sequence <= branch_sequence);
         self.live_staged_fetch_identities
+            .retain(|sequence, _| *sequence <= branch_sequence);
+        self.invalidated_live_staged_fetch_identities
             .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence <= branch_sequence);

@@ -935,6 +935,69 @@ fn split_inner_branch_suffix_replacement_prunes_nested_chain() {
 }
 
 #[test]
+fn outer_control_redirect_discards_invalidated_descendant_fetch_identity() {
+    let (mut runtime, _, inner, _) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let outer_sequence = rob[1].sequence();
+    let inner_sequence = rob[2].sequence();
+    let inner_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == inner_sequence)
+        .map(|issued| issued.execution.clone())
+        .unwrap();
+    let inner_event = RiscvCpuExecutionEvent::new(fetch_event(0x8008, 12), inner, inner_execution);
+    runtime.retire_live_staged_instruction(&inner_event, &[request(14)], 40);
+    runtime.record_retired_instruction_with_trace(&inner_event, true);
+    assert_eq!(runtime.invalidated_live_staged_fetch_identities.len(), 1);
+    assert!(runtime.owns_pending_retirement_authority(request(13)));
+
+    runtime.discard_live_control_descendants_from_at(outer_sequence, 40);
+
+    assert!(runtime.invalidated_live_staged_fetch_identities.is_empty());
+    assert!(!runtime.owns_pending_retirement_authority(request(13)));
+}
+
+#[test]
+fn mismatched_control_redirect_preserves_current_fallback_until_runtime_recording() {
+    let (mut runtime, _, inner, _) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let inner_sequence = rob[2].sequence();
+    let inner_execution = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == inner_sequence)
+        .map(|issued| issued.execution.clone())
+        .unwrap();
+    let inner_event = RiscvCpuExecutionEvent::new(fetch_event(0x8008, 12), inner, inner_execution);
+    runtime.retire_live_staged_instruction(&inner_event, &[request(14)], 40);
+    assert!(runtime.owns_pending_retirement_authority(request(12)));
+    assert!(runtime.owns_pending_retirement_authority(request(13)));
+
+    runtime.discard_live_control_descendants_from_at(inner_sequence, 40);
+
+    assert!(runtime.owns_pending_retirement_authority(request(12)));
+    assert!(!runtime.owns_pending_retirement_authority(request(13)));
+    let staged_rows_before = runtime.snapshot.reorder_buffer.clone();
+    runtime.record_retired_instruction_with_trace(&inner_event, true);
+
+    assert_eq!(runtime.snapshot.reorder_buffer, staged_rows_before);
+    assert!(runtime
+        .snapshot
+        .reorder_buffer
+        .iter()
+        .all(|entry| entry.is_live_staged() && !entry.is_ready()));
+    assert_eq!(
+        runtime
+            .trace_records()
+            .last()
+            .unwrap()
+            .rob_commits_at_tick(),
+        1
+    );
+}
+
+#[test]
 fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);

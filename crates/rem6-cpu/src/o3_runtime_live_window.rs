@@ -56,6 +56,24 @@ impl O3LiveStagedFetchIdentity {
                 .as_deref()
                 .is_none_or(|bound| bound == consumed_requests)
     }
+
+    fn matches_bound(
+        &self,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.instruction == instruction
+            && valid_live_speculative_fetch_identity(consumed_requests)
+            && self.consumed_requests.as_deref() == Some(consumed_requests)
+    }
+
+    pub(super) fn owns_fetch_request(&self, request: MemoryRequestId) -> bool {
+        self.consumed_requests
+            .as_ref()
+            .and_then(|requests| requests.first())
+            .copied()
+            == Some(request)
+    }
 }
 
 impl O3RuntimeState {
@@ -193,18 +211,45 @@ impl O3RuntimeState {
             .iter()
             .position(|entry| entry.is_live_staged() && entry.pc() == pc)
         else {
+            let invalidated_sequence = self
+                .invalidated_live_staged_fetch_identities
+                .iter()
+                .find_map(|(sequence, identity)| {
+                    identity
+                        .matches_bound(execution.instruction(), consumed_requests)
+                        .then_some(*sequence)
+                });
+            if let Some(sequence) = invalidated_sequence {
+                self.invalidated_live_staged_fetch_identities
+                    .remove(&sequence);
+                self.record_untrusted_live_retirement(execution, sequence, retire_tick);
+            }
             return;
         };
         let entry = self.snapshot.reorder_buffer[index];
         let identity_matches = self
             .live_staged_fetch_identities
-            .get_mut(&entry.sequence())
+            .get(&entry.sequence())
             .is_some_and(|identity| {
-                identity.instruction == execution.instruction()
-                    && identity.bind_consumed_requests(consumed_requests)
+                identity.matches_bound(execution.instruction(), consumed_requests)
             });
         if !identity_matches {
-            self.invalidate_live_speculative_retirement_at(entry.sequence(), retire_tick);
+            let invalidated_descendants = self
+                .snapshot
+                .reorder_buffer
+                .iter()
+                .filter(|younger| younger.is_live_staged() && younger.sequence() > entry.sequence())
+                .filter_map(|younger| {
+                    self.live_staged_fetch_identities
+                        .get(&younger.sequence())
+                        .cloned()
+                        .map(|identity| (younger.sequence(), identity))
+                })
+                .collect::<Vec<_>>();
+            self.discard_live_staged_window_from_at(entry.sequence(), retire_tick);
+            self.invalidated_live_staged_fetch_identities
+                .extend(invalidated_descendants);
+            self.record_untrusted_live_retirement(execution, entry.sequence(), retire_tick);
             return;
         }
         if is_deferred_o3_scalar_memory_access(execution.execution().memory_access()) {
@@ -278,6 +323,36 @@ impl O3RuntimeState {
             });
     }
 
+    fn record_untrusted_live_retirement(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        sequence: u64,
+        retire_tick: u64,
+    ) {
+        if execution.execution().memory_access().is_some() {
+            return;
+        }
+        let dependencies = self.record_scalar_integer_dependencies(&execution.instruction());
+        let fu_latency_cycles =
+            crate::riscv_fu_latency::riscv_execute_wait_cycles(execution.instruction());
+        let rob_occupancy = self.snapshot.reorder_buffer.len().saturating_add(1);
+        self.live_retired_instructions
+            .push(O3LiveRetiredInstruction {
+                request: execution.fetch().request_id(),
+                sequence,
+                issue_tick: retire_tick.saturating_sub(fu_latency_cycles),
+                admitted_writeback_tick: retire_tick,
+                commit_tick: retire_tick,
+                rob_occupancy,
+                rob_commits: 1,
+                rob_commit_blocked: false,
+                iew_dependency_producers: dependencies.newly_observed_producers,
+                iew_dependency_producer_registers: dependencies.producer_physical_registers,
+                iew_dependency_consumers: dependencies.consumers,
+                rename_destination: None,
+            });
+    }
+
     pub(crate) fn discard_live_retire_window(&mut self) {
         self.discard_live_staged_instructions();
         self.live_retired_instructions.clear();
@@ -294,6 +369,7 @@ impl O3RuntimeState {
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
+        self.invalidated_live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -309,6 +385,7 @@ impl O3RuntimeState {
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
+        self.invalidated_live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions_at(now);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -377,6 +454,8 @@ impl O3RuntimeState {
             .retain(|control| *control < sequence);
         self.live_staged_fetch_identities
             .retain(|staged, _| *staged < sequence);
+        self.invalidated_live_staged_fetch_identities
+            .retain(|staged, _| *staged < sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence < sequence);
         self.stats
@@ -442,6 +521,15 @@ impl O3RuntimeState {
         else {
             return false;
         };
+        self.bind_live_staged_fetch_identity_at_sequence(sequence, instruction, consumed_requests)
+    }
+
+    pub(super) fn bind_live_staged_fetch_identity_at_sequence(
+        &mut self,
+        sequence: u64,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
         let Some(identity) = self.live_staged_fetch_identities.get_mut(&sequence) else {
             return false;
         };
@@ -571,42 +659,6 @@ impl O3RuntimeState {
             }
         }
         self.live_speculative_executions = retained;
-    }
-
-    fn invalidate_live_speculative_retirement_at(&mut self, sequence: u64, now: u64) {
-        if !self
-            .live_speculative_executions
-            .iter()
-            .any(|execution| execution.sequence == sequence)
-        {
-            return;
-        }
-        let mut invalidated = BTreeSet::new();
-        let mut pending = vec![sequence];
-        while let Some(producer) = pending.pop() {
-            let mut index = 0;
-            while index < self.live_speculative_executions.len() {
-                let execution = &self.live_speculative_executions[index];
-                if execution.sequence == producer
-                    || execution.producer_sequences.contains(&producer)
-                {
-                    let removed = self.live_speculative_executions.remove(index).sequence;
-                    self.discard_future_writeback_sequence(removed, now);
-                    if invalidated.insert(removed) {
-                        pending.push(removed);
-                    }
-                } else {
-                    index += 1;
-                }
-            }
-        }
-        self.live_control_dependencies.retain(|dependent, control| {
-            !invalidated.contains(dependent) && !invalidated.contains(control)
-        });
-        self.live_control_window_sequences
-            .retain(|sequence| !invalidated.contains(sequence));
-        self.live_serializing_control_sequences
-            .retain(|sequence| !invalidated.contains(sequence));
     }
 }
 
@@ -1008,11 +1060,13 @@ mod tests {
         execution: &RiscvCpuExecutionEvent,
         retire_tick: u64,
     ) {
-        runtime.retire_live_staged_instruction(
-            execution,
-            &[execution.fetch().request_id()],
-            retire_tick,
-        );
+        let consumed_requests = [execution.fetch().request_id()];
+        assert!(runtime.bind_live_staged_fetch_identity(
+            Address::new(execution.execution().pc()),
+            execution.instruction(),
+            &consumed_requests,
+        ));
+        runtime.retire_live_staged_instruction(execution, &consumed_requests, retire_tick);
     }
 
     #[test]
@@ -1484,7 +1538,7 @@ mod tests {
         runtime.retire_live_staged_instruction(&producer, &[request(4)], 30);
         runtime.record_retired_instruction_with_trace(&producer, true);
         let consumer = execution_event(consumer, 0x8008, 3, 5);
-        retire_live(&mut runtime, &consumer, 31);
+        runtime.retire_live_staged_instruction(&consumer, &[request(3)], 31);
         runtime.record_retired_instruction_with_trace(&consumer, true);
 
         let trace = runtime.trace_records().last().copied().unwrap();

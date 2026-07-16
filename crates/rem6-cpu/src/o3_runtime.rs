@@ -218,6 +218,7 @@ pub struct O3RuntimeState {
     live_control_window_sequences: BTreeSet<u64>,
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
+    invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_scalar_memory_execution: Option<MemoryRequestId>,
     live_scalar_memories: Vec<O3LiveScalarMemory>,
     live_scalar_memory_younger_sequences: BTreeSet<u64>,
@@ -261,6 +262,7 @@ impl O3RuntimeState {
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
+        self.invalidated_live_staged_fetch_identities.clear();
         self.deferred_scalar_memory_execution = None;
         self.live_scalar_memories.clear();
         self.live_scalar_memory_younger_sequences.clear();
@@ -627,6 +629,7 @@ impl Default for O3RuntimeState {
             live_control_window_sequences: BTreeSet::new(),
             live_serializing_control_sequences: BTreeSet::new(),
             live_staged_fetch_identities: BTreeMap::new(),
+            invalidated_live_staged_fetch_identities: BTreeMap::new(),
             deferred_scalar_memory_execution: None,
             live_scalar_memories: Vec::new(),
             live_scalar_memory_younger_sequences: BTreeSet::new(),
