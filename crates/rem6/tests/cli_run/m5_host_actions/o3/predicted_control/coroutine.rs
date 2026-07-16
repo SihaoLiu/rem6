@@ -501,6 +501,23 @@ fn rem6_run_o3_same_window_coroutine_wrong_target_repairs_descendants() {
             .and_then(Value::as_str),
         Some("0x80000020")
     );
+    let wrong_target_fetches = completed
+        .pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .expect("wrong-target coroutine fetch trace")
+        .iter()
+        .filter(|record| record.pointer("/pc").and_then(Value::as_str) == Some("0x80000014"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        wrong_target_fetches.len(),
+        1,
+        "wrong-target descendant must be fetched exactly once before repair: {completed}"
+    );
+    assert!(
+        event_u64(wrong_target_fetches[0], "tick") <= event_u64(coroutine, "issue_tick"),
+        "wrong-target descendant fetch must precede coroutine resolution: fetch={} coroutine={coroutine}",
+        wrong_target_fetches[0]
+    );
     assert!(
         event_at_pc_if_present(&completed, "0x80000014").is_none(),
         "wrong-target descendant must be squashed: {completed}"

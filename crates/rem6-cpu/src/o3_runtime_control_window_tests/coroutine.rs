@@ -145,4 +145,40 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
             .map(O3WritebackReservation::admitted_tick),
         Some(descendant_issued.admitted_writeback_tick)
     );
+    assert!(runtime.has_live_control_descendants(coroutine_sequence));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [
+            Address::new(0x8000),
+            Address::new(0x8004),
+            Address::new(0x800c),
+            Address::new(0x8008),
+        ]
+    );
+
+    runtime.discard_live_control_descendants_from_at(
+        coroutine_sequence,
+        coroutine_admitted_writeback_tick,
+    );
+
+    assert!(!runtime.has_live_control_descendants(coroutine_sequence));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.pc())
+            .collect::<Vec<_>>(),
+        [
+            Address::new(0x8000),
+            Address::new(0x8004),
+            Address::new(0x800c),
+        ]
+    );
+    assert!(runtime.writeback_reservation(descendant_sequence).is_none());
 }
