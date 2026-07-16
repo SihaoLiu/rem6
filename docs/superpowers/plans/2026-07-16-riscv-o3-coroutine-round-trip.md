@@ -1354,6 +1354,8 @@ git commit -m "test: prove coroutine round-trip positives"
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs`
 - Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs`
 - Modify: `crates/rem6/tests/source_policy/coroutine_ownership.rs`
+- Modify: `docs/superpowers/specs/2026-07-16-riscv-o3-coroutine-round-trip-design.md`
+- Modify: `docs/superpowers/plans/2026-07-16-riscv-o3-coroutine-round-trip.md`
 
 - [ ] **Step 1: Add the lookahead-two suppression row**
 
@@ -1373,7 +1375,7 @@ CoroutineConcern {
     anchors: &[
         "rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three",
         "rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return",
-        "rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs",
+        "rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_direction",
     ],
 },
 ```
@@ -1417,11 +1419,20 @@ fn rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three(
         );
         assert_eq!(
             resident_rob_pcs(&resident),
-            [case.load_pc, case.call_pc, case.coroutine_pc, case.return_pc],
+            [case.load_pc, case.call_pc, case.coroutine_pc],
             "{}: unexpected lookahead-two resident ROB: {resident}",
             case.label
         );
-        assert_no_fetch_pc(&resident, case.success_store_pc);
+        assert_round_trip_fetch_count(&resident, case.label, case.return_pc, 1);
+        assert_round_trip_fetch_count(&resident, case.label, case.success_store_pc, 0);
+        assert_eq!(
+            resident
+                .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+                .and_then(Value::as_u64),
+            Some(1),
+            "{}: lookahead two must retain one LSQ row: {resident}",
+            case.label
+        );
         assert_eq!(
             resident
                 .pointer("/cores/0/branch_predictor/lookups/return")
@@ -1438,18 +1449,32 @@ fn rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three(
             "{}: lookahead two must use one RAS target: {resident}",
             case.label
         );
+        for pointer in [
+            "/cores/0/branch_predictor/lookups/total",
+            "/cores/0/branch_predictor/target_provider/total",
+        ] {
+            assert_eq!(
+                resident.pointer(pointer).and_then(Value::as_u64),
+                Some(2),
+                "{}: lookahead two must record exactly two control predictions at {pointer}: {resident}",
+                case.label
+            );
+        }
     }
 }
 ```
 
-Calibrate the live tick from the completed artifact if `response_tick - 1` precedes return-row admission. Keep the exact four-row terminal snapshot and no-target-fetch assertions.
+At `response_tick - 1`, keep the exact three-row ROB and one-row LSQ. The
+ordinary-return instruction must appear exactly once in the fetch trace as the
+coroutine's predicted target, while the return row remains unadmitted, causes
+no second return lookup or RAS use, and does not fetch the success-store target.
 
 - [ ] **Step 2: Add exact middle-repair fixture**
 
 Add to `coroutine/round_trip_repair.rs`:
 
 ```rust
-fn middle_repair_coroutine_round_trip_binary(name: &str) -> std::path::PathBuf {
+fn middle_round_trip_repair_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let data_auipc_pc = (words.len() * 4) as i32;
     words.extend([
@@ -1494,7 +1519,7 @@ Add:
 ```rust
 #[test]
 fn rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return() {
-    let path = middle_repair_coroutine_round_trip_binary(
+    let path = middle_round_trip_repair_binary(
         "o3-coroutine-round-trip-middle-repair",
     );
     let completed = run_coroutine_json(
@@ -1533,6 +1558,21 @@ fn rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return() 
             Some(expected)
         );
     }
+    let speculative_return_fetches =
+        round_trip_fetches_at_pc(&completed, "middle round-trip repair", "0x80000018");
+    assert_eq!(speculative_return_fetches.len(), 1);
+    let target_fetches =
+        round_trip_fetches_at_pc(&completed, "middle round-trip repair", "0x80000024");
+    assert_eq!(target_fetches.len(), 2);
+    assert!(
+        event_u64(speculative_return_fetches[0], "tick")
+            < event_u64(target_fetches[0], "tick")
+            && event_u64(target_fetches[0], "tick") < event_u64(coroutine, "issue_tick")
+    );
+    assert_eq!(
+        event_u64(target_fetches[1], "tick"),
+        event_u64(later_return, "issue_tick")
+    );
     assert!(event_at_pc_if_present(&completed, "0x80000018").is_none());
     assert!(event_u64(repaired, "issue_tick") > event_u64(coroutine, "commit_tick"));
     assert!(event_u64(later_return, "issue_tick") > event_u64(repaired, "writeback_tick"));
@@ -1564,12 +1604,12 @@ fn rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return() 
 
 If the exact inverse-operation counters differ, first prove the operation sequence from the RAS trace/state and then lock the observed exact balanced totals. Do not weaken them to lower bounds.
 
-- [ ] **Step 4: Add terminal ordinary-return wrong-target fixture and test**
+- [ ] **Step 4: Add terminal ordinary-return direction-only fixture and test**
 
 Add to `coroutine/round_trip_repair.rs`:
 
 ```rust
-fn wrong_target_coroutine_round_trip_binary(name: &str) -> std::path::PathBuf {
+fn terminal_round_trip_direction_only_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let data_auipc_pc = (words.len() * 4) as i32;
     words.extend([
@@ -1603,20 +1643,25 @@ fn wrong_target_coroutine_round_trip_binary(name: &str) -> std::path::PathBuf {
 }
 ```
 
-The ordinary return predicts the replacement address `0x24` but resolves to `0x2c`; the store at `0x24` and the fallthrough store at `0x1c` both target `WRONG_STORE_ADDRESS` and must be squashed before data access.
+The frontend RAS lookup still predicts replacement address `0x24` and records
+one incorrect use. The terminal nonzero-offset ordinary return intentionally
+retains basic-update O3 trace semantics: predicted target is null, predicted
+taken is false, resolved target is `0x2c`, squashed fallthrough is `0x1c`, and
+repair is direction-only. The stores at `0x24` and `0x1c` both target
+`WRONG_STORE_ADDRESS` and must be squashed before data access.
 
 Add:
 
 ```rust
 #[test]
-fn rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs() {
-    let path = wrong_target_coroutine_round_trip_binary(
-        "o3-coroutine-round-trip-return-wrong-target",
+fn rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_direction() {
+    let path = terminal_round_trip_direction_only_binary(
+        "o3-coroutine-round-trip-terminal-return-direction-only",
     );
     let completed = run_coroutine_json(
         &path,
         "direct",
-        2_500,
+        3_000,
         "detailed",
         3,
         &DIRECT_WIDTH_ARGS,
@@ -1632,19 +1677,50 @@ fn rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs() {
 
     let return_jump = event_at_pc(&completed, "0x80000018");
     assert_branch_kind_and_link(return_jump, "return", false);
+    assert!(
+        return_jump
+            .pointer("/branch_predicted_target")
+            .is_some_and(Value::is_null)
+    );
     for (pointer, expected) in [
-        ("/branch_predicted_target", "0x80000024"),
         ("/branch_resolved_target", "0x8000002c"),
-        ("/branch_squashed_target", "0x80000024"),
+        ("/branch_squashed_target", "0x8000001c"),
+        ("/branch_repair", "direction_only"),
     ] {
         assert_eq!(
             return_jump.pointer(pointer).and_then(Value::as_str),
             Some(expected)
         );
     }
-    assert_eq!(
-        return_jump.pointer("/branch_repair").and_then(Value::as_str),
-        Some("wrong_target")
+    for (field, expected) in [
+        ("branch_predicted_taken", false),
+        ("branch_resolved_taken", true),
+        ("branch_wrong_target", false),
+        ("branch_mispredicted", true),
+        ("branch_squash", true),
+    ] {
+        assert_eq!(
+            return_jump
+                .pointer(&format!("/{field}"))
+                .and_then(Value::as_bool),
+            Some(expected)
+        );
+    }
+    let return_fetches = round_trip_fetches_at_pc(
+        &completed,
+        "terminal round-trip direction-only repair",
+        "0x80000018",
+    );
+    assert_eq!(return_fetches.len(), 1);
+    let target_fetches = round_trip_fetches_at_pc(
+        &completed,
+        "terminal round-trip direction-only repair",
+        "0x80000024",
+    );
+    assert_eq!(target_fetches.len(), 1);
+    assert!(
+        event_u64(return_fetches[0], "tick") < event_u64(target_fetches[0], "tick")
+            && event_u64(target_fetches[0], "tick") < event_u64(return_jump, "issue_tick")
     );
     for (pointer, expected) in [
         ("/cores/0/branch_predictor/ras/pushes", 2),
@@ -1654,7 +1730,15 @@ fn rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs() {
         ("/cores/0/branch_predictor/ras/correct", 1),
         ("/cores/0/branch_predictor/ras/incorrect", 1),
         ("/cores/0/branch_predictor/target_provider/ras", 2),
-        ("/cores/0/o3_runtime/branch_repair/wrong_targets", 1),
+        (
+            "/cores/0/o3_runtime/branch_repair/direction_only_mismatches",
+            2,
+        ),
+        (
+            "/cores/0/o3_runtime/branch_repair/direction_only_kind/return",
+            1,
+        ),
+        ("/cores/0/o3_runtime/branch_repair/wrong_targets", 0),
     ] {
         assert_eq!(
             completed.pointer(pointer).and_then(Value::as_u64),
@@ -1672,15 +1756,22 @@ Run:
 ```text
 cargo test -p rem6 --test cli_run coroutine_round_trip_requires -- --nocapture
 cargo test -p rem6 --test cli_run coroutine_round_trip_middle_repair -- --nocapture
-cargo test -p rem6 --test cli_run coroutine_round_trip_wrong_target -- --nocapture
+cargo test -p rem6 --test cli_run coroutine_round_trip_terminal_return -- --nocapture
 ```
 
-Expected: all three real CLI rows pass with exact target, RAS, repair, and wrong-path suppression evidence.
+Expected: all three real CLI rows pass with exact lookahead suppression,
+middle wrong-target repair, terminal direction-only repair, RAS, and wrong-path
+suppression evidence.
 
 - [ ] **Step 6: Commit suppression and repair**
 
 ```text
-git add crates/rem6/tests/source_policy/coroutine_ownership.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs
+git add \
+  crates/rem6/tests/source_policy/coroutine_ownership.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs \
+  docs/superpowers/specs/2026-07-16-riscv-o3-coroutine-round-trip-design.md \
+  docs/superpowers/plans/2026-07-16-riscv-o3-coroutine-round-trip.md
 git commit -m "test: cover coroutine round-trip repair"
 ```
 
@@ -2231,7 +2322,7 @@ rem6_run_o3_same_window_coroutine_round_trip_commits_direct
 rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram
 rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three
 rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return
-rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs
+rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_direction
 rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip
 rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary
 rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip
@@ -2239,7 +2330,11 @@ rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip
 
 - [ ] **Step 2: Update only bounded CPU prose and test-map evidence**
 
-State that the exact adjacent call `Push` -> distinct-link coroutine `PopThenPush` -> ordinary return `Pop` round trip is proven in both directions with direct/hierarchy positives, lookahead-two suppression, middle and terminal wrong-target repair, mode switch, live/drained checkpoint, and timing suppression.
+State that the exact adjacent call `Push` -> distinct-link coroutine
+`PopThenPush` -> ordinary return `Pop` round trip is proven in both directions
+with direct/hierarchy positives, lookahead-two suppression, middle wrong-target
+repair, terminal direction-only repair, mode switch, live/drained checkpoint,
+and timing suppression.
 
 Remove only:
 

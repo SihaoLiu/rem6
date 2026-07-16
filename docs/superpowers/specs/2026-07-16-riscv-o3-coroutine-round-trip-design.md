@@ -292,9 +292,11 @@ made.
 ### Lookahead suppression
 
 With branch lookahead two, the call and coroutine may use exact RAS authority,
-but the ordinary return must not open the round-trip target. The pre-response
-artifact must retain the bounded terminal row while suppressing target fetch
-and later success-path activity.
+but the ordinary return must not become a third control speculation. The
+coroutine prediction fetches the ordinary-return instruction exactly once, but
+the pre-response artifact retains only `[load, call, coroutine]`: the return is
+not admitted to the ROB, performs no second return lookup or RAS use, and does
+not fetch its success-store target.
 
 ### Middle coroutine target mismatch
 
@@ -303,12 +305,13 @@ architectural target. The predicted call fallthrough contains the ordinary
 return, so that return may already have consumed the coroutine replacement
 with a speculative `Pop` before the coroutine resolves.
 
-Repair must discard the ordinary-return row, remove its control dependency,
-reverse its speculative `Pop`, suppress its predicted-target traffic, and
-redirect to the coroutine's resolved target. The call and coroutine remain in
-program order, both link writes remain owned, and the coroutine's
-`PopThenPush` replacement remains valid for a later ordinary return after
-ordered repair and drain.
+Externally, repair must leave the speculative ordinary return absent from the
+committed event surface and record one balanced RAS squash. Fetch evidence must
+contain exactly one pre-repair ordinary-return fetch and one pre-repair target
+fetch, followed by exactly one later legitimate target fetch opened by the
+post-repair return. The call and coroutine remain in program order, both link
+writes remain owned, and the coroutine's `PopThenPush` replacement remains
+valid for that later ordinary return after ordered repair and drain.
 
 This path uses exactly three control speculations: call, coroutine, and the
 discarded ordinary return. Exact rollback counters must be calibrated from the
@@ -362,7 +365,7 @@ Add three focused same-namespace includes. `coroutine/round_trip.rs` owns:
 
 1. `rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three`
 2. `rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return`
-3. `rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs`
+3. `rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_direction`
 
 `coroutine/round_trip_lifecycle.rs` owns:
 
@@ -396,14 +399,19 @@ but together they must exercise both directions.
 
 ### Suppression and repair
 
-- lookahead two does not fetch the ordinary-return target;
+- lookahead two retains exactly `[load, call, coroutine]`, fetches the
+  ordinary-return instruction once as the coroutine's predicted target, does
+  not admit or look up that return, and does not fetch its success-store target;
 - malformed or stale coroutine replacement producers fail closed in focused
   frontend tests;
-- middle coroutine repair removes the ordinary return, its dependency and
-  speculative `Pop`, plus wrong-path fetches and data traffic, while preserving
-  the coroutine replacement for later ordered consumption;
-- ordinary-return wrong-target repair records predicted, resolved, squashed,
-  and redirect targets exactly;
+- middle coroutine repair leaves the speculative ordinary return uncommitted,
+  records one balanced RAS squash, confines the `0x18` and speculative `0x24`
+  fetches to the pre-repair period, and permits only the later legitimate
+  `0x24` fetch opened by the post-repair return;
+- a terminal nonzero-offset ordinary return retains basic-update trace
+  semantics: predicted target is null, predicted taken is false, the resolved
+  target and squashed fallthrough are exact, repair is direction-only, and the
+  predictor RAS still records one incorrect use without an O3 wrong target;
 - repair leaves no reusable same-window replacement authority;
 - timing mode contains no O3 runtime surface.
 
@@ -499,8 +507,8 @@ This increment is complete only when:
    are exact;
 5. direct and hierarchy positives pass with exact architecture, memory,
    timing, predictor, RAS, and resource assertions;
-6. lookahead, rollback, wrong-target repair, switch, checkpoint, and timing
-   boundaries pass;
+6. lookahead, rollback, middle wrong-target repair, terminal direction-only
+   repair, switch, checkpoint, and timing boundaries pass;
 7. same-link, second-coroutine consumption, general live indirect forwarding,
    five-row chains, and fourth controls remain rejected or open;
 8. the ledger remains honest and exactly 1,200 lines without score inflation;

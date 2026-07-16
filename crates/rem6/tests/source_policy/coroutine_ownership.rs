@@ -1,13 +1,14 @@
 use super::*;
 
 const COROUTINE_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs";
-const COROUTINE_INCLUDES: [&str; 4] = [
+const COROUTINE_INCLUDES: [&str; 5] = [
     "coroutine/suppression.rs",
     "coroutine/repair.rs",
     "coroutine/lifecycle.rs",
     "coroutine/round_trip.rs",
+    "coroutine/round_trip_repair.rs",
 ];
-const COROUTINE_CONCERNS: [CoroutineConcern; 4] = [
+const COROUTINE_CONCERNS: [CoroutineConcern; 5] = [
     CoroutineConcern {
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/suppression.rs",
         anchors: &[
@@ -39,6 +40,15 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 4] = [
         anchors: &[
             "rem6_run_o3_same_window_coroutine_round_trip_commits_direct",
             "rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram",
+        ],
+    },
+    CoroutineConcern {
+        relative:
+            "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_repair.rs",
+        anchors: &[
+            "rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three",
+            "rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return",
+            "rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_direction",
         ],
     },
 ];

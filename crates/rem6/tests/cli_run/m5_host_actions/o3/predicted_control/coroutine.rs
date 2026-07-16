@@ -332,6 +332,7 @@ include!("coroutine/suppression.rs");
 include!("coroutine/repair.rs");
 include!("coroutine/lifecycle.rs");
 include!("coroutine/round_trip.rs");
+include!("coroutine/round_trip_repair.rs");
 
 fn run_coroutine_json(
     path: &Path,
