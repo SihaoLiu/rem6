@@ -1029,6 +1029,7 @@ mod tests {
             jal_with_destination(2),
             jalr_with_registers(2, 9),
             jalr_with_registers(2, 1),
+            jalr_with_registers(2, 5),
             jalr_with_registers(1, 1),
             jalr_with_registers(5, 5),
         ] {
@@ -1080,7 +1081,10 @@ mod tests {
     fn scalar_memory_prefix_rejects_unsupported_control_and_memory_rows() {
         for instruction in [
             jal_with_destination(2),
+            jalr_with_registers(2, 1),
+            jalr_with_registers(2, 5),
             jalr_with_registers(1, 1),
+            jalr_with_registers(5, 5),
             RiscvInstruction::Ecall,
             scalar_load(),
         ] {
