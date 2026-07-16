@@ -703,6 +703,21 @@ mod tests {
     }
 
     #[test]
+    fn scalar_memory_prefix_admits_coroutines_with_committed_targets() {
+        for (destination, source) in [(5, 1), (1, 5)] {
+            let mut window = scalar_load_window(4);
+            assert_eq!(
+                window.classify_younger(jalr_with_registers(destination, source)),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            assert_eq!(
+                window.classify_younger(addi(8, destination)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+        }
+    }
+
+    #[test]
     fn linked_control_destination_shadows_unresolved_load_for_descendants() {
         for (destination, instruction) in [
             (1, jal_with_destination(1)),
@@ -801,6 +816,31 @@ mod tests {
             );
             assert_eq!(
                 window.classify_younger(addi(8, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert!(window.is_full());
+        }
+    }
+
+    #[test]
+    fn same_window_coroutine_requires_exact_call_ras_prediction() {
+        for (call, coroutine, destination) in [
+            (jal_with_destination(1), jalr_with_registers(5, 1), 5),
+            (jalr_with_registers(5, 9), jalr_with_registers(1, 5), 1),
+        ] {
+            let mut window = scalar_load_window(4);
+            assert_eq!(
+                window.classify_sequenced_younger(call, 51).decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            let coroutine = window.classify_sequenced_younger(coroutine, 52);
+            assert_eq!(
+                coroutine.decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            );
+            assert_eq!(coroutine.ras_push_sequence(), Some(51));
+            assert_eq!(
+                window.classify_younger(addi(8, destination)),
                 RiscvScalarIntegerYoungerDecision::AdmitContinue
             );
             assert!(window.is_full());
@@ -948,6 +988,42 @@ mod tests {
     }
 
     #[test]
+    fn overwritten_coroutine_source_remains_terminal() {
+        let mut window = scalar_load_window(4);
+        assert_eq!(
+            window.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(addi(1, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(5, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert!(window.is_full());
+    }
+
+    #[test]
+    fn admitted_coroutine_does_not_publish_its_replacement_push() {
+        let mut window = scalar_load_window(4);
+        assert_eq!(
+            window.classify_younger(jal_with_destination(1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(5, 1)),
+            RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+        );
+        assert_eq!(
+            window.classify_younger(jalr_with_registers(0, 5)),
+            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+        );
+        assert!(window.is_full());
+    }
+
+    #[test]
     fn scalar_memory_prefix_rejects_unsupported_link_forms() {
         for instruction in [
             jal_with_destination(2),
@@ -955,8 +1031,6 @@ mod tests {
             jalr_with_registers(2, 1),
             jalr_with_registers(1, 1),
             jalr_with_registers(5, 5),
-            jalr_with_registers(1, 5),
-            jalr_with_registers(5, 1),
         ] {
             let mut window = scalar_load_window(4);
 
@@ -1006,7 +1080,7 @@ mod tests {
     fn scalar_memory_prefix_rejects_unsupported_control_and_memory_rows() {
         for instruction in [
             jal_with_destination(2),
-            jalr_with_registers(1, 5),
+            jalr_with_registers(1, 1),
             RiscvInstruction::Ecall,
             scalar_load(),
         ] {

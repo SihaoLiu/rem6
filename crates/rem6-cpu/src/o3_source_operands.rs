@@ -268,7 +268,8 @@ pub(crate) fn o3_live_control_operands(
         RiscvInstruction::Jal { rd, .. } if is_riscv_link_register(rd) => Some(Some(rd)),
         RiscvInstruction::Jalr { rd, .. } if rd.is_zero() => Some(None),
         RiscvInstruction::Jalr { rd, rs1, .. }
-            if is_riscv_link_register(rd) && !is_riscv_link_register(rs1) =>
+            if is_riscv_link_register(rd)
+                && (!is_riscv_link_register(rs1) || rd.index() != rs1.index()) =>
         {
             Some(Some(rd))
         }
@@ -387,16 +388,20 @@ mod tests {
     }
 
     #[test]
+    fn live_control_descriptor_classifies_coroutine_jalr_forms() {
+        for (rd, rs1) in [(5, 1), (1, 5)] {
+            assert_live_control(
+                jalr(rd, rs1),
+                BranchTargetKind::Return,
+                &[register(rs1)],
+                Some(register(rd)),
+            );
+        }
+    }
+
+    #[test]
     fn live_control_descriptor_rejects_unsupported_link_forms() {
-        for instruction in [
-            jal(2),
-            jalr(2, 9),
-            jalr(2, 1),
-            jalr(1, 1),
-            jalr(5, 5),
-            jalr(1, 5),
-            jalr(5, 1),
-        ] {
+        for instruction in [jal(2), jalr(2, 9), jalr(2, 1), jalr(1, 1), jalr(5, 5)] {
             assert_eq!(
                 o3_live_control_operands(instruction),
                 None,
