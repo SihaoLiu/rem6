@@ -136,6 +136,70 @@ fn scoped_issue_orders_same_window_call_coroutine_and_descendant() {
 }
 
 #[test]
+fn scoped_issue_serializes_same_window_coroutine_round_trip() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowCoroutineRoundTrip);
+    assert!(fixture.runtime.set_writeback_width(1));
+
+    fixture.schedule_all(20);
+
+    let call = fixture.execution_at(BRANCH_PC);
+    let coroutine = fixture.execution_at(SECOND_PC);
+    let return_control = fixture.execution_at(THIRD_PC);
+    assert_eq!(
+        (
+            call.issue_tick,
+            call.raw_ready_tick,
+            call.admitted_writeback_tick,
+            call.writeback_slot,
+        ),
+        (20, 20, 20, Some(0))
+    );
+    assert!(call.producer_sequences.is_empty());
+    assert_eq!(
+        call.execution.register_writes(),
+        &[RegisterWrite::new(reg(1), SECOND_PC)]
+    );
+    assert_eq!(call.execution.next_pc(), SECOND_PC);
+    assert_eq!(
+        (
+            coroutine.issue_tick,
+            coroutine.raw_ready_tick,
+            coroutine.admitted_writeback_tick,
+            coroutine.writeback_slot,
+        ),
+        (21, 21, 21, Some(0))
+    );
+    assert_eq!(coroutine.producer_sequences, vec![call.sequence]);
+    assert_eq!(
+        coroutine.execution.register_writes(),
+        &[RegisterWrite::new(reg(5), THIRD_PC)]
+    );
+    assert_eq!(coroutine.execution.next_pc(), SECOND_PC);
+    assert_eq!(
+        (
+            return_control.issue_tick,
+            return_control.raw_ready_tick,
+            return_control.admitted_writeback_tick,
+            return_control.writeback_slot,
+        ),
+        (22, 22, 22, None)
+    );
+    assert_eq!(return_control.producer_sequences, vec![coroutine.sequence]);
+    assert!(return_control.execution.register_writes().is_empty());
+    assert_eq!(return_control.execution.next_pc(), THIRD_PC);
+    assert!(fixture
+        .runtime
+        .writeback_reservation(return_control.sequence)
+        .is_none());
+    let stats = fixture.runtime.stats();
+    assert_eq!(stats.issue_cycles(), 3);
+    assert_eq!(stats.issued_rows(), 3);
+    assert_eq!(stats.resource_blocked_row_cycles(), 1);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 1);
+    assert_eq!(stats.max_rows_per_cycle(), 2);
+}
+
+#[test]
 fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_issue_width(4);
@@ -680,18 +744,11 @@ fn scoped_issue_rollback_uses_existing_producer_chain() {
     let dependent_sequence = rob[3].sequence();
 
     let multiply = fixture.execution_at(SECOND_PC);
-    assert!(
-        multiply.producer_sequences.contains(&branch_sequence),
-        "control owner must remain in the producer chain for rollback"
-    );
+    assert_eq!(multiply.producer_sequences, vec![branch_sequence]);
     let dependent = fixture.execution_at(THIRD_PC);
-    assert!(
-        dependent.producer_sequences.contains(&branch_sequence),
-        "dependent row must retain branch rollback ownership"
-    );
-    assert!(
-        dependent.producer_sequences.contains(&multiply_sequence),
-        "dependent row must retain data producer ownership"
+    assert_eq!(
+        dependent.producer_sequences,
+        vec![multiply_sequence, branch_sequence]
     );
 
     let branch_execution = fixture.execution_at(BRANCH_PC).execution.clone();
@@ -724,6 +781,7 @@ enum ScalarIssueCase {
     LinkedControls,
     SameWindowLinkReturn,
     SameWindowCoroutine,
+    SameWindowCoroutineRoundTrip,
 }
 
 struct ScalarIssueFixture {
@@ -748,6 +806,9 @@ impl ScalarIssueFixture {
             ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],
             ScalarIssueCase::SameWindowLinkReturn => [jal_link(1), jalr_return(1), addi(14, 0, 7)],
             ScalarIssueCase::SameWindowCoroutine => [jal_link(1), jalr_link(5, 1), addi(14, 5, 0)],
+            ScalarIssueCase::SameWindowCoroutineRoundTrip => {
+                [jal_link(1), jalr_link(5, 1), jalr_return(5)]
+            }
         };
         runtime.stage_live_scalar_memory_younger_window(
             load.fetch().request_id(),

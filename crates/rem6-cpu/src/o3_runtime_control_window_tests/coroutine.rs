@@ -324,6 +324,14 @@ fn same_window_coroutine_round_trip_serializes_three_controls() {
             .collect::<Vec<_>>(),
         [0x8000, 0x8004, 0x800c].map(Address::new)
     );
+    assert_eq!(
+        runtime
+            .live_speculative_executions
+            .iter()
+            .map(|execution| execution.sequence)
+            .collect::<Vec<_>>(),
+        [call_sequence, coroutine_sequence]
+    );
     assert!(!runtime.has_live_control_descendants(coroutine_sequence));
 }
 
