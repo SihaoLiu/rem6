@@ -1,6 +1,8 @@
 use super::lsq_fu_branch::{event_at_pc, event_at_pc_if_present, event_u64};
 use super::*;
 
+#[path = "predicted_control/coroutine.rs"]
+mod coroutine;
 #[path = "predicted_control/link_kind.rs"]
 mod link_kind;
 #[path = "predicted_control/link_return.rs"]
