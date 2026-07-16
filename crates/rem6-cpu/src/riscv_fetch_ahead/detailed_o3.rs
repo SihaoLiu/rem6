@@ -630,6 +630,7 @@ pub(crate) fn recorded_predicted_pc(
 fn ras_required_producer_matches(
     producer_kind: BranchTargetKind,
     operation: &ReturnAddressStackOperation,
+    entries: usize,
     pushed_address: Address,
     consumer: RequiredRasConsumer,
 ) -> bool {
@@ -661,6 +662,12 @@ fn ras_required_producer_matches(
         }
         _ => return false,
     }
+    if entries == 0 || expected_after.len() > entries {
+        return false;
+    }
+    if expected_after.len() == entries {
+        expected_after.remove(0);
+    }
     expected_after.push(pushed_address);
     operation.stack_after() == expected_after
 }
@@ -675,7 +682,13 @@ pub(super) fn unconsumed_ras_required_target(
     let operation_id = state.return_address_stack_operations.get(&push_sequence)?;
     let operation = state.return_address_stack.pending_operations().last()?;
     if operation.id() != *operation_id
-        || !ras_required_producer_matches(producer_kind, operation, pushed_address, consumer)
+        || !ras_required_producer_matches(
+            producer_kind,
+            operation,
+            state.return_address_stack.config().entries(),
+            pushed_address,
+            consumer,
+        )
         || operation.stack_after() != state.return_address_stack.stack_entries()
     {
         return None;
@@ -710,8 +723,13 @@ fn recorded_ras_required_target(
     }
     let producer = &operations[producer_index];
     let consumer_operation = &operations[consumer_index];
-    if !ras_required_producer_matches(producer_kind, producer, pushed_address, consumer)
-        || producer.stack_after() != consumer_operation.stack_before()
+    if !ras_required_producer_matches(
+        producer_kind,
+        producer,
+        state.return_address_stack.config().entries(),
+        pushed_address,
+        consumer,
+    ) || producer.stack_after() != consumer_operation.stack_before()
     {
         return None;
     }

@@ -462,6 +462,81 @@ fn detailed_unconsumed_coroutine_round_trip_rejects_linked_consumer() {
 }
 
 #[test]
+fn detailed_full_ras_call_producer_opens_exact_return() {
+    let load = i_type(0, 2, 0x2, 6, 0x03);
+    let call = j_type(8, 1);
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67);
+    let core = detailed_linked_control_core([
+        (0, 0x8000, load.to_le_bytes().to_vec()),
+        (1, 0x8004, call.to_le_bytes().to_vec()),
+        (2, 0x800c, return_jump.to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let entries = state.return_address_stack.config().entries();
+        for index in 0..entries {
+            let operation = state
+                .return_address_stack
+                .push_speculative(Address::new(0x9000 + index as u64 * 4));
+            state
+                .return_address_stack
+                .commit_operation(operation.id())
+                .unwrap();
+        }
+        assert_eq!(state.return_address_stack.depth(), entries);
+        assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+    }
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x800c));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&call_decision)
+            .unwrap(),
+    );
+
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(return_decision.pc(), Address::new(0x8008));
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&return_decision)
+            .unwrap(),
+    );
+
+    let call = RiscvInstruction::decode(call).unwrap();
+    let return_jump = RiscvInstruction::decode(return_jump).unwrap();
+    let mut window =
+        crate::riscv_o3_window_policy::RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(6).unwrap()],
+            1,
+            4,
+        )
+        .unwrap();
+    let call_classification = window.classify_sequenced_younger(call, 1);
+    assert_eq!(
+        call_classification.decision(),
+        crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+    );
+    let return_classification = window.classify_sequenced_younger(return_jump, 2);
+    assert_eq!(
+        return_classification.decision(),
+        crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+    );
+    assert_eq!(return_classification.ras_push_sequence(), Some(1));
+    let target_authority = predicted_control_target_authority(
+        return_jump,
+        Address::new(0x8010),
+        return_classification,
+        &[(1, Address::new(0x8008))],
+    )
+    .unwrap();
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        recorded_predicted_pc(&state, request(2), Address::new(0x8010), target_authority),
+        RecordedPredictedPc::Ready(Address::new(0x8008))
+    );
+}
+
+#[test]
 fn detailed_recorded_coroutine_round_trip_rejects_plain_push_producer() {
     let core = recorded_same_window_coroutine_round_trip_core();
     {
@@ -491,18 +566,35 @@ fn detailed_recorded_coroutine_round_trip_rejects_wrong_replacement_address() {
     let core = recorded_same_window_coroutine_round_trip_core();
     {
         let mut state = core.state.lock().expect("riscv core lock");
-        state.squash_return_address_stack_speculation(3).unwrap();
-        state.squash_return_address_stack_speculation(2).unwrap();
-        let producer = state
+        let producer_id = *state.return_address_stack_operations.get(&2).unwrap();
+        let snapshot = state.return_address_stack.snapshot();
+        let pending_operations = snapshot
+            .pending_operations()
+            .iter()
+            .map(|operation| {
+                if operation.id() != producer_id {
+                    return operation.clone();
+                }
+                crate::ReturnAddressStackOperation::from_checkpoint_parts(
+                    operation.id(),
+                    operation.kind(),
+                    Some(Address::new(0x9000)),
+                    operation.predicted_return(),
+                    operation.stack_before().to_vec(),
+                    operation.stack_after().to_vec(),
+                )
+            })
+            .collect();
+        let malformed_snapshot = crate::ReturnAddressStackSnapshot::from_checkpoint_parts(
+            snapshot.config().clone(),
+            snapshot.stack_entries().to_vec(),
+            snapshot.next_operation(),
+            pending_operations,
+        );
+        state
             .return_address_stack
-            .pop_then_push_speculative(Address::new(0x9000));
-        state
-            .return_address_stack_operations
-            .insert(2, producer.id());
-        let consumer = state.return_address_stack.pop_speculative();
-        state
-            .return_address_stack_operations
-            .insert(3, consumer.id());
+            .restore(&malformed_snapshot)
+            .unwrap();
     }
 
     assert_eq!(
@@ -551,8 +643,8 @@ fn detailed_recorded_coroutine_round_trip_rejects_stale_producer_stack() {
                     operation.kind(),
                     operation.pushed_address(),
                     operation.predicted_return(),
-                    operation.stack_before().to_vec(),
-                    vec![Address::new(0x9000)],
+                    vec![Address::new(0x9000), Address::new(0x8008)],
+                    operation.stack_after().to_vec(),
                 )
             })
             .collect();
