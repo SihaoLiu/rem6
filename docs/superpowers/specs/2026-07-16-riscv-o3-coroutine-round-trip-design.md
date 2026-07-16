@@ -40,8 +40,8 @@ boundary:
 
 - `RiscvScalarIntegerLiveWindow` records a call as the only forwardable link
   producer and clears that producer after every `return`-kind instruction;
-- `recorded_ras_required_target` accepts only call branch kinds backed by a
-  plain RAS `Push` as a producer;
+- `unconsumed_ras_required_target` and `recorded_ras_required_target` accept
+  only call branch kinds backed by a plain RAS `Push` as a producer;
 - the existing policy test
   `admitted_coroutine_does_not_publish_its_replacement_push` locks the third
   return as terminal.
@@ -83,10 +83,12 @@ the coroutine's recorded `PopThenPush` operation to the next adjacent `Pop`.
    state.
 8. Do not allow a fourth same-window linked/control consumer after the ordinary
    return.
-9. Do not add an older unresolved branch around the full round trip; that would
+9. Do not allow a second linked coroutine to consume the first coroutine's
+   replacement; the replacement producer may feed only an ordinary return.
+10. Do not add an older unresolved branch around the full round trip; that would
    require four simultaneous control speculations and exceed lookahead three.
-10. Do not add a checkpoint schema or widen live transport ownership.
-11. Do not raise the migration score from bounded evidence.
+11. Do not add a checkpoint schema or widen live transport ownership.
+12. Do not raise the migration score from bounded evidence.
 
 ## Alternatives Considered
 
@@ -116,6 +118,8 @@ The change must remain within existing owners:
 
 - `crates/rem6-cpu/src/riscv_o3_window_policy.rs` owns bounded admission,
   live-destination shadowing, and the forwardable link producer;
+- `crates/rem6-cpu/src/riscv_fetch_ahead.rs` owns passing typed target authority
+  into the live direct-jump target lookup;
 - `crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3.rs` owns typed RAS target
   authority and recorded-operation validation;
 - `crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control.rs` owns
@@ -123,17 +127,22 @@ The change must remain within existing owners:
 - `crates/rem6-cpu/src/o3_runtime_control_window_tests/coroutine.rs` owns
   exact ROB, rename, issue, writeback, and discard evidence;
 - `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs`
-  owns shared coroutine fixtures and case data;
+  owns the existing shared constants, runner, and ordered child includes;
 - a new same-namespace
   `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip.rs`
-  owns the new CLI matrix;
+  owns round-trip case data, fixtures, positives, suppression, and repair;
+- a new same-namespace
+  `crates/rem6/tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_lifecycle.rs`
+  owns round-trip mode-switch, checkpoint, and timing evidence;
 - `crates/rem6/tests/source_policy/coroutine_ownership.rs` owns include order,
   test ownership, and line-count ratchets;
 - `crates/rem6/tests/source_policy/core_test_anchors.txt` and
   `docs/architecture/gem5-to-rem6-migration.md` own auditable migration
   evidence.
 
-No production runtime file may change unless a focused runtime test proves
+The split keeps the existing root below its 500-line ratchet and each child
+below its 700-line ratchet without weakening exact test ownership. No
+production runtime file may change unless a focused runtime test proves
 that the existing generic control dependency, branch resource, rename,
 writeback, or rollback machinery is insufficient.
 
@@ -183,7 +192,7 @@ producer carrying:
 
 - architectural link destination;
 - producer instruction sequence;
-- producer shape implied by the admitted control.
+- producer shape: call `Push` or coroutine replacement `PopThenPush`.
 
 The state transitions are:
 
@@ -195,9 +204,11 @@ The state transitions are:
    sequence.
 3. An ordinary return may consume the coroutine producer with `Pop`; it then
    clears the pending producer.
-4. A scalar or control write that shadows the pending destination clears the
+4. A linked `PopThenPush` consumer may consume a call producer, but it may not
+   consume a coroutine replacement producer.
+5. A scalar or control write that shadows the pending destination clears the
    producer before a later return can use it.
-5. Any missing sequence, unsupported link destination, unresolved source,
+6. Any missing sequence, unsupported link destination, unresolved source,
    non-adjacent producer, or exhausted control depth remains terminal or
    rejected under existing fail-closed rules.
 
@@ -211,7 +222,9 @@ exact RAS operation.
 `PredictedControlTargetAuthority::RasRequired` remains the public typed
 authority. No new general target-authority variant is needed.
 
-Generalize the producer side of `recorded_ras_required_target` from:
+Use one exact producer predicate for both the pre-consumer
+`unconsumed_ras_required_target` path and the post-recording
+`recorded_ras_required_target` path. Generalize the producer from:
 
 ```text
 call branch kind + Push
@@ -221,19 +234,26 @@ to exactly one of:
 
 ```text
 call branch kind   + Push
-return branch kind + PopThenPush
+return branch kind + PopThenPush, consumed only by Pop
 ```
 
 For the coroutine producer, validation must require:
 
 - the producer sequence maps to `BranchTargetKind::Return`;
 - the producer operation is exactly `PopThenPush`;
+- the requested consumer is exactly `Pop`, not another `PopThenPush`;
 - its pushed address equals the recorded coroutine sequential PC;
 - its `stack_after` equals the consumer operation's `stack_before`;
 - the consumer operation is immediately adjacent in pending-operation order;
 - the consumer operation is exactly `Pop` for the ordinary return;
 - the consumer's predicted return equals the replacement address;
 - the resulting stack equals the expected stack after one pop.
+
+Before the ordinary return has recorded its own `Pop`, the unconsumed path must
+also require that the producer is the latest pending operation, its
+`stack_after` equals the live RAS stack, and the live top is the replacement
+address. After the consumer is recorded, the recorded path instead requires
+exact producer/consumer adjacency and matching stack boundaries.
 
 The existing call-to-coroutine `Push` -> `PopThenPush` path remains unchanged.
 Malformed producer kind, wrong replacement address, stale stack shape,
@@ -328,16 +348,19 @@ debug trace schema aliases remain present when requested.
 
 ## CLI Matrix
 
-Add a focused `coroutine/round_trip.rs` same-namespace include with these tests:
+Add two focused same-namespace includes. `coroutine/round_trip.rs` owns:
 
 1. `rem6_run_o3_same_window_coroutine_round_trip_commits_direct`
 2. `rem6_run_o3_same_window_indirect_coroutine_round_trip_commits_cache_fabric_dram`
 3. `rem6_run_o3_same_window_coroutine_round_trip_requires_branch_lookahead_three`
 4. `rem6_run_o3_same_window_coroutine_round_trip_middle_repair_discards_return`
 5. `rem6_run_o3_same_window_coroutine_round_trip_wrong_target_repairs`
-6. `rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip`
-7. `rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary`
-8. `rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip`
+
+`coroutine/round_trip_lifecycle.rs` owns:
+
+1. `rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip`
+2. `rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary`
+3. `rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip`
 
 The two positive rows cover forward-direct and reverse-hierarchy routes. The
 three lifecycle tests use a two-direction case table. Suppression and repair
@@ -396,13 +419,13 @@ coroutine/suppression.rs
 coroutine/repair.rs
 coroutine/lifecycle.rs
 coroutine/round_trip.rs
+coroutine/round_trip_lifecycle.rs
 ```
 
-The new file owns all eight round-trip test definitions. Existing concern files
-must not duplicate those names. Preserve the root line ceiling and keep every
-child below the existing focused-module ratchet. If the new matrix exceeds a
-single child ratchet, split round-trip lifecycle evidence into another
-same-namespace file rather than raising the ceiling.
+The execution/repair child owns the first five definitions and the lifecycle
+child owns the final three. Existing concern files must not duplicate those
+names. Preserve the 500-line root ceiling and keep every child below the
+existing 700-line focused-module ratchet.
 
 ## Migration Ledger Update
 
@@ -461,15 +484,16 @@ This increment is complete only when:
 1. both link directions execute the four-row call/coroutine/return round trip;
 2. exact `Push` -> `PopThenPush` -> `Pop` provenance fails closed for malformed
    operations and stale stack state;
-3. the coroutine replacement is consumed once and then cleared;
+3. the coroutine replacement is consumed once by an ordinary return, rejects
+   a linked `PopThenPush` consumer, and is then cleared;
 4. call/coroutine rename and writeback plus ordinary-return branch ownership
    are exact;
 5. direct and hierarchy positives pass with exact architecture, memory,
    timing, predictor, RAS, and resource assertions;
 6. lookahead, rollback, wrong-target repair, switch, checkpoint, and timing
    boundaries pass;
-7. same-link, general live indirect forwarding, five-row chains, and fourth
-   controls remain rejected or open;
+7. same-link, second-coroutine consumption, general live indirect forwarding,
+   five-row chains, and fourth controls remain rejected or open;
 8. the ledger remains honest and exactly 1,200 lines without score inflation;
 9. independent read-only review finds no dead API, weak assertion, accidental
    general forwarding, or ownership regression;
@@ -479,6 +503,6 @@ This increment is complete only when:
 
 This increment proves one exact three-control round trip in a four-row
 scalar-memory-prefix window. It does not prove a scalar descendant plus a later
-return in the same window, a fourth linked/control consumer, same-link forms,
-other link-sourced indirect controls, arbitrary producer-forwarded targets, or
-a general O3 engine.
+return in the same window, a second linked coroutine consuming the replacement,
+a fourth linked/control consumer, same-link forms, other link-sourced indirect
+controls, arbitrary producer-forwarded targets, or a general O3 engine.
