@@ -7,7 +7,7 @@ use crate::branch_predictor::{BranchTargetKind, BranchUpdate};
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
-use crate::riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind};
+use crate::riscv_branch_kind::is_riscv_link_register;
 use crate::riscv_defaults::{
     DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_WRITEBACK_WIDTH,
     MIN_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
@@ -700,7 +700,7 @@ fn next_runtime_physical_register(snapshot: &O3RuntimeSnapshot) -> u32 {
         .map_or(1, |physical| physical.saturating_add(1))
 }
 
-fn o3_branch_link_register_write(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {
+fn o3_execution_writes_link_register(record: &rem6_isa_riscv::RiscvExecutionRecord) -> bool {
     record
         .register_writes()
         .iter()

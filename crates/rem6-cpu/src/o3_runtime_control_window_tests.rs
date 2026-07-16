@@ -531,13 +531,74 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
         .iter()
         .find(|issued| issued.sequence == coroutine_sequence)
         .expect("recorded coroutine execution");
+    let coroutine_admitted_writeback_tick = issued.admitted_writeback_tick;
     assert_eq!(issued.writeback_slot, Some(0));
-    assert!(issued.admitted_writeback_tick >= 20);
+    assert!(coroutine_admitted_writeback_tick >= 20);
     assert_eq!(
         runtime
             .writeback_reservation(coroutine_sequence)
             .map(O3WritebackReservation::admitted_tick),
-        Some(issued.admitted_writeback_tick)
+        Some(coroutine_admitted_writeback_tick)
+    );
+
+    let descendant_candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x8008), descendant)
+        .expect("coroutine result should wake the staged descendant");
+    let descendant_sequence = descendant_candidate.sequence();
+    let descendant_producer_sequences = descendant_candidate.producer_sequences().to_vec();
+    assert!(descendant_producer_sequences.contains(&coroutine_sequence));
+    assert!(descendant_producer_sequences
+        .iter()
+        .all(|sequence| *sequence == coroutine_sequence));
+    assert_eq!(
+        descendant_candidate.forwarded_register_writes(),
+        &[RegisterWrite::new(reg(5), 0x8010)]
+    );
+    assert_eq!(
+        descendant_candidate.issue_tick(1),
+        coroutine_admitted_writeback_tick
+    );
+    assert!(runtime
+        .record_live_speculative_execution(
+            descendant_candidate,
+            &[request(13)],
+            1,
+            RiscvExecutionRecord::new(
+                descendant,
+                0x8008,
+                0x800c,
+                vec![RegisterWrite::new(reg(8), 0x8010)],
+                None,
+            ),
+        )
+        .unwrap());
+    let descendant_issued = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == descendant_sequence)
+        .expect("recorded descendant execution");
+    assert_eq!(
+        descendant_issued.producer_sequences,
+        descendant_producer_sequences
+    );
+    assert_eq!(
+        descendant_issued.issue_tick,
+        coroutine_admitted_writeback_tick
+    );
+    assert_eq!(
+        descendant_issued.raw_ready_tick,
+        coroutine_admitted_writeback_tick
+    );
+    assert_eq!(
+        descendant_issued.admitted_writeback_tick,
+        coroutine_admitted_writeback_tick + 1
+    );
+    assert_eq!(descendant_issued.writeback_slot, Some(0));
+    assert_eq!(
+        runtime
+            .writeback_reservation(descendant_sequence)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(descendant_issued.admitted_writeback_tick)
     );
 }
 

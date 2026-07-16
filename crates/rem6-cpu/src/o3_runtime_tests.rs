@@ -53,7 +53,7 @@ fn o3_issue_width_survives_snapshot_restore() {
 }
 
 #[test]
-fn branch_link_write_uses_actual_coroutine_register_write() {
+fn execution_writes_link_register_uses_actual_coroutine_register_write() {
     let coroutine = RiscvInstruction::Jalr {
         rd: rem6_isa_riscv::Register::new(5).unwrap(),
         rs1: rem6_isa_riscv::Register::new(1).unwrap(),
@@ -70,11 +70,11 @@ fn branch_link_write_uses_actual_coroutine_register_write() {
         None,
     );
 
-    assert!(o3_branch_link_register_write(&record));
+    assert!(o3_execution_writes_link_register(&record));
 }
 
 #[test]
-fn branch_link_write_keeps_plain_return_false() {
+fn execution_writes_link_register_keeps_plain_return_false() {
     let plain_return = RiscvInstruction::Jalr {
         rd: rem6_isa_riscv::Register::new(0).unwrap(),
         rs1: rem6_isa_riscv::Register::new(1).unwrap(),
@@ -82,7 +82,7 @@ fn branch_link_write_keeps_plain_return_false() {
     };
     let record = RiscvExecutionRecord::new(plain_return, 0x800c, 0x8008, vec![], None);
 
-    assert!(!o3_branch_link_register_write(&record));
+    assert!(!o3_execution_writes_link_register(&record));
 }
 
 #[test]

@@ -1,3 +1,5 @@
+use crate::riscv_branch_kind::riscv_branch_target_kind;
+
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,7 +130,7 @@ impl O3RuntimeState {
         let branch_predicted_taken = branch_update.is_some_and(|update| update.predicted_taken());
         let branch_resolved_taken = branch_update.is_some_and(|update| update.actual_taken());
         let branch_link_register_write =
-            branch_update.is_some() && o3_branch_link_register_write(record);
+            branch_update.is_some() && o3_execution_writes_link_register(record);
         let branch_predicted_target = branch_update.and_then(|update| update.predicted_target());
         let branch_resolved_target = branch_update.and_then(|update| update.actual_target());
         let branch_fallthrough_target = Address::new(
