@@ -12,9 +12,9 @@ pub(crate) use rem6_memory::{
 };
 pub(crate) use rem6_stats::StatsRegistry;
 pub(crate) use rem6_system::{
-    GuestEventId, GuestSourceId, HostEventPolicy, RiscvMmapRegion, RiscvSystemRunDriver,
-    RiscvTrapEventPort, StopRequest, SystemActionOutcome, SystemHostController,
-    SystemHostEventPort,
+    configure_riscv_unrestricted_pmp, GuestEventId, GuestSourceId, HostEventPolicy,
+    RiscvMmapRegion, RiscvSystemRunDriver, RiscvTrapEventPort, StopRequest, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort,
 };
 pub(crate) use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -115,7 +115,7 @@ pub(crate) fn riscv_core(
     fetch_route: MemoryRouteId,
     entry: u64,
 ) -> RiscvCore {
-    RiscvCore::new(
+    let core = RiscvCore::new(
         CpuCore::new(
             CpuResetState::new(
                 CpuId::new(cpu),
@@ -131,7 +131,9 @@ pub(crate) fn riscv_core(
             ),
         )
         .unwrap(),
-    )
+    );
+    configure_riscv_unrestricted_pmp(&core).unwrap();
+    core
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,7 +147,7 @@ pub(crate) fn riscv_data_core(
     data_route: MemoryRouteId,
     entry: u64,
 ) -> RiscvCore {
-    RiscvCore::with_data(
+    let core = RiscvCore::with_data(
         CpuCore::new(
             CpuResetState::new(
                 CpuId::new(cpu),
@@ -162,7 +164,9 @@ pub(crate) fn riscv_data_core(
         )
         .unwrap(),
         CpuDataConfig::new(endpoint(data_endpoint), data_route, layout()),
-    )
+    );
+    configure_riscv_unrestricted_pmp(&core).unwrap();
+    core
 }
 
 fn memory_response(

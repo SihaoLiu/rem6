@@ -125,10 +125,11 @@ use crate::workload_replay_heterogeneous::{
 };
 use crate::workload_replay_host::schedule_planned_host_events_with_handler;
 use crate::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, ExecutionMode, GuestEventId, GuestSourceId,
-    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, TrafficTraceReplayControllerParallelErrors,
+    configure_riscv_unrestricted_pmp, DramMemoryCheckpointBank, DramMemoryCheckpointPort,
+    ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy, MemoryStoreCheckpointBank,
+    MemoryStoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvTrapEventPort, SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    TrafficTraceReplayControllerParallelErrors,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -1428,6 +1429,10 @@ fn apply_linux_boot_handoff(cores: &[RiscvCore], dtb_addr: Address) {
         return;
     };
 
+    for core in cores {
+        configure_riscv_unrestricted_pmp(core)
+            .expect("fresh workload core accepts unrestricted supervisor PMP policy");
+    }
     boot.start_supervisor_hart(boot.pc(), dtb_addr.get());
     for core in secondaries {
         core.set_hart_stopped();

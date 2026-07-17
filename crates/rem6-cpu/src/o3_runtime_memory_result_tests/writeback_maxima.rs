@@ -7,6 +7,9 @@ fn finalized_maxima_survive_equal_live_maxima_replanned_down() {
     reserve_three_ready_and_deferred_rows(&mut runtime, 1_000, 10);
     assert_writeback_totals(&runtime, 5, 4, 7, 3, 3);
 
+    for sequence in 1_000..1_005 {
+        runtime.finalize_writeback_publication(sequence);
+    }
     runtime.prune_writeback_calendar_before(14);
     assert!(runtime.writeback_reservations().is_empty());
 
@@ -50,6 +53,9 @@ fn stats_reset_clears_finalized_writeback_maxima() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     reserve_three_ready_and_deferred_rows(&mut runtime, 1_000, 10);
+    for sequence in 1_000..1_005 {
+        runtime.finalize_writeback_publication(sequence);
+    }
     runtime.prune_writeback_calendar_before(14);
     runtime.reset_stats();
 

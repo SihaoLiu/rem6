@@ -5,7 +5,7 @@ use rem6_cpu::{
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvPrivilegeMode};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
-use rem6_system::RiscvSeStartupImage;
+use rem6_system::{configure_riscv_unrestricted_pmp, RiscvSeStartupImage};
 use rem6_transport::MemoryTransport;
 
 use crate::config::Rem6RunConfig;
@@ -86,13 +86,14 @@ pub(super) fn build_cli_riscv_cores(
             config.riscv_boot_a1(),
         );
         if let Some(startup) = riscv_se_startup {
+            configure_riscv_unrestricted_pmp(&core).map_err(execute_error)?;
             core.set_privilege_mode(RiscvPrivilegeMode::User);
             core.write_register(
                 Register::new(RISCV_STACK_POINTER_REGISTER).map_err(execute_error)?,
                 startup.initial_stack_pointer().get(),
             );
         }
-        configure_cli_riscv_sbi_core(config, cpu_index, &core, start_address);
+        configure_cli_riscv_sbi_core(config, cpu_index, &core, start_address)?;
         if config.checker_cpu() {
             core.enable_checker_cpu();
         }

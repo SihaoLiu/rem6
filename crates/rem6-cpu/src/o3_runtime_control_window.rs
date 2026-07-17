@@ -440,7 +440,7 @@ impl O3RuntimeState {
         now: u64,
     ) {
         if let Some(descendant_sequence) = branch_sequence.checked_add(1) {
-            self.discard_future_writeback_from_sequence(descendant_sequence, now);
+            self.discard_live_writeback_from_sequence(descendant_sequence);
         }
         self.discard_live_control_descendant_rows_from_at(branch_sequence, now);
     }

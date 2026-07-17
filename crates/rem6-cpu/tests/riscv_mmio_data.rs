@@ -12,7 +12,9 @@ use rem6_memory::{
     TranslationPageMap, TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
     TranslationTlbConfig,
 };
-use rem6_mmio::{MmioAccess, MmioBus, MmioError, MmioRegisterBank, MmioRoute};
+use rem6_mmio::{
+    MmioAccess, MmioBus, MmioError, MmioRegisterBank, MmioRequest, MmioRequestId, MmioRoute,
+};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
@@ -35,6 +37,16 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 5) & 0x7f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x23
 }
 
 fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
@@ -334,4 +346,141 @@ fn riscv_core_leaves_unmapped_translated_atomic_for_memory_after_mmio_probe() {
         None
     );
     assert!(core.has_pending_data_access());
+}
+
+#[test]
+fn redirect_cancels_scheduled_mmio_store_before_device_delivery() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = RiscvCore::with_data(
+        core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
+    );
+    core.write_register(Register::new(2).unwrap(), 0x1000);
+    core.write_register(Register::new(6).unwrap(), 0x5a);
+    let store = loaded_store(0x8000, s_type(8, 6, 2, 0x3));
+    let (bus, bank) = writable_mmio_bus();
+
+    fetch_one_parallel(&core, store, &mut scheduler, &transport);
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let source_event = core
+        .issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+        .unwrap()
+        .expect("MMIO store schedules before redirect");
+    let source_tick = scheduler
+        .pending_event_snapshot(source_event)
+        .expect("MMIO source event is pending")
+        .tick();
+    assert_eq!(source_tick, scheduler.now());
+    let source_epoch = scheduler.run_next_epoch_parallel().unwrap();
+    assert_eq!(source_epoch.executed_events(), 1);
+    assert_eq!(read_mmio_u64(&bank), 0);
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(read_mmio_u64(&bank), 0);
+}
+
+#[test]
+fn redirect_cancels_scheduled_translated_mmio_store_before_device_delivery() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(Register::new(2).unwrap(), 0x2000);
+    core.write_register(Register::new(6).unwrap(), 0x5a);
+    let store = loaded_store(0x8000, s_type(8, 6, 2, 0x3));
+    let page_map = single_page_map(0x2000, 0x1000);
+    let (bus, bank) = writable_mmio_bus();
+
+    fetch_one_parallel(&core, store, &mut scheduler, &transport);
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let source_event = core
+        .issue_next_translated_mmio_data_access_parallel(&mut scheduler, &bus, &page_map)
+        .unwrap()
+        .expect("translated MMIO store schedules before redirect");
+    let source_tick = scheduler
+        .pending_event_snapshot(source_event)
+        .expect("translated MMIO source event is pending")
+        .tick();
+    assert_eq!(source_tick, scheduler.now());
+    let source_epoch = scheduler.run_next_epoch_parallel().unwrap();
+    assert_eq!(source_epoch.executed_events(), 1);
+    assert_eq!(read_mmio_u64(&bank), 0);
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(read_mmio_u64(&bank), 0);
+}
+
+fn data_routes() -> (
+    PartitionedScheduler,
+    MemoryTransport,
+    rem6_transport::MemoryRouteId,
+    rem6_transport::MemoryRouteId,
+) {
+    let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    (scheduler, transport, fetch_route, data_route)
+}
+
+fn writable_mmio_bus() -> (MmioBus, Arc<Mutex<MmioRegisterBank>>) {
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadWrite,
+        vec![0; 8],
+    )
+    .unwrap();
+    let bank = Arc::new(Mutex::new(bank));
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        rem6_memory::AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap())
+            .unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 3, 2).unwrap(),
+        Arc::clone(&bank),
+    )
+    .unwrap();
+    (bus, bank)
+}
+
+fn read_mmio_u64(bank: &Arc<Mutex<MmioRegisterBank>>) -> u64 {
+    let response = bank
+        .lock()
+        .unwrap()
+        .respond(
+            &MmioRequest::read(
+                MmioRequestId::new(99),
+                Address::new(0x1008),
+                AccessSize::new(8).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    u64::from_le_bytes(response.data().unwrap().try_into().unwrap())
 }

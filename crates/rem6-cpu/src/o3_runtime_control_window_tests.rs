@@ -804,6 +804,24 @@ fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
 }
 
 #[test]
+fn branch_descendant_cleanup_discards_unpublished_past_writeback_reservation() {
+    let (mut runtime, _, _, descendant) = issued_nested_control_runtime();
+    let rob = runtime.snapshot().reorder_buffer().to_vec();
+    let branch_sequence = rob[1].sequence();
+    let descendant_sequence = rob[3].sequence();
+    let descendant_admitted_tick = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.execution.instruction() == descendant)
+        .expect("descendant execution is staged")
+        .admitted_writeback_tick;
+
+    runtime.discard_live_control_descendants_from_at(branch_sequence, descendant_admitted_tick);
+
+    assert!(runtime.writeback_reservation(descendant_sequence).is_none());
+}
+
+#[test]
 fn inner_control_discard_preserves_outer_branch() {
     let (mut runtime, outer, inner, _) = issued_nested_control_runtime();
     let inner_sequence = runtime.snapshot().reorder_buffer()[2].sequence();

@@ -397,6 +397,18 @@ impl O3WritebackPortStatsSchedule {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn has_unpublished_writeback_reservation(&self) -> bool {
+        self.writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .any(|reservation| {
+                !self
+                    .published_writeback_sequences
+                    .contains(&reservation.sequence)
+            })
+    }
+
     pub(crate) fn failure_diagnostic_writeback_reservation_count(&self) -> usize {
         self.writeback_calendar.by_tick.values().map(Vec::len).sum()
     }
@@ -622,10 +634,24 @@ impl O3RuntimeState {
     }
 
     fn finalize_writeback_reservations_before(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
-        self.finalize_live_writeback_ownership_before(tick)?;
         let live = self.live_writeback_schedule()?;
-        self.finalized_writeback_port_stats
-            .close_before(tick, &live)?;
+        let earliest_unpublished_raw_ready_tick = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .filter(|reservation| {
+                !self
+                    .published_writeback_sequences
+                    .contains(&reservation.sequence)
+            })
+            .map(|reservation| reservation.raw_ready_tick)
+            .min();
+        self.finalized_writeback_port_stats.close_before(
+            earliest_unpublished_raw_ready_tick
+                .map_or(tick, |raw_ready_tick| tick.min(raw_ready_tick)),
+            &live,
+        )?;
         self.stats
             .set_writeback_port_schedule(&self.finalized_writeback_port_stats, &live)?;
         let finalized = self
@@ -633,6 +659,10 @@ impl O3RuntimeState {
             .by_tick
             .range(..tick)
             .flat_map(|(_, reservations)| reservations)
+            .filter(|reservation| {
+                self.published_writeback_sequences
+                    .contains(&reservation.sequence)
+            })
             .map(|reservation| reservation.sequence)
             .collect::<Vec<_>>();
         for sequence in finalized {
@@ -640,21 +670,6 @@ impl O3RuntimeState {
             self.published_writeback_sequences.remove(&sequence);
         }
         Ok(())
-    }
-
-    fn finalize_live_writeback_ownership_before(
-        &mut self,
-        tick: u64,
-    ) -> Result<(), O3RuntimeError> {
-        let finalized = self
-            .writeback_calendar
-            .by_tick
-            .range(..tick)
-            .flat_map(|(_, reservations)| reservations)
-            .map(|reservation| reservation.sequence)
-            .filter(|sequence| self.live_writeback_counted_sequences.contains(sequence))
-            .collect::<BTreeSet<_>>();
-        self.finalize_live_writeback_ownership(&finalized, None)
     }
 
     fn discard_writeback_reservations(

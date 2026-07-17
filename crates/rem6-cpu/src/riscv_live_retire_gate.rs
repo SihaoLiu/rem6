@@ -158,6 +158,11 @@ impl RiscvLiveRetireGateState {
         self.pending.map(RiscvLiveRetireGatePending::ready_tick)
     }
 
+    pub(crate) fn awaits_rebind_to_next_request(&self) -> bool {
+        self.pending
+            .is_some_and(|pending| pending.rebind_on_next_request)
+    }
+
     pub(crate) fn owned_scheduler_wakes(&self) -> Vec<RiscvLiveRetireGateWake> {
         self.detached_scheduler_wakes
             .iter()
@@ -356,6 +361,14 @@ impl RiscvCore {
         let state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.blocks_new_work()
             || state.o3_runtime.has_pending_live_data_access_retirement()
+    }
+
+    pub(crate) fn live_retire_gate_awaits_rebind(&self) -> bool {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .live_retire_gate
+            .awaits_rebind_to_next_request()
     }
 
     pub fn o3_runtime_checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {

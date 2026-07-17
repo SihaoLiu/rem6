@@ -49,10 +49,7 @@ impl RiscvCore {
         issue: &OutstandingDataAccess,
     ) -> Option<MemoryRequestId> {
         let state = self.state.lock().expect("riscv core lock");
-        let execution = state
-            .events
-            .iter()
-            .find(|event| event.fetch().request_id() == issue.fetch_request)?;
+        let execution = state.data_access_execution(issue.fetch_request)?;
         state.o3_runtime.scalar_store_predecessor(execution)
     }
 
@@ -77,6 +74,7 @@ impl RiscvCore {
             + 'static,
     {
         let request_id = buffered.issue.request_id;
+        let responder_core = self.clone();
         let core = self.clone();
         let event = transport
             .submit(
@@ -84,7 +82,13 @@ impl RiscvCore {
                 buffered.issue.memory_route(),
                 buffered.request,
                 trace,
-                responder,
+                move |delivery, context| {
+                    if responder_core.owns_outstanding_data_request(request_id) {
+                        responder(delivery, context)
+                    } else {
+                        TargetOutcome::NoResponse
+                    }
+                },
                 move |delivery| core.record_data_response(delivery),
             )
             .map_err(RiscvCpuError::Transport)?;
@@ -104,12 +108,19 @@ impl RiscvCore {
             + 'static,
     {
         let request_id = buffered.issue.request_id;
+        let responder_core = self.clone();
         let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
             buffered.issue.memory_route(),
             buffered.request,
             trace,
-            responder,
+            move |delivery, context| {
+                if responder_core.owns_outstanding_data_request(request_id) {
+                    responder(delivery, context)
+                } else {
+                    TargetOutcome::NoResponse
+                }
+            },
             move |delivery| core.record_data_response(delivery),
         );
         PreparedDataParallelAccess::buffered_transaction(request_id, transaction)

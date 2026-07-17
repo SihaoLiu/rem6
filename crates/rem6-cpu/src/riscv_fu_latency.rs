@@ -30,6 +30,7 @@ pub(crate) struct RiscvFuLatency {
     cycles: u64,
     owner: RiscvFuLatencyOwner,
     o3_class: Option<O3RuntimeFuLatencyClass>,
+    writes_vector_state: bool,
 }
 
 impl RiscvFuLatency {
@@ -38,6 +39,16 @@ impl RiscvFuLatency {
             cycles,
             owner: RiscvFuLatencyOwner::Pipeline,
             o3_class,
+            writes_vector_state: false,
+        }
+    }
+
+    const fn vector_pipeline(cycles: u64, o3_class: Option<O3RuntimeFuLatencyClass>) -> Self {
+        Self {
+            cycles,
+            owner: RiscvFuLatencyOwner::Pipeline,
+            o3_class,
+            writes_vector_state: true,
         }
     }
 
@@ -46,6 +57,7 @@ impl RiscvFuLatency {
             cycles,
             owner: RiscvFuLatencyOwner::DataCompletion,
             o3_class: None,
+            writes_vector_state: false,
         }
     }
 
@@ -59,6 +71,10 @@ impl RiscvFuLatency {
 
     pub(crate) const fn o3_class(self) -> Option<O3RuntimeFuLatencyClass> {
         self.o3_class
+    }
+
+    pub(crate) const fn writes_vector_state(self) -> bool {
+        self.writes_vector_state
     }
 }
 
@@ -110,7 +126,7 @@ pub(crate) const fn riscv_fu_latency(instruction: RiscvInstruction) -> Option<Ri
             | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedSignedVx { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVv { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVx { .. },
-        ) => Some(RiscvFuLatency::pipeline(
+        ) => Some(RiscvFuLatency::vector_pipeline(
             SCALAR_INTEGER_MUL_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorIntegerMul),
         )),
@@ -121,16 +137,19 @@ pub(crate) const fn riscv_fu_latency(instruction: RiscvInstruction) -> Option<Ri
         | RiscvInstruction::VectorRemainderUnsignedVv { .. }
         | RiscvInstruction::VectorRemainderUnsignedVx { .. }
         | RiscvInstruction::VectorRemainderSignedVv { .. }
-        | RiscvInstruction::VectorRemainderSignedVx { .. } => Some(RiscvFuLatency::pipeline(
-            SCALAR_INTEGER_DIV_CYCLES,
-            Some(O3RuntimeFuLatencyClass::VectorIntegerDiv),
+        | RiscvInstruction::VectorRemainderSignedVx { .. } => {
+            Some(RiscvFuLatency::vector_pipeline(
+                SCALAR_INTEGER_DIV_CYCLES,
+                Some(O3RuntimeFuLatencyClass::VectorIntegerDiv),
+            ))
+        }
+        RiscvInstruction::VectorFixedPointShift(..) | RiscvInstruction::VectorNarrow(..) => Some(
+            RiscvFuLatency::vector_pipeline(VECTOR_INTEGER_SHIFT_CYCLES, None),
+        ),
+        RiscvInstruction::VectorReduction(..) => Some(RiscvFuLatency::vector_pipeline(
+            SCALAR_INTEGER_MUL_CYCLES,
+            None,
         )),
-        RiscvInstruction::VectorFixedPointShift(..) | RiscvInstruction::VectorNarrow(..) => {
-            Some(RiscvFuLatency::pipeline(VECTOR_INTEGER_SHIFT_CYCLES, None))
-        }
-        RiscvInstruction::VectorReduction(..) => {
-            Some(RiscvFuLatency::pipeline(SCALAR_INTEGER_MUL_CYCLES, None))
-        }
         RiscvInstruction::VectorMemory(
             RiscvVectorMemoryInstruction::LoadUnitStride { .. }
             | RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly { .. }
@@ -272,13 +291,22 @@ pub(crate) const fn riscv_o3_fu_latency_class(
     }
 }
 
+pub(crate) const fn riscv_pipeline_fu_writes_vector_state(instruction: RiscvInstruction) -> bool {
+    matches!(
+        riscv_fu_latency(instruction),
+        Some(latency)
+            if matches!(latency.owner(), RiscvFuLatencyOwner::Pipeline)
+                && latency.writes_vector_state()
+    )
+}
+
 const fn vector_float_fu_latency(instruction: RiscvVectorFloatInstruction) -> RiscvFuLatency {
     match instruction {
         RiscvVectorFloatInstruction::AddVv { .. }
         | RiscvVectorFloatInstruction::AddVf { .. }
         | RiscvVectorFloatInstruction::SubVv { .. }
         | RiscvVectorFloatInstruction::SubVf { .. }
-        | RiscvVectorFloatInstruction::ReverseSubVf { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::ReverseSubVf { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_ADD_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatAdd),
         ),
@@ -293,7 +321,7 @@ const fn vector_float_fu_latency(instruction: RiscvVectorFloatInstruction) -> Ri
         | RiscvVectorFloatInstruction::MaskLessThanVv { .. }
         | RiscvVectorFloatInstruction::MaskLessThanVf { .. }
         | RiscvVectorFloatInstruction::MaskLessEqualVv { .. }
-        | RiscvVectorFloatInstruction::MaskLessEqualVf { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::MaskLessEqualVf { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_COMPARE_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatCompare),
         ),
@@ -306,7 +334,7 @@ const fn vector_float_fu_latency(instruction: RiscvVectorFloatInstruction) -> Ri
         | RiscvVectorFloatInstruction::MergeVf { .. }
         | RiscvVectorFloatInstruction::MoveVf { .. }
         | RiscvVectorFloatInstruction::MoveFv { .. }
-        | RiscvVectorFloatInstruction::MoveSv { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::MoveSv { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_CONVERT_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatMisc),
         ),
@@ -316,30 +344,114 @@ const fn vector_float_fu_latency(instruction: RiscvVectorFloatInstruction) -> Ri
         | RiscvVectorFloatInstruction::SignInjectNegVf { .. }
         | RiscvVectorFloatInstruction::SignInjectXorVv { .. }
         | RiscvVectorFloatInstruction::SignInjectXorVf { .. }
-        | RiscvVectorFloatInstruction::ClassV { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::ClassV { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_MISC_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatMisc),
         ),
         RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. } => {
-            RiscvFuLatency::pipeline(
+            RiscvFuLatency::vector_pipeline(
                 SCALAR_FLOAT_MUL_CYCLES,
                 Some(O3RuntimeFuLatencyClass::VectorFloatMul),
             )
         }
         RiscvVectorFloatInstruction::MulAddVv { .. }
-        | RiscvVectorFloatInstruction::MulAddVf { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::MulAddVf { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_FMA_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatFma),
         ),
         RiscvVectorFloatInstruction::DivVv { .. }
         | RiscvVectorFloatInstruction::DivVf { .. }
-        | RiscvVectorFloatInstruction::ReverseDivVf { .. } => RiscvFuLatency::pipeline(
+        | RiscvVectorFloatInstruction::ReverseDivVf { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_DIV_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatDiv),
         ),
-        RiscvVectorFloatInstruction::SqrtV { .. } => RiscvFuLatency::pipeline(
+        RiscvVectorFloatInstruction::SqrtV { .. } => RiscvFuLatency::vector_pipeline(
             SCALAR_FLOAT_SQRT_CYCLES,
             Some(O3RuntimeFuLatencyClass::VectorFloatSqrt),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_pipeline_latency_families_report_vector_state_writes() {
+        for (label, raw) in [
+            ("integer multiply", vector_mvv_type(0b100101, 2, 1, 3)),
+            ("integer multiply-add", vector_mvv_type(0b101001, 2, 1, 3)),
+            ("saturating multiply", vector_vv_type(0b100111, 2, 1, 3)),
+            ("widening multiply", vector_mvv_type(0b111000, 2, 1, 4)),
+            ("integer divide", vector_mvv_type(0b100000, 2, 1, 3)),
+            ("fixed-point shift", vector_vv_type(0b101010, 2, 1, 3)),
+            ("narrow shift", vector_vv_type(0b101100, 6, 5, 3)),
+            ("reduction", vector_mvv_type(0b000000, 2, 1, 3)),
+            ("widening reduction", vector_vv_type(0b110000, 2, 1, 3)),
+            ("float add", vector_float_vv_type(0b000000, 2, 1, 3)),
+            ("float compare", vector_float_vv_type(0b000100, 2, 1, 3)),
+            ("float misc", vector_float_vv_type(0b001000, 2, 1, 3)),
+            ("float multiply", vector_float_vv_type(0b100100, 2, 1, 3)),
+            (
+                "float multiply-add",
+                vector_float_vv_type(0b101100, 2, 1, 3),
+            ),
+            ("float divide", vector_float_vv_type(0b100000, 2, 1, 3)),
+            (
+                "float square-root",
+                vector_float_type(0b010011, 0b001, 1, 0x00, 3),
+            ),
+        ] {
+            let instruction = RiscvInstruction::decode(raw).unwrap();
+            assert!(
+                riscv_pipeline_fu_writes_vector_state(instruction),
+                "{label}: {instruction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nonvector_or_data_completion_latency_does_not_report_vector_state_write() {
+        let scalar_div = RiscvInstruction::decode(r_type(1, 2, 1, 0b100, 3, 0x33)).unwrap();
+        let vector_load = RiscvInstruction::decode(0x0205_7087).unwrap();
+
+        assert!(!riscv_pipeline_fu_writes_vector_state(scalar_div));
+        assert!(!riscv_pipeline_fu_writes_vector_state(vector_load));
+    }
+
+    fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+        (funct7 << 25)
+            | (u32::from(rs2) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | (u32::from(rd) << 7)
+            | opcode
+    }
+
+    fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+        (funct6 << 26)
+            | (1 << 25)
+            | (u32::from(vs2) << 20)
+            | (u32::from(vs1) << 15)
+            | (u32::from(vd) << 7)
+            | 0x57
+    }
+
+    fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+        vector_vv_type(funct6, vs2, vs1, vd) | (0b010 << 12)
+    }
+
+    fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+        vector_float_type(funct6, 0b001, vs2, vs1, vd)
+    }
+
+    fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+        (funct6 << 26)
+            | (1 << 25)
+            | (u32::from(vs2) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | (u32::from(vd) << 7)
+            | 0x57
     }
 }

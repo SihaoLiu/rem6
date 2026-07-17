@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{AtomicMemoryOp, MemoryAccessKind, RiscvPrivilegeMode};
+use rem6_isa_riscv::{AtomicMemoryOp, MemoryAccessKind};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
@@ -102,6 +102,8 @@ impl RiscvCore {
                     .map(Some);
             }
 
+            let request_id = issue.request_id;
+            let responder_core = self.clone();
             let core = self.clone();
             let event = transport
                 .submit(
@@ -109,7 +111,13 @@ impl RiscvCore {
                     issue.memory_route(),
                     request,
                     trace,
-                    responder,
+                    move |delivery, context| {
+                        if responder_core.owns_outstanding_data_request(request_id) {
+                            responder(delivery, context)
+                        } else {
+                            TargetOutcome::NoResponse
+                        }
+                    },
                     move |delivery| core.record_data_response(delivery),
                 )
                 .map_err(RiscvCpuError::Transport)?;
@@ -187,12 +195,20 @@ impl RiscvCore {
                     predecessor,
                 )));
             }
+            let request_id = issue.request_id;
+            let responder_core = self.clone();
             let core = self.clone();
             let transaction = ParallelMemoryTransaction::new(
                 issue.memory_route(),
                 request,
                 trace,
-                responder,
+                move |delivery, context| {
+                    if responder_core.owns_outstanding_data_request(request_id) {
+                        responder(delivery, context)
+                    } else {
+                        TargetOutcome::NoResponse
+                    }
+                },
                 move |delivery| core.record_data_response(delivery),
             );
             Ok(Some(PreparedDataParallelAccess::transaction(
@@ -235,9 +251,19 @@ impl RiscvCore {
             let request_id = issue.request_id;
             let event = scheduler
                 .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
-                    bus.submit_parallel(context, request, move |completion| {
-                        core.record_mmio_completion(request_id, completion);
-                    })
+                    if !core.owns_outstanding_data_request(request_id) {
+                        return;
+                    }
+                    let delivery_core = core.clone();
+                    let completion_core = core.clone();
+                    bus.submit_parallel_guarded(
+                        context,
+                        request,
+                        move |_| delivery_core.owns_outstanding_data_request(request_id),
+                        move |completion| {
+                            completion_core.record_mmio_completion(request_id, completion);
+                        },
+                    )
                     .expect("validated parallel MMIO data access submission");
                 })
                 .map_err(RiscvCpuError::Scheduler)?;
@@ -497,16 +523,11 @@ impl RiscvCore {
         physical_address: Address,
     ) -> Result<(), RiscvCpuError> {
         let kind = pmp_access_kind(access);
-        self.state
-            .lock()
-            .expect("riscv core lock")
+        let state = self.state.lock().expect("riscv core lock");
+        let privilege = state.hart.data_sv39_access_context().privilege();
+        state
             .pmp
-            .check_access(
-                physical_address.get(),
-                size.bytes(),
-                kind,
-                RiscvPrivilegeMode::Machine,
-            )
+            .check_access(physical_address.get(), size.bytes(), kind, privilege)
             .map_err(|error| RiscvCpuError::DataPmpAccess { fetch, error })
     }
 
@@ -569,7 +590,12 @@ impl RiscvCore {
                     || state
                         .o3_runtime
                         .owns_pending_live_data_access_retirement(issue.fetch_request));
+            let provisional_terminal_result = state
+                .pending_terminal_memory_result
+                .as_ref()
+                .is_some_and(|pending| pending.owns_fetch(issue.fetch_request));
             let eligible_scalar_load = o3_data_access
+                && !provisional_terminal_result
                 && matches!(&issue.access, MemoryAccessKind::Load { .. })
                 && o3_memory_result_destination(&issue.access).is_some()
                 && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
@@ -585,8 +611,6 @@ impl RiscvCore {
                 );
             let younger_window_policy = if eligible_scalar_load {
                 O3DataAccessWindowPolicy::ScalarMemoryPrefix
-            } else if o3_data_access && o3_memory_result_destination(&issue.access).is_some() {
-                O3DataAccessWindowPolicy::MemoryResult
             } else {
                 O3DataAccessWindowPolicy::None
             };
@@ -601,11 +625,7 @@ impl RiscvCore {
         state
             .cached_translated_scalar_load_window_fetches
             .remove(&issue.fetch_request);
-        let execution = state
-            .events
-            .iter()
-            .find(|event| event.fetch().request_id() == issue.fetch_request)
-            .cloned();
+        let execution = state.data_access_execution(issue.fetch_request).cloned();
         state.issued_data_for_fetches.insert(issue.fetch_request);
         state
             .outstanding_data

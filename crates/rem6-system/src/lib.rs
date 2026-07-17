@@ -36,6 +36,7 @@ mod riscv_debug_pmp;
 mod riscv_instruction_stats;
 mod riscv_live_retire_gate_policy;
 mod riscv_o3_runtime_stats;
+mod riscv_pmp;
 mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_driver;
@@ -184,6 +185,7 @@ pub use riscv_debug::{
 };
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_o3_runtime_stats::RiscvO3RuntimeStats;
+pub use riscv_pmp::configure_riscv_unrestricted_pmp;
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use riscv_sbi::{
     RiscvSbiFirmware, RiscvSbiHsmRecord, RiscvSbiHsmStatusRecord, RiscvSbiHsmWakeRecord,

@@ -6,7 +6,6 @@ use rem6_isa_riscv::{
 };
 use rem6_memory::{Address, MemoryRequestId};
 
-use crate::branch_predictor::BranchTargetKind;
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
@@ -18,7 +17,7 @@ use crate::riscv_defaults::{
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
-use crate::RiscvDataAccessEventKind;
+use crate::{branch_predictor::BranchTargetKind, RiscvDataAccessEventKind};
 
 #[path = "o3_runtime_authority.rs"]
 mod o3_runtime_authority;
@@ -1143,9 +1142,10 @@ impl crate::RiscvCore {
     ) -> Option<RiscvCpuExecutionEvent> {
         let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
-        if !state
-            .o3_runtime
-            .live_data_access_publication_is_admitted(current_tick)
+        if state.pending_terminal_memory_result.is_some()
+            || !state
+                .o3_runtime
+                .live_data_access_publication_is_admitted(current_tick)
         {
             return None;
         }

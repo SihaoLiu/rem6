@@ -3,6 +3,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuResetState, CpuTranslationFrontend,
     CpuTranslationFrontendSnapshot,
 };
+use rem6_isa_riscv::{RiscvPmpAddressMode, RiscvPmpConfig};
 use rem6_kernel::{PartitionId, PartitionSnapshot, SchedulerContext, SchedulerSnapshot};
 use rem6_memory::{
     AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
@@ -425,6 +426,18 @@ fn registered_rfence_writeback_pair() -> (
     );
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1
+        .write_pmp_addr(0, 0xa000 >> 2)
+        .expect("valid target PMP address");
+    core1
+        .write_pmp_config(
+            0,
+            RiscvPmpConfig::new(RiscvPmpAddressMode::Tor)
+                .with_read(true)
+                .with_write(true)
+                .with_execute(true),
+        )
+        .expect("valid target PMP permissions");
     let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).expect("valid cluster");
     let firmware = RiscvSbiFirmware::new();
     firmware

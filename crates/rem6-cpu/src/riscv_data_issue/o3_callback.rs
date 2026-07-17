@@ -5,10 +5,7 @@ pub(super) fn mark_data_access_event_kind(
     access: &IssuedDataAccess,
     kind: RiscvDataAccessEventKind,
 ) -> Option<RiscvCpuExecutionEvent> {
-    let event = state
-        .events
-        .iter_mut()
-        .find(|event| event.fetch().request_id() == access.fetch_request)?;
+    let event = state.data_access_execution_mut(access.fetch_request)?;
     event.set_data_access_event_kind(kind);
     Some(event.clone())
 }
@@ -18,11 +15,7 @@ pub(super) fn cloned_data_access_event_with_kind(
     access: &IssuedDataAccess,
     kind: RiscvDataAccessEventKind,
 ) -> Option<RiscvCpuExecutionEvent> {
-    let mut event = state
-        .events
-        .iter()
-        .find(|event| event.fetch().request_id() == access.fetch_request)?
-        .clone();
+    let mut event = state.data_access_execution(access.fetch_request)?.clone();
     event.set_data_access_event_kind(kind);
     Some(event)
 }
@@ -89,11 +82,7 @@ pub(super) fn record_o3_data_access_outcome(
             state.outstanding_data.remove(&request);
             state.buffered_o3_stores.remove(&request);
             state.issued_data_for_fetches.remove(&fetch_request);
-            if let Some(event) = state
-                .events
-                .iter_mut()
-                .find(|event| event.fetch().request_id() == fetch_request)
-            {
+            if let Some(event) = state.data_access_execution_mut(fetch_request) {
                 event.clear_data_access_retirement();
             }
         }

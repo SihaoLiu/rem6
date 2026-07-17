@@ -372,13 +372,15 @@ fn stats_reset_preserves_writeback_calendar_without_recounting_reservations() {
 }
 
 #[test]
-fn writeback_calendar_prunes_only_before_current_tick() {
+fn writeback_calendar_prunes_published_rows_only_before_current_tick() {
     let mut runtime = runtime_with_reserved_sequences([(4, 20), (5, 21)]);
 
+    runtime.finalize_writeback_publication(4);
     runtime.prune_writeback_calendar_before(21);
 
     assert!(runtime.writeback_reservation(4).is_none());
     assert!(runtime.writeback_reservation(5).is_some());
+    runtime.finalize_writeback_publication(5);
     runtime.prune_writeback_calendar_before(22);
     assert!(runtime.writeback_reservation(5).is_none());
 }
@@ -422,6 +424,17 @@ fn full_lifecycle_cleanup_discards_all_writeback_authority() {
     assert!(runtime.writeback_reservation(sequence).is_none());
     assert!(runtime.writeback_reservation(99).is_none());
     assert!(runtime.writeback_reservations().is_empty());
+}
+
+#[test]
+fn redirect_cleanup_discards_admitted_unpublished_writeback_authority() {
+    let (mut runtime, sequence, admitted_tick) = runtime_with_live_speculative_writeback();
+
+    runtime.discard_live_staged_instructions_at(admitted_tick);
+
+    assert!(runtime.live_speculative_executions.is_empty());
+    assert!(runtime.writeback_reservation(sequence).is_none());
+    assert!(!runtime.has_unpublished_writeback_reservation());
 }
 
 #[test]

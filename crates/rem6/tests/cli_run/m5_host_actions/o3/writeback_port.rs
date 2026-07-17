@@ -217,8 +217,8 @@ fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admi
     let fu_raw_ready = event_u64(fu, "issue_tick") + 19;
     let admitted_tick = event_u64(load, "writeback_tick");
     assert_eq!(load_raw_ready, fu_raw_ready);
-    assert_eq!(admitted_tick, load_raw_ready + 1);
-    assert_eq!(event_u64(fu, "writeback_tick"), fu_raw_ready);
+    assert_eq!(admitted_tick, load_raw_ready);
+    assert_eq!(event_u64(fu, "writeback_tick"), fu_raw_ready + 1);
     assert!(event_u64(dependent, "issue_tick") >= admitted_tick);
     assert_eq!(
         full.pointer("/cores/0/registers/x12")
@@ -995,8 +995,8 @@ fn assert_scalar_load_writeback_collision(json: &Value) {
     let fu_raw_ready = event_u64(fu, "issue_tick") + 19;
     let admitted_tick = event_u64(load, "writeback_tick");
     assert_eq!(load_raw_ready, fu_raw_ready);
-    assert_eq!(admitted_tick, load_raw_ready + 1);
-    assert_eq!(event_u64(fu, "writeback_tick"), fu_raw_ready);
+    assert_eq!(admitted_tick, load_raw_ready);
+    assert_eq!(event_u64(fu, "writeback_tick"), fu_raw_ready + 1);
     assert!(event_u64(dependent, "issue_tick") >= admitted_tick);
     assert_eq!(
         json.pointer("/cores/0/registers/x12")

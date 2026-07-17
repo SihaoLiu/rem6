@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn published_tick_remains_open_for_a_late_same_tick_reservation() {
+fn prune_retains_an_unpublished_late_same_tick_reservation() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     let raw_ready_tick = 42;
@@ -52,8 +52,66 @@ fn published_tick_remains_open_for_a_late_same_tick_reservation() {
     );
 
     runtime.prune_writeback_calendar_before(44);
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_eq!(
+        runtime
+            .writeback_reservations()
+            .iter()
+            .map(|reservation| (reservation.sequence(), reservation.admitted_tick()))
+            .collect::<Vec<_>>(),
+        vec![(2, 43)]
+    );
+    assert_unpublished_live_writeback_rows(&runtime, &[2]);
     assert_writeback_stats(&runtime, 2, 2, 1, 1, 2, 1);
+
+    runtime.finalize_writeback_publication(2);
+    runtime.prune_writeback_calendar_before(44);
+    assert_live_writeback_ownership(&runtime, 0);
+}
+
+#[test]
+fn prune_retains_unpublished_past_fixed_fu_reservation_for_replanning() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(10, 20)])
+        .unwrap();
+
+    runtime.prune_writeback_calendar_before(21);
+
+    assert_eq!(
+        runtime
+            .writeback_reservation(10)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(20)
+    );
+    assert!(runtime.live_writeback_counted_sequences.contains(&10));
+    let replanned = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(11, 20)])
+        .unwrap();
+    assert_eq!(replanned[0].admitted_tick(), 21);
+    assert_eq!(
+        runtime
+            .writeback_reservations()
+            .iter()
+            .map(|reservation| (reservation.sequence(), reservation.admitted_tick()))
+            .collect::<Vec<_>>(),
+        vec![(10, 20), (11, 21)]
+    );
+}
+
+#[test]
+fn prune_removes_published_past_fixed_fu_reservation() {
+    let mut runtime = O3RuntimeState::default();
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(10, 20)])
+        .unwrap();
+    runtime.finalize_writeback_publication(10);
+
+    runtime.prune_writeback_calendar_before(21);
+
+    assert!(runtime.writeback_reservation(10).is_none());
+    assert!(runtime.published_writeback_sequences.is_empty());
+    assert!(runtime.live_writeback_counted_sequences.is_empty());
 }
 
 #[test]
@@ -181,7 +239,7 @@ fn repeated_publication_does_not_refinalize_the_same_sequence() {
 }
 
 #[test]
-fn published_deferred_depth_remains_open_for_a_late_same_tick_reservation() {
+fn prune_retains_an_unpublished_deferred_row_until_publication() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -200,8 +258,18 @@ fn published_deferred_depth_remains_open_for_a_late_same_tick_reservation() {
 
     assert_writeback_stats(&runtime, 3, 3, 2, 3, 3, 2);
     runtime.prune_writeback_calendar_before(45);
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_eq!(
+        runtime
+            .writeback_reservation(12)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(44)
+    );
+    assert_unpublished_live_writeback_rows(&runtime, &[12]);
     assert_writeback_stats(&runtime, 3, 3, 2, 3, 3, 2);
+
+    runtime.finalize_writeback_publication(12);
+    runtime.prune_writeback_calendar_before(45);
+    assert_live_writeback_ownership(&runtime, 0);
 }
 
 #[test]
@@ -233,7 +301,7 @@ fn staged_suffix_discard_preserves_published_same_tick_occupancy() {
 }
 
 #[test]
-fn new_writeback_below_prune_watermark_is_rejected_atomically() {
+fn unpublished_past_rows_remain_replan_open_across_stats_reset() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -248,35 +316,21 @@ fn new_writeback_below_prune_watermark_is_rejected_atomically() {
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(21, 10)])
         .unwrap();
     assert_eq!(reentry[0].admitted_tick(), 11);
-    let before = runtime.clone();
-
-    let error = runtime
+    let late = runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(22, 10)])
-        .expect_err("a new raw-ready row below the prune watermark must be rejected");
-    assert_eq!(
-        error,
-        O3RuntimeError::WritebackReservationTickClosed {
-            sequence: 22,
-            raw_ready_tick: 10,
-            closed_before_tick: 11,
-        }
-    );
-    assert_eq!(runtime, before);
+        .expect("an unpublished row keeps its raw-ready tick available for replanning");
+    assert_eq!(late[0].admitted_tick(), 12);
 
     runtime.reset_stats();
-    let before = runtime.clone();
-    let error = runtime
+    let after_reset = runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(23, 10)])
-        .expect_err("statistics reset must preserve the writeback closure watermark");
+        .expect("statistics reset must not close an unpublished raw-ready tick");
     assert_eq!(
-        error,
-        O3RuntimeError::WritebackReservationTickClosed {
-            sequence: 23,
-            raw_ready_tick: 10,
-            closed_before_tick: 11,
-        }
+        after_reset[0].admitted_tick(),
+        13,
+        "the retained calendar remains the collision authority after a statistics reset"
     );
-    assert_eq!(runtime, before);
+    assert_eq!(runtime.writeback_reservations().len(), 4);
 }
 
 #[test]
@@ -369,7 +423,7 @@ fn writeback_live_ownership_is_bounded_across_prune_and_discard_cycles() {
 }
 
 #[test]
-fn stats_reset_clears_reopenable_ownership_without_removing_the_calendar() {
+fn stats_reset_does_not_make_an_unpublished_calendar_row_prunable() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -389,12 +443,21 @@ fn stats_reset_clears_reopenable_ownership_without_removing_the_calendar() {
         .unwrap();
     assert_writeback_stats(&runtime, 2, 1, 1, 1, 1, 1);
     runtime.prune_writeback_calendar_before(44);
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_eq!(
+        runtime
+            .writeback_reservation(4)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(43)
+    );
+    assert_eq!(
+        runtime.live_writeback_counted_sequences,
+        BTreeSet::from([4])
+    );
     assert_writeback_stats(&runtime, 2, 1, 1, 1, 1, 1);
 }
 
 #[test]
-fn partial_prune_finalizes_only_the_admitted_prefix_of_shared_live_ownership() {
+fn partial_prune_retains_the_full_unpublished_shared_live_ownership() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -413,20 +476,28 @@ fn partial_prune_finalizes_only_the_admitted_prefix_of_shared_live_ownership() {
             .iter()
             .map(|reservation| reservation.sequence())
             .collect::<Vec<_>>(),
-        vec![11, 12]
+        vec![10, 11, 12]
     );
-    assert_partial_writeback_ownership(&runtime, 1, 1, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[10, 11, 12]);
+    assert_partial_writeback_ownership(&runtime, 0, 0, 0);
     assert_writeback_stats(&runtime, 3, 3, 2, 3, 3, 2);
 
     runtime.discard_future_writeback_from_sequence(11, 10);
 
-    assert!(runtime.writeback_reservations().is_empty());
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_eq!(
+        runtime
+            .writeback_reservations()
+            .iter()
+            .map(|reservation| reservation.sequence())
+            .collect::<Vec<_>>(),
+        vec![10]
+    );
+    assert_unpublished_live_writeback_rows(&runtime, &[10]);
     assert_writeback_stats(&runtime, 1, 1, 0, 0, 1, 0);
 }
 
 #[test]
-fn sequential_prune_recombines_ready_rows_from_the_same_raw_tick() {
+fn sequential_prune_keeps_ready_rows_from_the_same_raw_tick_live() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -438,15 +509,15 @@ fn sequential_prune_recombines_ready_rows_from_the_same_raw_tick() {
         .unwrap();
 
     runtime.prune_writeback_calendar_before(11);
-    assert_partial_writeback_ownership(&runtime, 1, 1, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[40, 41, 42]);
     runtime.prune_writeback_calendar_before(13);
 
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[40, 41, 42]);
     assert_writeback_stats(&runtime, 3, 3, 2, 3, 3, 2);
 }
 
 #[test]
-fn sequential_prune_recombines_deferred_depth_from_the_same_cycle() {
+fn sequential_prune_keeps_deferred_depth_from_the_same_cycle_live() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -458,18 +529,18 @@ fn sequential_prune_recombines_deferred_depth_from_the_same_cycle() {
         .unwrap();
 
     runtime.prune_writeback_calendar_before(10);
-    assert_partial_writeback_ownership(&runtime, 1, 1, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[50, 51, 52]);
     runtime.prune_writeback_calendar_before(11);
-    assert_partial_writeback_ownership(&runtime, 2, 1, 1);
+    assert_unpublished_live_writeback_rows(&runtime, &[50, 51, 52]);
     runtime.prune_writeback_calendar_before(12);
 
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[50, 51, 52]);
     assert_eq!(runtime.stats().writeback_port_max_deferred_rows(), 2);
     assert_writeback_stats(&runtime, 3, 3, 2, 3, 3, 2);
 }
 
 #[test]
-fn partial_prune_preserves_a_finalized_cycle_shared_only_by_live_planning() {
+fn partial_prune_retains_all_unpublished_cycles_for_live_planning() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -488,14 +559,15 @@ fn partial_prune_preserves_a_finalized_cycle_shared_only_by_live_planning() {
             .iter()
             .map(|reservation| reservation.sequence())
             .collect::<Vec<_>>(),
-        vec![22]
+        vec![20, 21, 22]
     );
-    assert_partial_writeback_ownership(&runtime, 1, 0, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[20, 21, 22]);
+    assert_partial_writeback_ownership(&runtime, 0, 0, 0);
     assert_writeback_stats(&runtime, 3, 3, 2, 2, 2, 1);
 
     runtime.discard_future_writeback_sequence(22, 10);
 
-    assert_live_writeback_ownership(&runtime, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[20, 21]);
     assert_writeback_stats(&runtime, 2, 2, 1, 1, 2, 1);
 }
 
@@ -548,7 +620,7 @@ fn drained_restore_clears_a_prior_writeback_closure_watermark() {
 }
 
 #[test]
-fn partial_maxima_ownership_is_unchanged_by_transaction_error() {
+fn live_maxima_ownership_is_unchanged_by_transaction_error_after_prune() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
     runtime
@@ -559,7 +631,8 @@ fn partial_maxima_ownership_is_unchanged_by_transaction_error() {
         ])
         .unwrap();
     runtime.prune_writeback_calendar_before(11);
-    assert_partial_writeback_ownership(&runtime, 1, 1, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[60, 61, 62]);
+    assert_partial_writeback_ownership(&runtime, 0, 0, 0);
     let before = runtime.clone();
 
     let error = runtime
@@ -575,7 +648,24 @@ fn partial_maxima_ownership_is_unchanged_by_transaction_error() {
         }
     );
     assert_eq!(runtime, before);
-    assert_partial_writeback_ownership(&runtime, 1, 1, 0);
+    assert_unpublished_live_writeback_rows(&runtime, &[60, 61, 62]);
+    assert_partial_writeback_ownership(&runtime, 0, 0, 0);
+}
+
+fn assert_unpublished_live_writeback_rows(runtime: &O3RuntimeState, sequences: &[u64]) {
+    assert_eq!(
+        runtime
+            .writeback_reservations()
+            .iter()
+            .map(|reservation| reservation.sequence())
+            .collect::<Vec<_>>(),
+        sequences
+    );
+    assert_eq!(
+        runtime.live_writeback_counted_sequences,
+        sequences.iter().copied().collect()
+    );
+    assert!(runtime.published_writeback_sequences.is_empty());
 }
 
 fn assert_live_writeback_ownership(runtime: &O3RuntimeState, live_rows: usize) {

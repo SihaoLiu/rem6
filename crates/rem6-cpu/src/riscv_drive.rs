@@ -53,8 +53,9 @@ impl RiscvCore {
         }
 
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
-        let inherited_o3_retirement =
-            !detailed_o3_fetch && self.o3_retirement_suppresses_normal_pipeline();
+        let inherited_o3_retirement = !detailed_o3_fetch
+            && self.o3_retirement_suppresses_normal_pipeline()
+            && !self.live_retire_gate_awaits_rebind();
         let pending_o3_live_data_access_retirement =
             self.has_pending_o3_live_data_access_retirement();
         if !detailed_o3_fetch && pending_o3_live_data_access_retirement {

@@ -63,11 +63,16 @@ impl RiscvO3WritebackWakeState {
     }
 
     pub(crate) fn requested_tick(&mut self, now: Tick) -> Option<Tick> {
+        self.requested_tick_with_current(now, false)
+    }
+
+    fn requested_tick_with_current(&mut self, now: Tick, allow_current: bool) -> Option<Tick> {
         self.prune(now);
         if self.scheduled.is_some() {
             return None;
         }
-        self.desired_tick.filter(|tick| *tick > now)
+        self.desired_tick
+            .filter(|tick| *tick > now || (allow_current && *tick == now))
     }
 
     pub(crate) fn mark_scheduled(
@@ -142,11 +147,28 @@ impl RiscvCore {
     pub fn requested_o3_writeback_wake_tick(&self, now: Tick) -> Option<Tick> {
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
-        let desired = state
+        let memory_result = state
             .o3_runtime
             .earliest_unpublished_memory_result_writeback_tick();
+        let live_gate_ready_tick = state.live_retire_gate.pending_ready_tick();
+        let live_gate_wakes = state.live_retire_gate.owned_scheduler_wakes();
+        let restored_live_gate = live_gate_wakes
+            .is_empty()
+            .then_some(live_gate_ready_tick)
+            .flatten();
+        let desired = match (memory_result, restored_live_gate) {
+            (Some(memory_result), Some(live_gate)) => Some(memory_result.min(live_gate)),
+            (Some(tick), None) | (None, Some(tick)) => Some(tick),
+            (None, None) => None,
+        };
         state.o3_writeback_wake.set_desired_tick(desired, now);
-        state.o3_writeback_wake.requested_tick(now)
+        if restored_live_gate == Some(now) {
+            state
+                .o3_writeback_wake
+                .requested_tick_with_current(now, true)
+        } else {
+            state.o3_writeback_wake.requested_tick(now)
+        }
     }
 
     pub fn mark_o3_writeback_wake_scheduled(
@@ -220,8 +242,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
-        O3RuntimeError, RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
+        o3_runtime::O3LiveRetireGateCheckpointPayload, CpuCore, CpuFetchConfig, CpuFetchEvent,
+        CpuFetchRecord, CpuId, CpuResetState, O3RuntimeError, RiscvCpuExecutionEvent,
+        RiscvDataAccessEventKind,
     };
 
     #[test]
@@ -372,6 +395,44 @@ mod tests {
         drop(state);
         assert!(core.o3_runtime_writeback_reservations().is_empty());
         assert!(core.data_access_lifecycle_is_quiescent());
+    }
+
+    #[test]
+    fn restored_live_retire_gate_without_owned_scheduler_wake_requests_gate_tick() {
+        let core = core();
+        let request = memory_request(31);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .live_retire_gate
+                .restore_checkpoint(Some(O3LiveRetireGateCheckpointPayload::new(request, 31)));
+        }
+        assert!(core.checkpoint_owned_live_retire_gate_wakes().is_empty());
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(28), Some(31));
+        let (scheduler, event) = wake(31);
+        core.mark_o3_writeback_wake_scheduled(scheduler, event);
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(29), None);
+    }
+
+    #[test]
+    fn restored_live_retire_gate_due_now_requests_current_tick() {
+        let core = core();
+        let request = memory_request(31);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .live_retire_gate
+                .restore_checkpoint(Some(O3LiveRetireGateCheckpointPayload::new(request, 31)));
+        }
+        assert!(core.checkpoint_owned_live_retire_gate_wakes().is_empty());
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(31), Some(31));
+        let (scheduler, event) = wake(31);
+        core.mark_o3_writeback_wake_scheduled(scheduler, event);
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(31), None);
     }
 
     fn core() -> RiscvCore {

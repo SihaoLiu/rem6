@@ -2,6 +2,8 @@ use std::process::Command;
 
 use crate::support::*;
 
+#[path = "riscv_sbi/data_access.rs"]
+mod data_access;
 #[path = "riscv_sbi/hsm_status.rs"]
 mod hsm_status;
 #[path = "riscv_sbi/reset.rs"]

@@ -63,10 +63,10 @@ impl O3RuntimeState {
 
     pub(crate) fn scalar_memory_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
         if !self.live_data_access_younger_sequences.is_empty()
-            || self.live_data_accesses.iter().any(|live| {
-                live.outcome != O3LiveDataAccessOutcome::Resident
-                    || live.younger_window_policy == O3DataAccessWindowPolicy::MemoryResult
-            })
+            || self
+                .live_data_accesses
+                .iter()
+                .any(|live| live.outcome != O3LiveDataAccessOutcome::Resident)
         {
             return None;
         }
@@ -87,7 +87,10 @@ impl O3RuntimeState {
                     store_ranges.push(range);
                     stores.push(access.clone());
                 }
-                MemoryAccessKind::Load { .. } => {
+                MemoryAccessKind::Load { .. }
+                    if live.younger_window_policy
+                        == O3DataAccessWindowPolicy::ScalarMemoryPrefix =>
+                {
                     let destination = independent_scalar_load_destination(
                         live.execution.instruction(),
                         load_destinations.iter().copied(),
@@ -130,24 +133,6 @@ impl O3RuntimeState {
                     window.rows,
                     self.scalar_memory_window_limit,
                 )
-            }
-            O3DataAccessWindowPolicy::MemoryResult => {
-                if self.live_data_accesses.len() != 1 {
-                    return None;
-                }
-                let (class, architectural) =
-                    o3_memory_result_destination(tail.execution.execution().memory_access()?)?;
-                let integer_destination = (class == O3RegisterClass::Integer)
-                    .then(|| {
-                        u8::try_from(architectural)
-                            .ok()
-                            .and_then(|index| Register::new(index).ok())
-                    })
-                    .flatten();
-                Some(RiscvScalarIntegerLiveWindow::from_data_access_result(
-                    integer_destination,
-                    self.scalar_memory_window_limit,
-                ))
             }
         }
     }

@@ -1,18 +1,24 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvInstruction};
+use rem6_isa_riscv::{
+    Register, RiscvDecodedInstruction, RiscvExecutionRecord, RiscvInstruction,
+    RiscvVectorMemoryInstruction,
+};
 use rem6_kernel::PartitionedScheduler;
-use rem6_memory::{Address, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    o3_runtime::{O3LiveIssueHeadReservation, O3LiveIssueRequest, O3RuntimeError},
+    o3_runtime::{
+        o3_memory_result_destination, o3_scalar_integer_source_registers,
+        O3LiveIssueHeadReservation, O3LiveIssueRequest, O3RuntimeError,
+    },
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
     riscv_o3_window_policy::{
         RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
         O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
     },
-    CpuFetchEvent, CpuFetchEventKind, RiscvCore, RiscvCoreState, RiscvCpuError,
+    CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, RiscvCore, RiscvCoreState, RiscvCpuError,
     RiscvCpuExecutionEvent,
 };
 
@@ -25,12 +31,17 @@ pub(super) struct RiscvLiveRetireWindowRequest<'a> {
 }
 
 pub(crate) struct RiscvCompletedFetchInstruction {
+    fetch: CpuFetchEvent,
     pc: Address,
     consumed_requests: Vec<MemoryRequestId>,
     decoded: RiscvDecodedInstruction,
 }
 
 impl RiscvCompletedFetchInstruction {
+    pub(crate) const fn fetch(&self) -> &CpuFetchEvent {
+        &self.fetch
+    }
+
     pub(crate) const fn pc(&self) -> Address {
         self.pc
     }
@@ -51,6 +62,103 @@ impl RiscvCompletedFetchInstruction {
 
     pub(crate) const fn decoded(&self) -> RiscvDecodedInstruction {
         self.decoded
+    }
+
+    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
+        &self.consumed_requests
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvPendingTerminalMemoryResult {
+    predecessor_pc: Address,
+    predecessor_instruction: RiscvInstruction,
+    predecessor_consumed_requests: Vec<MemoryRequestId>,
+    execution: RiscvCpuExecutionEvent,
+    consumed_requests: Vec<MemoryRequestId>,
+    decoded: RiscvDecodedInstruction,
+    issue_wake_generation: u64,
+    issue_ready: bool,
+}
+
+impl RiscvPendingTerminalMemoryResult {
+    fn new(
+        predecessor: &RiscvCompletedFetchInstruction,
+        execution: RiscvCpuExecutionEvent,
+        consumed_requests: Vec<MemoryRequestId>,
+        decoded: RiscvDecodedInstruction,
+        issue_wake_generation: u64,
+    ) -> Self {
+        Self {
+            predecessor_pc: predecessor.pc(),
+            predecessor_instruction: predecessor.decoded().instruction(),
+            predecessor_consumed_requests: predecessor.consumed_requests().to_vec(),
+            execution,
+            consumed_requests,
+            decoded,
+            issue_wake_generation,
+            issue_ready: false,
+        }
+    }
+
+    pub(crate) const fn execution(&self) -> &RiscvCpuExecutionEvent {
+        &self.execution
+    }
+
+    pub(crate) fn execution_mut(&mut self) -> &mut RiscvCpuExecutionEvent {
+        &mut self.execution
+    }
+
+    pub(crate) fn owns_fetch(&self, fetch_request: MemoryRequestId) -> bool {
+        self.execution.fetch().request_id() == fetch_request
+    }
+
+    pub(crate) const fn issue_ready(&self) -> bool {
+        self.issue_ready
+    }
+
+    fn mark_issue_ready(&mut self) {
+        self.issue_ready = true;
+    }
+
+    fn owns_issue_wake(&self, fetch: MemoryRequestId, generation: u64) -> bool {
+        self.owns_fetch(fetch) && self.issue_wake_generation == generation
+    }
+
+    fn issue_wake_identity(&self) -> (MemoryRequestId, u64) {
+        (
+            self.execution.fetch().request_id(),
+            self.issue_wake_generation,
+        )
+    }
+
+    pub(crate) fn follows(
+        &self,
+        predecessor: &RiscvCpuExecutionEvent,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.predecessor_pc == predecessor.fetch_pc()
+            && self.predecessor_instruction == predecessor.instruction()
+            && self.predecessor_consumed_requests == consumed_requests
+    }
+
+    fn has_predecessor(
+        &self,
+        request: MemoryRequestId,
+        pc: Address,
+        instruction: RiscvInstruction,
+    ) -> bool {
+        self.predecessor_pc == pc
+            && self.predecessor_instruction == instruction
+            && self.predecessor_consumed_requests.first().copied() == Some(request)
+    }
+
+    pub(crate) const fn decoded(&self) -> RiscvDecodedInstruction {
+        self.decoded
+    }
+
+    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
+        &self.consumed_requests
     }
 }
 
@@ -79,7 +187,7 @@ impl RiscvCore {
         gate_scheduler: &mut Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
         window: RiscvLiveRetireWindowRequest<'_>,
     ) -> Result<Option<u64>, RiscvCpuError> {
-        if detailed_scalar_memory_blocks_execution(state, window.raw)? {
+        if detailed_scalar_memory_blocks_execution(state, &window)? {
             return Ok(None);
         }
         let live_speculative_ready_tick = if state.live_retire_gate.pending_ready_tick().is_none() {
@@ -163,6 +271,13 @@ impl RiscvCore {
                         window.fetch_events,
                     )?;
                 }
+                if let Some(identity) =
+                    provision_terminal_memory_result_behind_live_fu(state, &window)?
+                {
+                    self.schedule_terminal_memory_result_issue_wake(
+                        state, scheduler, *kind, now, identity,
+                    )?;
+                }
                 Ok(None)
             }
             RiscvLiveRetireGateDecision::Schedule {
@@ -198,8 +313,220 @@ impl RiscvCore {
                         window.fetch_events,
                     )?;
                 }
+                if let Some(identity) =
+                    provision_terminal_memory_result_behind_live_fu(state, &window)?
+                {
+                    self.schedule_terminal_memory_result_issue_wake(
+                        state, scheduler, *kind, now, identity,
+                    )?;
+                }
                 Ok(None)
             }
+        }
+    }
+
+    fn schedule_terminal_memory_result_issue_wake(
+        &self,
+        state: &mut RiscvCoreState,
+        scheduler: &mut PartitionedScheduler,
+        kind: RiscvLiveRetireGateWakeKind,
+        now: u64,
+        identity: (MemoryRequestId, u64),
+    ) -> Result<(), RiscvCpuError> {
+        let Some(issue_tick) = now.checked_add(2) else {
+            rollback_terminal_memory_result_provision(state, identity);
+            return Err(RiscvCpuError::Scheduler(
+                rem6_kernel::SchedulerError::TickOverflow { now, delay: 2 },
+            ));
+        };
+        let core = self.clone();
+        let scheduled = match kind {
+            RiscvLiveRetireGateWakeKind::Serial => scheduler
+                .schedule_at(self.partition(), issue_tick, move |_| {
+                    core.mark_terminal_memory_result_issue_ready(identity);
+                })
+                .map(|_| ()),
+            RiscvLiveRetireGateWakeKind::Parallel => scheduler
+                .schedule_parallel_at(self.partition(), issue_tick, move |_| {
+                    core.mark_terminal_memory_result_issue_ready(identity);
+                })
+                .map(|_| ()),
+        };
+        if let Err(error) = scheduled {
+            rollback_terminal_memory_result_provision(state, identity);
+            return Err(RiscvCpuError::Scheduler(error));
+        }
+        Ok(())
+    }
+
+    fn mark_terminal_memory_result_issue_ready(&self, identity: (MemoryRequestId, u64)) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        if let Some(pending) = state
+            .pending_terminal_memory_result
+            .as_mut()
+            .filter(|pending| pending.owns_issue_wake(identity.0, identity.1))
+        {
+            pending.mark_issue_ready();
+        }
+    }
+}
+
+fn rollback_terminal_memory_result_provision(
+    state: &mut RiscvCoreState,
+    identity: (MemoryRequestId, u64),
+) {
+    if !state
+        .pending_terminal_memory_result
+        .as_ref()
+        .is_some_and(|pending| pending.owns_issue_wake(identity.0, identity.1))
+    {
+        return;
+    }
+    state.pending_terminal_memory_result = None;
+    assert!(
+        state
+            .o3_runtime
+            .abort_deferred_live_data_access_execution(identity.0),
+        "terminal result wake rollback owns deferred data access"
+    );
+}
+
+fn provision_terminal_memory_result_behind_live_fu(
+    state: &mut RiscvCoreState,
+    window: &RiscvLiveRetireWindowRequest<'_>,
+) -> Result<Option<(MemoryRequestId, u64)>, RiscvCpuError> {
+    if state.pending_terminal_memory_result.is_some()
+        || state.data_translation.is_some()
+        || state.pending_trap.is_some()
+        || state.hart.machine_interrupt_enable() != 0
+        || state.live_retire_gate.pending_ready_tick().is_none()
+        || !state.live_retire_gate.detailed_policy_enabled()
+        || !state.o3_runtime.has_live_retirement_authority()
+        || state.o3_runtime.has_live_data_access()
+        || !state.outstanding_data.is_empty()
+        || !state.pending_data_translations.is_empty()
+        || !state.ready_translated_data.is_empty()
+    {
+        return Ok(None);
+    }
+    let decoded = RiscvInstruction::decode_with_length(window.raw).map_err(RiscvCpuError::Isa)?;
+    if crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction()) == 0 {
+        return Ok(None);
+    }
+    let Some(head_fetch) = window.fetch_events.iter().find(|event| {
+        event.kind() == CpuFetchEventKind::Completed
+            && event.request_id() == window.request
+            && event.pc() == window.pc
+    }) else {
+        return Ok(None);
+    };
+    let Some(head) = completed_fetch_instruction_starting_with(
+        &state.executed_fetches,
+        window.fetch_events,
+        head_fetch,
+    ) else {
+        return Ok(None);
+    };
+    if head.decoded() != decoded {
+        return Ok(None);
+    }
+    let Some((_, head_execution)) = live_speculative_fu(state, window)? else {
+        return Ok(None);
+    };
+    let successor_pc = Address::new(
+        head.pc()
+            .get()
+            .wrapping_add(u64::from(head.decoded().bytes())),
+    );
+    let Some(successor) = completed_fetch_instruction_at(
+        state,
+        window.fetch_events,
+        head.last_consumed_request(),
+        successor_pc,
+    ) else {
+        return Ok(None);
+    };
+    if crate::riscv_fu_latency::riscv_pipeline_fu_writes_vector_state(head.decoded().instruction())
+        && matches!(
+            successor.decoded().instruction(),
+            RiscvInstruction::VectorMemory(_)
+        )
+    {
+        return Ok(None);
+    }
+    if head_execution.register_writes().iter().any(|write| {
+        !write.register().is_zero()
+            && terminal_memory_result_reads_register(
+                successor.decoded().instruction(),
+                write.register(),
+            )
+    }) {
+        return Ok(None);
+    }
+
+    let mut hart = state.hart.clone();
+    hart.set_pc(successor.pc().get());
+    let execution = hart
+        .execute_decoded(successor.decoded())
+        .map_err(RiscvCpuError::Isa)?;
+    let sequential_next_pc = successor
+        .pc()
+        .get()
+        .wrapping_add(u64::from(successor.decoded().bytes()));
+    if execution.trap().is_some()
+        || execution.system_event().is_some()
+        || execution.next_pc() != sequential_next_pc
+        || execution
+            .memory_access()
+            .and_then(o3_memory_result_destination)
+            .is_none()
+    {
+        return Ok(None);
+    }
+    let event = RiscvCpuExecutionEvent::new(
+        successor.fetch().clone(),
+        successor.decoded().instruction(),
+        execution,
+    );
+    if !state.o3_runtime.defer_live_data_access_execution(&event) {
+        return Ok(None);
+    }
+    let generation = state.next_terminal_memory_result_issue_wake_generation;
+    state.next_terminal_memory_result_issue_wake_generation = generation.wrapping_add(1);
+    state.pending_terminal_memory_result = Some(RiscvPendingTerminalMemoryResult::new(
+        &head,
+        event,
+        successor.consumed_requests().to_vec(),
+        successor.decoded(),
+        generation,
+    ));
+    Ok(state
+        .pending_terminal_memory_result
+        .as_ref()
+        .map(RiscvPendingTerminalMemoryResult::issue_wake_identity))
+}
+
+fn terminal_memory_result_reads_register(
+    instruction: RiscvInstruction,
+    register: Register,
+) -> bool {
+    if o3_scalar_integer_source_registers(&instruction).contains(&register) {
+        return true;
+    }
+    let RiscvInstruction::VectorMemory(memory) = instruction else {
+        return false;
+    };
+    match memory {
+        RiscvVectorMemoryInstruction::LoadUnitStride { rs1, .. }
+        | RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly { rs1, .. }
+        | RiscvVectorMemoryInstruction::LoadSegmentUnitStride { rs1, .. }
+        | RiscvVectorMemoryInstruction::LoadIndexedUnordered { rs1, .. }
+        | RiscvVectorMemoryInstruction::StoreUnitStride { rs1, .. }
+        | RiscvVectorMemoryInstruction::StoreSegmentUnitStride { rs1, .. }
+        | RiscvVectorMemoryInstruction::StoreIndexedUnordered { rs1, .. } => rs1 == register,
+        RiscvVectorMemoryInstruction::LoadStrided { rs1, rs2, .. }
+        | RiscvVectorMemoryInstruction::StoreStrided { rs1, rs2, .. } => {
+            rs1 == register || rs2 == register
         }
     }
 }
@@ -237,6 +564,13 @@ fn live_speculative_fu_ready_tick(
     state: &RiscvCoreState,
     window: &RiscvLiveRetireWindowRequest<'_>,
 ) -> Result<Option<u64>, RiscvCpuError> {
+    Ok(live_speculative_fu(state, window)?.map(|(ready_tick, _)| ready_tick))
+}
+
+fn live_speculative_fu(
+    state: &RiscvCoreState,
+    window: &RiscvLiveRetireWindowRequest<'_>,
+) -> Result<Option<(u64, RiscvExecutionRecord)>, RiscvCpuError> {
     let decoded = RiscvInstruction::decode_with_length(window.raw).map_err(RiscvCpuError::Isa)?;
     if crate::riscv_fu_latency::riscv_execute_wait_cycles(decoded.instruction()) == 0 {
         return Ok(None);
@@ -258,23 +592,34 @@ fn live_speculative_fu_ready_tick(
     ) else {
         return Ok(None);
     };
-    Ok(state
+    let Some(ready_tick) = state
         .o3_runtime
-        .live_speculative_execution_ready_tick(&instruction.consumed_requests, &execution))
+        .live_speculative_execution_ready_tick(&instruction.consumed_requests, &execution)
+    else {
+        return Ok(None);
+    };
+    Ok(Some((ready_tick, execution)))
 }
 
 fn detailed_scalar_memory_blocks_execution(
     state: &RiscvCoreState,
-    raw: u32,
+    window: &RiscvLiveRetireWindowRequest<'_>,
 ) -> Result<bool, RiscvCpuError> {
     if !state.live_retire_gate.detailed_policy_enabled()
         || !state.o3_runtime.has_pending_live_data_access_retirement()
     {
         return Ok(false);
     }
-    let instruction = RiscvInstruction::decode_with_length(raw)
+    let instruction = RiscvInstruction::decode_with_length(window.raw)
         .map_err(RiscvCpuError::Isa)?
         .instruction();
+    if state
+        .pending_terminal_memory_result
+        .as_ref()
+        .is_some_and(|pending| pending.has_predecessor(window.request, window.pc, instruction))
+    {
+        return Ok(false);
+    }
     Ok(!state.can_overlap_detailed_scalar_memory_instruction(instruction))
 }
 
@@ -637,8 +982,10 @@ pub(crate) fn completed_fetch_instruction_starting_with(
     let pc = event.pc();
     let data = event.data()?;
     let mut consumed_requests = vec![event.request_id()];
-    let raw = match data {
-        [low, high] if low & 0x3 != 0x3 => u32::from(u16::from_le_bytes([*low, *high])),
+    let (raw, fetch) = match data {
+        [low, high] if low & 0x3 != 0x3 => {
+            (u32::from(u16::from_le_bytes([*low, *high])), event.clone())
+        }
         [low, high] => {
             let suffix_pc = Address::new(pc.get().checked_add(2)?);
             let suffix = oldest_completed_fetch_at(
@@ -651,13 +998,27 @@ pub(crate) fn completed_fetch_instruction_starting_with(
                 return None;
             };
             consumed_requests.push(suffix.request_id());
-            u32::from_le_bytes([*low, *high, *suffix_low, *suffix_high])
+            let raw = u32::from_le_bytes([*low, *high, *suffix_low, *suffix_high]);
+            let fetch = CpuFetchEvent::completed(
+                CpuFetchRecord::new(
+                    event.tick(),
+                    event.partition(),
+                    event.route(),
+                    event.endpoint().clone(),
+                    event.request_id(),
+                    event.pc(),
+                    AccessSize::new(4).expect("RISC-V word fetch width is nonzero"),
+                ),
+                raw.to_le_bytes().to_vec(),
+            );
+            (raw, fetch)
         }
-        [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
+        [a, b, c, d] => (u32::from_le_bytes([*a, *b, *c, *d]), event.clone()),
         _ => return None,
     };
     let decoded = RiscvInstruction::decode_with_length(raw).ok()?;
     Some(RiscvCompletedFetchInstruction {
+        fetch,
         pc,
         consumed_requests,
         decoded,

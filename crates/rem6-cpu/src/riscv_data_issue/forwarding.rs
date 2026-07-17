@@ -23,10 +23,7 @@ impl RiscvCore {
         if state.data_translation.is_some() {
             return None;
         }
-        let execution = state
-            .events
-            .iter()
-            .find(|event| event.fetch().request_id() == fetch_request)?;
+        let execution = state.data_access_execution(fetch_request)?;
         state
             .o3_runtime
             .scalar_load_forwarding_plan(execution.instruction(), access)

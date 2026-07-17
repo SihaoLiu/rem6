@@ -32,7 +32,6 @@ pub(super) struct O3LiveDataAccess {
 pub(crate) enum O3DataAccessWindowPolicy {
     None,
     ScalarMemoryPrefix,
-    MemoryResult,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,12 +102,11 @@ fn live_data_access_younger_window_policy_matches(
     policy: O3DataAccessWindowPolicy,
 ) -> bool {
     match policy {
-        O3DataAccessWindowPolicy::None => o3_memory_result_destination(access).is_none(),
+        O3DataAccessWindowPolicy::None => true,
         O3DataAccessWindowPolicy::ScalarMemoryPrefix => matches!(
             access,
             MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
         ),
-        O3DataAccessWindowPolicy::MemoryResult => o3_memory_result_destination(access).is_some(),
     }
 }
 
@@ -286,6 +284,21 @@ impl O3RuntimeState {
         true
     }
 
+    pub(crate) fn replace_live_data_access_execution(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> bool {
+        let Some(live) = self
+            .live_data_accesses
+            .iter_mut()
+            .find(|live| live.fetch_request == execution.fetch().request_id() && !live.event_taken)
+        else {
+            return false;
+        };
+        live.execution = execution.clone();
+        true
+    }
+
     pub(crate) fn defer_live_data_access_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -353,8 +366,8 @@ impl O3RuntimeState {
         {
             return false;
         }
-        let scalar_window = is_scalar_window_access(access)
-            && younger_window_policy != O3DataAccessWindowPolicy::MemoryResult;
+        let scalar_window = matches!(access, MemoryAccessKind::Store { .. })
+            || younger_window_policy == O3DataAccessWindowPolicy::ScalarMemoryPrefix;
         if scalar_window && !self.has_scalar_memory_window_capacity() {
             return false;
         }
@@ -435,9 +448,6 @@ impl O3RuntimeState {
         let younger_window_policy = match access {
             MemoryAccessKind::Load { rd, .. } if !rd.is_zero() => {
                 O3DataAccessWindowPolicy::ScalarMemoryPrefix
-            }
-            _ if o3_memory_result_destination(access).is_some() => {
-                O3DataAccessWindowPolicy::MemoryResult
             }
             _ => O3DataAccessWindowPolicy::None,
         };
@@ -828,7 +838,35 @@ impl crate::RiscvCore {
         self.with_o3_runtime(|runtime| runtime.ready_live_data_access_event_kind())
     }
 
+    #[deprecated(note = "use o3_live_data_access_lifecycle_is_quiescent")]
+    pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool {
+        self.o3_live_data_access_lifecycle_is_quiescent()
+    }
+
+    #[deprecated(note = "use has_pending_o3_live_data_access_retirement")]
+    pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool {
+        self.has_pending_o3_live_data_access_retirement()
+    }
+
+    #[deprecated(note = "use pending_o3_live_data_access_retirement_count")]
+    pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize {
+        self.pending_o3_live_data_access_retirement_count()
+    }
+
+    #[deprecated(note = "use owns_pending_o3_live_data_access_retirement")]
+    pub fn owns_pending_o3_scalar_memory_retirement(&self, fetch_request: MemoryRequestId) -> bool {
+        self.owns_pending_o3_live_data_access_retirement(fetch_request)
+    }
+
+    #[deprecated(note = "use ready_o3_live_data_access_event_kind")]
+    pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
+        self.ready_o3_live_data_access_event_kind()
+    }
+
     pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
-        self.with_o3_runtime(O3RuntimeState::clear_deferred_live_data_access_execution)
+        let mut state = self.state.lock().expect("riscv core lock");
+        let cleared = state.o3_runtime.clear_deferred_live_data_access_execution();
+        state.pending_terminal_memory_result = None;
+        cleared
     }
 }

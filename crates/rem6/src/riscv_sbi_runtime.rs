@@ -1,7 +1,7 @@
 use rem6_cpu::{CpuId, RiscvCore};
 use rem6_isa_riscv::RiscvMachineTrapCsr;
 use rem6_memory::{Address, CacheLineLayout};
-use rem6_system::RiscvSystemRunDriver;
+use rem6_system::{configure_riscv_unrestricted_pmp, RiscvSystemRunDriver};
 
 use crate::config::Rem6RunConfig;
 use crate::data_cache_runtime::{write_guest_memory_with_cache_invalidation, CliCacheHierarchy};
@@ -11,6 +11,7 @@ use crate::riscv_guest_output::{
     Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
 };
 use crate::runtime_memory::CliMemoryRuntime;
+use crate::{execute_error, Rem6CliError};
 
 const SUPERVISOR_SOFTWARE_INTERRUPT: u64 = 1;
 const SUPERVISOR_TIMER_INTERRUPT: u64 = 5;
@@ -36,10 +37,11 @@ pub(crate) fn configure_cli_riscv_sbi_core(
     core_index: u32,
     core: &RiscvCore,
     start_address: Address,
-) {
+) -> Result<(), Rem6CliError> {
     if !config.riscv_sbi() {
-        return;
+        return Ok(());
     }
+    configure_riscv_unrestricted_pmp(core).map_err(execute_error)?;
     let delegated_interrupts =
         core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg) | SBI_SUPERVISOR_INTERRUPT_DELEGATION;
     core.set_machine_trap_csr(RiscvMachineTrapCsr::Mideleg, delegated_interrupts);
@@ -48,6 +50,7 @@ pub(crate) fn configure_cli_riscv_sbi_core(
     } else {
         core.set_hart_stopped();
     }
+    Ok(())
 }
 
 pub(crate) fn attach_cli_riscv_sbi_firmware(

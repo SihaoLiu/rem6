@@ -1,8 +1,10 @@
 use super::*;
 use crate::{
-    AccessSize, AgentId, CacheLineLayout, CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord,
-    CpuResetState, MemoryRequestId, MemoryRouteId, TransportEndpointId,
+    o3_runtime::O3LiveRetireGateCheckpointPayload, AccessSize, AgentId, CacheLineLayout, CpuCore,
+    CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState, MemoryRequestId, MemoryRouteId,
+    TransportEndpointId,
 };
+use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::PartitionId;
 use rem6_memory::{Address, MemoryRequest};
 use rem6_transport::{MemoryTrace, ParallelMemoryTransaction, TargetOutcome, TransportError};
@@ -64,6 +66,46 @@ fn unknown_route_transaction() -> ParallelMemoryTransaction {
         |_delivery, _context| TargetOutcome::NoResponse,
         |_delivery| {},
     )
+}
+
+#[test]
+fn restored_live_gate_awaiting_rebind_admits_only_the_head_replay() {
+    let core = core_with_completed_fetch();
+    let request = MemoryRequestId::new(AgentId::new(7), 42);
+    let div = RiscvInstruction::Div {
+        rd: Register::new(3).unwrap(),
+        rs1: Register::new(1).unwrap(),
+        rs2: Register::new(2).unwrap(),
+    };
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state
+            .o3_runtime
+            .stage_live_retire_window(Address::new(0x8000), div, 31, None)
+            .expect("restored fixed-FU head stages");
+        state
+            .live_retire_gate
+            .restore_checkpoint(Some(O3LiveRetireGateCheckpointPayload::new(request, 31)));
+    }
+
+    assert!(core.o3_retirement_suppresses_normal_pipeline());
+    assert!(fetch_before_pipeline_is_admitted(&core));
+
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state
+                .live_retire_gate
+                .before_retire(request, 0x0220_c1b3, 30, 30)
+                .unwrap(),
+            crate::riscv_live_retire_gate::RiscvLiveRetireGateDecision::Schedule {
+                ready_tick: 31,
+                created_wait_ticks: None,
+            }
+        );
+    }
+
+    assert!(!fetch_before_pipeline_is_admitted(&core));
 }
 
 #[test]

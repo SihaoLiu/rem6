@@ -45,7 +45,7 @@ fn rem6_run_m5_reset_between_o3_lsq_request_and_response_keeps_latency() {
             reset_tick: 199,
             response_tick: 216,
             response_latency_ticks: 26,
-            dump_tick: 244,
+            dump_tick: 246,
         },
         CrossResetMemoryCase {
             name: "cache-fabric-dram",
@@ -55,7 +55,7 @@ fn rem6_run_m5_reset_between_o3_lsq_request_and_response_keeps_latency() {
             reset_tick: 207,
             response_tick: 232,
             response_latency_ticks: 28,
-            dump_tick: 262,
+            dump_tick: 264,
         },
     ] {
         assert_cross_reset_atomic_response(case);
@@ -169,7 +169,7 @@ fn assert_cross_reset_atomic_response(case: CrossResetMemoryCase) {
         ),
         format!("system.cpu.lsq0.operation.{}", case.operation.camel_case()),
     ] {
-        assert_stats_dump_sample(dump, &path, "counter", "Count", 0, "resettable");
+        assert_stats_dump_sample(dump, &path, "counter", "Count", 1, "resettable");
     }
     for path in [
         "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_samples".to_owned(),
@@ -238,8 +238,8 @@ fn assert_cross_reset_atomic_response(case: CrossResetMemoryCase) {
     ] {
         assert_eq!(
             json.pointer(&pointer).and_then(Value::as_u64),
-            Some(0),
-            "{} should not resurrect the pre-reset retired operation at {pointer}: {json}",
+            Some(1),
+            "{} should count the operation that retires after reset at {pointer}: {json}",
             case.name
         );
     }
@@ -254,8 +254,8 @@ fn assert_cross_reset_atomic_response(case: CrossResetMemoryCase) {
         })
         .count();
     assert_eq!(
-        raw_atomic_events, 0,
-        "{} should not reintroduce the pre-reset raw atomic event: {json}",
+        raw_atomic_events, 1,
+        "{} should expose one post-reset terminal result event: {json}",
         case.name
     );
 }

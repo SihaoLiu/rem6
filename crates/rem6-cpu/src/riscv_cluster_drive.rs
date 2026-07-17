@@ -426,6 +426,7 @@ pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {
 fn inherited_o3_retirement_suppresses_pipeline(core: &RiscvCore) -> bool {
     !core.detailed_o3_window_prefers_fetch_ahead()
         && core.o3_retirement_suppresses_normal_pipeline()
+        && !core.live_retire_gate_awaits_rebind()
 }
 
 pub(crate) fn push_prepared_pipeline_cycle_drive_event(

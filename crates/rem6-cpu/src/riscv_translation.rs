@@ -593,26 +593,36 @@ impl RiscvCoreState {
     pub(super) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
-        let candidate = self.events.iter().find_map(|event| {
-            let fetch_request = event.fetch().request_id();
-            if self.issued_data_for_fetches.contains(&fetch_request) {
-                return None;
-            }
-            if self
-                .pending_data_translations
-                .values()
-                .any(|pending| pending.fetch_request() == fetch_request)
-            {
-                return None;
-            }
-            if self.ready_translated_data.contains_key(&fetch_request) {
-                return None;
-            }
-            event
-                .execution()
-                .memory_access()
-                .map(|access| (event, fetch_request, access.clone()))
-        });
+        let pending_terminal = self
+            .pending_terminal_memory_result
+            .as_ref()
+            .filter(|pending| pending.issue_ready())
+            .filter(|_| !crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&self.hart))
+            .map(|pending| pending.execution());
+        let candidate = self
+            .events
+            .iter()
+            .chain(pending_terminal)
+            .find_map(|event| {
+                let fetch_request = event.fetch().request_id();
+                if self.issued_data_for_fetches.contains(&fetch_request) {
+                    return None;
+                }
+                if self
+                    .pending_data_translations
+                    .values()
+                    .any(|pending| pending.fetch_request() == fetch_request)
+                {
+                    return None;
+                }
+                if self.ready_translated_data.contains_key(&fetch_request) {
+                    return None;
+                }
+                event
+                    .execution()
+                    .memory_access()
+                    .map(|access| (event, fetch_request, access.clone()))
+            });
         let (event, fetch_request, access) = candidate?;
         if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_data_access() {
             return Some((fetch_request, access));
@@ -1168,6 +1178,8 @@ impl RiscvCore {
                 issue.memory_request()?,
             )?;
 
+            let request_id = issue.request_id;
+            let responder_core = self.clone();
             let core = self.clone();
             let event = transport
                 .submit(
@@ -1175,7 +1187,13 @@ impl RiscvCore {
                     issue.memory_route(),
                     request,
                     trace,
-                    responder,
+                    move |delivery, context| {
+                        if responder_core.owns_outstanding_data_request(request_id) {
+                            responder(delivery, context)
+                        } else {
+                            TargetOutcome::NoResponse
+                        }
+                    },
                     move |delivery| core.record_data_response(delivery),
                 )
                 .map_err(RiscvCpuError::Transport)?;
@@ -1262,9 +1280,19 @@ impl RiscvCore {
             let request_id = issue.request_id;
             let event = scheduler
                 .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
-                    bus.submit_parallel(context, request, move |completion| {
-                        core.record_mmio_completion(request_id, completion);
-                    })
+                    if !core.owns_outstanding_data_request(request_id) {
+                        return;
+                    }
+                    let delivery_core = core.clone();
+                    let completion_core = core.clone();
+                    bus.submit_parallel_guarded(
+                        context,
+                        request,
+                        move |_| delivery_core.owns_outstanding_data_request(request_id),
+                        move |completion| {
+                            completion_core.record_mmio_completion(request_id, completion);
+                        },
+                    )
                     .expect("validated translated parallel MMIO data access submission");
                 })
                 .map_err(RiscvCpuError::Scheduler)?;
@@ -1304,12 +1332,20 @@ impl RiscvCore {
                 issue.size,
                 issue.memory_request()?,
             )?;
+            let request_id = issue.request_id;
+            let responder_core = self.clone();
             let core = self.clone();
             let transaction = ParallelMemoryTransaction::new(
                 issue.memory_route(),
                 request,
                 trace,
-                responder,
+                move |delivery, context| {
+                    if responder_core.owns_outstanding_data_request(request_id) {
+                        responder(delivery, context)
+                    } else {
+                        TargetOutcome::NoResponse
+                    }
+                },
                 move |delivery| core.record_data_response(delivery),
             );
 

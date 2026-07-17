@@ -600,7 +600,7 @@ impl RiscvFetchAheadSpeculation {
     }
 }
 
-fn hart_has_enabled_pending_interrupt(hart: &RiscvHartState) -> bool {
+pub(crate) fn hart_has_enabled_pending_interrupt(hart: &RiscvHartState) -> bool {
     let pending = hart.machine_interrupt_pending() & hart.machine_interrupt_enable();
     if pending == 0 {
         return false;

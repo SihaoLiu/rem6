@@ -457,6 +457,14 @@ impl RiscvCore {
             .is_empty()
     }
 
+    pub(crate) fn owns_outstanding_data_request(&self, request_id: MemoryRequestId) -> bool {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .contains_key(&request_id)
+    }
+
     pub fn has_unissued_data_access(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.has_ready_buffered_o3_store() || state.next_unissued_data_access().is_some()
@@ -851,6 +859,9 @@ struct RiscvCoreState {
     data_translation: Option<CpuTranslationFrontend>,
     executed_fetches: BTreeSet<MemoryRequestId>,
     pending_fetch_prefix: Option<riscv_execute::RiscvPendingFetchPrefix>,
+    pending_terminal_memory_result:
+        Option<riscv_live_retire_window::RiscvPendingTerminalMemoryResult>,
+    next_terminal_memory_result_issue_wake_generation: u64,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
     cached_translated_scalar_load_window_fetches: BTreeSet<MemoryRequestId>,
     pending_data_translations:
@@ -910,6 +921,8 @@ impl RiscvCoreState {
             data_translation: None,
             executed_fetches: BTreeSet::new(),
             pending_fetch_prefix: None,
+            pending_terminal_memory_result: None,
+            next_terminal_memory_result_issue_wake_generation: 0,
             issued_data_for_fetches: BTreeSet::new(),
             cached_translated_scalar_load_window_fetches: BTreeSet::new(),
             pending_data_translations: BTreeMap::new(),
@@ -1016,6 +1029,11 @@ impl RiscvCoreState {
             .iter()
             .filter(|event| event.execution().memory_access().is_some())
             .map(|event| event.fetch().request_id())
+            .chain(
+                self.pending_terminal_memory_result
+                    .as_ref()
+                    .map(|pending| pending.execution().fetch().request_id()),
+            )
             .collect::<Vec<_>>();
         for fetch_request in &stale_data_fetches {
             self.o3_runtime.discard_data_access_outcome(*fetch_request);
@@ -1029,6 +1047,39 @@ impl RiscvCoreState {
         self.ready_translated_data.clear();
         self.outstanding_data.clear();
         self.buffered_o3_stores.clear();
+        self.pending_terminal_memory_result = None;
+    }
+
+    fn data_access_execution(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<&RiscvCpuExecutionEvent> {
+        self.events
+            .iter()
+            .find(|event| event.fetch().request_id() == fetch_request)
+            .or_else(|| {
+                self.pending_terminal_memory_result
+                    .as_ref()
+                    .filter(|pending| pending.owns_fetch(fetch_request))
+                    .map(riscv_live_retire_window::RiscvPendingTerminalMemoryResult::execution)
+            })
+    }
+
+    fn data_access_execution_mut(
+        &mut self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<&mut RiscvCpuExecutionEvent> {
+        if let Some(index) = self
+            .events
+            .iter()
+            .position(|event| event.fetch().request_id() == fetch_request)
+        {
+            return self.events.get_mut(index);
+        }
+        self.pending_terminal_memory_result
+            .as_mut()
+            .filter(|pending| pending.owns_fetch(fetch_request))
+            .map(riscv_live_retire_window::RiscvPendingTerminalMemoryResult::execution_mut)
     }
 
     fn discard_return_address_stack_speculations(&mut self) {

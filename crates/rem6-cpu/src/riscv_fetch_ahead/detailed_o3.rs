@@ -120,15 +120,7 @@ pub(super) fn allows_detailed_data_access_head_fetch_ahead(
     translated: TranslatedMemoryFetchAhead,
 ) -> bool {
     state.live_retire_gate.detailed_policy_enabled()
-        && (scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
-            || data_access_result_fetch_ahead_window(
-                state,
-                fetch_request,
-                instruction,
-                state.o3_runtime.scalar_memory_window_limit(),
-                translated,
-            )
-            .is_some())
+        && scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
 }
 
 pub(super) fn scalar_memory_fetch_ahead_head(
@@ -344,37 +336,11 @@ pub(super) fn additional_fetch_candidate(
         }
         None => {}
     }
-    if let Some(window) = data_access_result_fetch_ahead_window(
-        state,
-        current.last_consumed_request(),
-        current.decoded().instruction(),
-        state.o3_runtime.scalar_memory_window_limit(),
-        translated,
-    ) {
-        return scalar_integer_fu_window_candidate(state, fetch_events, &current, window);
-    }
     let Some(window) = RiscvScalarIntegerLiveWindow::from_fu_head(current.decoded().instruction())
     else {
         return DetailedFetchAheadCandidate::NotApplicable;
     };
     scalar_integer_fu_window_candidate(state, fetch_events, &current, window)
-}
-
-fn data_access_result_fetch_ahead_window(
-    state: &RiscvCoreState,
-    fetch_request: MemoryRequestId,
-    instruction: RiscvInstruction,
-    row_limit: usize,
-    translated: TranslatedMemoryFetchAhead,
-) -> Option<RiscvScalarIntegerLiveWindow> {
-    let integer_destination = data_access_result_fetch_ahead_shape(state, instruction)?;
-    if !data_access_result_translation_probe_allows(state, fetch_request, instruction, translated) {
-        return None;
-    }
-    Some(RiscvScalarIntegerLiveWindow::from_data_access_result(
-        integer_destination,
-        row_limit,
-    ))
 }
 
 fn data_access_result_fetch_ahead_shape(
@@ -497,27 +463,6 @@ fn data_access_result_translation_probe(
             .unwrap_or(DataAccessResultTranslationProbe::Blocked),
         Ok(None) => DataAccessResultTranslationProbe::Unknown,
         Err(_) => DataAccessResultTranslationProbe::Blocked,
-    }
-}
-
-fn data_access_result_translation_probe_allows(
-    state: &RiscvCoreState,
-    fetch_request: MemoryRequestId,
-    instruction: RiscvInstruction,
-    translated: TranslatedMemoryFetchAhead,
-) -> bool {
-    if translated == TranslatedMemoryFetchAhead::Blocked {
-        return false;
-    }
-    let Some(probe) = data_access_result_head_probe(state, fetch_request, instruction) else {
-        return false;
-    };
-    match data_access_result_translation_probe(state, &probe) {
-        DataAccessResultTranslationProbe::Direct => true,
-        DataAccessResultTranslationProbe::Unknown | DataAccessResultTranslationProbe::Ready(_) => {
-            translated != TranslatedMemoryFetchAhead::Disabled
-        }
-        DataAccessResultTranslationProbe::Blocked => false,
     }
 }
 

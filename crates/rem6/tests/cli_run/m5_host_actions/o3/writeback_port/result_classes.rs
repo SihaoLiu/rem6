@@ -1,7 +1,7 @@
 include!("result_classes/support.rs");
 
 const RESULT_MAX_TICK: u64 = 2_000;
-const ROUTE_DELAY_CANDIDATES: [u64; 12] = [1, 2, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];
+const ROUTE_DELAY_CANDIDATES: [u64; 13] = [1, 2, 3, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];
 const ORDINARY_RESOURCES: [&str; 4] = ["cache.data", "transport.data", "fabric", "dram"];
 static RESULT_TEMP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -134,13 +134,17 @@ impl MemoryResultFixture {
         );
         let json: Value = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|error| panic!("{} invalid stdout JSON: {error}", self.class.label()));
-        if max_tick == RESULT_MAX_TICK {
-            assert_eq!(
-                json.pointer("/simulation/status").and_then(Value::as_str),
-                Some("stopped_by_host")
-            );
+        let status = if max_tick == RESULT_MAX_TICK {
             assert_eq!(json_u64(&json, "/simulation/stop_code"), 0);
-        }
+            "stopped_by_host"
+        } else {
+            assert_eq!(json_u64(&json, "/simulation/final_tick"), max_tick);
+            "stopped_at_tick_limit"
+        };
+        assert_eq!(
+            json.pointer("/simulation/status").and_then(Value::as_str),
+            Some(status)
+        );
         json
     }
 }
@@ -158,9 +162,9 @@ impl MemoryResultClass {
 
     const fn pcs(self) -> [&'static str; 3] {
         match self {
-            Self::Vector => ["0x80000030", "0x80000034", "0x80000038"],
-            Self::Mmio => ["0x80000010", "0x80000014", "0x80000018"],
-            _ => ["0x80000018", "0x8000001c", "0x80000020"],
+            Self::Vector => ["0x80000034", "0x80000030", "0x80000038"],
+            Self::Mmio => ["0x80000014", "0x80000010", "0x80000018"],
+            _ => ["0x8000001c", "0x80000018", "0x80000020"],
         }
     }
 
@@ -186,8 +190,8 @@ impl MemoryResultClass {
 
     fn expected_route_delay(self, memory_system: &str) -> u64 {
         match memory_system {
-            "direct" => 9,
-            "cache-fabric-dram" if self != Self::LoadReserved && self != Self::Mmio => 8,
+            "direct" => 4,
+            "cache-fabric-dram" if self != Self::LoadReserved && self != Self::Mmio => 3,
             _ => panic!("unsupported route-delay lock"),
         }
     }
@@ -242,18 +246,19 @@ fn assert_result_collision(fixture: &MemoryResultFixture, json: &Value, writebac
         "{} collision",
         class.label()
     );
-    assert_eq!(event_u64(result, "writeback_tick"), result_raw_ready);
+    assert_eq!(event_u64(div, "writeback_tick"), div_raw_ready);
     assert_eq!(
-        event_u64(div, "writeback_tick"),
-        div_raw_ready + u64::from(writeback_width == 1)
+        event_u64(result, "writeback_tick"),
+        result_raw_ready + u64::from(writeback_width == 1)
     );
-    assert_event_order([result, div, witness], "sequence", true);
-    assert_event_order([result, div, witness], "writeback_tick", false);
-    assert_event_order([result, div, witness], "commit_tick", false);
+    assert_event_order([div, result, witness], "sequence", true);
+    assert_event_order([div, result, witness], "writeback_tick", false);
+    assert_event_order([div, result, witness], "commit_tick", false);
     for event in [result, div, witness] {
         assert!(event_u64(event, "issue_tick") <= event_u64(event, "writeback_tick"));
         assert!(event_u64(event, "writeback_tick") <= event_u64(event, "commit_tick"));
     }
+    assert!(event_u64(div, "issue_tick") < event_u64(result, "issue_tick"));
     assert!(event_u64(witness, "issue_tick") >= event_u64(result, "writeback_tick"));
     assert_writeback_port_totals(json, writeback_width);
     assert_final_witness(fixture, json);
@@ -296,19 +301,14 @@ fn assert_pre_and_post_admission(
 ) -> Value {
     let completed_result = memory_result_event_at_pc(completed, fixture.class.pcs()[0]);
     let raw_ready_tick = event_u64(completed_result, "lsq_data_response_tick") + 1;
-    let admitted_tick = event_u64(completed_result, "writeback_tick");
-    let before = fixture.run(
-        memory_system,
-        writeback_width,
-        route_delay,
-        admitted_tick - 1,
-    );
+    let admitted = event_u64(completed_result, "writeback_tick");
+    let before = fixture.run(memory_system, writeback_width, route_delay, admitted);
     let sequence = event_u64(completed_result, "sequence");
     let row = rob_entry_at_sequence(&before, sequence);
     let pre_admission_destination = event_u64(row, "destination");
     let reservation = writeback_reservation_at_sequence(&before, sequence);
     assert_eq!(event_u64(reservation, "raw_ready_tick"), raw_ready_tick);
-    assert_eq!(event_u64(reservation, "admitted_tick"), admitted_tick);
+    assert_eq!(event_u64(reservation, "admitted_tick"), admitted);
     assert_eq!(row.pointer("/ready").and_then(Value::as_bool), Some(false));
     assert_eq!(
         row.pointer("/live_staged").and_then(Value::as_bool),
@@ -316,12 +316,12 @@ fn assert_pre_and_post_admission(
     );
     assert_pre_admission_witness(fixture, &before);
 
-    let at_admission = fixture.run(memory_system, writeback_width, route_delay, admitted_tick);
+    let at_admission = fixture.run(memory_system, writeback_width, route_delay, admitted + 1);
     assert_admitted_result(
         fixture.class,
         &at_admission,
         sequence,
-        admitted_tick,
+        admitted,
         pre_admission_destination,
     );
     at_admission
@@ -367,6 +367,9 @@ fn assert_admitted_result(
     assert_eq!(event_u64(result, "sequence"), sequence);
     assert_eq!(event_u64(result, "writeback_tick"), admitted_tick);
     assert_eq!(event_u64(result, "commit_tick"), admitted_tick);
+    assert!(o3_trace_events(json)
+        .iter()
+        .all(|event| event_u64(event, "commit_tick") <= admitted_tick));
     assert_rob_sequence_absent(json, sequence);
     match class {
         MemoryResultClass::LoadReserved => assert_register(json, "x7", "0x1122334455667788"),
@@ -573,18 +576,18 @@ fn memory_result_binary(class: MemoryResultClass) -> std::path::PathBuf {
     ]);
     match class {
         MemoryResultClass::FloatLoad => words.extend([
-            i_type(0, 5, 0b011, 1, 0x07),
             r_type(0x01, 2, 1, 0b100, 3, 0x33),
+            i_type(0, 5, 0b011, 1, 0x07),
             float_store_type(8, 1, 5, 0b011),
         ]),
         MemoryResultClass::LoadReserved => words.extend([
-            atomic_type(0x02, false, false, 0, 5, 0x3, 7),
             r_type(0x01, 2, 1, 0b100, 3, 0x33),
+            atomic_type(0x02, false, false, 0, 5, 0x3, 7),
             i_type(1, 7, 0x0, 8, 0x13),
         ]),
         MemoryResultClass::Atomic => words.extend([
-            atomic_type(0x01, false, false, 2, 5, 0x3, 11),
             r_type(0x01, 2, 1, 0b100, 3, 0x33),
+            atomic_type(0x01, false, false, 2, 5, 0x3, 11),
             s_type(8, 11, 5, 0b011),
         ]),
         MemoryResultClass::Vector | MemoryResultClass::Mmio => unreachable!(),
@@ -622,8 +625,8 @@ fn vector_memory_result_binary() -> std::path::PathBuf {
         vector_arith_type(0b010111, 0b100, 0, 6, 0),
         vector_arith_type(0b010111, 0b100, 0, 7, 1),
         m5op(M5_SWITCH_CPU),
-        vector_unit_stride_load_type(false, 0b111, 5, 1),
         r_type(0x01, 2, 1, 0b100, 3, 0x33),
+        vector_unit_stride_load_type(false, 0b111, 5, 1),
         vector_unit_stride_store_type(true, 0b111, 16, 1),
     ];
     append_host_stop(&mut words);
@@ -643,8 +646,8 @@ fn mmio_memory_result_binary() -> std::path::PathBuf {
         i_type(84, 0, 0x0, 1, 0x13),
         i_type(2, 0, 0x0, 2, 0x13),
         m5op(M5_SWITCH_CPU),
-        i_type(0, 5, 0b011, 12, 0x03),
         r_type(0x01, 2, 1, 0b100, 3, 0x33),
+        i_type(0, 5, 0b011, 12, 0x03),
         i_type(1, 12, 0x0, 13, 0x13),
     ];
     append_host_stop(&mut words);

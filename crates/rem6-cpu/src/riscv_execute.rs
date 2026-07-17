@@ -69,8 +69,32 @@ impl RiscvCore {
         &self,
         mut gate_scheduler: Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
-        let state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some() || state.o3_runtime.has_ready_live_data_access_event() {
+        let current_tick = match gate_scheduler.as_ref() {
+            Some((scheduler, _)) => scheduler
+                .partition_now(self.partition())
+                .map_err(RiscvCpuError::Scheduler)?,
+            None => u64::MAX,
+        };
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some() {
+            return Ok(None);
+        }
+        let pending_predecessor_retired = state
+            .pending_terminal_memory_result
+            .as_ref()
+            .is_some_and(|pending| pending.execution().fetch_pc().get() == state.hart.pc());
+        if pending_predecessor_retired {
+            let Some(canonical) = self
+                .canonicalize_admitted_pending_terminal_memory_result(&mut state, current_tick)?
+            else {
+                return Ok(None);
+            };
+            state.events.push(canonical.clone());
+            return Ok(Some(canonical));
+        }
+        if state.o3_runtime.has_ready_live_data_access_event()
+            && state.pending_terminal_memory_result.is_none()
+        {
             return Ok(None);
         }
         drop(state);
@@ -323,6 +347,19 @@ impl RiscvCore {
             0,
             retires_instruction,
         );
+        let canonical_terminal_memory_result = if retires_instruction {
+            self.canonicalize_pending_terminal_memory_result(
+                state,
+                &event,
+                consumed_requests,
+                retire_tick,
+            )?
+        } else {
+            if state.pending_terminal_memory_result.is_some() {
+                state.discard_data_accesses_for_control_boundary();
+            }
+            None
+        };
         if retires_instruction {
             state
                 .o3_runtime
@@ -380,7 +417,101 @@ impl RiscvCore {
         state.executed_fetches.extend(discarded_requests);
         remove_fetch_sequences_from_pipeline(state, &discarded_sequences)?;
         state.events.push(event.clone());
+        if let Some(canonical) = canonical_terminal_memory_result {
+            state.events.push(canonical);
+        }
         Ok(event)
+    }
+
+    fn canonicalize_pending_terminal_memory_result(
+        &self,
+        state: &mut RiscvCoreState,
+        predecessor: &RiscvCpuExecutionEvent,
+        predecessor_consumed_requests: &[MemoryRequestId],
+        current_tick: u64,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        let Some(pending) = state.pending_terminal_memory_result.clone() else {
+            return Ok(None);
+        };
+        if !pending.follows(predecessor, predecessor_consumed_requests) {
+            return Ok(None);
+        }
+        self.canonicalize_admitted_pending_terminal_memory_result(state, current_tick)
+    }
+
+    fn canonicalize_admitted_pending_terminal_memory_result(
+        &self,
+        state: &mut RiscvCoreState,
+        current_tick: u64,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        let Some(pending) = state.pending_terminal_memory_result.clone() else {
+            return Ok(None);
+        };
+        if !state
+            .o3_runtime
+            .live_data_access_publication_is_admitted(current_tick)
+        {
+            return Ok(None);
+        }
+        assert_eq!(
+            state.hart.pc(),
+            pending.execution().fetch_pc().get(),
+            "terminal memory result follows the retired fixed-FU head"
+        );
+        let decoded = pending.decoded();
+        let provisional_access = pending.execution().execution().memory_access().cloned();
+        let execution = state
+            .hart
+            .execute_decoded(decoded)
+            .map_err(RiscvCpuError::Isa)?;
+        assert_eq!(execution.memory_access(), provisional_access.as_ref());
+        assert!(execution.trap().is_none());
+        assert!(execution.system_event().is_none());
+        let primary_hart = state.hart.clone();
+        if let Some(checker) = &mut state.checker {
+            checker
+                .check_execution(
+                    true,
+                    pending.execution().fetch().request_id().sequence(),
+                    pending.execution().fetch_pc(),
+                    decoded,
+                    &execution,
+                    &primary_hart,
+                )
+                .map_err(RiscvCpuError::Isa)?;
+        }
+        let mut canonical = RiscvCpuExecutionEvent::new(
+            pending.execution().fetch().clone(),
+            pending.execution().instruction(),
+            execution,
+        );
+        if let Some(kind) = pending.execution().data_access_event_kind() {
+            canonical.set_data_access_event_kind(kind);
+        }
+        if state.o3_runtime.has_live_data_access() {
+            assert!(
+                state
+                    .o3_runtime
+                    .replace_live_data_access_execution(&canonical),
+                "terminal memory result live row accepts canonical execution"
+            );
+        }
+        let next_pc = Address::new(canonical.execution().next_pc());
+        let fetch_events = self.core.fetch_events();
+        let has_completed_successor_fetch = fetch_events.iter().any(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.pc() == next_pc
+                && !state.executed_fetches.contains(&event.request_id())
+                && !pending.consumed_requests().contains(&event.request_id())
+        });
+        if !has_completed_successor_fetch || self.core.pc().get() < next_pc.get() {
+            self.core.set_pc(next_pc);
+        }
+        state
+            .executed_fetches
+            .extend(pending.consumed_requests().iter().copied());
+        state.pending_terminal_memory_result = None;
+        Ok(Some(canonical))
     }
 }
 

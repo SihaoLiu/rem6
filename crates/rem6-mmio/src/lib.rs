@@ -735,6 +735,27 @@ impl MmioChannel {
             + 'static,
         G: FnOnce(MmioCompletion) + Send + 'static,
     {
+        self.submit_parallel_guarded(context, request, |_| true, responder, completion_sink)
+    }
+
+    pub fn submit_parallel_guarded<H, F, G>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: MmioRequest,
+        delivery_guard: H,
+        responder: F,
+        completion_sink: G,
+    ) -> Result<PartitionEventId, MmioError>
+    where
+        H: FnOnce(&MmioDelivery) -> bool + Send + 'static,
+        F: FnOnce(
+                MmioDelivery,
+                &mut ParallelSchedulerContext<'_>,
+            ) -> Result<MmioResponse, MmioError>
+            + Send
+            + 'static,
+        G: FnOnce(MmioCompletion) + Send + 'static,
+    {
         let route = self.route;
         let response_errors = Arc::clone(&self.response_errors);
         context
@@ -742,11 +763,12 @@ impl MmioChannel {
                 route.target_partition(),
                 route.request_latency(),
                 move |context| {
-                    let response = responder(
-                        MmioDelivery::new(context.now(), route, request.clone()),
-                        context,
-                    )
-                    .and_then(|response| validate_response(&request, response));
+                    let delivery = MmioDelivery::new(context.now(), route, request.clone());
+                    if !delivery_guard(&delivery) {
+                        return;
+                    }
+                    let response = responder(delivery, context)
+                        .and_then(|response| validate_response(&request, response));
                     if let Err(error) = context.schedule_remote_after(
                         route.source_partition(),
                         route.response_latency(),
@@ -912,6 +934,28 @@ impl MmioBus {
         device.channel.submit_parallel(
             context,
             request,
+            move |delivery, context| responder.respond_parallel(context, delivery.request()),
+            completion_sink,
+        )
+    }
+
+    pub fn submit_parallel_guarded<H, G>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: MmioRequest,
+        delivery_guard: H,
+        completion_sink: G,
+    ) -> Result<PartitionEventId, MmioError>
+    where
+        H: FnOnce(&MmioDelivery) -> bool + Send + 'static,
+        G: FnOnce(MmioCompletion) + Send + 'static,
+    {
+        let device = self.device_for(context.partition(), &request)?.clone();
+        let responder = Arc::clone(&device.device);
+        device.channel.submit_parallel_guarded(
+            context,
+            request,
+            delivery_guard,
             move |delivery, context| responder.respond_parallel(context, delivery.request()),
             completion_sink,
         )

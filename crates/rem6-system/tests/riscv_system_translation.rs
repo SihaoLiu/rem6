@@ -6,7 +6,7 @@ use rem6_cpu::{
     RiscvCluster, RiscvClusterTopologyConfig, RiscvCore, RiscvCoreDriveAction,
     RiscvCoreTopologyConfig, RiscvCoreTopologyDataTranslationConfig,
 };
-use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
+use rem6_isa_riscv::{Register, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPrivilegeMode};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
@@ -128,6 +128,19 @@ fn translated_riscv_core_with_latency(spec: CoreSpec<'_>, latency: u64) -> Riscv
             TranslationTlbConfig::new(4).unwrap(),
         ),
     )
+}
+
+fn configure_supervisor_test_pmp(core: &RiscvCore) {
+    core.write_pmp_addr(0, 0xc000 >> 2)
+        .expect("valid translated-test PMP address");
+    core.write_pmp_config(
+        0,
+        RiscvPmpConfig::new(RiscvPmpAddressMode::Tor)
+            .with_read(true)
+            .with_write(true)
+            .with_execute(true),
+    )
+    .expect("valid translated-test PMP permissions");
 }
 
 fn store_with_programs_and_data(
@@ -757,6 +770,7 @@ fn assert_remote_tlb_fence_flushes_translated_data_tlb(
     });
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    configure_supervisor_test_pmp(&core1);
     core1.write_register(reg(2), 0x4010);
     let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
     let page_map = single_page_map(0x4000, 0x9000);
@@ -956,6 +970,7 @@ fn riscv_sbi_remote_sfence_vma_asid_preserves_other_address_spaces() {
     });
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    configure_supervisor_test_pmp(&core1);
     core1.write_register(reg(2), 0x4010);
     core1.set_data_translation_address_space(TranslationAddressSpaceId::new(11));
     let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
@@ -1192,6 +1207,7 @@ fn assert_remote_tlb_fence_range_flushes_each_overlapping_page(
     });
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    configure_supervisor_test_pmp(&core1);
     core1.write_register(reg(2), 0x4010);
     core1.write_register(reg(3), 0x5010);
     core1.write_register(reg(4), 0x7010);

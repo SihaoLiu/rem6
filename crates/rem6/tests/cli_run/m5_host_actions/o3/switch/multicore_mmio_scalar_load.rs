@@ -470,7 +470,6 @@ fn multicore_cpu1_mmio_handoff_binary() -> std::path::PathBuf {
     words.extend([
         u_type(0, 20, 0x17),
         i_type(data_start - cpu0_auipc_pc, 20, 0x0, 20, 0x13),
-        i_type(0, 0, 0x0, 0, 0x13),
         i_type(4, 20, 0b010, 21, 0x03),
         b_type(0, 0, 0, 0x0),
     ]);

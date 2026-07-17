@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn atomic_result_execution_is_deferred_o3_data_access() {
@@ -72,6 +73,141 @@ fn denied_atomic_write_never_stages_live_result_authority() {
 }
 
 #[test]
+fn unlocked_pmp_denies_atomic_write_for_effective_non_machine_privilege() {
+    for (privilege, status, effective_privilege) in [
+        (
+            rem6_isa_riscv::RiscvPrivilegeMode::Supervisor,
+            rem6_isa_riscv::RiscvStatusWord::new(0),
+            rem6_isa_riscv::RiscvPrivilegeMode::Supervisor,
+        ),
+        (
+            rem6_isa_riscv::RiscvPrivilegeMode::User,
+            rem6_isa_riscv::RiscvStatusWord::new(0),
+            rem6_isa_riscv::RiscvPrivilegeMode::User,
+        ),
+        (
+            rem6_isa_riscv::RiscvPrivilegeMode::Machine,
+            rem6_isa_riscv::RiscvStatusWord::new(0)
+                .with_mprv(true)
+                .with_mpp(rem6_isa_riscv::RiscvPrivilegeMode::Supervisor),
+            rem6_isa_riscv::RiscvPrivilegeMode::Supervisor,
+        ),
+    ] {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = RiscvCore::with_data(
+            cpu_core(fetch_route, 0x8000),
+            CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        );
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_privilege_mode(privilege);
+        core.set_status(status);
+        core.write_pmp_addr(0, 0x8800 >> 2).unwrap();
+        core.write_pmp_config(
+            0,
+            rem6_isa_riscv::RiscvPmpConfig::new(rem6_isa_riscv::RiscvPmpAddressMode::Tor)
+                .with_read(true)
+                .with_write(true)
+                .with_execute(true),
+        )
+        .unwrap();
+        core.write_pmp_addr(1, 0xa000 >> 2).unwrap();
+        core.write_pmp_config(
+            1,
+            rem6_isa_riscv::RiscvPmpConfig::new(rem6_isa_riscv::RiscvPmpAddressMode::Tor),
+        )
+        .unwrap();
+        core.state
+            .lock()
+            .expect("riscv core lock")
+            .events
+            .push(atomic_memory_event(0x8000, 1, 0x9000));
+
+        let error = core
+            .issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |_delivery, _context| panic!("unlocked PMP-denied AMO must not issue"),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RiscvCpuError::DataPmpAccess {
+                error: rem6_isa_riscv::RiscvPmpError::AccessDenied {
+                    kind: rem6_isa_riscv::RiscvPmpAccessKind::Write,
+                    privilege: actual_privilege,
+                    ..
+                },
+                ..
+            } if actual_privilege == effective_privilege
+        ));
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.outstanding_data.is_empty());
+        assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
+        assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
+        assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
+    }
+}
+
+#[test]
+fn redirect_cancels_submitted_atomic_before_transport_delivery() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .events
+        .push(atomic_memory_event(0x8000, 1, 0x9000));
+    let memory = Arc::new(Mutex::new(9_u64));
+    let target_calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let target_memory = memory.clone();
+    let target_calls_for_responder = target_calls.clone();
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            target_calls_for_responder.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut value = target_memory.lock().expect("atomic memory lock");
+            let old = *value;
+            *value = old + 7;
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(old.to_le_bytes().to_vec()))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("AMO request submits before redirect");
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(*memory.lock().expect("atomic memory lock"), 9);
+    assert_eq!(
+        target_calls.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a squashed AMO must not reach the mutating target responder"
+    );
+    assert_eq!(core.read_register(reg(5)), 0);
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.outstanding_data.is_empty());
+    assert!(state
+        .data_events
+        .iter()
+        .all(|event| event.kind() != RiscvDataAccessEventKind::Completed));
+    assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
+    assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
+    assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
+    assert!(state.o3_runtime.writeback_reservations().is_empty());
+}
+
+#[test]
 fn pma_denied_atomic_write_never_stages_live_result_authority() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(
@@ -113,7 +249,7 @@ fn pma_denied_atomic_write_never_stages_live_result_authority() {
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
 }
 
-fn atomic_memory_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {
+pub(super) fn atomic_memory_event(pc: u64, sequence: u64, address: u64) -> RiscvCpuExecutionEvent {
     let instruction = rem6_isa_riscv::RiscvInstruction::AtomicMemory {
         rd: reg(5),
         rs1: reg(2),

@@ -529,17 +529,14 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
     core.set_detailed_live_retire_gate_enabled(true);
     core.write_register(reg(2), 0x4000);
     core.set_privilege_mode(RiscvPrivilegeMode::User);
+    core.write_pmp_addr(0, u64::MAX >> 2).unwrap();
+    core.write_pmp_config(0, tor_with_all_permissions())
+        .unwrap();
     core.set_machine_exception_delegation(1 << 13);
     core.set_supervisor_trap_vector(0xa001);
     core.set_status(RiscvStatusWord::new(0).with_sie(true));
     let page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
     let store = loaded_program_store(0x8000, &[i_type(8, 2, 0x3, 5, 0x03)], &[]);
-
-    assert!(matches!(
-        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
-        Some(RiscvCoreDriveAction::FetchIssued { .. })
-    ));
-    scheduler.run_until_idle_conservative();
 
     assert!(matches!(
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),

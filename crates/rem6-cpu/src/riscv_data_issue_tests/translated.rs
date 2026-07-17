@@ -5,7 +5,7 @@ use rem6_memory::{
 use super::*;
 
 #[test]
-fn detailed_translated_cold_scalar_load_stages_completed_younger_result_fetch() {
+fn detailed_translated_cold_scalar_load_is_terminal_before_retirement() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data_translation(
         cpu_core(fetch_route, 0x8000),
@@ -21,9 +21,8 @@ fn detailed_translated_cold_scalar_load_stages_completed_younger_result_fetch() 
     issue_translated_data_without_response(&core, &mut scheduler, &transport);
 
     let snapshot = core.o3_runtime_snapshot();
-    assert_eq!(snapshot.reorder_buffer().len(), 2);
+    assert_eq!(snapshot.reorder_buffer().len(), 1);
     assert_eq!(snapshot.reorder_buffer()[0].pc(), Address::new(0x8000));
-    assert_eq!(snapshot.reorder_buffer()[1].pc(), Address::new(0x8004));
     assert_eq!(snapshot.load_store_queue().len(), 1);
 }
 
@@ -64,7 +63,7 @@ fn detailed_cached_translated_scalar_load_stages_load_dependent_younger_window()
 }
 
 #[test]
-fn detailed_translated_uncacheable_scalar_load_stages_completed_younger_result_fetch() {
+fn detailed_translated_uncacheable_scalar_load_is_terminal_before_retirement() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data_translation(
         cpu_core(fetch_route, 0x8000),
@@ -82,10 +81,110 @@ fn detailed_translated_uncacheable_scalar_load_stages_completed_younger_result_f
     issue_translated_data_without_response(&core, &mut scheduler, &transport);
 
     let snapshot = core.o3_runtime_snapshot();
-    assert_eq!(snapshot.reorder_buffer().len(), 2);
+    assert_eq!(snapshot.reorder_buffer().len(), 1);
     assert_eq!(snapshot.reorder_buffer()[0].pc(), Address::new(0x8000));
-    assert_eq!(snapshot.reorder_buffer()[1].pc(), Address::new(0x8004));
     assert_eq!(snapshot.load_store_queue().len(), 1);
+}
+
+#[test]
+fn redirect_cancels_submitted_translated_atomic_before_serial_delivery() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 0).unwrap()),
+    );
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .events
+        .push(super::atomic::atomic_memory_event(0x8000, 1, 0x4008));
+    let page_map = translated_test_page_map();
+    let memory = Arc::new(Mutex::new(9_u64));
+    let target_calls = Arc::new(AtomicU64::new(0));
+    let target_memory = Arc::clone(&memory);
+    let responder_calls = Arc::clone(&target_calls);
+
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            responder_calls.fetch_add(1, Ordering::Relaxed);
+            let mut value = target_memory.lock().expect("atomic memory lock");
+            let old = *value;
+            *value += 7;
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(old.to_le_bytes().to_vec()))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("translated AMO submits before redirect");
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(*memory.lock().expect("atomic memory lock"), 9);
+    assert_eq!(target_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn redirect_cancels_submitted_translated_atomic_before_parallel_delivery() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 0).unwrap()),
+    );
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .events
+        .push(super::atomic::atomic_memory_event(0x8000, 1, 0x4008));
+    let page_map = translated_test_page_map();
+    let memory = Arc::new(Mutex::new(9_u64));
+    let target_calls = Arc::new(AtomicU64::new(0));
+    let target_memory = Arc::clone(&memory);
+    let responder_calls = Arc::clone(&target_calls);
+
+    core.issue_next_translated_data_access_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            responder_calls.fetch_add(1, Ordering::Relaxed);
+            let mut value = target_memory.lock().expect("atomic memory lock");
+            let old = *value;
+            *value += 7;
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(old.to_le_bytes().to_vec()))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("translated parallel AMO submits before redirect");
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(*memory.lock().expect("atomic memory lock"), 9);
+    assert_eq!(target_calls.load(Ordering::Relaxed), 0);
+}
+
+fn translated_test_page_map() -> TranslationPageMap {
+    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    page_map
+        .map(
+            Address::new(0x4000),
+            Address::new(0x9000),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+    page_map
 }
 
 fn issue_translated_data_without_response(

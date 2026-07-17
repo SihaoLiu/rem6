@@ -192,13 +192,13 @@ fn cached_atomic_fault_suppresses_result_fetch_ahead_and_retirement_wait() {
 }
 
 #[test]
-fn untranslated_mmio_scalar_load_uses_result_only_driver_fetch_window() {
+fn untranslated_mmio_scalar_load_is_terminal_before_retirement() {
     let bus = direct_mmio_bus();
     let head = direct_mmio_load_core([]);
     assert_eq!(
         head.next_mmio_aware_fetch_ahead_before_retire(&bus)
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8004))
+        None
     );
 
     let disallowed = [
@@ -295,7 +295,7 @@ fn untranslated_memory_scalar_load_keeps_scalar_prefix_with_mmio_aware_driver() 
 }
 
 #[test]
-fn detailed_uncacheable_scalar_load_fetches_independent_younger_fu() {
+fn detailed_uncacheable_scalar_load_is_terminal_before_retirement() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
@@ -307,12 +307,12 @@ fn detailed_uncacheable_scalar_load_fetches_independent_younger_fu() {
     assert_eq!(
         core.next_fetch_ahead_before_retire()
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8004))
+        None
     );
 }
 
 #[test]
-fn detailed_uncacheable_scalar_load_result_window_blocks_dependency_memory_and_control() {
+fn detailed_uncacheable_scalar_load_does_not_admit_a_completed_younger_window() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let independent = i_type(7, 0, 0x0, 6, 0x13);
     let head = core_with_completed_fetch(load.to_le_bytes().to_vec());
@@ -324,7 +324,7 @@ fn detailed_uncacheable_scalar_load_result_window_blocks_dependency_memory_and_c
     assert_eq!(
         head.next_fetch_ahead_before_retire()
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8004))
+        None
     );
 
     for younger in [
@@ -358,12 +358,12 @@ fn detailed_uncacheable_scalar_load_result_window_blocks_dependency_memory_and_c
         independent_core
             .next_fetch_ahead_before_retire()
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8008))
+        None
     );
 }
 
 #[test]
-fn detailed_uncacheable_scalar_load_result_waits_for_completed_younger_fetch() {
+fn detailed_uncacheable_scalar_load_does_not_wait_for_a_younger_fetch() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let div = (1_u32 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
@@ -387,7 +387,7 @@ fn detailed_uncacheable_scalar_load_result_waits_for_completed_younger_fetch() {
         .events
         .push(crate::CpuFetchEvent::issued(younger.clone()));
 
-    assert!(!core
+    assert!(core
         .can_retire_completed_fetch_while_fetch_pending()
         .unwrap());
 

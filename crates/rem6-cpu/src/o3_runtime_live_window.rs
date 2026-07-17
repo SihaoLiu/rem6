@@ -376,6 +376,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
+        self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle_at(now);
         self.snapshot
             .reorder_buffer

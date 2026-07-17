@@ -17,7 +17,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn has_pending_retirement_authority(&self) -> bool {
-        self.has_live_retirement_authority() || !self.writeback_calendar.is_empty()
+        self.has_live_retirement_authority() || self.has_unpublished_writeback_reservation()
     }
 
     pub(crate) fn has_live_writeback_owner(&self) -> bool {
@@ -66,6 +66,7 @@ mod tests {
     use rem6_memory::Address;
 
     use super::*;
+    use crate::o3_runtime::O3LiveWritebackReady;
 
     #[test]
     fn live_staged_window_owns_retirement_authority_until_discarded() {
@@ -85,6 +86,21 @@ mod tests {
 
         runtime.discard_live_retire_window();
 
+        assert!(!runtime.has_pending_retirement_authority());
+    }
+
+    #[test]
+    fn published_writeback_reservation_does_not_own_retirement_authority() {
+        let mut runtime = O3RuntimeState::default();
+        runtime
+            .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(7, 29)])
+            .unwrap();
+
+        assert!(runtime.has_pending_retirement_authority());
+
+        runtime.finalize_writeback_publication(7);
+
+        assert!(runtime.writeback_calendar.reservation(7).is_some());
         assert!(!runtime.has_pending_retirement_authority());
     }
 }

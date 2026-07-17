@@ -490,7 +490,6 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "take_ready_live_scalar_memory_event",
         "consume_live_scalar_memory_retirement",
         "record_ready_o3_scalar_memory_event_with_trace",
-        "scalar_memory_lifecycle_is_quiescent",
         "has_pending_scalar_memory_retirement",
         "pending_scalar_memory_retirement_count",
         "owns_pending_scalar_memory_retirement",
@@ -511,11 +510,6 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "discard_live_scalar_memory_window_rows",
         "discard_live_scalar_memory_window_rows_at",
         "remove_live_scalar_memory_rows",
-        "o3_scalar_memory_lifecycle_is_quiescent",
-        "has_pending_o3_scalar_memory_retirement",
-        "pending_o3_scalar_memory_retirement_count",
-        "owns_pending_o3_scalar_memory_retirement",
-        "ready_o3_scalar_memory_event_kind",
         "clear_deferred_o3_scalar_memory_execution",
         "deferred_o3_scalar_memory_retirement",
         "completed_live_scalar_memory",
@@ -586,7 +580,6 @@ fn o3_data_access_younger_window_has_focused_owners() {
     let live_window = fs::read_to_string(crate_dir.join("src/o3_runtime_live_window.rs")).unwrap();
     let issue = fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap();
     let data_issue = fs::read_to_string(crate_dir.join("src/riscv_data_issue.rs")).unwrap();
-    let policy = fs::read_to_string(crate_dir.join("src/riscv_o3_window_policy.rs")).unwrap();
     let fetch_ahead =
         fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs")).unwrap();
     let fetch_driver =
@@ -601,18 +594,11 @@ fn o3_data_access_younger_window_has_focused_owners() {
             "pub(crate) fn stage_live_data_access_younger_window(",
         ),
         (&issue, "pub(crate) fn live_data_access_head_reservation("),
-        (&policy, "pub(crate) fn from_data_access_result("),
         (&data_issue, "O3DataAccessWindowPolicy::ScalarMemoryPrefix"),
-        (&data_issue, "O3DataAccessWindowPolicy::MemoryResult"),
-        (&fetch_ahead, "fn data_access_result_fetch_ahead_window("),
         (&fetch_ahead, "fn data_access_result_fetch_ahead_shape("),
         (&fetch_ahead, "fn data_access_result_head_probe("),
         (&fetch_ahead, "masked_vector_memory_request_span("),
         (&fetch_ahead, "fault_only_first: false"),
-        (
-            &fetch_ahead,
-            "fn data_access_result_translation_probe_allows(",
-        ),
         (
             &fetch_ahead,
             "pub(super) fn data_access_result_head_physical_probe(",
@@ -636,6 +622,50 @@ fn o3_data_access_younger_window_has_focused_owners() {
             "missing data-access window owner `{anchor}`"
         );
     }
+}
+
+#[test]
+fn public_scalar_memory_lifecycle_methods_remain_deprecated_live_data_forwards() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let raw_memory = fs::read_to_string(crate_dir.join("src/o3_runtime_memory.rs")).unwrap();
+    let memory = production_rust_source(&raw_memory);
+
+    for (deprecated, forward) in [
+        (
+            "pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool",
+            "self.o3_live_data_access_lifecycle_is_quiescent()",
+        ),
+        (
+            "pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool",
+            "self.has_pending_o3_live_data_access_retirement()",
+        ),
+        (
+            "pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize",
+            "self.pending_o3_live_data_access_retirement_count()",
+        ),
+        (
+            "pub fn owns_pending_o3_scalar_memory_retirement(",
+            "self.owns_pending_o3_live_data_access_retirement(fetch_request)",
+        ),
+        (
+            "pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind>",
+            "self.ready_o3_live_data_access_event_kind()",
+        ),
+    ] {
+        assert!(
+            memory.contains(deprecated),
+            "public scalar-memory compatibility method is missing `{deprecated}`"
+        );
+        assert!(
+            memory.contains(forward),
+            "public scalar-memory compatibility method must forward to `{forward}`"
+        );
+    }
+    assert_eq!(
+        raw_memory.matches("#[deprecated(note = \"use ").count(),
+        5,
+        "each scalar-memory public compatibility method must be explicitly deprecated"
+    );
 }
 
 #[test]

@@ -8374,7 +8374,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         ("lsq_stores", 5),
         ("lsq_load_bytes", 24),
         ("lsq_store_bytes", 40),
-        ("max_lsq_occupancy", 3),
+        ("max_lsq_occupancy", 2),
     ] {
         assert_eq!(
             json_record_u64(record, field),
@@ -8460,7 +8460,7 @@ fn rem6_run_o3_debug_flag_classifies_lsq_memory_ordering() {
         ("/load_bytes", 24),
         ("/store_bytes", 40),
         ("/store_conditional_failures", 0),
-        ("/max_occupancy", 3),
+        ("/max_occupancy", 2),
         ("/operation/load/count", 1),
         ("/operation/store/count", 3),
         ("/operation/load_reserved/count", 1),

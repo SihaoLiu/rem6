@@ -601,8 +601,10 @@ fn mode_disable_preserves_completed_scalar_younger_window_until_retirement() {
 
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
-    assert!(state.o3_runtime.has_pending_retirement_authority());
+    assert_eq!(state.o3_runtime.writeback_reservations().len(), 1);
+    assert!(!state.o3_runtime.has_pending_retirement_authority());
     state.o3_runtime.prune_writeback_calendar_before(43);
+    assert!(state.o3_runtime.writeback_reservations().is_empty());
     assert!(!state.o3_runtime.has_pending_retirement_authority());
 }
 

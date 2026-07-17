@@ -777,7 +777,7 @@ fn detailed_scalar_load_waits_for_completed_younger_fetch() {
 }
 
 #[test]
-fn detailed_float_load_result_waits_for_completed_younger_fetch() {
+fn detailed_float_load_result_does_not_wait_for_a_younger_fetch() {
     let float_load = i_type(0, 5, 0b011, 1, 0x07);
     let div = (1_u32 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let core = core_with_completed_fetch(float_load.to_le_bytes().to_vec());
@@ -798,7 +798,7 @@ fn detailed_float_load_result_waits_for_completed_younger_fetch() {
         .events
         .push(crate::CpuFetchEvent::issued(younger.clone()));
 
-    assert!(!core
+    assert!(core
         .can_retire_completed_fetch_while_fetch_pending()
         .unwrap());
 
@@ -1056,27 +1056,17 @@ fn translated_cached_memory_driver_fetches_third_younger_alu() {
 }
 
 #[test]
-fn detailed_float_load_result_fetches_younger_scalar_integer_fu() {
+fn detailed_float_load_result_is_terminal_before_retirement() {
     let float_load = i_type(0, 5, 0b011, 1, 0x07);
     let core = core_with_completed_fetch(float_load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(2);
 
-    let decision = core.next_fetch_ahead_before_retire().unwrap();
-
-    assert_eq!(decision.pc(), Address::new(0x8004));
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
 }
 
 #[test]
-fn mmio_aware_compressed_load_uses_result_fetch_ahead() {
-    let memory_core = compressed_cached_translated_load_core();
-    assert_eq!(
-        memory_core
-            .next_cached_translated_memory_fetch_ahead_before_retire()
-            .map(|decision| decision.pc()),
-        Some(Address::new(0x8010))
-    );
-
+fn mmio_aware_compressed_load_is_terminal_before_retirement() {
     let core = compressed_cached_translated_load_core();
     let bank =
         MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
@@ -1092,7 +1082,7 @@ fn mmio_aware_compressed_load_uses_result_fetch_ahead() {
     assert_eq!(
         core.next_mmio_aware_fetch_ahead_before_retire(&bus)
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8010))
+        None
     );
 }
 
@@ -1157,7 +1147,7 @@ fn translated_cached_scalar_load_window_stops_at_configured_depth() {
 }
 
 #[test]
-fn translated_uncached_scalar_load_fetches_younger_result_fu() {
+fn translated_uncached_scalar_load_is_terminal_before_retirement() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
@@ -1174,7 +1164,7 @@ fn translated_uncached_scalar_load_fetches_younger_result_fu() {
     assert_eq!(
         core.next_cached_translated_memory_fetch_ahead_before_retire()
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8004))
+        None
     );
 }
 
@@ -1207,7 +1197,7 @@ fn translated_cached_permission_fault_does_not_fetch_younger_alu() {
 }
 
 #[test]
-fn translated_cached_uncacheable_load_fetches_younger_result_fu() {
+fn translated_cached_uncacheable_load_is_terminal_before_retirement() {
     let load = i_type(0, 2, 0x2, 5, 0x03);
     let core = core_with_completed_fetch(load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
@@ -1233,7 +1223,7 @@ fn translated_cached_uncacheable_load_fetches_younger_result_fu() {
     assert_eq!(
         core.next_cached_translated_memory_fetch_ahead_before_retire()
             .map(|decision| decision.pc()),
-        Some(Address::new(0x8004))
+        None
     );
 }
 
