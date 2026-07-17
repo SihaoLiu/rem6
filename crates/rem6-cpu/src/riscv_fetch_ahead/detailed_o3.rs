@@ -1,7 +1,14 @@
-use rem6_isa_riscv::{Register, RiscvInstruction};
-use rem6_memory::{Address, AddressRange, MemoryRequestId};
+use rem6_isa_riscv::{
+    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMaskMode,
+    RiscvVectorMemoryInstruction, VectorRegister,
+};
+use rem6_memory::{
+    Address, AddressRange, MemoryRequestId, TranslationAccessKind, TranslationAddressSpaceId,
+    TranslationRequest, TranslationRequestId,
+};
 
 use crate::{
+    riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
         completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
@@ -97,6 +104,8 @@ pub(crate) enum RecordedPredictedPc {
 pub(super) enum TranslatedMemoryFetchAhead {
     Disabled,
     CachedMemory,
+    Mmio,
+    Blocked,
 }
 
 pub(super) enum ScalarMemoryFetchAheadHead {
@@ -104,13 +113,22 @@ pub(super) enum ScalarMemoryFetchAheadHead {
     CachedTranslatedLoad { destination: Register },
 }
 
-pub(super) fn allows_detailed_memory_head_fetch_ahead(
+pub(super) fn allows_detailed_data_access_head_fetch_ahead(
     state: &RiscvCoreState,
     fetch_request: rem6_memory::MemoryRequestId,
     instruction: RiscvInstruction,
     translated: TranslatedMemoryFetchAhead,
 ) -> bool {
-    scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
+    state.live_retire_gate.detailed_policy_enabled()
+        && (scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
+            || data_access_result_fetch_ahead_window(
+                state,
+                fetch_request,
+                instruction,
+                state.o3_runtime.scalar_memory_window_limit(),
+                translated,
+            )
+            .is_some())
 }
 
 pub(super) fn scalar_memory_fetch_ahead_head(
@@ -122,13 +140,19 @@ pub(super) fn scalar_memory_fetch_ahead_head(
     if !state.live_retire_gate.detailed_policy_enabled() {
         return None;
     }
+    if translated == TranslatedMemoryFetchAhead::Blocked {
+        return None;
+    }
     if state.data_translation.is_none() {
+        if translated == TranslatedMemoryFetchAhead::Mmio {
+            return None;
+        }
         return state
             .cacheable_scalar_memory_instruction_range(instruction)
             .is_some()
             .then_some(ScalarMemoryFetchAheadHead::Untranslated);
     }
-    if translated == TranslatedMemoryFetchAhead::Disabled {
+    if translated != TranslatedMemoryFetchAhead::CachedMemory {
         return None;
     }
     let destination = independent_scalar_load_destination(instruction, [])?;
@@ -137,7 +161,7 @@ pub(super) fn scalar_memory_fetch_ahead_head(
         .then_some(ScalarMemoryFetchAheadHead::CachedTranslatedLoad { destination })
 }
 
-pub(super) fn scalar_memory_has_younger_fetch(
+pub(super) fn data_access_has_younger_fetch(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     memory_request: rem6_memory::MemoryRequestId,
@@ -145,7 +169,7 @@ pub(super) fn scalar_memory_has_younger_fetch(
     instruction: RiscvInstruction,
     translated: TranslatedMemoryFetchAhead,
 ) -> bool {
-    allows_detailed_memory_head_fetch_ahead(state, memory_request, instruction, translated)
+    allows_detailed_data_access_head_fetch_ahead(state, memory_request, instruction, translated)
         && has_live_younger_fetch_at(state, fetch_events, memory_request, younger_pc)
 }
 
@@ -170,7 +194,7 @@ fn has_live_younger_fetch_at(
     })
 }
 
-pub(super) fn scalar_memory_waits_for_younger_fetch(
+pub(super) fn data_access_waits_for_younger_fetch(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     translated: TranslatedMemoryFetchAhead,
@@ -198,7 +222,7 @@ pub(super) fn scalar_memory_waits_for_younger_fetch(
         return false;
     }
 
-    allows_detailed_memory_head_fetch_ahead(
+    allows_detailed_data_access_head_fetch_ahead(
         state,
         memory.request_id(),
         decoded.instruction(),
@@ -206,28 +230,68 @@ pub(super) fn scalar_memory_waits_for_younger_fetch(
     ) && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
 }
 
-pub(super) fn cached_translated_scalar_load_head_physical_range(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DataAccessResultHeadPhysicalProbe {
+    Memory,
+    Ready {
+        fetch_request: MemoryRequestId,
+        access: MemoryAccessKind,
+        range: AddressRange,
+        request_byte_offset: usize,
+    },
+    Blocked,
+}
+
+pub(super) fn data_access_result_head_physical_probe(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
-) -> Option<(MemoryRequestId, AddressRange)> {
+) -> DataAccessResultHeadPhysicalProbe {
     let architectural = Address::new(state.hart.pc());
-    let memory = fetch_events
+    let Some(memory) = fetch_events
         .iter()
         .filter(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == architectural
                 && !state.executed_fetches.contains(&event.request_id())
         })
-        .min_by_key(|event| event.request_id().sequence())?;
-    let current =
-        completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, memory)?;
+        .min_by_key(|event| event.request_id().sequence())
+    else {
+        return DataAccessResultHeadPhysicalProbe::Memory;
+    };
+    let Some(current) =
+        completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, memory)
+    else {
+        return DataAccessResultHeadPhysicalProbe::Memory;
+    };
     let fetch_request = current.last_consumed_request();
-    state
-        .cached_translated_scalar_load_physical_range(
-            current.decoded().instruction(),
-            fetch_request,
-        )
-        .map(|range| (fetch_request, range))
+    let instruction = current.decoded().instruction();
+    if data_access_result_fetch_ahead_shape(state, instruction).is_none() {
+        return DataAccessResultHeadPhysicalProbe::Memory;
+    }
+    let Some(probe) = data_access_result_head_probe(state, fetch_request, instruction) else {
+        return DataAccessResultHeadPhysicalProbe::Blocked;
+    };
+    let range = match data_access_result_translation_probe(state, &probe) {
+        DataAccessResultTranslationProbe::Direct => probe.virtual_range,
+        DataAccessResultTranslationProbe::Unknown => {
+            return DataAccessResultHeadPhysicalProbe::Memory;
+        }
+        DataAccessResultTranslationProbe::Ready(physical_address) => {
+            let Ok(range) = AddressRange::new(physical_address, probe.virtual_range.size()) else {
+                return DataAccessResultHeadPhysicalProbe::Blocked;
+            };
+            range
+        }
+        DataAccessResultTranslationProbe::Blocked => {
+            return DataAccessResultHeadPhysicalProbe::Blocked;
+        }
+    };
+    DataAccessResultHeadPhysicalProbe::Ready {
+        fetch_request,
+        access: probe.access,
+        range,
+        request_byte_offset: probe.request_byte_offset,
+    }
 }
 
 pub(super) fn additional_fetch_candidate(
@@ -238,6 +302,9 @@ pub(super) fn additional_fetch_candidate(
 ) -> DetailedFetchAheadCandidate {
     if !state.live_retire_gate.detailed_policy_enabled() {
         return DetailedFetchAheadCandidate::NotApplicable;
+    }
+    if translated == TranslatedMemoryFetchAhead::Blocked {
+        return DetailedFetchAheadCandidate::Blocked;
     }
     let architectural = Address::new(state.hart.pc());
     let Some(current) = completed
@@ -277,11 +344,181 @@ pub(super) fn additional_fetch_candidate(
         }
         None => {}
     }
+    if let Some(window) = data_access_result_fetch_ahead_window(
+        state,
+        current.last_consumed_request(),
+        current.decoded().instruction(),
+        state.o3_runtime.scalar_memory_window_limit(),
+        translated,
+    ) {
+        return scalar_integer_fu_window_candidate(state, fetch_events, &current, window);
+    }
     let Some(window) = RiscvScalarIntegerLiveWindow::from_fu_head(current.decoded().instruction())
     else {
         return DetailedFetchAheadCandidate::NotApplicable;
     };
     scalar_integer_fu_window_candidate(state, fetch_events, &current, window)
+}
+
+fn data_access_result_fetch_ahead_window(
+    state: &RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    instruction: RiscvInstruction,
+    row_limit: usize,
+    translated: TranslatedMemoryFetchAhead,
+) -> Option<RiscvScalarIntegerLiveWindow> {
+    let integer_destination = data_access_result_fetch_ahead_shape(state, instruction)?;
+    if !data_access_result_translation_probe_allows(state, fetch_request, instruction, translated) {
+        return None;
+    }
+    Some(RiscvScalarIntegerLiveWindow::from_data_access_result(
+        integer_destination,
+        row_limit,
+    ))
+}
+
+fn data_access_result_fetch_ahead_shape(
+    state: &RiscvCoreState,
+    instruction: RiscvInstruction,
+) -> Option<Option<Register>> {
+    let integer_destination = match instruction {
+        RiscvInstruction::Load { rd, .. } if !rd.is_zero() => Some(rd),
+        RiscvInstruction::FloatLoad { .. } => None,
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
+            vd,
+            width: MemoryWidth::Doubleword,
+            mask,
+            ..
+        }) => {
+            let config = state.hart.vector_config();
+            if config.vill()
+                || config.vl() == 0
+                || config.vtype() & 0x7 != 0
+                || config.element_width_bytes() != Some(MemoryWidth::Doubleword.bytes())
+                || config.register_group_registers() != Some(1)
+                || (mask == RiscvVectorMaskMode::Masked && vd.index() == 0)
+            {
+                return None;
+            }
+            if mask == RiscvVectorMaskMode::Masked {
+                let mask_register = state
+                    .hart
+                    .read_vector(VectorRegister::new(0).expect("v0 is a valid vector register"));
+                let any_active = (0..config.vl() as usize)
+                    .any(|lane| mask_register[lane / 8] & (1_u8 << (lane % 8)) != 0);
+                if !any_active {
+                    return None;
+                }
+            }
+            None
+        }
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
+            ..
+        }) => return None,
+        RiscvInstruction::LoadReserved { rd, .. } | RiscvInstruction::AtomicMemory { rd, .. }
+            if !rd.is_zero() =>
+        {
+            Some(rd)
+        }
+        _ => return None,
+    };
+    Some(integer_destination)
+}
+
+struct DataAccessResultHeadProbe {
+    access: MemoryAccessKind,
+    request: TranslationRequest,
+    virtual_range: AddressRange,
+    request_byte_offset: usize,
+}
+
+fn data_access_result_head_probe(
+    state: &RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    instruction: RiscvInstruction,
+) -> Option<DataAccessResultHeadProbe> {
+    let mut hart = state.hart.clone();
+    let execution = hart.execute(instruction).ok()?;
+    let access = execution.memory_access()?.clone();
+    let translation_access = match &access {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride {
+            fault_only_first: false,
+            ..
+        }
+        | MemoryAccessKind::LoadReserved { .. } => TranslationAccessKind::Load,
+        MemoryAccessKind::AtomicMemory { .. } => TranslationAccessKind::Atomic,
+        _ => return None,
+    };
+    let base_size = access_size(&access).ok()?;
+    let base_address = Address::new(access_address(&access));
+    let request_span = masked_vector_memory_request_span(&access, base_address, base_size).ok()?;
+    let virtual_range = AddressRange::new(request_span.address, request_span.size).ok()?;
+    let request = TranslationRequest::new(
+        TranslationRequestId::new(fetch_request.agent(), fetch_request.sequence()),
+        request_span.address,
+        request_span.size,
+        translation_access,
+    )
+    .ok()?;
+    Some(DataAccessResultHeadProbe {
+        access,
+        request,
+        virtual_range,
+        request_byte_offset: request_span.byte_offset,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DataAccessResultTranslationProbe {
+    Direct,
+    Unknown,
+    Ready(Address),
+    Blocked,
+}
+
+fn data_access_result_translation_probe(
+    state: &RiscvCoreState,
+    probe: &DataAccessResultHeadProbe,
+) -> DataAccessResultTranslationProbe {
+    let Some(frontend) = state.data_translation.as_ref() else {
+        return DataAccessResultTranslationProbe::Direct;
+    };
+    let Some(tlb) = frontend.tlb() else {
+        return DataAccessResultTranslationProbe::Unknown;
+    };
+    let address_space = TranslationAddressSpaceId::new(state.hart.translation_address_space());
+    match tlb.peek_cached_in_address_space(address_space, &probe.request) {
+        Ok(Some(lookup)) if lookup.fault().is_some() => DataAccessResultTranslationProbe::Blocked,
+        Ok(Some(lookup)) => lookup
+            .physical_address()
+            .map(DataAccessResultTranslationProbe::Ready)
+            .unwrap_or(DataAccessResultTranslationProbe::Blocked),
+        Ok(None) => DataAccessResultTranslationProbe::Unknown,
+        Err(_) => DataAccessResultTranslationProbe::Blocked,
+    }
+}
+
+fn data_access_result_translation_probe_allows(
+    state: &RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    instruction: RiscvInstruction,
+    translated: TranslatedMemoryFetchAhead,
+) -> bool {
+    if translated == TranslatedMemoryFetchAhead::Blocked {
+        return false;
+    }
+    let Some(probe) = data_access_result_head_probe(state, fetch_request, instruction) else {
+        return false;
+    };
+    match data_access_result_translation_probe(state, &probe) {
+        DataAccessResultTranslationProbe::Direct => true,
+        DataAccessResultTranslationProbe::Unknown | DataAccessResultTranslationProbe::Ready(_) => {
+            translated != TranslatedMemoryFetchAhead::Disabled
+        }
+        DataAccessResultTranslationProbe::Blocked => false,
+    }
 }
 
 fn translated_scalar_load_window_candidate(

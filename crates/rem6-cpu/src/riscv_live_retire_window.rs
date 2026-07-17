@@ -368,7 +368,7 @@ fn stage_o3_live_retire_window(
     Ok(Some(admitted_tick))
 }
 
-pub(crate) fn stage_o3_scalar_memory_younger_window(
+pub(crate) fn stage_o3_data_access_younger_window(
     state: &mut RiscvCoreState,
     execution: &RiscvCpuExecutionEvent,
     issue_tick: u64,
@@ -387,7 +387,7 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         .min(O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
     let Some(window) = state
         .o3_runtime
-        .scalar_memory_integer_window(execution.fetch().request_id())
+        .data_access_integer_window(execution.fetch().request_id())
     else {
         return;
     };
@@ -399,7 +399,7 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         window,
         row_limit.saturating_sub(1),
     );
-    let staged_rows = state.o3_runtime.stage_live_scalar_memory_younger_window(
+    let staged_rows = state.o3_runtime.stage_live_data_access_younger_window(
         execution.fetch().request_id(),
         younger
             .iter()
@@ -407,7 +407,7 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
     );
     let Some(head) = state
         .o3_runtime
-        .live_scalar_memory_head_reservation(execution.fetch().request_id())
+        .live_data_access_head_reservation(execution.fetch().request_id())
     else {
         return;
     };
@@ -417,16 +417,15 @@ pub(crate) fn stage_o3_scalar_memory_younger_window(
         &younger[..staged_rows.min(younger.len())],
         issue_tick,
     )
-    .expect("live scalar memory younger writeback reservation");
+    .expect("live data-access younger writeback reservation");
 }
 
-pub(crate) fn wake_o3_scalar_memory_younger_window(
+pub(crate) fn wake_o3_data_access_younger_window(
     state: &mut RiscvCoreState,
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) {
-    let Some((tail_request, younger_pcs)) =
-        state.o3_runtime.live_scalar_memory_younger_wakeup_seed()
+    let Some((tail_request, younger_pcs)) = state.o3_runtime.live_data_access_younger_wakeup_seed()
     else {
         return;
     };
@@ -443,12 +442,12 @@ pub(crate) fn wake_o3_scalar_memory_younger_window(
     }
     let Some(head) = state
         .o3_runtime
-        .live_scalar_memory_head_reservation(tail_request)
+        .live_data_access_head_reservation(tail_request)
     else {
         return;
     };
     schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick)
-        .expect("live scalar memory wake writeback reservation");
+        .expect("live data-access wake writeback reservation");
 }
 
 fn accepted_scalar_integer_younger_window(
@@ -1047,11 +1046,13 @@ mod tests {
             .live_retire_gate
             .set_policy(RiscvLiveRetireGatePolicy::detailed());
         state.o3_runtime.set_scalar_memory_window_limit(4);
-        assert!(state
-            .o3_runtime
-            .stage_live_data_access_issue(&execution, request(7, 20), 31));
+        assert!(state.o3_runtime.stage_live_data_access_issue_for_test(
+            &execution,
+            request(7, 20),
+            31
+        ));
 
-        stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
+        stage_o3_data_access_younger_window(&mut state, &execution, 10, &events);
 
         assert_eq!(
             state.o3_runtime.snapshot().reorder_buffer().len(),
@@ -1109,11 +1110,13 @@ mod tests {
             None,
         );
         state.branch_speculations.insert(11, prediction.id());
-        assert!(state
-            .o3_runtime
-            .stage_live_data_access_issue(&execution, request(7, 20), 31));
+        assert!(state.o3_runtime.stage_live_data_access_issue_for_test(
+            &execution,
+            request(7, 20),
+            31
+        ));
 
-        stage_o3_scalar_memory_younger_window(&mut state, &execution, 10, &events);
+        stage_o3_data_access_younger_window(&mut state, &execution, 10, &events);
 
         assert_eq!(
             state

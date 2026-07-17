@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     o3_runtime::O3StoreLoadForwardingPlan,
-    riscv_live_retire_window::wake_o3_scalar_memory_younger_window, RiscvCore, RiscvCpuError,
+    riscv_live_retire_window::wake_o3_data_access_younger_window, RiscvCore, RiscvCpuError,
     RiscvDataAccessEvent, RiscvDataAccessEventKind,
 };
 
@@ -115,7 +115,7 @@ impl RiscvCore {
         let completed_event =
             mark_data_access_event_kind(&mut state, &access, RiscvDataAccessEventKind::Completed);
         debug_assert!(completed_event.is_some());
-        wake_o3_scalar_memory_younger_window(&mut state, tick, &fetch_events);
+        wake_o3_data_access_younger_window(&mut state, tick, &fetch_events);
         state.data_events.push(RiscvDataAccessEvent::completed(
             access.record(tick),
             Some(data),

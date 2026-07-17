@@ -14,7 +14,7 @@ use rem6_transport::{
 
 use crate::{
     o3_runtime::{
-        is_deferred_o3_data_access, is_scalar_window_access, o3_memory_result_destination,
+        is_deferred_o3_data_access, o3_memory_result_destination, O3DataAccessWindowPolicy,
         O3StoreLoadForwardingPlan,
     },
     riscv_checker,
@@ -24,7 +24,7 @@ use crate::{
     riscv_execute,
     riscv_fu_latency::riscv_data_completion_execute_wait_cycles,
     riscv_live_retire_window::{
-        stage_o3_scalar_memory_younger_window, wake_o3_scalar_memory_younger_window,
+        stage_o3_data_access_younger_window, wake_o3_data_access_younger_window,
     },
     CpuFetchEvent, InOrderPipelineCycleRecord, InOrderPipelineStage, InOrderPipelineStallCause,
     O3RuntimeError, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
@@ -396,12 +396,23 @@ impl RiscvCore {
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
-        let size = access_size(&access)?;
-        let address = Address::new(access_address(&access));
+        let base_size = access_size(&access)?;
+        let base_address = Address::new(access_address(&access));
+        let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
+        let size = request_span.size;
+        let address = request_span.address;
+        let request_byte_offset = request_span.byte_offset;
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
-        self.check_pma_data_access(fetch_request, &access, size, address, 0)?;
+        self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
-        let Some(route) = self.mmio_route_for_access(bus, request_id, &access, size, address)?
+        let Some(route) = self.mmio_route_for_access(
+            bus,
+            request_id,
+            &access,
+            size,
+            address,
+            request_byte_offset,
+        )?
         else {
             return Ok(None);
         };
@@ -428,7 +439,7 @@ impl RiscvCore {
             access,
             size,
             physical_address: address,
-            request_byte_offset: 0,
+            request_byte_offset,
             line_layout: None,
             forwarded_load_data: None,
             store_load_forwarding_plan: None,
@@ -445,11 +456,19 @@ impl RiscvCore {
         let Some((_, access)) = self.next_unissued_data_access() else {
             return Ok(false);
         };
-        let size = access_size(&access)?;
-        let address = Address::new(access_address(&access));
+        let base_size = access_size(&access)?;
+        let base_address = Address::new(access_address(&access));
+        let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         Ok(self
-            .mmio_route_for_access(bus, request_id, &access, size, address)?
+            .mmio_route_for_access(
+                bus,
+                request_id,
+                &access,
+                request_span.size,
+                request_span.address,
+                request_span.byte_offset,
+            )?
             .is_some())
     }
 
@@ -460,8 +479,9 @@ impl RiscvCore {
         access: &MemoryAccessKind,
         size: AccessSize,
         address: Address,
+        request_byte_offset: usize,
     ) -> Result<Option<MmioRoute>, RiscvCpuError> {
-        let request = mmio_request(request_id, access, size, address, 0)?;
+        let request = mmio_request(request_id, access, size, address, request_byte_offset)?;
         match bus.route_for(self.core.partition(), &request) {
             Ok(route) => Ok(Some(route)),
             Err(MmioError::UnmappedAddress { .. }) => Ok(None),
@@ -541,7 +561,7 @@ impl RiscvCore {
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
-        let (o3_data_access, o3_scalar_load_younger_window) = {
+        let (o3_data_access, younger_window_policy) = {
             let state = self.state.lock().expect("riscv core lock");
             let detailed = state.live_retire_gate.detailed_policy_enabled();
             let o3_data_access = is_deferred_o3_data_access(Some(&issue.access))
@@ -549,9 +569,9 @@ impl RiscvCore {
                     || state
                         .o3_runtime
                         .owns_pending_live_data_access_retirement(issue.fetch_request));
-            let o3_scalar_load_younger_window = o3_data_access
-                && is_scalar_window_access(&issue.access)
-                && matches!(issue.access, MemoryAccessKind::Load { .. })
+            let eligible_scalar_load = o3_data_access
+                && matches!(&issue.access, MemoryAccessKind::Load { .. })
+                && o3_memory_result_destination(&issue.access).is_some()
                 && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
                 && (state.data_translation.is_none()
                     || state
@@ -563,9 +583,16 @@ impl RiscvCore {
                         .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
                     Ok(false)
                 );
-            (o3_data_access, o3_scalar_load_younger_window)
+            let younger_window_policy = if eligible_scalar_load {
+                O3DataAccessWindowPolicy::ScalarMemoryPrefix
+            } else if o3_data_access && o3_memory_result_destination(&issue.access).is_some() {
+                O3DataAccessWindowPolicy::MemoryResult
+            } else {
+                O3DataAccessWindowPolicy::None
+            };
+            (o3_data_access, younger_window_policy)
         };
-        let fetch_events = if o3_scalar_load_younger_window {
+        let fetch_events = if younger_window_policy != O3DataAccessWindowPolicy::None {
             self.core.fetch_events()
         } else {
             Vec::new()
@@ -591,13 +618,14 @@ impl RiscvCore {
                 execution,
                 issue.request_id,
                 issue.tick,
+                younger_window_policy,
             );
             assert!(
                 staged,
                 "O3-owned data issue must own an available memory slot"
             );
-            if o3_scalar_load_younger_window {
-                stage_o3_scalar_memory_younger_window(
+            if younger_window_policy != O3DataAccessWindowPolicy::None {
+                stage_o3_data_access_younger_window(
                     &mut state,
                     execution,
                     issue.tick,
@@ -701,7 +729,7 @@ impl RiscvCore {
                 .is_some_and(|access| matches!(access.access, MemoryAccessKind::Load { .. }))
                 && state
                     .o3_runtime
-                    .live_scalar_memory_younger_wakeup_seed()
+                    .live_data_access_younger_wakeup_seed()
                     .is_some()
         };
         if should_snapshot {
@@ -793,11 +821,7 @@ impl RiscvCore {
                     riscv_checker::sync_checker_hart(&mut state);
                 }
                 if matches!(access.access, MemoryAccessKind::Load { .. }) {
-                    wake_o3_scalar_memory_younger_window(
-                        &mut state,
-                        delivery.tick(),
-                        &fetch_events,
-                    );
+                    wake_o3_data_access_younger_window(&mut state, delivery.tick(), &fetch_events);
                 }
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),

@@ -797,7 +797,7 @@ impl ScalarIssueFixture {
         runtime.set_issue_width(issue_width);
         runtime.set_scalar_memory_window_limit(4);
         let load = scalar_load_event();
-        assert!(runtime.stage_live_data_access_issue(&load, request(20), 20));
+        assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 20));
         let younger = match case {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
@@ -810,7 +810,7 @@ impl ScalarIssueFixture {
                 [jal_link(1), jalr_link(5, 1), jalr_return(5)]
             }
         };
-        runtime.stage_live_scalar_memory_younger_window(
+        runtime.stage_live_data_access_younger_window(
             load.fetch().request_id(),
             [BRANCH_PC, SECOND_PC, THIRD_PC]
                 .into_iter()
@@ -818,7 +818,7 @@ impl ScalarIssueFixture {
                 .map(|(pc, instruction)| (Address::new(pc), instruction)),
         );
         let head = runtime
-            .live_scalar_memory_head_reservation(load.fetch().request_id())
+            .live_data_access_head_reservation(load.fetch().request_id())
             .expect("scalar load head reservation");
         let requests = [BRANCH_PC, SECOND_PC, THIRD_PC]
             .into_iter()

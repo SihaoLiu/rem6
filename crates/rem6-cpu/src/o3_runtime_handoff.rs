@@ -101,7 +101,7 @@ impl O3RuntimeState {
             resident_rows,
             forwarded_rows,
             completed_partial_rows,
-            self.live_scalar_memory_younger_sequences.len(),
+            self.live_data_access_younger_sequences.len(),
         ))
     }
 }
@@ -123,7 +123,7 @@ mod tests {
         let mut runtime = O3RuntimeState::default();
         let store = scalar_store_event(0x8000, 10, 0x9001);
         let load = scalar_load_event(0x8004, 11, 0x9000);
-        assert!(runtime.stage_live_data_access_issue(&store, memory_request(20), 31));
+        assert!(runtime.stage_live_data_access_issue_for_test(&store, memory_request(20), 31));
         let plan = runtime
             .scalar_load_forwarding_plan(
                 load.instruction(),
@@ -131,7 +131,7 @@ mod tests {
             )
             .expect("byte store should partially overlay the word load");
         assert!(plan.is_partial());
-        assert!(runtime.stage_live_data_access_issue(&load, memory_request(21), 32));
+        assert!(runtime.stage_live_data_access_issue_for_test(&load, memory_request(21), 32));
         let mut completed = load.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(runtime

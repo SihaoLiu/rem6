@@ -816,8 +816,14 @@ fn fetch_ahead_decision(
 ) -> Option<RiscvFetchAheadDecision> {
     let scalar_memory_head =
         detailed_o3::scalar_memory_fetch_ahead_head(state, request, instruction, translated);
+    let data_access_head = detailed_o3::allows_detailed_data_access_head_fetch_ahead(
+        state,
+        request,
+        instruction,
+        translated,
+    );
     if instruction_allows_straight_line_fetch_ahead(instruction)
-        || scalar_memory_head.is_some()
+        || data_access_head
         || instruction_allows_trap_fallthrough_fetch_ahead(state, instruction)
     {
         if matches!(

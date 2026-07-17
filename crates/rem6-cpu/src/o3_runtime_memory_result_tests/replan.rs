@@ -6,7 +6,7 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
     assert!(runtime.set_issue_width(2));
     assert!(runtime.set_writeback_width(2));
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let other = multiply_instruction(6, 0);
     let producer = fixed_instruction(7);
     let child = multiply_instruction(8, 7);
@@ -89,7 +89,7 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
     );
 
     let head = runtime
-        .live_scalar_memory_head_reservation(older.fetch().request_id())
+        .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for authoritative reissue");
     runtime
         .schedule_live_speculative_issues(
@@ -174,7 +174,7 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
     assert!(runtime.set_issue_width(1));
     assert!(runtime.set_writeback_width(1));
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let producer = fixed_instruction(6);
     let child = dependent_instruction(7, 6);
     let producer_sequence = runtime
@@ -195,7 +195,7 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
         42,
     );
     let head = runtime
-        .live_scalar_memory_head_reservation(older.fetch().request_id())
+        .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains live");
     let child_request = issue_request(0x8008, request(31), child);
     runtime

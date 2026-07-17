@@ -19,7 +19,9 @@ use crate::riscv_cluster_run::{RiscvClusterDriveEvent, RiscvClusterTurn};
 use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
-use crate::riscv_cluster_translation::schedule_pending_data_translation_wake;
+use crate::riscv_cluster_translation::{
+    can_retire_mmio_fetch_pending, schedule_pending_data_translation_wake,
+};
 use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
@@ -937,9 +939,7 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
-                    && crate::riscv_cluster_translation::can_retire_mmio_aware_translated_fetch_pending(
-                        *cpu, core, bus,
-                    )?
+                    && can_retire_mmio_fetch_pending(*cpu, core, bus)?
                     && push_prepared_completed_fetch_drive_event(
                         *cpu,
                         core,
@@ -957,9 +957,7 @@ impl RiscvCluster {
 
             let fetch_admitted = fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) =
-                    core.next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(bus)
-                {
+                if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
@@ -1087,7 +1085,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
+                if can_retire_mmio_fetch_pending(*cpu, core, bus)?
                     && push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)?
                 {
                     continue;
@@ -1098,7 +1096,7 @@ impl RiscvCluster {
 
             let fetch_admitted = fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     let event = core
@@ -1215,7 +1213,7 @@ impl RiscvCluster {
             let instruction_budget_exhausted = committed_instructions >= instruction_budget;
             if core.has_pending_fetch() {
                 if !instruction_budget_exhausted {
-                    if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
+                    if can_retire_mmio_fetch_pending(*cpu, core, bus)? {
                         if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                             committed_instructions += u64::from(matches!(
                                 event.action(),
@@ -1236,7 +1234,7 @@ impl RiscvCluster {
             let fetch_admitted =
                 !instruction_budget_exhausted && fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     let event = core

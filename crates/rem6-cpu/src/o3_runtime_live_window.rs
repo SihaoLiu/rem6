@@ -120,12 +120,12 @@ impl O3RuntimeState {
         head_sequence
     }
 
-    pub(crate) fn stage_live_scalar_memory_younger_window(
+    pub(crate) fn stage_live_data_access_younger_window(
         &mut self,
         fetch_request: MemoryRequestId,
         younger: impl IntoIterator<Item = (Address, RiscvInstruction)>,
     ) -> usize {
-        let Some(mut window) = self.scalar_memory_integer_window(fetch_request) else {
+        let Some(mut window) = self.data_access_integer_window(fetch_request) else {
             return 0;
         };
         let live_sequence = self
@@ -175,7 +175,7 @@ impl O3RuntimeState {
             if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
                 self.live_serializing_control_sequences.insert(sequence);
             }
-            self.live_scalar_memory_younger_sequences.insert(sequence);
+            self.live_data_access_younger_sequences.insert(sequence);
             if matches!(
                 decision,
                 RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
@@ -256,7 +256,7 @@ impl O3RuntimeState {
             let boundary_sequence = entry.sequence();
             self.snapshot.reorder_buffer.drain(index..);
             self.discard_future_writeback_from_sequence(boundary_sequence, retire_tick);
-            self.live_scalar_memory_younger_sequences
+            self.live_data_access_younger_sequences
                 .retain(|sequence| *sequence < boundary_sequence);
             self.retain_live_speculative_executions_at(
                 |speculative| speculative.sequence < boundary_sequence,
@@ -364,7 +364,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
-        self.live_scalar_memory_younger_sequences.clear();
+        self.live_data_access_younger_sequences.clear();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
@@ -380,7 +380,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
-        self.live_scalar_memory_younger_sequences.clear();
+        self.live_data_access_younger_sequences.clear();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
@@ -408,14 +408,14 @@ impl O3RuntimeState {
         self.live_speculative_executions.clear();
     }
 
-    pub(crate) fn live_scalar_memory_younger_wakeup_seed(
+    pub(crate) fn live_data_access_younger_wakeup_seed(
         &self,
     ) -> Option<(MemoryRequestId, Vec<Address>)> {
-        if self.live_scalar_memory_younger_sequences.is_empty() {
+        if self.live_data_access_younger_sequences.is_empty() {
             return None;
         }
         let tail = self.live_data_accesses.last()?;
-        let younger_sequences = &self.live_scalar_memory_younger_sequences;
+        let younger_sequences = &self.live_data_access_younger_sequences;
         let younger_pcs = self
             .snapshot
             .reorder_buffer
@@ -423,7 +423,7 @@ impl O3RuntimeState {
             .filter(|entry| younger_sequences.contains(&entry.sequence()))
             .map(|entry| entry.pc())
             .collect::<Vec<_>>();
-        (younger_pcs.len() == self.live_scalar_memory_younger_sequences.len())
+        (younger_pcs.len() == self.live_data_access_younger_sequences.len())
             .then_some((tail.fetch_request, younger_pcs))
     }
 
@@ -441,7 +441,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);
-        self.live_scalar_memory_younger_sequences
+        self.live_data_access_younger_sequences
             .retain(|younger| *younger < sequence);
         if let Some(now) = now {
             self.retain_live_speculative_executions_at(
@@ -632,14 +632,14 @@ impl O3RuntimeState {
             .map(|entry| entry.sequence())
     }
 
-    pub(super) fn retain_live_scalar_memory_younger_sequences_in_rob(&mut self) {
+    pub(super) fn retain_live_data_access_younger_sequences_in_rob(&mut self) {
         let resident_sequences = self
             .snapshot
             .reorder_buffer
             .iter()
             .map(|entry| entry.sequence())
             .collect::<BTreeSet<_>>();
-        self.live_scalar_memory_younger_sequences
+        self.live_data_access_younger_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
         self.live_control_dependencies
             .retain(|sequence, _| resident_sequences.contains(sequence));

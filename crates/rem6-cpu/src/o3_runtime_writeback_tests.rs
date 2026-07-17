@@ -503,9 +503,9 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
     let oldest_request = memory_request(20);
     let boundary_request = memory_request(21);
     let discarded_request = memory_request(22);
-    assert!(runtime.stage_live_data_access_issue(&oldest, oldest_request, 31));
-    assert!(runtime.stage_live_data_access_issue(&boundary, boundary_request, 32));
-    assert!(runtime.stage_live_data_access_issue(&discarded, discarded_request, 33));
+    assert!(runtime.stage_live_data_access_issue_for_test(&oldest, oldest_request, 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&boundary, boundary_request, 32));
+    assert!(runtime.stage_live_data_access_issue_for_test(&discarded, discarded_request, 33));
     let oldest_sequence = runtime.live_data_accesses[0].sequence;
     let discarded_sequence = runtime.live_data_accesses[2].sequence;
 

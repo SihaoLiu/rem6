@@ -326,7 +326,7 @@ impl O3RuntimeState {
                         .map(|write| (write, issued.admitted_writeback_tick))
                 });
             let (write, producer_ready_tick) = speculative
-                .or_else(|| self.completed_live_scalar_load_source(producer.sequence(), source))?;
+                .or_else(|| self.completed_live_data_access_source(producer.sequence(), source))?;
             if !producer_sequences.contains(&producer.sequence()) {
                 producer_sequences.push(producer.sequence());
             }
@@ -355,7 +355,7 @@ impl O3RuntimeState {
         ))
     }
 
-    fn completed_live_scalar_load_source(
+    fn completed_live_data_access_source(
         &self,
         sequence: u64,
         source: rem6_isa_riscv::Register,
@@ -449,7 +449,7 @@ impl O3RuntimeState {
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
-        self.live_scalar_memory_younger_sequences
+        self.live_data_access_younger_sequences
             .retain(|sequence| *sequence <= branch_sequence);
         self.retain_live_speculative_executions_at(
             |execution| execution.sequence <= branch_sequence,

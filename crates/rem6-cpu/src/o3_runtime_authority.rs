@@ -12,7 +12,7 @@ impl O3RuntimeState {
                 .any(|entry| entry.is_live_staged())
             || !self.live_retired_instructions.is_empty()
             || !self.live_speculative_executions.is_empty()
-            || !self.live_scalar_memory_younger_sequences.is_empty()
+            || !self.live_data_access_younger_sequences.is_empty()
             || !self.invalidated_live_staged_fetch_identities.is_empty()
     }
 

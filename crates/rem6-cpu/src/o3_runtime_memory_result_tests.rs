@@ -26,6 +26,8 @@ use crate::{
 mod replan;
 #[path = "o3_runtime_memory_result_tests/writeback_maxima.rs"]
 mod writeback_maxima;
+#[path = "o3_runtime_memory_result_tests/younger_window.rs"]
+mod younger_window;
 
 #[test]
 fn memory_result_policy_accepts_exact_one_destination_matrix() {
@@ -34,7 +36,7 @@ fn memory_result_policy_accepts_exact_one_destination_matrix() {
         let event = execution_event(0x8000, 1, instruction, access);
 
         assert!(
-            runtime.stage_live_data_access_issue(&event, request(20), 31),
+            runtime.stage_live_data_access_issue_for_test(&event, request(20), 31),
             "{label}"
         );
 
@@ -65,7 +67,7 @@ fn memory_result_policy_accepts_exact_one_destination_matrix() {
 fn memory_result_policy_rejects_zero_destination_and_unsupported_shapes() {
     let mut scalar_x0 = O3RuntimeState::default();
     let x0_load = load_event(0x8000, 1, 0);
-    assert!(scalar_x0.stage_live_data_access_issue(&x0_load, request(20), 31));
+    assert!(scalar_x0.stage_live_data_access_issue_for_test(&x0_load, request(20), 31));
     assert_eq!(scalar_x0.snapshot().reorder_buffer()[0].destination(), None);
     let mut completed_x0 = x0_load;
     completed_x0.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
@@ -90,7 +92,7 @@ fn memory_result_policy_rejects_zero_destination_and_unsupported_shapes() {
         let event = execution_event(0x8000, 1, instruction, access);
 
         assert!(
-            !runtime.stage_live_data_access_issue(&event, request(20), 31),
+            !runtime.stage_live_data_access_issue_for_test(&event, request(20), 31),
             "{label}"
         );
         assert!(runtime.snapshot().reorder_buffer().is_empty(), "{label}");
@@ -103,14 +105,26 @@ fn memory_result_policy_rejects_zero_destination_and_unsupported_shapes() {
 fn non_scalar_result_is_terminal_while_scalar_overlap_remains_available() {
     let mut scalar = O3RuntimeState::default();
     scalar.set_scalar_memory_window_limit(4);
-    assert!(scalar.stage_live_data_access_issue(&load_event(0x8000, 1, 5), request(20), 31));
-    assert!(scalar.stage_live_data_access_issue(&load_event(0x8004, 2, 6), request(21), 32));
+    assert!(scalar.stage_live_data_access_issue_for_test(
+        &load_event(0x8000, 1, 5),
+        request(20),
+        31
+    ));
+    assert!(scalar.stage_live_data_access_issue_for_test(
+        &load_event(0x8004, 2, 6),
+        request(21),
+        32
+    ));
     assert_eq!(scalar.live_data_accesses.len(), 2);
 
     let mut result = O3RuntimeState::default();
     let float = float_load_event(0x8000, 1);
-    assert!(result.stage_live_data_access_issue(&float, request(20), 31));
-    assert!(!result.stage_live_data_access_issue(&load_event(0x8004, 2, 6), request(21), 32));
+    assert!(result.stage_live_data_access_issue_for_test(&float, request(20), 31));
+    assert!(!result.stage_live_data_access_issue_for_test(
+        &load_event(0x8004, 2, 6),
+        request(21),
+        32
+    ));
     let mut completed = float;
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(is_terminal_o3_data_access_event(&completed));
@@ -120,7 +134,7 @@ fn non_scalar_result_is_terminal_while_scalar_overlap_remains_available() {
 fn live_atomic_reserves_and_retires_two_lsq_sequences() {
     let mut runtime = O3RuntimeState::default();
     let atomic = atomic_event(0x8000, 1, 7);
-    assert!(runtime.stage_live_data_access_issue(&atomic, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&atomic, request(20), 31));
     let sequence = runtime.live_data_accesses[0].sequence;
     assert_eq!(sequence, 0);
     assert_eq!(lsq_sequences(&runtime), vec![sequence, sequence + 1]);
@@ -146,7 +160,7 @@ fn live_atomic_reserves_and_retires_two_lsq_sequences() {
     }));
 
     let next = load_event(0x8004, 2, 8);
-    assert!(runtime.stage_live_data_access_issue(&next, request(21), 43));
+    assert!(runtime.stage_live_data_access_issue_for_test(&next, request(21), 43));
     assert_eq!(runtime.live_data_accesses[0].sequence, sequence + 2);
 }
 
@@ -158,7 +172,7 @@ fn memory_result_retry_and_failure_discard_reservation_and_full_lsq_span() {
     ] {
         let mut runtime = O3RuntimeState::default();
         let atomic = atomic_event(0x8000, 1, 7);
-        assert!(runtime.stage_live_data_access_issue(&atomic, request(20), 31));
+        assert!(runtime.stage_live_data_access_issue_for_test(&atomic, request(20), 31));
         let sequence = runtime.live_data_accesses[0].sequence;
         runtime
             .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(sequence, 50)])
@@ -207,7 +221,7 @@ fn live_atomic_squash_redirect_and_rollback_remove_both_lsq_rows() {
 fn live_non_scalar_result_is_rejected_by_handoff_status_and_remains_nonquiescent() {
     let core = core_with_runtime(O3RuntimeState::default());
     core.with_o3_runtime(|runtime| {
-        assert!(runtime.stage_live_data_access_issue(
+        assert!(runtime.stage_live_data_access_issue_for_test(
             &float_load_event(0x8000, 1),
             request(20),
             31
@@ -436,7 +450,7 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
     assert!(runtime.set_issue_width(1));
     runtime.set_writeback_width(1);
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let producer = fixed_instruction(6);
     let child = dependent_instruction(7, 6);
     let grandchild = dependent_instruction(8, 7);
@@ -490,7 +504,7 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
     assert!(runtime.writeback_reservation(child_sequence).is_none());
     assert!(runtime.writeback_reservation(grandchild_sequence).is_none());
     let head = runtime
-        .live_scalar_memory_head_reservation(older.fetch().request_id())
+        .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for descendant reissue");
     runtime
         .schedule_live_speculative_issues(
@@ -565,7 +579,7 @@ fn memory_result_replanning_reverses_provisional_deferred_stats() {
     assert!(runtime.set_issue_width(2));
     assert!(runtime.set_writeback_width(2));
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let other = multiply_instruction(6, 0);
     let producer = fixed_instruction(7);
     let dependent = dependent_instruction(8, 7);
@@ -603,7 +617,7 @@ fn memory_result_replanning_reverses_provisional_deferred_stats() {
     assert!(runtime.writeback_reservation(dependent_sequence).is_none());
 
     let head = runtime
-        .live_scalar_memory_head_reservation(older.fetch().request_id())
+        .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for dependent reissue");
     runtime
         .schedule_live_speculative_issues(
@@ -843,7 +857,11 @@ fn unsupported_results() -> Vec<(&'static str, RiscvInstruction, MemoryAccessKin
 
 fn live_atomic_runtime() -> O3RuntimeState {
     let mut runtime = O3RuntimeState::default();
-    assert!(runtime.stage_live_data_access_issue(&atomic_event(0x8000, 1, 7), request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(
+        &atomic_event(0x8000, 1, 7),
+        request(20),
+        31
+    ));
     assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
     runtime
 }
@@ -860,7 +878,7 @@ fn fixed_fu_owner_reserved_before_older_memory_result(width: usize) -> RealOwner
     let mut runtime = O3RuntimeState::default();
     runtime.set_writeback_width(width);
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let fixed = fixed_instruction(6);
     let fixed_sequence = runtime
         .stage_live_retire_window(Address::new(0x8004), fixed, 0, [])
@@ -904,7 +922,7 @@ fn memory_result_owner_reserved_before_older_fixed_fu(width: usize) -> RealOwner
         .expect("older fixed-FU row stages first");
     assert_eq!(fixed_sequence, 0);
     let younger = load_event(0x8004, 2, 5);
-    assert!(runtime.stage_live_data_access_issue(&younger, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&younger, request(20), 31));
     assert_eq!(runtime.live_data_accesses[0].sequence, 1);
     let mut completed_younger = younger;
     completed_younger.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);

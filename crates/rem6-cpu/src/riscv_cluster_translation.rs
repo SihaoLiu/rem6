@@ -32,12 +32,12 @@ pub(crate) fn schedule_pending_data_translation_wake(
     Ok(())
 }
 
-pub(crate) fn can_retire_mmio_aware_translated_fetch_pending(
+pub(crate) fn can_retire_mmio_fetch_pending(
     cpu: CpuId,
     core: &RiscvCore,
     bus: &MmioBus,
 ) -> Result<bool, RiscvClusterError> {
-    core.can_retire_completed_fetch_while_mmio_aware_cached_translated_memory_fetch_pending(bus)
+    core.can_retire_completed_fetch_while_mmio_aware_fetch_pending(bus)
         .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 

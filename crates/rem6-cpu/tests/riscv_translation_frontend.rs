@@ -543,6 +543,12 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
 
     assert!(matches!(
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::InstructionExecuted(_))
     ));
     assert!(!core.o3_live_data_access_lifecycle_is_quiescent());

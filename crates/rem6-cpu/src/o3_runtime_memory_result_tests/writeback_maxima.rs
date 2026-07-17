@@ -80,7 +80,7 @@ fn reserve_three_ready_and_deferred_rows(
 
 fn replan_three_live_rows_down_to_two(runtime: &mut O3RuntimeState) {
     let older = load_event(0x8000, 1, 5);
-    assert!(runtime.stage_live_data_access_issue(&older, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&older, request(20), 31));
     let producer = fixed_instruction(6);
     let child = fixed_instruction(7);
     let grandchild = fixed_instruction(8);

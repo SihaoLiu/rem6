@@ -87,7 +87,7 @@ use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
 pub(crate) use o3_runtime_memory::{
-    is_deferred_o3_data_access, is_scalar_window_access, o3_memory_result_destination,
+    is_deferred_o3_data_access, o3_memory_result_destination, O3DataAccessWindowPolicy,
 };
 use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
@@ -235,7 +235,7 @@ pub struct O3RuntimeState {
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_live_data_access_execution: Option<MemoryRequestId>,
     live_data_accesses: Vec<O3LiveDataAccess>,
-    live_scalar_memory_younger_sequences: BTreeSet<u64>,
+    live_data_access_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
     scalar_memory_window_limit_explicit: bool,
     issue_width: usize,
@@ -280,7 +280,7 @@ impl O3RuntimeState {
         self.invalidated_live_staged_fetch_identities.clear();
         self.deferred_live_data_access_execution = None;
         self.live_data_accesses.clear();
-        self.live_scalar_memory_younger_sequences.clear();
+        self.live_data_access_younger_sequences.clear();
         self.last_live_commit_tick = None;
         Ok(())
     }
@@ -687,7 +687,7 @@ impl Default for O3RuntimeState {
             invalidated_live_staged_fetch_identities: BTreeMap::new(),
             deferred_live_data_access_execution: None,
             live_data_accesses: Vec::new(),
-            live_scalar_memory_younger_sequences: BTreeSet::new(),
+            live_data_access_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
             scalar_memory_window_limit_explicit: false,
             issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
@@ -1184,7 +1184,7 @@ impl crate::RiscvCore {
             );
             crate::riscv_checker::sync_checker_hart(&mut state);
         }
-        state.wake_ready_o3_scalar_memory_younger_window(wake_tick, &fetch_events);
+        state.wake_ready_o3_data_access_younger_window(wake_tick, &fetch_events);
         state
             .o3_runtime
             .record_retired_instruction_with_trace(&execution, trace_enabled);

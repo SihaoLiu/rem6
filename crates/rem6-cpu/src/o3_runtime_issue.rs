@@ -68,7 +68,7 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
-    pub(crate) fn live_scalar_memory_head_reservation(
+    pub(crate) fn live_data_access_head_reservation(
         &self,
         fetch_request: MemoryRequestId,
     ) -> Option<O3LiveIssueHeadReservation> {

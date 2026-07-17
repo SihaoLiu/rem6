@@ -1,8 +1,8 @@
-use rem6_isa_riscv::RiscvInstruction;
+use rem6_isa_riscv::{MemoryAccessKind, RiscvInstruction};
 use rem6_memory::Address;
 use rem6_mmio::{MmioBus, MmioError, MmioRequest, MmioRequestId};
 
-use crate::{CpuFetchEventKind, RiscvCore, RiscvCpuError};
+use crate::{riscv_data_issue::mmio_request, CpuFetchEventKind, RiscvCore, RiscvCpuError};
 
 use super::{
     can_retire_completed_fetch_with_branch_speculations, completed_fetch_window, detailed_o3,
@@ -10,6 +10,13 @@ use super::{
     preview_selected_branch_speculation, PreparedRiscvFetchAheadSpeculation,
     RiscvFetchAheadDecision,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DataAccessResultHeadRoute {
+    Memory,
+    Mmio,
+    Blocked,
+}
 
 impl RiscvCore {
     pub(crate) fn next_fetch_ahead_before_retire(&self) -> Option<RiscvFetchAheadDecision> {
@@ -26,15 +33,18 @@ impl RiscvCore {
         )
     }
 
-    pub(crate) fn next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire(
+    pub(crate) fn next_mmio_aware_fetch_ahead_before_retire(
         &self,
         bus: &MmioBus,
     ) -> Option<RiscvFetchAheadDecision> {
-        if self.cached_translated_scalar_load_head_targets_mmio(bus) {
-            self.next_fetch_ahead_before_retire()
-        } else {
-            self.next_cached_translated_memory_fetch_ahead_before_retire()
-        }
+        let translated = match self.data_access_result_head_route(bus) {
+            DataAccessResultHeadRoute::Memory => {
+                detailed_o3::TranslatedMemoryFetchAhead::CachedMemory
+            }
+            DataAccessResultHeadRoute::Mmio => detailed_o3::TranslatedMemoryFetchAhead::Mmio,
+            DataAccessResultHeadRoute::Blocked => detailed_o3::TranslatedMemoryFetchAhead::Blocked,
+        };
+        self.next_fetch_ahead_before_retire_with_translation(translated)
     }
 
     fn next_fetch_ahead_before_retire_with_translation(
@@ -118,7 +128,7 @@ impl RiscvCore {
             return None;
         };
         let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
-        if detailed_o3::scalar_memory_has_younger_fetch(
+        if detailed_o3::data_access_has_younger_fetch(
             &state,
             &fetch_events,
             fetch.request_id(),
@@ -205,36 +215,64 @@ impl RiscvCore {
         )
     }
 
-    pub(crate) fn can_retire_completed_fetch_while_mmio_aware_cached_translated_memory_fetch_pending(
+    pub(crate) fn can_retire_completed_fetch_while_mmio_aware_fetch_pending(
         &self,
         bus: &MmioBus,
     ) -> Result<bool, RiscvCpuError> {
-        if self.cached_translated_scalar_load_head_targets_mmio(bus) {
-            self.can_retire_completed_fetch_while_fetch_pending()
-        } else {
-            self.can_retire_completed_fetch_while_cached_translated_memory_fetch_pending()
-        }
+        let translated = match self.data_access_result_head_route(bus) {
+            DataAccessResultHeadRoute::Memory => {
+                detailed_o3::TranslatedMemoryFetchAhead::CachedMemory
+            }
+            DataAccessResultHeadRoute::Mmio => detailed_o3::TranslatedMemoryFetchAhead::Mmio,
+            DataAccessResultHeadRoute::Blocked => detailed_o3::TranslatedMemoryFetchAhead::Blocked,
+        };
+        self.can_retire_completed_fetch_while_fetch_pending_with_translation(translated)
     }
 
-    fn cached_translated_scalar_load_head_targets_mmio(&self, bus: &MmioBus) -> bool {
+    fn data_access_result_head_route(&self, bus: &MmioBus) -> DataAccessResultHeadRoute {
         let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
-        let Some((fetch_request, range)) =
-            detailed_o3::cached_translated_scalar_load_head_physical_range(&state, &fetch_events)
-        else {
-            return false;
+        let (fetch_request, access, range, request_byte_offset) =
+            match detailed_o3::data_access_result_head_physical_probe(&state, &fetch_events) {
+                detailed_o3::DataAccessResultHeadPhysicalProbe::Memory => {
+                    return DataAccessResultHeadRoute::Memory;
+                }
+                detailed_o3::DataAccessResultHeadPhysicalProbe::Ready {
+                    fetch_request,
+                    access,
+                    range,
+                    request_byte_offset,
+                } => (fetch_request, access, range, request_byte_offset),
+                detailed_o3::DataAccessResultHeadPhysicalProbe::Blocked => {
+                    return DataAccessResultHeadRoute::Blocked;
+                }
+            };
+        let probe = if matches!(access, MemoryAccessKind::AtomicMemory { .. }) {
+            MmioRequest::read(
+                MmioRequestId::new(fetch_request.sequence()),
+                range.start(),
+                range.size(),
+            )
+            .map_err(RiscvCpuError::Mmio)
+        } else {
+            mmio_request(
+                fetch_request,
+                &access,
+                range.size(),
+                range.start(),
+                request_byte_offset,
+            )
         };
-        let Ok(probe) = MmioRequest::read(
-            MmioRequestId::new(fetch_request.sequence()),
-            range.start(),
-            range.size(),
-        ) else {
-            return true;
+        let Ok(probe) = probe else {
+            return DataAccessResultHeadRoute::Blocked;
         };
         match bus.route_for(self.partition(), &probe) {
-            Ok(_) => true,
-            Err(MmioError::UnmappedAddress { .. }) => false,
-            Err(_) => true,
+            Ok(_) if matches!(access, MemoryAccessKind::AtomicMemory { .. }) => {
+                DataAccessResultHeadRoute::Blocked
+            }
+            Ok(_) => DataAccessResultHeadRoute::Mmio,
+            Err(MmioError::UnmappedAddress { .. }) => DataAccessResultHeadRoute::Memory,
+            Err(_) => DataAccessResultHeadRoute::Blocked,
         }
     }
 
@@ -250,7 +288,7 @@ impl RiscvCore {
         {
             return Ok(false);
         }
-        if detailed_o3::scalar_memory_waits_for_younger_fetch(&state, &fetch_events, translated) {
+        if detailed_o3::data_access_waits_for_younger_fetch(&state, &fetch_events, translated) {
             return Ok(false);
         }
 

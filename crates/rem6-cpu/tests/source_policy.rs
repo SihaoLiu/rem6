@@ -10,6 +10,8 @@ const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
 const MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES: usize = 600;
 const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
+const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
+const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -41,6 +43,47 @@ fn riscv_data_issue_lives_in_focused_module() {
         !lib_rs.contains("struct OutstandingDataAccess"),
         "src/lib.rs should delegate RISC-V data access records to a focused module"
     );
+}
+
+#[test]
+fn riscv_data_issue_lifecycle_tests_live_in_focused_child() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/riscv_data_issue_tests.rs");
+    let child_path = crate_dir.join("src/riscv_data_issue_tests/lifecycle.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert!(
+        root.lines().count() < MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES,
+        "src/riscv_data_issue_tests.rs must stay below {MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES} lines"
+    );
+    assert!(
+        root.contains("#[path = \"riscv_data_issue_tests/lifecycle.rs\"]\nmod lifecycle;"),
+        "RISC-V data-issue lifecycle tests must be delegated to the focused child"
+    );
+    assert!(
+        child_path.exists(),
+        "RISC-V data-issue lifecycle tests belong in src/riscv_data_issue_tests/lifecycle.rs"
+    );
+    let child = fs::read_to_string(child_path).unwrap();
+    assert!(
+        child.lines().count() <= MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES,
+        "src/riscv_data_issue_tests/lifecycle.rs exceeds {MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES} lines"
+    );
+    for anchor in [
+        "fn retry_response_discards_pending_o3_trace_data_access_outcome()",
+        "fn control_boundary_after_stats_reset_discards_pending_o3_data_access_outcome()",
+        "fn detailed_scalar_load_submission_stages_live_o3_rob_and_lsq_rows()",
+        "fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(",
+    ] {
+        assert!(
+            child.contains(anchor),
+            "focused lifecycle child is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "data-issue test root still owns `{anchor}`"
+        );
+    }
 }
 
 #[test]
@@ -358,6 +401,8 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
 
     for anchor in [
         "struct O3LiveDataAccess",
+        "enum O3DataAccessWindowPolicy",
+        "younger_window_policy: O3DataAccessWindowPolicy",
         "memory_result: Option<RiscvDataCompletion>",
         "fn o3_memory_result_destination",
         "fn stage_live_data_access_issue",
@@ -447,6 +492,8 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "live_scalar_memory_publication_is_admitted",
         "ready_live_scalar_load_writeback",
         "discard_live_scalar_memory_lifecycle",
+        "discard_live_scalar_memory_window_rows",
+        "discard_live_scalar_memory_window_rows_at",
         "remove_live_scalar_memory_rows",
         "o3_scalar_memory_lifecycle_is_quiescent",
         "has_pending_o3_scalar_memory_retirement",
@@ -465,6 +512,24 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "stages_two_live_scalar_memory_rows",
         "rejects_live_scalar_memory",
         "apply_deferred_scalar_load_writeback",
+        "live_scalar_memory_younger_sequences",
+        "stage_live_scalar_memory_younger_window",
+        "live_scalar_memory_younger_wakeup_seed",
+        "retain_live_scalar_memory_younger_sequences_in_rob",
+        "stage_o3_scalar_memory_younger_window",
+        "wake_o3_scalar_memory_younger_window",
+        "wake_ready_o3_scalar_memory_younger_window",
+        "live_scalar_memory_head_reservation",
+        "scalar_memory_integer_window",
+        "completed_live_scalar_load_source",
+        "allows_detailed_memory_head_fetch_ahead",
+        "scalar_memory_has_younger_fetch",
+        "scalar_memory_waits_for_younger_fetch",
+        "translated_scalar_load_result_fetch_ahead_allowed",
+        "cached_translated_scalar_load_head_physical_range",
+        "next_mmio_aware_cached_translated_memory_fetch_ahead_before_retire",
+        "can_retire_completed_fetch_while_mmio_aware_cached_translated_memory_fetch_pending",
+        "scalar_load_result_head_targets_mmio",
     ];
     let rem6_system_dir = crate_dir
         .parent()
@@ -498,6 +563,66 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
 }
 
 #[test]
+fn o3_data_access_younger_window_has_focused_owners() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let memory_window =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_memory_window.rs")).unwrap();
+    let live_window = fs::read_to_string(crate_dir.join("src/o3_runtime_live_window.rs")).unwrap();
+    let issue = fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap();
+    let data_issue = fs::read_to_string(crate_dir.join("src/riscv_data_issue.rs")).unwrap();
+    let policy = fs::read_to_string(crate_dir.join("src/riscv_o3_window_policy.rs")).unwrap();
+    let fetch_ahead =
+        fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs")).unwrap();
+    let fetch_driver =
+        fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/driver.rs")).unwrap();
+    let cluster_translation =
+        fs::read_to_string(crate_dir.join("src/riscv_cluster_translation.rs")).unwrap();
+
+    for (owner, anchor) in [
+        (&memory_window, "pub(crate) fn data_access_integer_window("),
+        (
+            &live_window,
+            "pub(crate) fn stage_live_data_access_younger_window(",
+        ),
+        (&issue, "pub(crate) fn live_data_access_head_reservation("),
+        (&policy, "pub(crate) fn from_data_access_result("),
+        (&data_issue, "O3DataAccessWindowPolicy::ScalarMemoryPrefix"),
+        (&data_issue, "O3DataAccessWindowPolicy::MemoryResult"),
+        (&fetch_ahead, "fn data_access_result_fetch_ahead_window("),
+        (&fetch_ahead, "fn data_access_result_fetch_ahead_shape("),
+        (&fetch_ahead, "fn data_access_result_head_probe("),
+        (&fetch_ahead, "masked_vector_memory_request_span("),
+        (&fetch_ahead, "fault_only_first: false"),
+        (
+            &fetch_ahead,
+            "fn data_access_result_translation_probe_allows(",
+        ),
+        (
+            &fetch_ahead,
+            "pub(super) fn data_access_result_head_physical_probe(",
+        ),
+        (
+            &fetch_ahead,
+            "pub(super) fn data_access_waits_for_younger_fetch(",
+        ),
+        (
+            &fetch_driver,
+            "pub(crate) fn next_mmio_aware_fetch_ahead_before_retire(",
+        ),
+        (&fetch_driver, "enum DataAccessResultHeadRoute"),
+        (
+            &cluster_translation,
+            "pub(crate) fn can_retire_mmio_fetch_pending(",
+        ),
+    ] {
+        assert!(
+            owner.contains(anchor),
+            "missing data-access window owner `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn o3_runtime_issue_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
@@ -524,7 +649,7 @@ fn o3_runtime_issue_lives_in_focused_module() {
         "pub(crate) fn schedule_live_speculative_issues(",
         "O3ScopedIssueScheduler::new(",
         "self.stats.record_issue_cycle(",
-        "pub(crate) fn live_scalar_memory_head_reservation(",
+        "pub(crate) fn live_data_access_head_reservation(",
         "O3LiveIssueHeadReservation::memory(",
     ];
     for anchor in issue_authority_patterns {

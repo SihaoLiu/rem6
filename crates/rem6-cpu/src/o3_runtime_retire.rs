@@ -438,7 +438,7 @@ impl O3RuntimeState {
             }
         }
         self.snapshot.reorder_buffer.drain(0..commits);
-        self.retain_live_scalar_memory_younger_sequences_in_rob();
+        self.retain_live_data_access_younger_sequences_in_rob();
         self.last_live_commit_tick = Some(commit_tick);
         commit_tick
     }

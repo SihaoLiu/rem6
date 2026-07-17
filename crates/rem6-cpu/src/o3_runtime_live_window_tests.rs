@@ -75,9 +75,9 @@ fn scalar_load_window_allows_one_independent_younger_issue_candidate() {
     let mut runtime = O3RuntimeState::default();
     let load = scalar_load_event();
     let independent = addi(5, 0);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), independent)],
     );
@@ -94,9 +94,9 @@ fn scalar_load_window_blocks_younger_load_destination_consumer() {
     let mut runtime = O3RuntimeState::default();
     let load = scalar_load_event();
     let dependent = addi(5, 4);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), dependent)],
     );
@@ -115,9 +115,9 @@ fn scalar_load_head_stages_three_younger_scalar_alus() {
     let first = addi(5, 0);
     let second = addi(6, 5);
     let third = add(7, 5, 6);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), first),
@@ -128,7 +128,7 @@ fn scalar_load_head_stages_three_younger_scalar_alus() {
 
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 4);
     assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
-    assert_eq!(runtime.live_scalar_memory_younger_sequences.len(), 3);
+    assert_eq!(runtime.live_data_access_younger_sequences.len(), 3);
     assert_eq!(
         runtime.snapshot().reorder_buffer()[3].pc(),
         Address::new(0x800c)
@@ -146,9 +146,9 @@ fn scalar_load_backedge_stages_only_the_unique_prefix() {
         rs2: Register::new(2).unwrap(),
         offset: Immediate::new(-4),
     };
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    let staged = runtime.stage_live_scalar_memory_younger_window(
+    let staged = runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), repeated),
@@ -167,9 +167,9 @@ fn scalar_load_head_stages_terminal_branch_without_rename_or_younger_rows() {
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
     let branch = RiscvInstruction::decode(0x00b2_0463).unwrap();
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), addi(5, 0)),
@@ -204,8 +204,8 @@ fn scalar_load_head_younger_alus_wake_transitively_with_fan_in() {
     let first = addi(5, 0);
     let second = addi(6, 5);
     let third = add(7, 5, 6);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), first),
@@ -271,8 +271,8 @@ fn scalar_load_head_dependency_row_remains_blocked_before_load_writeback() {
     let load = scalar_load_event();
     let independent = addi(5, 0);
     let dependent = addi(6, 4);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), independent),
@@ -294,8 +294,8 @@ fn completed_live_load_forwards_into_dependent_alu_candidate() {
     let mut runtime = O3RuntimeState::default();
     let load = scalar_load_event();
     let dependent = addi(5, 4);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), dependent)],
     );
@@ -341,17 +341,17 @@ fn scalar_memory_prefix_stages_load_dependent_terminal_alu() {
     let store = scalar_store_event();
     let load = scalar_load_event();
     let dependent = addi(5, 4);
-    assert!(runtime.stage_live_data_access_issue(&store, request(19), 30));
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&store, request(19), 30));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), dependent)],
     );
 
     assert_eq!(runtime.snapshot().reorder_buffer().len(), 3);
     assert_eq!(runtime.snapshot().load_store_queue().len(), 2);
-    assert_eq!(runtime.live_scalar_memory_younger_sequences.len(), 1);
+    assert_eq!(runtime.live_data_access_younger_sequences.len(), 1);
     assert!(runtime
         .live_speculative_issue_candidate(Address::new(0x8004), dependent)
         .is_none());
@@ -362,8 +362,8 @@ fn scalar_load_head_discard_removes_every_younger_row() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), addi(5, 0)),
@@ -376,7 +376,7 @@ fn scalar_load_head_discard_removes_every_younger_row() {
 
     assert!(runtime.snapshot().reorder_buffer().is_empty());
     assert!(runtime.snapshot().load_store_queue().is_empty());
-    assert!(runtime.live_scalar_memory_younger_sequences.is_empty());
+    assert!(runtime.live_data_access_younger_sequences.is_empty());
     assert!(runtime.live_speculative_executions.is_empty());
 }
 

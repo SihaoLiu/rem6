@@ -55,9 +55,9 @@ fn scalar_load_stages_predicted_branch_and_two_descendants() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
 
-    runtime.stage_live_scalar_memory_younger_window(
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), branch),
@@ -85,9 +85,9 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
     let first = addi(5, 0, 1);
     let second = addi(6, 0, 2);
     let branch = beq(0, 0);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
     assert_eq!(
-        runtime.stage_live_scalar_memory_younger_window(
+        runtime.stage_live_data_access_younger_window(
             load.fetch().request_id(),
             [
                 (Address::new(0x8004), first),
@@ -218,9 +218,9 @@ fn blocked_prefix_dependency_chain_uses_preceding_staged_rename_across_stats_res
     let producer = addi(5, 5, 1);
     let consumer = addi(6, 5, 1);
     let younger_writer = addi(5, 0, 2);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
     assert_eq!(
-        runtime.stage_live_scalar_memory_younger_window(
+        runtime.stage_live_data_access_younger_window(
             load.fetch().request_id(),
             [
                 (Address::new(0x8004), producer),
@@ -436,8 +436,8 @@ fn scalar_and_linked_control_candidates_expose_destinations() {
     let load = scalar_load_event();
     let call = jal_link(1, 4);
     let scalar = addi(8, 0, 7);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), call), (Address::new(0x8008), scalar)],
     );
@@ -466,9 +466,9 @@ fn same_window_return_candidate_uses_link_call_forwarding() {
     let call = jal_link(1, 8);
     let return_jump = jalr_return(1);
     let descendant = addi(8, 0, 7);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
     assert_eq!(
-        runtime.stage_live_scalar_memory_younger_window(
+        runtime.stage_live_data_access_younger_window(
             load.fetch().request_id(),
             [
                 (Address::new(0x8004), call),
@@ -699,8 +699,8 @@ fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
     let load = scalar_load_event();
     let outer = beq(5, 6);
     let inner = beq(4, 0);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), outer), (Address::new(0x8008), inner)],
     );
@@ -1008,8 +1008,8 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), branch),
@@ -1142,8 +1142,8 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let branch = beq(5, 6);
     let multiply = mul(7, 1, 2);
     let dependent = addi(8, 7, 1);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), branch),
@@ -1232,8 +1232,8 @@ fn discarding_older_branch_removes_linked_call_descendant_state() {
     let branch = beq(5, 6);
     let call = jal_link(1, 4);
     let descendant = addi(8, 1, 1);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), branch),
@@ -1340,8 +1340,8 @@ fn linked_call_rollback_restores_prior_committed_rename() {
     let load = scalar_load_event();
     let branch = beq(5, 6);
     let call = jal_link(1, 4);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), branch), (Address::new(0x8008), call)],
     );
@@ -1409,8 +1409,8 @@ fn staged_window_truncation_prunes_control_dependencies() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), beq(5, 6)),
@@ -1431,8 +1431,8 @@ fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [(Address::new(0x8004), branch)],
     );
@@ -1451,8 +1451,8 @@ fn nested_control_runtime() -> (
     let outer = beq(5, 6);
     let inner = beq(7, 8);
     let descendant = mul(9, 1, 2);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), outer),
@@ -1526,8 +1526,8 @@ fn three_deep_control_runtime() -> (
     let outer = bne(5, 6);
     let middle = blt(7, 8);
     let inner = bgeu(9, 10);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), outer),
@@ -1577,8 +1577,8 @@ fn mixed_control_runtime() -> (
     let direct_jump = jal(4);
     let conditional = beq(5, 6);
     let indirect_jump = jalr(9);
-    assert!(runtime.stage_live_data_access_issue(&load, request(20), 31));
-    runtime.stage_live_scalar_memory_younger_window(
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
+    runtime.stage_live_data_access_younger_window(
         load.fetch().request_id(),
         [
             (Address::new(0x8004), direct_jump),

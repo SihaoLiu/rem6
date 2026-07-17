@@ -5,7 +5,7 @@ use rem6_memory::{
 use super::*;
 
 #[test]
-fn detailed_translated_cold_scalar_load_does_not_stage_completed_younger_fetch() {
+fn detailed_translated_cold_scalar_load_stages_completed_younger_result_fetch() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data_translation(
         cpu_core(fetch_route, 0x8000),
@@ -21,8 +21,9 @@ fn detailed_translated_cold_scalar_load_does_not_stage_completed_younger_fetch()
     issue_translated_data_without_response(&core, &mut scheduler, &transport);
 
     let snapshot = core.o3_runtime_snapshot();
-    assert_eq!(snapshot.reorder_buffer().len(), 1);
+    assert_eq!(snapshot.reorder_buffer().len(), 2);
     assert_eq!(snapshot.reorder_buffer()[0].pc(), Address::new(0x8000));
+    assert_eq!(snapshot.reorder_buffer()[1].pc(), Address::new(0x8004));
     assert_eq!(snapshot.load_store_queue().len(), 1);
 }
 
@@ -63,7 +64,7 @@ fn detailed_cached_translated_scalar_load_stages_load_dependent_younger_window()
 }
 
 #[test]
-fn detailed_translated_uncacheable_scalar_load_does_not_stage_completed_younger_fetch() {
+fn detailed_translated_uncacheable_scalar_load_stages_completed_younger_result_fetch() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data_translation(
         cpu_core(fetch_route, 0x8000),
@@ -81,8 +82,9 @@ fn detailed_translated_uncacheable_scalar_load_does_not_stage_completed_younger_
     issue_translated_data_without_response(&core, &mut scheduler, &transport);
 
     let snapshot = core.o3_runtime_snapshot();
-    assert_eq!(snapshot.reorder_buffer().len(), 1);
+    assert_eq!(snapshot.reorder_buffer().len(), 2);
     assert_eq!(snapshot.reorder_buffer()[0].pc(), Address::new(0x8000));
+    assert_eq!(snapshot.reorder_buffer()[1].pc(), Address::new(0x8004));
     assert_eq!(snapshot.load_store_queue().len(), 1);
 }
 

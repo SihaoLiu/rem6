@@ -3,12 +3,12 @@ use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 use crate::{CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError};
 
 impl RiscvCoreState {
-    pub(crate) fn wake_ready_o3_scalar_memory_younger_window(
+    pub(crate) fn wake_ready_o3_data_access_younger_window(
         &mut self,
         tick: Tick,
         fetch_events: &[CpuFetchEvent],
     ) {
-        crate::riscv_live_retire_window::wake_o3_scalar_memory_younger_window(
+        crate::riscv_live_retire_window::wake_o3_data_access_younger_window(
             self,
             tick,
             fetch_events,
@@ -398,8 +398,8 @@ mod tests {
         let older = scalar_load_event(0x8000, 10, 12, 0x9000);
         let younger = scalar_load_event(0x8004, 11, 13, 0x9040);
         let mut runtime = crate::o3_runtime::O3RuntimeState::default();
-        assert!(runtime.stage_live_data_access_issue(&older, memory_request(20), 10));
-        assert!(runtime.stage_live_data_access_issue(&younger, memory_request(21), 11));
+        assert!(runtime.stage_live_data_access_issue_for_test(&older, memory_request(20), 10));
+        assert!(runtime.stage_live_data_access_issue_for_test(&younger, memory_request(21), 11));
         complete_scalar_load(&mut runtime, &older, memory_request(20), 19, 0x2a);
         complete_scalar_load(&mut runtime, &younger, memory_request(21), 21, 0x63);
         let core = core();

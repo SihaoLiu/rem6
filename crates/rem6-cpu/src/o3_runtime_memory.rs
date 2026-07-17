@@ -14,6 +14,7 @@ pub(super) struct O3LiveDataAccess {
     pub(super) issue_tick: u64,
     pub(super) issue_rob_occupancy: usize,
     pub(super) issue_lsq_occupancy: usize,
+    pub(super) younger_window_policy: O3DataAccessWindowPolicy,
     pub(super) response_tick: Option<u64>,
     pub(super) raw_ready_tick: Option<u64>,
     pub(super) admitted_writeback_tick: Option<u64>,
@@ -25,6 +26,13 @@ pub(super) struct O3LiveDataAccess {
     pub(super) forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     pub(super) outcome: O3LiveDataAccessOutcome,
     pub(super) event_taken: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum O3DataAccessWindowPolicy {
+    None,
+    ScalarMemoryPrefix,
+    MemoryResult,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,6 +96,20 @@ pub(crate) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> b
     access.is_some_and(|access| {
         is_scalar_window_access(access) || o3_memory_result_destination(access).is_some()
     })
+}
+
+fn live_data_access_younger_window_policy_matches(
+    access: &MemoryAccessKind,
+    policy: O3DataAccessWindowPolicy,
+) -> bool {
+    match policy {
+        O3DataAccessWindowPolicy::None => o3_memory_result_destination(access).is_none(),
+        O3DataAccessWindowPolicy::ScalarMemoryPrefix => matches!(
+            access,
+            MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
+        ),
+        O3DataAccessWindowPolicy::MemoryResult => o3_memory_result_destination(access).is_some(),
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +184,15 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
 
 impl O3RuntimeState {
     #[cfg(test)]
+    pub(crate) fn live_data_access_younger_window_policy(
+        &self,
+    ) -> Option<O3DataAccessWindowPolicy> {
+        self.live_data_accesses
+            .first()
+            .map(|live| live.younger_window_policy)
+    }
+
+    #[cfg(test)]
     pub(crate) fn has_pending_store_forwarding_load_match(&self) -> bool {
         self.store_forwarding_window.pending_load_match.is_some()
     }
@@ -169,7 +200,7 @@ impl O3RuntimeState {
     pub(crate) fn live_data_access_lifecycle_is_quiescent(&self) -> bool {
         self.deferred_live_data_access_execution.is_none()
             && self.live_data_accesses.is_empty()
-            && self.live_scalar_memory_younger_sequences.is_empty()
+            && self.live_data_access_younger_sequences.is_empty()
     }
 
     pub(crate) fn has_pending_live_data_access_retirement(&self) -> bool {
@@ -197,7 +228,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn has_live_data_access_window(&self) -> bool {
-        !self.live_data_accesses.is_empty() || !self.live_scalar_memory_younger_sequences.is_empty()
+        !self.live_data_accesses.is_empty() || !self.live_data_access_younger_sequences.is_empty()
     }
 
     pub(crate) fn has_ready_live_data_access_event(&self) -> bool {
@@ -312,14 +343,18 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
         data_request: MemoryRequestId,
         issue_tick: u64,
+        younger_window_policy: O3DataAccessWindowPolicy,
     ) -> bool {
         let Some(access) = execution.execution().memory_access() else {
             return false;
         };
-        if !is_deferred_o3_data_access(Some(access)) {
+        if !is_deferred_o3_data_access(Some(access))
+            || !live_data_access_younger_window_policy_matches(access, younger_window_policy)
+        {
             return false;
         }
-        let scalar_window = is_scalar_window_access(access);
+        let scalar_window = is_scalar_window_access(access)
+            && younger_window_policy != O3DataAccessWindowPolicy::MemoryResult;
         if scalar_window && !self.has_scalar_memory_window_capacity() {
             return false;
         }
@@ -371,6 +406,7 @@ impl O3RuntimeState {
             issue_tick,
             issue_rob_occupancy,
             issue_lsq_occupancy,
+            younger_window_policy,
             response_tick: None,
             raw_ready_tick: None,
             admitted_writeback_tick: None,
@@ -384,6 +420,33 @@ impl O3RuntimeState {
             event_taken: false,
         });
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_live_data_access_issue_for_test(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        issue_tick: u64,
+    ) -> bool {
+        let Some(access) = execution.execution().memory_access() else {
+            return false;
+        };
+        let younger_window_policy = match access {
+            MemoryAccessKind::Load { rd, .. } if !rd.is_zero() => {
+                O3DataAccessWindowPolicy::ScalarMemoryPrefix
+            }
+            _ if o3_memory_result_destination(access).is_some() => {
+                O3DataAccessWindowPolicy::MemoryResult
+            }
+            _ => O3DataAccessWindowPolicy::None,
+        };
+        self.stage_live_data_access_issue(
+            execution,
+            data_request,
+            issue_tick,
+            younger_window_policy,
+        )
     }
 
     pub(crate) fn complete_live_data_access_completion(
@@ -585,7 +648,7 @@ impl O3RuntimeState {
                 self.pending_data_accesses.remove(&stale.fetch_request);
             }
             self.live_data_accesses.truncate(index + 1);
-            self.discard_live_scalar_memory_window_rows_at(sequence, response_tick);
+            self.discard_live_data_access_window_rows_at(sequence, response_tick);
         }
         Ok(true)
     }
@@ -690,9 +753,9 @@ impl O3RuntimeState {
         let boundary_sequence = live
             .first()
             .map(|live| live.sequence)
-            .or_else(|| self.live_scalar_memory_younger_sequences.first().copied());
+            .or_else(|| self.live_data_access_younger_sequences.first().copied());
         if let Some(sequence) = boundary_sequence {
-            self.discard_live_scalar_memory_window_rows(sequence);
+            self.discard_live_data_access_window_rows(sequence);
         }
     }
 
@@ -705,20 +768,20 @@ impl O3RuntimeState {
         let boundary_sequence = live
             .first()
             .map(|live| live.sequence)
-            .or_else(|| self.live_scalar_memory_younger_sequences.first().copied());
+            .or_else(|| self.live_data_access_younger_sequences.first().copied());
         if let Some(sequence) = boundary_sequence {
-            self.discard_live_scalar_memory_window_rows_at(sequence, now);
+            self.discard_live_data_access_window_rows_at(sequence, now);
         }
     }
 
-    fn discard_live_scalar_memory_window_rows(&mut self, sequence: u64) {
+    fn discard_live_data_access_window_rows(&mut self, sequence: u64) {
         self.discard_live_staged_window_from(sequence);
         self.snapshot
             .load_store_queue
             .retain(|entry| entry.sequence() < sequence);
     }
 
-    pub(super) fn discard_live_scalar_memory_window_rows_at(&mut self, sequence: u64, now: u64) {
+    pub(super) fn discard_live_data_access_window_rows_at(&mut self, sequence: u64, now: u64) {
         self.discard_live_staged_window_from_at(sequence, now);
         self.snapshot
             .load_store_queue
