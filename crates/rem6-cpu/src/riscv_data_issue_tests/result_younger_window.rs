@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "result_younger_window/terminal_ownership.rs"]
+mod terminal_ownership;
+
 fn assert_younger_window_policy(core: &RiscvCore, expected: O3DataAccessWindowPolicy) {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(

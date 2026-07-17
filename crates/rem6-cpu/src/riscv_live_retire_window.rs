@@ -382,11 +382,8 @@ fn rollback_terminal_memory_result_provision(
     {
         return;
     }
-    state.pending_terminal_memory_result = None;
     assert!(
-        state
-            .o3_runtime
-            .abort_deferred_live_data_access_execution(identity.0),
+        state.abort_deferred_o3_live_data_access_execution(identity.0),
         "terminal result wake rollback owns deferred data access"
     );
 }

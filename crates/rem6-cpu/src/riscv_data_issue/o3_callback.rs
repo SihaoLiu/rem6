@@ -1,5 +1,28 @@
 use super::*;
 
+impl RiscvCoreState {
+    pub(crate) fn abort_deferred_o3_live_data_access_execution(
+        &mut self,
+        fetch_request: MemoryRequestId,
+    ) -> bool {
+        let aborted = self
+            .o3_runtime
+            .abort_deferred_live_data_access_execution(fetch_request);
+        if self
+            .pending_terminal_memory_result
+            .as_ref()
+            .is_some_and(|pending| pending.owns_fetch(fetch_request))
+        {
+            assert!(
+                aborted,
+                "pending terminal result owns deferred O3 data execution"
+            );
+            self.pending_terminal_memory_result = None;
+        }
+        aborted
+    }
+}
+
 pub(super) fn mark_data_access_event_kind(
     state: &mut RiscvCoreState,
     access: &IssuedDataAccess,

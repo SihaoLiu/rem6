@@ -179,7 +179,6 @@ impl Drop for PreparedDataIssueCleanup {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .o3_runtime
-            .abort_deferred_live_data_access_execution(self.fetch_request);
+            .abort_deferred_o3_live_data_access_execution(self.fetch_request);
     }
 }

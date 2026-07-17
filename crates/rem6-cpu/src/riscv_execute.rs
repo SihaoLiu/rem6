@@ -69,12 +69,11 @@ impl RiscvCore {
         &self,
         mut gate_scheduler: Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
-        let current_tick = match gate_scheduler.as_ref() {
-            Some((scheduler, _)) => scheduler
-                .partition_now(self.partition())
-                .map_err(RiscvCpuError::Scheduler)?,
-            None => u64::MAX,
-        };
+        let current_tick = gate_scheduler
+            .as_ref()
+            .map(|(scheduler, _)| scheduler.partition_now(self.partition()))
+            .transpose()
+            .map_err(RiscvCpuError::Scheduler)?;
         let mut state = self.state.lock().expect("riscv core lock");
         if state.pending_trap.is_some() {
             return Ok(None);
@@ -84,6 +83,9 @@ impl RiscvCore {
             .as_ref()
             .is_some_and(|pending| pending.execution().fetch_pc().get() == state.hart.pc());
         if pending_predecessor_retired {
+            let Some(current_tick) = current_tick else {
+                return Ok(None);
+            };
             let Some(canonical) = self
                 .canonicalize_admitted_pending_terminal_memory_result(&mut state, current_tick)?
             else {
