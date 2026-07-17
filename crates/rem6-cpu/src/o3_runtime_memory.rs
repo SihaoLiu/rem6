@@ -1,5 +1,8 @@
 use super::o3_runtime_writeback::O3LiveWritebackReady;
 use super::*;
+use crate::riscv_data_completion::RiscvDataCompletion;
+#[cfg(test)]
+use rem6_memory::{AccessSize, Address};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveDataAccess {
@@ -7,6 +10,7 @@ pub(super) struct O3LiveDataAccess {
     pub(super) data_request: MemoryRequestId,
     pub(super) execution: RiscvCpuExecutionEvent,
     pub(super) sequence: u64,
+    pub(super) lsq_sequence_span: u64,
     pub(super) issue_tick: u64,
     pub(super) issue_rob_occupancy: usize,
     pub(super) issue_lsq_occupancy: usize,
@@ -17,6 +21,7 @@ pub(super) struct O3LiveDataAccess {
     pub(super) latency_ticks: Option<u64>,
     pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
+    pub(super) memory_result: Option<RiscvDataCompletion>,
     pub(super) forwarding_plan: Option<O3StoreLoadForwardingPlan>,
     pub(super) outcome: O3LiveDataAccessOutcome,
     pub(super) event_taken: bool,
@@ -30,22 +35,121 @@ pub(super) enum O3LiveDataAccessOutcome {
     Failed,
 }
 
-pub(super) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
+struct O3LiveDataAccessResponse {
+    response_tick: u64,
+    latency_ticks: u64,
+    load_data: Option<Vec<u8>>,
+    memory_result: Option<RiscvDataCompletion>,
+    forwarding_plan: Option<O3StoreLoadForwardingPlan>,
+}
+
+pub(crate) fn is_scalar_window_access(access: &MemoryAccessKind) -> bool {
     matches!(
         access,
-        Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
+        MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
     )
+}
+
+pub(crate) fn o3_memory_result_destination(
+    access: &MemoryAccessKind,
+) -> Option<(O3RegisterClass, u32)> {
+    match access {
+        MemoryAccessKind::Load { rd, .. }
+        | MemoryAccessKind::LoadReserved { rd, .. }
+        | MemoryAccessKind::AtomicMemory { rd, .. }
+            if !rd.is_zero() =>
+        {
+            Some((O3RegisterClass::Integer, u32::from(rd.index())))
+        }
+        MemoryAccessKind::FloatLoad { rd, .. } => {
+            Some((O3RegisterClass::FloatingPoint, u32::from(rd.index())))
+        }
+        MemoryAccessKind::VectorLoadUnitStride {
+            vd,
+            width: MemoryWidth::Doubleword,
+            byte_len,
+            byte_mask,
+            group_registers: 1,
+            fault_only_first: false,
+            ..
+        } if *byte_len > 0
+            && *byte_len <= RISCV_VECTOR_REGISTER_BYTES
+            && byte_mask
+                .as_deref()
+                .is_none_or(|mask| mask.iter().copied().any(|active| active)) =>
+        {
+            Some((O3RegisterClass::Vector, u32::from(vd.index())))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
+    access.is_some_and(|access| {
+        is_scalar_window_access(access) || o3_memory_result_destination(access).is_some()
+    })
+}
+
+#[cfg(test)]
+fn test_memory_result_completion(
+    execution: &RiscvCpuExecutionEvent,
+    load_data: Option<&[u8]>,
+) -> Option<RiscvDataCompletion> {
+    let access = execution.execution().memory_access()?.clone();
+    o3_memory_result_destination(&access)?;
+    let (physical_address, size) = memory_result_test_address_size(&access)?;
+    Some(RiscvDataCompletion::from_issued_response(
+        execution.fetch().request_id(),
+        access,
+        physical_address,
+        size,
+        0,
+        load_data.map(ToOwned::to_owned),
+    ))
+}
+
+#[cfg(test)]
+fn memory_result_test_address_size(access: &MemoryAccessKind) -> Option<(Address, AccessSize)> {
+    match access {
+        MemoryAccessKind::Load { address, width, .. }
+        | MemoryAccessKind::LoadReserved { address, width, .. }
+        | MemoryAccessKind::AtomicMemory { address, width, .. }
+        | MemoryAccessKind::FloatLoad { address, width, .. } => Some((
+            Address::new(*address),
+            AccessSize::new(width.bytes() as u64).ok()?,
+        )),
+        MemoryAccessKind::VectorLoadUnitStride {
+            address, byte_len, ..
+        } => Some((
+            Address::new(*address),
+            AccessSize::new(*byte_len as u64).ok()?,
+        )),
+        _ => None,
+    }
 }
 
 pub(super) fn is_deferred_o3_data_instruction(instruction: RiscvInstruction) -> bool {
     matches!(
         instruction,
-        RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
+        RiscvInstruction::Load { .. }
+            | RiscvInstruction::Store { .. }
+            | RiscvInstruction::FloatLoad { .. }
+            | RiscvInstruction::LoadReserved { .. }
+            | RiscvInstruction::AtomicMemory { .. }
+            | RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride { .. })
     )
 }
 
+pub(super) fn o3_instruction_sequence_span(access: Option<&MemoryAccessKind>) -> u64 {
+    if matches!(access, Some(MemoryAccessKind::AtomicMemory { .. })) {
+        2
+    } else {
+        1
+    }
+}
+
 pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEvent) -> bool {
-    execution.is_scalar_memory_access()
+    is_deferred_o3_data_access(execution.execution().memory_access())
         && matches!(
             execution.data_access_event_kind(),
             Some(
@@ -57,6 +161,11 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
 }
 
 impl O3RuntimeState {
+    #[cfg(test)]
+    pub(crate) fn has_pending_store_forwarding_load_match(&self) -> bool {
+        self.store_forwarding_window.pending_load_match.is_some()
+    }
+
     pub(crate) fn live_data_access_lifecycle_is_quiescent(&self) -> bool {
         self.deferred_live_data_access_execution.is_none()
             && self.live_data_accesses.is_empty()
@@ -150,14 +259,20 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
-        if !execution.is_scalar_memory_access() {
+        let Some(access) = execution.execution().memory_access() else {
+            return false;
+        };
+        if !is_deferred_o3_data_access(Some(access)) {
             return false;
         }
         let fetch_request = execution.fetch().request_id();
         match self.deferred_live_data_access_execution {
             Some(pending) => pending == fetch_request,
             None => {
-                if !self.live_data_accesses.is_empty() && !self.can_stage_scalar_memory(execution) {
+                if !self.live_data_accesses.is_empty()
+                    && (!is_scalar_window_access(access)
+                        || !self.can_stage_scalar_memory(execution))
+                {
                     return false;
                 }
                 self.deferred_live_data_access_execution = Some(fetch_request);
@@ -172,7 +287,7 @@ impl O3RuntimeState {
         execution: &RiscvCpuExecutionEvent,
     ) -> bool {
         !detailed
-            || !execution.is_scalar_memory_access()
+            || !is_deferred_o3_data_access(execution.execution().memory_access())
             || self.defer_live_data_access_execution(execution)
     }
 
@@ -198,16 +313,19 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         issue_tick: u64,
     ) -> bool {
-        if !self.has_scalar_memory_window_capacity() {
-            return false;
-        }
         let Some(access) = execution.execution().memory_access() else {
             return false;
         };
         if !is_deferred_o3_data_access(Some(access)) {
             return false;
         }
-        if !self.live_data_accesses.is_empty() && !self.can_stage_scalar_memory(execution) {
+        let scalar_window = is_scalar_window_access(access);
+        if scalar_window && !self.has_scalar_memory_window_capacity() {
+            return false;
+        }
+        if !self.live_data_accesses.is_empty()
+            && (!scalar_window || !self.can_stage_scalar_memory(execution))
+        {
             return false;
         }
         if self
@@ -218,8 +336,9 @@ impl O3RuntimeState {
         }
         self.deferred_live_data_access_execution = None;
 
-        let sequence = self.allocate_sequence();
-        let rename_destination = o3_memory_destination_registers(access).into_iter().next();
+        let lsq_sequence_span = o3_instruction_sequence_span(Some(access));
+        let sequence = self.allocate_sequence_span(lsq_sequence_span);
+        let rename_destination = o3_memory_result_destination(access);
         let destination = rename_destination.map(|_| self.allocate_physical_register());
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(
@@ -248,6 +367,7 @@ impl O3RuntimeState {
             data_request,
             execution: execution.clone(),
             sequence,
+            lsq_sequence_span,
             issue_tick,
             issue_rob_occupancy,
             issue_lsq_occupancy,
@@ -258,6 +378,7 @@ impl O3RuntimeState {
             latency_ticks: None,
             commit_tick: None,
             load_data: None,
+            memory_result: None,
             forwarding_plan: None,
             outcome: O3LiveDataAccessOutcome::Resident,
             event_taken: false,
@@ -265,6 +386,31 @@ impl O3RuntimeState {
         true
     }
 
+    pub(crate) fn complete_live_data_access_completion(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        response_tick: u64,
+        latency_ticks: u64,
+        completion: Option<RiscvDataCompletion>,
+    ) -> Result<bool, O3RuntimeError> {
+        let load_data = completion
+            .as_ref()
+            .and_then(|completion| completion.bytes().map(ToOwned::to_owned));
+        self.complete_live_data_access(
+            execution,
+            data_request,
+            O3LiveDataAccessResponse {
+                response_tick,
+                latency_ticks,
+                load_data,
+                memory_result: completion,
+                forwarding_plan: None,
+            },
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn complete_live_data_access_response(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -273,16 +419,44 @@ impl O3RuntimeState {
         latency_ticks: u64,
         load_data: Option<&[u8]>,
     ) -> Result<bool, O3RuntimeError> {
+        let completion = test_memory_result_completion(execution, load_data);
         self.complete_live_data_access(
             execution,
             data_request,
-            response_tick,
-            latency_ticks,
-            load_data,
-            None,
+            O3LiveDataAccessResponse {
+                response_tick,
+                latency_ticks,
+                load_data: load_data.map(ToOwned::to_owned),
+                memory_result: completion,
+                forwarding_plan: None,
+            },
         )
     }
 
+    pub(crate) fn complete_live_scalar_memory_forwarding_completion(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        response_tick: u64,
+        latency_ticks: u64,
+        completion: RiscvDataCompletion,
+        forwarding_plan: O3StoreLoadForwardingPlan,
+    ) -> Result<bool, O3RuntimeError> {
+        let load_data = completion.bytes().map(ToOwned::to_owned);
+        self.complete_live_data_access(
+            execution,
+            data_request,
+            O3LiveDataAccessResponse {
+                response_tick,
+                latency_ticks,
+                load_data,
+                memory_result: Some(completion),
+                forwarding_plan: Some(forwarding_plan),
+            },
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn complete_live_scalar_memory_forwarding(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -292,13 +466,17 @@ impl O3RuntimeState {
         load_data: &[u8],
         forwarding_plan: O3StoreLoadForwardingPlan,
     ) -> Result<bool, O3RuntimeError> {
+        let completion = test_memory_result_completion(execution, Some(load_data));
         self.complete_live_data_access(
             execution,
             data_request,
-            response_tick,
-            latency_ticks,
-            Some(load_data),
-            Some(forwarding_plan),
+            O3LiveDataAccessResponse {
+                response_tick,
+                latency_ticks,
+                load_data: Some(load_data.to_vec()),
+                memory_result: completion,
+                forwarding_plan: Some(forwarding_plan),
+            },
         )
     }
 
@@ -306,11 +484,15 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         data_request: MemoryRequestId,
-        response_tick: u64,
-        latency_ticks: u64,
-        load_data: Option<&[u8]>,
-        forwarding_plan: Option<O3StoreLoadForwardingPlan>,
+        response: O3LiveDataAccessResponse,
     ) -> Result<bool, O3RuntimeError> {
+        let O3LiveDataAccessResponse {
+            response_tick,
+            latency_ticks,
+            load_data,
+            memory_result,
+            forwarding_plan,
+        } = response;
         let Some(index) = self.live_data_accesses.iter().position(|live| {
             live.data_request == data_request
                 && live.fetch_request == execution.fetch().request_id()
@@ -319,6 +501,7 @@ impl O3RuntimeState {
             return Ok(false);
         };
         let sequence = self.live_data_accesses[index].sequence;
+        let lsq_sequence_span = self.live_data_accesses[index].lsq_sequence_span;
 
         let outcome = match execution.data_access_event_kind() {
             Some(RiscvDataAccessEventKind::Completed) => {
@@ -330,20 +513,22 @@ impl O3RuntimeState {
                 else {
                     return Ok(false);
                 };
-                let Some(lsq_index) = self
+                let lsq_end = sequence.saturating_add(lsq_sequence_span);
+                let lsq_rows = self
                     .snapshot
                     .load_store_queue
                     .iter()
-                    .position(|entry| entry.sequence() == sequence)
-                else {
+                    .filter(|entry| entry.sequence() >= sequence && entry.sequence() < lsq_end)
+                    .count();
+                if lsq_rows != usize::try_from(lsq_sequence_span).unwrap_or(usize::MAX) {
                     return Ok(false);
-                };
-                let (raw_ready_tick, reservation) = if matches!(
-                    execution.execution().memory_access(),
-                    Some(MemoryAccessKind::Load { .. })
-                ) && self.snapshot.reorder_buffer[rob_index]
-                    .rename_destination()
-                    .is_some()
+                }
+                let memory_result = memory_result
+                    .filter(|result| o3_memory_result_destination(result.access()).is_some());
+                let (raw_ready_tick, reservation) = if memory_result.is_some()
+                    && self.snapshot.reorder_buffer[rob_index]
+                        .rename_destination()
+                        .is_some()
                 {
                     let raw_ready_tick = response_tick.checked_add(1).ok_or(
                         O3RuntimeError::WritebackTickOverflow {
@@ -351,22 +536,27 @@ impl O3RuntimeState {
                         },
                     )?;
                     let reservation = self
-                        .reserve_writeback_completions([O3LiveWritebackReady::scalar_load(
+                        .reserve_writeback_completions([O3LiveWritebackReady::memory_result(
                             sequence,
                             raw_ready_tick,
                         )])?
                         .into_iter()
                         .next()
-                        .expect("single scalar-load reservation returns one row");
+                        .expect("single memory-result reservation returns one row");
                     (Some(raw_ready_tick), Some(reservation))
                 } else {
                     (None, None)
                 };
-                self.snapshot.load_store_queue[lsq_index].mark_completed();
+                for entry in &mut self.snapshot.load_store_queue {
+                    if entry.sequence() >= sequence && entry.sequence() < lsq_end {
+                        entry.mark_completed();
+                    }
+                }
                 let live = &mut self.live_data_accesses[index];
                 live.raw_ready_tick = raw_ready_tick;
                 live.admitted_writeback_tick = reservation.map(|row| row.admitted_tick());
                 live.writeback_slot = reservation.map(|row| row.slot());
+                live.memory_result = memory_result;
                 O3LiveDataAccessOutcome::Completed
             }
             Some(RiscvDataAccessEventKind::Retry) => O3LiveDataAccessOutcome::Retried,
@@ -382,7 +572,7 @@ impl O3RuntimeState {
         live.response_tick = Some(response_tick);
         live.latency_ticks = Some(latency_ticks);
         live.commit_tick = None;
-        live.load_data = load_data.map(ToOwned::to_owned);
+        live.load_data = load_data;
         live.forwarding_plan = forwarding_plan;
         live.outcome = outcome;
         live.event_taken = false;
@@ -478,25 +668,20 @@ impl O3RuntimeState {
         if live.outcome == O3LiveDataAccessOutcome::Completed {
             self.last_live_commit_tick = live.commit_tick;
         }
+        self.finalize_writeback_publication(live.sequence);
         Some(live)
     }
 
-    pub(crate) fn ready_live_memory_result_completion(
-        &self,
-    ) -> Option<(MemoryAccessKind, Vec<u8>)> {
+    pub(crate) fn ready_live_memory_result_completion(&self) -> Option<RiscvDataCompletion> {
         let live = self.live_data_accesses.first()?;
         if live.outcome != O3LiveDataAccessOutcome::Completed || live.event_taken {
             return None;
         }
-        let access = live.execution.execution().memory_access()?.clone();
-        if !matches!(access, MemoryAccessKind::Load { .. }) {
-            return None;
-        }
-        Some((access, live.load_data.clone()?))
+        live.memory_result.clone()
     }
 
     pub(crate) fn discard_live_data_access_lifecycle(&mut self) {
-        self.discard_all_writeback_reservations();
+        self.discard_live_writeback_reservations();
         self.deferred_live_data_access_execution = None;
         let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
@@ -540,14 +725,15 @@ impl O3RuntimeState {
             .retain(|entry| entry.sequence() < sequence);
     }
 
-    pub(super) fn remove_live_data_access_rows(&mut self, sequence: u64) {
+    pub(super) fn remove_live_data_access_rows(&mut self, sequence: u64, sequence_span: u64) {
+        let sequence_end = sequence.saturating_add(sequence_span);
         self.snapshot
             .reorder_buffer
             .retain(|entry| entry.sequence() != sequence);
         self.live_staged_fetch_identities.remove(&sequence);
         self.snapshot
             .load_store_queue
-            .retain(|entry| entry.sequence() != sequence);
+            .retain(|entry| entry.sequence() < sequence || entry.sequence() >= sequence_end);
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }

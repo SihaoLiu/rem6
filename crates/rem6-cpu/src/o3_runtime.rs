@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
+use rem6_isa_riscv::{
+    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMemoryInstruction,
+    RISCV_VECTOR_REGISTER_BYTES,
+};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::branch_predictor::BranchTargetKind;
@@ -8,13 +11,14 @@ use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::is_riscv_link_register;
+use crate::riscv_data_completion::apply_completed_data_access;
 use crate::riscv_defaults::{
     DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_WRITEBACK_WIDTH,
     MIN_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
-use crate::{RiscvCoreState, RiscvDataAccessEventKind};
+use crate::RiscvDataAccessEventKind;
 
 #[path = "o3_runtime_authority.rs"]
 mod o3_runtime_authority;
@@ -42,6 +46,9 @@ mod o3_runtime_issue_tests;
 mod o3_runtime_live_window;
 #[path = "o3_runtime_memory.rs"]
 mod o3_runtime_memory;
+#[cfg(test)]
+#[path = "o3_runtime_memory_result_tests.rs"]
+mod o3_runtime_memory_result_tests;
 #[cfg(test)]
 #[path = "o3_runtime_memory_tests.rs"]
 mod o3_runtime_memory_tests;
@@ -79,14 +86,18 @@ pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest
 use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
+pub(crate) use o3_runtime_memory::{
+    is_deferred_o3_data_access, is_scalar_window_access, o3_memory_result_destination,
+};
 use o3_runtime_memory::{
-    is_deferred_o3_data_access, is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
-    O3LiveDataAccess, O3LiveDataAccessOutcome,
+    is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
+    o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
 pub use o3_runtime_stats::O3RuntimeStats;
+use o3_runtime_writeback::O3FinalizedWritebackPortStats;
 pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
 #[cfg(test)]
 pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
@@ -212,6 +223,9 @@ pub struct O3RuntimeState {
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     live_issue_cycle_ticks: BTreeSet<u64>,
     writeback_calendar: O3WritebackReservationCalendar,
+    published_writeback_sequences: BTreeSet<u64>,
+    live_writeback_counted_sequences: BTreeSet<u64>,
+    finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     live_writeback_cycle_ticks: BTreeSet<u64>,
     live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
     live_control_dependencies: BTreeMap<u64, u64>,
@@ -257,7 +271,8 @@ impl O3RuntimeState {
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
         self.live_issue_cycle_ticks.clear();
-        self.clear_live_writeback_state();
+        self.clear_all_writeback_state();
+        self.seed_finalized_writeback_stats_from_aggregate();
         self.live_control_dependencies.clear();
         self.live_control_window_sequences.clear();
         self.live_serializing_control_sequences.clear();
@@ -279,6 +294,7 @@ impl O3RuntimeState {
             payload.dependency_producers_with_consumers().clone();
         self.restore(payload.into_snapshot())?;
         self.stats = stats;
+        self.seed_finalized_writeback_stats_from_aggregate();
         self.dependency_producers_with_consumers = dependency_producers_with_consumers;
         Ok(())
     }
@@ -389,8 +405,7 @@ impl O3RuntimeState {
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
         self.live_issue_cycle_ticks.clear();
-        self.live_writeback_cycle_ticks.clear();
-        self.live_writeback_ready_rows_by_tick.clear();
+        self.reset_writeback_stats_ownership();
         let live_rob_occupancy = self
             .live_retired_instructions
             .iter()
@@ -457,11 +472,15 @@ impl O3RuntimeState {
         }
         self.stats
             .record_retired_instruction(execution, trace_record);
-        let observation = self.record_store_forwarding_window(
-            execution,
-            trace_enabled.then_some(trace_record.sequence()),
-            completed_live_data_access.and_then(|live| live.forwarding_plan),
-        );
+        let observation = self
+            .take_prepared_store_forwarding_observation(execution)
+            .unwrap_or_else(|| {
+                self.record_store_forwarding_window(
+                    execution,
+                    trace_enabled.then_some(trace_record.sequence()),
+                    completed_live_data_access.and_then(|live| live.forwarding_plan),
+                )
+            });
         trace_record.set_store_load_forwarding(
             observation.candidate,
             observation.matched,
@@ -481,14 +500,6 @@ impl O3RuntimeState {
         }
         if trace_enabled {
             self.trace_records.push(trace_record);
-        }
-        if let Some(live) = completed_live_data_access {
-            if let (Some(access), Some(data)) = (
-                execution.execution().memory_access(),
-                live.load_data.as_deref(),
-            ) {
-                self.record_completed_load_data(live.fetch_request, access, data);
-            }
         }
     }
 
@@ -524,6 +535,43 @@ impl O3RuntimeState {
         }
     }
 
+    fn prepare_ready_live_data_access_forwarding_matcher(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) {
+        if !matches!(
+            execution.execution().memory_access(),
+            Some(MemoryAccessKind::Load { .. })
+        ) {
+            return;
+        }
+        let forwarding_plan = self
+            .live_data_accesses
+            .iter()
+            .find(|live| {
+                live.fetch_request == execution.fetch().request_id()
+                    && live.outcome == O3LiveDataAccessOutcome::Completed
+            })
+            .and_then(|live| live.forwarding_plan);
+        let observation = self.record_store_forwarding_window(execution, None, forwarding_plan);
+        self.store_forwarding_window.prepared_load = Some(O3PreparedLoadForwarding {
+            fetch_request: execution.fetch().request_id(),
+            observation,
+        });
+    }
+
+    fn take_prepared_store_forwarding_observation(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> Option<O3StoreForwardingObservation> {
+        let prepared = self.store_forwarding_window.prepared_load?;
+        if prepared.fetch_request != execution.fetch().request_id() {
+            return None;
+        }
+        self.store_forwarding_window.prepared_load = None;
+        Some(prepared.observation)
+    }
+
     pub fn record_completed_load_data(
         &mut self,
         fetch_request: MemoryRequestId,
@@ -548,6 +596,11 @@ impl O3RuntimeState {
         if pending.plan.matches_data(data) {
             self.stats
                 .record_store_to_load_forwarding_match(pending.operation);
+            if let Some(prepared) = self.store_forwarding_window.prepared_load.as_mut() {
+                if prepared.fetch_request == fetch_request {
+                    prepared.observation.matched = true;
+                }
+            }
             self.mark_trace_store_forwarding_match(pending.trace_sequence);
         }
     }
@@ -622,6 +675,9 @@ impl Default for O3RuntimeState {
             live_speculative_executions: Vec::new(),
             live_issue_cycle_ticks: BTreeSet::new(),
             writeback_calendar: O3WritebackReservationCalendar::default(),
+            published_writeback_sequences: BTreeSet::new(),
+            live_writeback_counted_sequences: BTreeSet::new(),
+            finalized_writeback_port_stats: O3FinalizedWritebackPortStats::default(),
             live_writeback_cycle_ticks: BTreeSet::new(),
             live_writeback_ready_rows_by_tick: BTreeMap::new(),
             live_control_dependencies: BTreeMap::new(),
@@ -646,6 +702,13 @@ impl Default for O3RuntimeState {
 struct O3StoreForwardingWindow {
     store: Option<O3StoreForwardingEntry>,
     pending_load_match: Option<O3PendingLoadForwardingMatch>,
+    prepared_load: Option<O3PreparedLoadForwarding>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3PreparedLoadForwarding {
+    fetch_request: MemoryRequestId,
+    observation: O3StoreForwardingObservation,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1105,18 +1168,26 @@ impl crate::RiscvCore {
                 "completed O3 data access accepts its ordered pipeline retirement"
             );
         }
-        let writeback = state.o3_runtime.ready_live_memory_result_completion();
+        let memory_result = state.o3_runtime.ready_live_memory_result_completion();
         let execution = state
             .o3_runtime
             .take_ready_live_data_access_event(current_tick)?;
+        if let Some(completion) = memory_result {
+            state
+                .o3_runtime
+                .prepare_ready_live_data_access_forwarding_matcher(&execution);
+            apply_completed_data_access(
+                &mut state,
+                self.id(),
+                &completion,
+                "deferred O3 memory-result data",
+            );
+            crate::riscv_checker::sync_checker_hart(&mut state);
+        }
         state.wake_ready_o3_scalar_memory_younger_window(wake_tick, &fetch_events);
         state
             .o3_runtime
             .record_retired_instruction_with_trace(&execution, trace_enabled);
-        if let Some((access, data)) = writeback {
-            apply_deferred_scalar_load_writeback(&mut state, &access, &data);
-            crate::riscv_checker::sync_checker_hart(&mut state);
-        }
         state.refresh_o3_writeback_wake(current_tick);
         Some(execution)
     }
@@ -1125,18 +1196,4 @@ impl crate::RiscvCore {
         O3RuntimeCheckpointPayload::from_snapshot(default_o3_runtime_snapshot())
             .expect("default O3 runtime checkpoint payload is valid")
     }
-}
-
-pub(crate) fn apply_deferred_scalar_load_writeback(
-    state: &mut RiscvCoreState,
-    access: &MemoryAccessKind,
-    data: &[u8],
-) {
-    let writeback = access
-        .read_response_writeback(data)
-        .expect("deferred scalar load response payload width")
-        .expect("deferred scalar load response writeback");
-    state
-        .hart
-        .write(writeback.expect_integer_register(), writeback.value());
 }

@@ -158,17 +158,26 @@ fn scalar_load_publication_waits_until_admitted_tick() {
 }
 
 #[test]
-fn late_scalar_load_does_not_displace_fixed_fu_reservation() {
+fn older_memory_result_replans_younger_fixed_fu_reservation() {
     let mut runtime = O3RuntimeState::default();
-    let fixed = runtime
+    runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(8, 42)])
-        .unwrap()[0];
+        .unwrap();
     let load = runtime
-        .reserve_writeback_completions([O3LiveWritebackReady::scalar_load(4, 42)])
+        .reserve_writeback_completions([O3LiveWritebackReady::memory_result(4, 42)])
         .unwrap()[0];
-    assert_eq!(fixed.admitted_tick(), 42);
-    assert_eq!(runtime.writeback_reservation(8), Some(fixed));
-    assert_eq!(load.admitted_tick(), 43);
+    let fixed = runtime.writeback_reservation(8).unwrap();
+
+    assert_eq!(load.admitted_tick(), 42);
+    assert_eq!(load.slot(), 0);
+    assert_eq!(fixed.admitted_tick(), 43);
+    assert_eq!(fixed.slot(), 0);
+    let stats = runtime.stats();
+    assert_eq!(stats.writeback_port_admitted_rows(), 2);
+    assert_eq!(stats.writeback_port_deferred_rows(), 1);
+    assert_eq!(stats.writeback_port_deferred_row_cycles(), 1);
+    assert_eq!(stats.writeback_port_max_ready_rows_per_cycle(), 2);
+    assert_eq!(stats.writeback_port_max_deferred_rows(), 1);
 }
 
 #[test]

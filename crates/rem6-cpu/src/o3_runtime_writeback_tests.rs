@@ -20,6 +20,9 @@ use crate::{
     RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
 };
 
+#[path = "o3_runtime_writeback_tests/ownership.rs"]
+mod ownership;
+
 #[test]
 fn o3_writeback_width_defaults_to_one_and_rejects_out_of_range_updates() {
     let mut runtime = O3RuntimeState::default();
@@ -178,6 +181,112 @@ fn writeback_reentry_returns_identical_reservation_without_recounting() {
 }
 
 #[test]
+fn writeback_reservation_does_not_clone_or_replace_large_trace_history() {
+    let mut runtime = runtime_with_large_trace_history(4096);
+    let trace_pointer = runtime.trace_records.as_ptr();
+    let trace_history = runtime.trace_records.clone();
+
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(9, 12)])
+        .unwrap();
+
+    assert_eq!(runtime.trace_records.as_ptr(), trace_pointer);
+    assert_eq!(runtime.trace_records, trace_history);
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::memory_result(9, 12)])
+        .unwrap_err();
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackReservationSourceMismatch {
+            sequence: 9,
+            existing_source: "FixedFu",
+            requested_source: "MemoryResult",
+        }
+    );
+    assert_eq!(runtime.trace_records.as_ptr(), trace_pointer);
+    assert_eq!(runtime.trace_records, trace_history);
+}
+
+#[test]
+fn writeback_reentry_rejects_same_sequence_source_mismatch_without_mutating_state() {
+    let mut runtime = O3RuntimeState::default();
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(9, 12)])
+        .unwrap();
+    let before = runtime.clone();
+
+    let result =
+        runtime.reserve_writeback_completions([O3LiveWritebackReady::memory_result(9, 12)]);
+
+    assert_eq!(
+        result.unwrap_err(),
+        O3RuntimeError::WritebackReservationSourceMismatch {
+            sequence: 9,
+            existing_source: "FixedFu",
+            requested_source: "MemoryResult",
+        }
+    );
+    assert_writeback_error_left_state_unchanged(&runtime, &before);
+}
+
+#[test]
+fn owner_source_mismatch_error_leaves_writeback_state_unchanged() {
+    let (mut runtime, sequence, admitted_tick) = runtime_with_live_speculative_writeback();
+    runtime.force_test_writeback_reservation_to_memory_result(sequence);
+    assert_eq!(
+        runtime
+            .writeback_reservation(sequence)
+            .map(|row| row.source_name()),
+        Some("MemoryResult")
+    );
+    let before = runtime.clone();
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+            99,
+            admitted_tick.saturating_sub(1),
+        )])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackOwnerSourceMismatch {
+            sequence,
+            owner: "fixed-FU speculative execution",
+            reservation_source: "MemoryResult",
+        }
+    );
+    assert_writeback_error_left_state_unchanged(&runtime, &before);
+}
+
+#[test]
+fn owner_validation_error_leaves_writeback_state_unchanged() {
+    let (mut runtime, sequence, admitted_tick) = runtime_with_live_speculative_writeback();
+    runtime
+        .snapshot
+        .reorder_buffer
+        .retain(|entry| entry.sequence() != sequence);
+    let before = runtime.clone();
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+            99,
+            admitted_tick.saturating_sub(1),
+        )])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackOwnerMissing {
+            sequence,
+            owner: "fixed-FU ROB",
+        }
+    );
+    assert_writeback_error_left_state_unchanged(&runtime, &before);
+}
+
+#[test]
 fn partial_reentry_cannot_overbook_or_recount_writeback() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));
@@ -254,6 +363,7 @@ fn stats_reset_preserves_writeback_calendar_without_recounting_reservations() {
     runtime.reset_stats();
 
     assert_eq!(runtime.writeback_reservations(), reservations);
+    assert_eq!(runtime.writeback_partial_ownership_debug(), (0, 0, 0, true));
     assert_eq!(runtime.stats().writeback_port_admitted_rows(), 0);
     runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(4, 20)])
@@ -341,6 +451,7 @@ fn pc_redirect_discards_all_writeback_authority_but_keeps_callback_error_sticky(
 #[test]
 fn explicit_hart_reset_discards_writeback_authority_and_callback_error() {
     let (mut runtime, sequence, admitted_tick) = runtime_with_live_speculative_writeback();
+    runtime.finalize_writeback_publication(sequence);
     runtime
         .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(99, admitted_tick + 4)])
         .unwrap();
@@ -360,6 +471,8 @@ fn explicit_hart_reset_discards_writeback_authority_and_callback_error() {
         assert!(runtime.writeback_reservation(99).is_none());
     });
     assert_eq!(core.pending_callback_error(), None);
+    core.reserve_test_fixed_fu_writeback(100, admitted_tick)
+        .expect("full hart reset clears prior writeback occupancy and closure");
 }
 
 #[test]
@@ -451,6 +564,33 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
     assert!(runtime.writeback_reservation(discarded_sequence).is_none());
 }
 
+fn assert_writeback_error_left_state_unchanged(runtime: &O3RuntimeState, before: &O3RuntimeState) {
+    assert_eq!(
+        runtime.snapshot.pending_state(),
+        before.snapshot.pending_state()
+    );
+    assert_eq!(runtime.writeback_calendar, before.writeback_calendar);
+    assert_eq!(
+        runtime.live_writeback_cycle_ticks,
+        before.live_writeback_cycle_ticks
+    );
+    assert_eq!(
+        runtime.live_writeback_ready_rows_by_tick,
+        before.live_writeback_ready_rows_by_tick
+    );
+    assert_eq!(
+        runtime.snapshot.reorder_buffer(),
+        before.snapshot.reorder_buffer()
+    );
+    assert_eq!(
+        runtime.live_speculative_executions,
+        before.live_speculative_executions
+    );
+    assert_eq!(runtime.live_data_accesses, before.live_data_accesses);
+    assert_eq!(runtime.stats(), before.stats());
+    assert_eq!(runtime, before);
+}
+
 fn runtime_with_live_speculative_writeback() -> (O3RuntimeState, u64, u64) {
     let mut runtime = O3RuntimeState::default();
     let head = addi(1, 0, 1);
@@ -487,6 +627,26 @@ fn runtime_with_live_speculative_writeback() -> (O3RuntimeState, u64, u64) {
         Some(admitted_tick)
     );
     (runtime, sequence, admitted_tick)
+}
+
+fn runtime_with_large_trace_history(len: usize) -> O3RuntimeState {
+    let mut runtime = O3RuntimeState::default();
+    let instruction = addi(1, 0, 1);
+    let execution = RiscvCpuExecutionEvent::new(
+        fetch_event(0x8000, 1),
+        instruction,
+        RiscvExecutionRecord::new(
+            instruction,
+            0x8000,
+            0x8004,
+            vec![RegisterWrite::new(reg(1), 1)],
+            None,
+        ),
+    );
+    runtime.record_retired_instruction_with_trace(&execution, true);
+    let trace = runtime.trace_records[0];
+    runtime.trace_records.resize(len, trace);
+    runtime
 }
 
 fn scalar_load_event(

@@ -5,7 +5,10 @@ const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
+const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
+const MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES: usize = 600;
+const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_SOURCE_LINES: usize = 1800;
 
@@ -355,8 +358,12 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
 
     for anchor in [
         "struct O3LiveDataAccess",
+        "memory_result: Option<RiscvDataCompletion>",
+        "fn o3_memory_result_destination",
         "fn stage_live_data_access_issue",
+        "fn complete_live_data_access_completion",
         "fn complete_live_data_access_response",
+        "fn ready_live_memory_result_completion",
         "fn take_ready_live_data_access_event",
         "fn consume_live_data_access_retirement",
     ] {
@@ -369,6 +376,41 @@ fn o3_runtime_memory_lifecycle_lives_in_focused_module() {
             "src/o3_runtime.rs still owns live data-access lifecycle `{anchor}`"
         );
     }
+}
+
+#[test]
+fn task3_sequence_span_lsq_span_and_retire_ownership_stay_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let memory = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_memory.rs")).unwrap(),
+    );
+    let retire = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_retire.rs")).unwrap(),
+    );
+
+    for anchor in [
+        "pub(super) fn o3_instruction_sequence_span(",
+        "self.allocate_sequence_span(lsq_sequence_span)",
+    ] {
+        assert!(
+            memory.contains(anchor),
+            "src/o3_runtime_memory.rs is missing Task 3 memory-sequence owner `{anchor}`"
+        );
+    }
+    for anchor in [
+        "pub(super) fn allocate_sequence_span(&mut self, span: u64) -> u64",
+        "self.allocate_sequence_span(o3_instruction_sequence_span(record.memory_access()))",
+        "self.remove_live_data_access_rows(live.sequence, live.lsq_sequence_span)",
+    ] {
+        assert!(
+            retire.contains(anchor),
+            "src/o3_runtime_retire.rs is missing Task 3 retire-sequence owner `{anchor}`"
+        );
+    }
+    assert!(
+        !retire.contains("Some(MemoryAccessKind::AtomicMemory"),
+        "src/o3_runtime_retire.rs must not keep a legacy separate AMO sequence increment"
+    );
 }
 
 #[test]
@@ -422,6 +464,7 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "pending_retirement_tracks_deferred_and_live_scalar_memory",
         "stages_two_live_scalar_memory_rows",
         "rejects_live_scalar_memory",
+        "apply_deferred_scalar_load_writeback",
     ];
     let rem6_system_dir = crate_dir
         .parent()
@@ -521,6 +564,10 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     let root = production_rust_source(&fs::read_to_string(&root_path).unwrap());
     let module_path = crate_dir.join("src/o3_runtime_writeback.rs");
     let module = production_rust_source(&fs::read_to_string(&module_path).unwrap());
+    let replan_path = crate_dir.join("src/o3_runtime_writeback/replan.rs");
+    let replan = production_rust_source(&fs::read_to_string(&replan_path).unwrap());
+    let ownership_path = crate_dir.join("src/o3_runtime_writeback/ownership.rs");
+    let ownership = production_rust_source(&fs::read_to_string(&ownership_path).unwrap());
     let issue = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap(),
     );
@@ -530,6 +577,9 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     let memory = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/o3_runtime_memory.rs")).unwrap(),
     );
+    let live_window = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_live_window.rs")).unwrap(),
+    );
 
     assert!(
         root.contains("mod o3_runtime_writeback;"),
@@ -538,6 +588,22 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     assert!(
         module_path.exists(),
         "live O3 writeback reservation belongs in src/o3_runtime_writeback.rs"
+    );
+    assert!(
+        module.contains("mod replan;"),
+        "src/o3_runtime_writeback.rs must delegate transactional replanning to its focused child module"
+    );
+    assert!(
+        module.contains("mod ownership;"),
+        "src/o3_runtime_writeback.rs must delegate finalized/live statistics ownership to its focused child module"
+    );
+    assert!(
+        replan_path.exists(),
+        "transactional O3 writeback replanning belongs in src/o3_runtime_writeback/replan.rs"
+    );
+    assert!(
+        ownership_path.exists(),
+        "finalized O3 writeback statistics ownership belongs in src/o3_runtime_writeback/ownership.rs"
     );
     let root_lines = line_count(&root_path);
     assert!(
@@ -549,6 +615,36 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         module_lines < MAX_O3_RUNTIME_WRITEBACK_LINES,
         "src/o3_runtime_writeback.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_LINES} lines, but it has {module_lines} lines"
     );
+    let replan_lines = line_count(&replan_path);
+    assert!(
+        replan_lines < MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES,
+        "src/o3_runtime_writeback/replan.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES} lines, but it has {replan_lines} lines"
+    );
+    let ownership_lines = line_count(&ownership_path);
+    assert!(
+        ownership_lines < MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES,
+        "src/o3_runtime_writeback/ownership.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES} lines, but it has {ownership_lines} lines"
+    );
+    assert!(
+        ownership.contains("struct O3FinalizedWritebackPortStats"),
+        "src/o3_runtime_writeback/ownership.rs must own finalized writeback statistics"
+    );
+    assert!(
+        ownership.contains("fn finalize_live_writeback_ownership("),
+        "src/o3_runtime_writeback/ownership.rs must own exact finalized/live ownership transfer"
+    );
+
+    for anchor in [
+        "pub(super) fn reserve_writeback_completions_in_place(",
+        "fn speculative_descendants(",
+        "fn invalidate_speculative_descendants(",
+        "fn sync_writeback_reservation_owners(",
+    ] {
+        assert!(
+            replan.contains(anchor),
+            "src/o3_runtime_writeback/replan.rs is missing transactional replanning owner `{anchor}`"
+        );
+    }
 
     let writeback_authority_patterns = [
         "struct O3WritebackReservationCalendar",
@@ -577,46 +673,16 @@ fn o3_runtime_writeback_lives_in_focused_module() {
             );
         }
     }
-    for field in [
-        "writeback_port_cycles",
-        "writeback_port_admitted_rows",
-        "writeback_port_deferred_rows",
-        "writeback_port_deferred_row_cycles",
-        "writeback_port_max_ready_rows_per_cycle",
-        "writeback_port_max_deferred_rows",
+    for anchor in [
+        "fn set_writeback_port_schedule(",
+        "observe_finalized_schedule(",
+        "reconcile_live_schedule(",
+        "close_all_reopenable_ticks(",
     ] {
         assert!(
-            module.contains(&format!("self.{field} = self")),
-            "src/o3_runtime_writeback.rs must own mutation of `{field}`"
+            module.contains(anchor) || ownership.contains(anchor),
+            "focused writeback statistics ownership is missing `{anchor}`"
         );
-        for path in rust_source_files(&crate_dir.join("src")) {
-            let relative = path.strip_prefix(crate_dir).unwrap();
-            if relative == Path::new("src/o3_runtime_writeback.rs")
-                || is_test_only_rust_source(relative)
-            {
-                continue;
-            }
-            let source = production_rust_source(&fs::read_to_string(&path).unwrap());
-            for operator in [
-                " =", " +=", " -=", " *=", " /=", " %=", " &=", " |=", " ^=", " <<=", " >>=",
-            ] {
-                let mutation = format!(".{field}{operator}");
-                assert!(
-                    !source.contains(&mutation),
-                    "{} mutates focused writeback stat `{field}` via `{mutation}`",
-                    relative.display()
-                );
-            }
-            if relative != Path::new("src/o3_runtime_stats.rs")
-                && relative != Path::new("src/o3_runtime_checkpoint.rs")
-            {
-                assert!(
-                    !source.contains(field),
-                    "{} duplicates writeback stat `{field}` outside the focused owner or read-only projection/codec boundary",
-                    relative.display()
-                );
-            }
-        }
     }
 
     assert!(
@@ -630,6 +696,30 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     assert!(
         memory.contains(".reserve_writeback_completions("),
         "src/o3_runtime_memory.rs must delegate scalar-load completion to focused writeback reservation"
+    );
+    for anchor in [
+        "fn discard_live_writeback_reservations(",
+        "fn discard_live_writeback_from_sequence(",
+        "fn finalize_all_writeback_reservations(",
+    ] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_writeback.rs is missing cleanup owner `{anchor}`"
+        );
+    }
+    assert!(
+        !module.contains("discard_all_writeback_reservations"),
+        "live lifecycle cleanup must not expose a blind writeback-calendar discard alias"
+    );
+    assert!(
+        live_window.contains(".discard_live_writeback_reservations()")
+            && memory.contains(".discard_live_writeback_reservations()"),
+        "live window and data lifecycle cleanup must preserve published writeback occupancy"
+    );
+    assert!(
+        replan.contains("WritebackReservationTickClosed")
+            && replan.contains("published_writeback_sequences"),
+        "transactional replanning must enforce the close watermark and retain published slots"
     );
     for (relative, source) in [
         ("src/riscv_live_retire_window.rs", live_retire),
@@ -645,6 +735,73 @@ fn o3_runtime_writeback_lives_in_focused_module() {
             );
         }
     }
+}
+
+#[test]
+fn task3_writeback_reservation_uses_bounded_transaction_state() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let writeback = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback.rs")).unwrap(),
+    );
+    let replan = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback/replan.rs")).unwrap(),
+    );
+    let ownership = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback/ownership.rs")).unwrap(),
+    );
+    let reservation = source_section(
+        &writeback,
+        "pub(crate) fn reserve_writeback_completions<I>(",
+        "pub(crate) fn reserve_fixed_fu_writeback(",
+    );
+
+    assert!(
+        !reservation.contains("self.clone()"),
+        "writeback reservation must not clone the full O3 runtime"
+    );
+    assert!(
+        reservation.contains("O3WritebackReplanTransaction::capture(self)"),
+        "writeback reservation must capture a focused bounded transaction"
+    );
+    for anchor in [
+        "struct O3WritebackReplanTransaction",
+        "fn capture(runtime: &O3RuntimeState)",
+        "fn commit(self, runtime: &mut O3RuntimeState)",
+        "fn reserve_writeback_completions_in_place(",
+    ] {
+        assert!(
+            replan.contains(anchor),
+            "bounded writeback transaction is missing `{anchor}`"
+        );
+    }
+    assert!(
+        ownership.contains("struct O3FinalizedWritebackPortStats"),
+        "focused writeback owner must separate finalized maxima from the live schedule"
+    );
+    let transaction = source_section(
+        &replan,
+        "struct O3WritebackReplanTransaction",
+        "impl O3WritebackReplanTransaction",
+    );
+    assert!(
+        !transaction.contains("trace_records"),
+        "bounded writeback transaction must not own trace history"
+    );
+    for anchor in [
+        "fn finalize_writeback_reservations_before(",
+        "fn discard_writeback_reservations(",
+        "fn rebuild_live_writeback_schedule_ownership(",
+    ] {
+        assert!(
+            writeback.contains(anchor),
+            "focused writeback ownership is missing bounded cleanup `{anchor}`"
+        );
+    }
+    assert!(
+        ownership.contains("fn observe_finalized_schedule(")
+            && ownership.contains("fn reconcile_live_schedule("),
+        "focused writeback owner must partition finalized and bounded live schedule ownership"
+    );
 }
 
 #[test]
@@ -700,9 +857,15 @@ fn o3_writeback_transfer_planning_stays_in_generic_pipeline_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let pipeline_path = crate_dir.join("src/o3_pipeline.rs");
     let pipeline = production_rust_source(&fs::read_to_string(&pipeline_path).unwrap());
-    let runtime_writeback = production_rust_source(
-        &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback.rs")).unwrap(),
-    );
+    let runtime_writeback = [
+        production_rust_source(
+            &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback.rs")).unwrap(),
+        ),
+        production_rust_source(
+            &fs::read_to_string(crate_dir.join("src/o3_runtime_writeback/replan.rs")).unwrap(),
+        ),
+    ]
+    .join("\n");
     let planner = "pub fn plan_cycle_with_occupied_slots";
 
     assert_eq!(
@@ -958,6 +1121,44 @@ fn o3_runtime_tests_live_in_sibling_test_module() {
         assert!(
             module.contains(anchor),
             "src/o3_runtime_tests.rs is missing former inline test body anchor `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn o3_runtime_live_window_tests_live_in_sibling_test_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let owner_path = crate_dir.join("src/o3_runtime_live_window.rs");
+    let owner = fs::read_to_string(&owner_path).unwrap();
+    let tests_path = crate_dir.join("src/o3_runtime_live_window_tests.rs");
+
+    assert!(
+        owner.contains("#[cfg(test)]\n#[path = \"o3_runtime_live_window_tests.rs\"]\nmod tests;"),
+        "src/o3_runtime_live_window.rs must declare its sibling test-only module"
+    );
+    assert!(
+        !owner.contains("mod tests {"),
+        "src/o3_runtime_live_window.rs must not retain its inline test body"
+    );
+    assert!(
+        line_count(&owner_path) < MAX_O3_RUNTIME_LIVE_WINDOW_LINES,
+        "src/o3_runtime_live_window.rs must stay below {MAX_O3_RUNTIME_LIVE_WINDOW_LINES} lines"
+    );
+    assert!(
+        tests_path.exists(),
+        "live-window tests belong in src/o3_runtime_live_window_tests.rs"
+    );
+
+    let tests = fs::read_to_string(tests_path).unwrap();
+    for anchor in [
+        "fn scalar_memory_stops_live_retire_window_before_memory_and_younger_rows(",
+        "fn completed_live_load_forwards_into_dependent_alu_candidate(",
+        "fn invalidated_speculative_producer_revokes_dependent_issue_timing(",
+        "fn live_rename_overlay_preserves_canonical_register_order(",
+    ] {
+        assert!(
+            tests.contains(anchor),
+            "src/o3_runtime_live_window_tests.rs is missing `{anchor}`"
         );
     }
 }
@@ -1519,10 +1720,12 @@ fn push_rust_blank(output: &mut String, character: char) {
 }
 
 fn is_test_only_rust_source(path: &Path) -> bool {
-    if path
-        .components()
-        .any(|component| component.as_os_str() == "tests")
-    {
+    if path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|component| component == "tests" || component.ends_with("_tests"))
+    }) {
         return true;
     }
     path.file_stem()

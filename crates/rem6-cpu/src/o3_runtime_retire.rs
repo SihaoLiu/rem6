@@ -67,7 +67,8 @@ impl O3RuntimeState {
                 drains_runtime_rob: false,
             }
         } else {
-            let sequence = self.allocate_sequence();
+            let sequence =
+                self.allocate_sequence_span(o3_instruction_sequence_span(record.memory_access()));
             let dependencies = self.record_scalar_integer_dependencies(&record.instruction());
             let destination = self.record_rename_map_entries(record, None);
             for entry in &mut self.snapshot.reorder_buffer {
@@ -97,12 +98,6 @@ impl O3RuntimeState {
                 drains_runtime_rob: true,
             }
         };
-        if matches!(
-            record.memory_access(),
-            Some(MemoryAccessKind::AtomicMemory { .. })
-        ) {
-            self.next_sequence = self.next_sequence.saturating_add(1);
-        }
         let (lsq_loads, lsq_stores) = record
             .memory_access()
             .map(o3_lsq_access_counts)
@@ -179,7 +174,7 @@ impl O3RuntimeState {
                 .find(|entry| entry.sequence() == live.sequence)
                 .copied()
                 .and_then(staged_rename_entry);
-            self.remove_live_data_access_rows(live.sequence);
+            self.remove_live_data_access_rows(live.sequence, live.lsq_sequence_span);
             if let Some(rename_destination) = rename_destination {
                 self.publish_live_rename_entry(rename_destination);
             }
@@ -449,8 +444,12 @@ impl O3RuntimeState {
     }
 
     pub(super) fn allocate_sequence(&mut self) -> u64 {
+        self.allocate_sequence_span(1)
+    }
+
+    pub(super) fn allocate_sequence_span(&mut self, span: u64) -> u64 {
         let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.next_sequence = self.next_sequence.saturating_add(span);
         sequence
     }
 

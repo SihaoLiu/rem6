@@ -84,7 +84,7 @@ fn conflicting_scalar_load_callback_fixture() -> (
 }
 
 #[test]
-fn detailed_store_then_aliasing_load_completes_without_transport() {
+fn deferred_forwarded_load_records_one_candidate_match_and_trace() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = detailed_store_load_core(fetch_route, data_route, 0x9000, 0x9000);
 
@@ -140,6 +140,20 @@ fn detailed_store_then_aliasing_load_completes_without_transport() {
     core.record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .expect("forwarded load should retire second");
     assert_eq!(core.read_register(reg(6)), 0x2a);
+
+    let stats = core.o3_runtime_stats();
+    assert_eq!(stats.lsq_store_to_load_forwarding_candidates(), 1);
+    assert_eq!(stats.lsq_store_to_load_forwarding_matches(), 1);
+    assert!(!core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .has_pending_store_forwarding_load_match());
+    let trace = core.o3_runtime_trace_records();
+    let load = trace.last().expect("forwarded load records a trace");
+    assert!(load.store_load_forwarding_candidate());
+    assert!(load.store_load_forwarding_match());
 }
 
 #[test]

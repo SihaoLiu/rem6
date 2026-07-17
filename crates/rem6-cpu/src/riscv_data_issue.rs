@@ -13,7 +13,10 @@ use rem6_transport::{
 };
 
 use crate::{
-    o3_runtime::O3StoreLoadForwardingPlan,
+    o3_runtime::{
+        is_deferred_o3_data_access, is_scalar_window_access, o3_memory_result_destination,
+        O3StoreLoadForwardingPlan,
+    },
     riscv_checker,
     riscv_cross_line::supports_cross_line_data_access,
     riscv_data_access,
@@ -538,19 +541,16 @@ impl RiscvCore {
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
-        let (o3_scalar_memory, o3_scalar_load_younger_window) = {
+        let (o3_data_access, o3_scalar_load_younger_window) = {
             let state = self.state.lock().expect("riscv core lock");
             let detailed = state.live_retire_gate.detailed_policy_enabled();
-            let scalar_memory = matches!(
-                issue.access,
-                MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. }
-            );
-            let o3_scalar_memory = scalar_memory
+            let o3_data_access = is_deferred_o3_data_access(Some(&issue.access))
                 && (detailed
                     || state
                         .o3_runtime
                         .owns_pending_live_data_access_retirement(issue.fetch_request));
-            let o3_scalar_load_younger_window = o3_scalar_memory
+            let o3_scalar_load_younger_window = o3_data_access
+                && is_scalar_window_access(&issue.access)
                 && matches!(issue.access, MemoryAccessKind::Load { .. })
                 && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
                 && (state.data_translation.is_none()
@@ -563,7 +563,7 @@ impl RiscvCore {
                         .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
                     Ok(false)
                 );
-            (o3_scalar_memory, o3_scalar_load_younger_window)
+            (o3_data_access, o3_scalar_load_younger_window)
         };
         let fetch_events = if o3_scalar_load_younger_window {
             self.core.fetch_events()
@@ -583,10 +583,10 @@ impl RiscvCore {
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        if o3_scalar_memory {
+        if o3_data_access {
             let execution = execution
                 .as_ref()
-                .expect("issued scalar data access has a matching execution event");
+                .expect("issued O3 data access has a matching execution event");
             let staged = state.o3_runtime.stage_live_data_access_issue(
                 execution,
                 issue.request_id,
@@ -594,7 +594,7 @@ impl RiscvCore {
             );
             assert!(
                 staged,
-                "O3-owned scalar data issue must own an available memory slot"
+                "O3-owned data issue must own an available memory slot"
             );
             if o3_scalar_load_younger_window {
                 stage_o3_scalar_memory_younger_window(
@@ -733,6 +733,7 @@ impl RiscvCore {
                             .as_mut()
                             .is_some_and(|data| plan.overlay_response_data(data))
                 });
+                let completion = access.completion(data.clone());
                 let deferred_retirement = deferred_o3_live_data_access_retirement(&state, &access);
                 let completed_event = if deferred_retirement {
                     cloned_data_access_event_with_kind(
@@ -749,7 +750,7 @@ impl RiscvCore {
                         &access,
                         completed_event,
                         delivery.tick(),
-                        data.as_deref(),
+                        Some(completion.clone()),
                         forwarding_plan,
                     ) {
                         record_callback_error(&mut state, error);
@@ -775,15 +776,14 @@ impl RiscvCore {
                         &access,
                         completed_event,
                         delivery.tick(),
-                        data.as_deref(),
+                        Some(completion.clone()),
                         forwarding_plan,
                     ) {
                         record_callback_error(&mut state, error);
                         return;
                     }
                 }
-                if !deferred_o3_scalar_load_writeback(&state, &access) {
-                    let completion = access.completion(data.clone());
+                if !deferred_o3_memory_result_writeback(&state, &access) {
                     apply_completed_data_access(
                         &mut state,
                         self.id(),
@@ -910,6 +910,7 @@ impl RiscvCore {
         match completion.response() {
             Ok(response) => {
                 let data = response.data().map(ToOwned::to_owned);
+                let data_completion = access.completion(data.clone());
                 let deferred_retirement = deferred_o3_live_data_access_retirement(&state, &access);
                 let completed_event = if deferred_retirement {
                     cloned_data_access_event_with_kind(
@@ -926,7 +927,7 @@ impl RiscvCore {
                         &access,
                         completed_event,
                         completion.tick(),
-                        data.as_deref(),
+                        Some(data_completion.clone()),
                         None,
                     ) {
                         record_callback_error(&mut state, error);
@@ -952,19 +953,18 @@ impl RiscvCore {
                         &access,
                         completed_event,
                         completion.tick(),
-                        data.as_deref(),
+                        Some(data_completion.clone()),
                         None,
                     ) {
                         record_callback_error(&mut state, error);
                         return;
                     }
                 }
-                if !deferred_o3_scalar_load_writeback(&state, &access) {
-                    let completion = access.completion(data.clone());
+                if !deferred_o3_memory_result_writeback(&state, &access) {
                     apply_completed_data_access(
                         &mut state,
                         self.id(),
-                        &completion,
+                        &data_completion,
                         "MMIO load response data",
                     );
                     riscv_checker::sync_checker_hart(&mut state);
@@ -1091,8 +1091,8 @@ fn deferred_o3_live_data_access_retirement(
         .owns_pending_live_data_access_retirement(access.fetch_request)
 }
 
-fn deferred_o3_scalar_load_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
-    matches!(access.access, MemoryAccessKind::Load { .. })
+fn deferred_o3_memory_result_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
+    o3_memory_result_destination(&access.access).is_some()
         && deferred_o3_live_data_access_retirement(state, access)
 }
 

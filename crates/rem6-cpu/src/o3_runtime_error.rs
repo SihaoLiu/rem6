@@ -61,6 +61,43 @@ pub enum O3RuntimeError {
         existing_raw_ready_tick: u64,
         requested_raw_ready_tick: u64,
     },
+    WritebackReservationSourceMismatch {
+        sequence: u64,
+        existing_source: &'static str,
+        requested_source: &'static str,
+    },
+    WritebackReservationTickClosed {
+        sequence: u64,
+        raw_ready_tick: u64,
+        closed_before_tick: u64,
+    },
+    WritebackOwnerReservationMismatch {
+        sequence: u64,
+        owner: &'static str,
+        owner_raw_ready_tick: u64,
+        reservation_raw_ready_tick: u64,
+    },
+    WritebackOwnerSourceMismatch {
+        sequence: u64,
+        owner: &'static str,
+        reservation_source: &'static str,
+    },
+    WritebackOwnerMissing {
+        sequence: u64,
+        owner: &'static str,
+    },
+    WritebackOwnerMissingRawReadyTick {
+        sequence: u64,
+        owner: &'static str,
+    },
+    WritebackStatisticsUnderflow {
+        counter: &'static str,
+        current: u64,
+        removed: u64,
+    },
+    WritebackStatisticsOverflow {
+        counter: &'static str,
+    },
     WritebackCalendarSlotOccupied {
         tick: u64,
         slot: usize,
@@ -69,6 +106,9 @@ pub enum O3RuntimeError {
         deferred: usize,
     },
     WritebackTickOverflow {
+        tick: u64,
+    },
+    WritebackClosureTickOverflow {
         tick: u64,
     },
     CheckpointValueTooLarge {
@@ -154,6 +194,59 @@ impl fmt::Display for O3RuntimeError {
                 formatter,
                 "O3 runtime writeback reservation for sequence {sequence} has raw-ready tick {existing_raw_ready_tick} but was requested at {requested_raw_ready_tick}"
             ),
+            Self::WritebackReservationSourceMismatch {
+                sequence,
+                existing_source,
+                requested_source,
+            } => write!(
+                formatter,
+                "O3 runtime writeback reservation for sequence {sequence} has source {existing_source} but was requested as {requested_source}"
+            ),
+            Self::WritebackReservationTickClosed {
+                sequence,
+                raw_ready_tick,
+                closed_before_tick,
+            } => write!(
+                formatter,
+                "O3 runtime writeback reservation for sequence {sequence} has raw-ready tick {raw_ready_tick} below closed watermark {closed_before_tick}"
+            ),
+            Self::WritebackOwnerReservationMismatch {
+                sequence,
+                owner,
+                owner_raw_ready_tick,
+                reservation_raw_ready_tick,
+            } => write!(
+                formatter,
+                "O3 runtime {owner} owner for sequence {sequence} has raw-ready tick {owner_raw_ready_tick} but reservation has {reservation_raw_ready_tick}"
+            ),
+            Self::WritebackOwnerSourceMismatch {
+                sequence,
+                owner,
+                reservation_source,
+            } => write!(
+                formatter,
+                "O3 runtime {owner} owner for sequence {sequence} cannot use {reservation_source} writeback reservation source"
+            ),
+            Self::WritebackOwnerMissing { sequence, owner } => write!(
+                formatter,
+                "O3 runtime writeback reservation for sequence {sequence} is missing {owner} owner metadata"
+            ),
+            Self::WritebackOwnerMissingRawReadyTick { sequence, owner } => write!(
+                formatter,
+                "O3 runtime {owner} owner for sequence {sequence} is missing raw-ready tick metadata"
+            ),
+            Self::WritebackStatisticsUnderflow {
+                counter,
+                current,
+                removed,
+            } => write!(
+                formatter,
+                "O3 runtime writeback statistic {counter} cannot remove {removed} from {current}"
+            ),
+            Self::WritebackStatisticsOverflow { counter } => write!(
+                formatter,
+                "O3 runtime writeback statistic {counter} overflowed"
+            ),
             Self::WritebackCalendarSlotOccupied { tick, slot } => write!(
                 formatter,
                 "O3 runtime writeback calendar tick {tick} slot {slot} is already occupied"
@@ -165,6 +258,10 @@ impl fmt::Display for O3RuntimeError {
             Self::WritebackTickOverflow { tick } => write!(
                 formatter,
                 "O3 runtime writeback reservation tick overflowed after {tick}"
+            ),
+            Self::WritebackClosureTickOverflow { tick } => write!(
+                formatter,
+                "O3 runtime writeback closure watermark overflowed after tick {tick}"
             ),
             Self::CheckpointValueTooLarge {
                 field,

@@ -38,7 +38,7 @@ pub(super) fn record_o3_data_access_outcome(
     access: &IssuedDataAccess,
     execution: Option<RiscvCpuExecutionEvent>,
     response_tick: Tick,
-    load_data: Option<&[u8]>,
+    completion: Option<RiscvDataCompletion>,
     forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 ) -> Result<bool, O3RuntimeError> {
     let Some(execution) = execution else {
@@ -60,24 +60,26 @@ pub(super) fn record_o3_data_access_outcome(
     })
     .unwrap_or_default();
     let completed_live_data_access = if let Some(forwarding_plan) = forwarding_plan {
-        match load_data {
-            Some(data) => state.o3_runtime.complete_live_scalar_memory_forwarding(
-                &execution,
-                access.request,
-                response_tick,
-                latency_ticks,
-                data,
-                forwarding_plan,
-            )?,
+        match completion {
+            Some(completion) => state
+                .o3_runtime
+                .complete_live_scalar_memory_forwarding_completion(
+                    &execution,
+                    access.request,
+                    response_tick,
+                    latency_ticks,
+                    completion,
+                    forwarding_plan,
+                )?,
             None => false,
         }
     } else {
-        state.o3_runtime.complete_live_data_access_response(
+        state.o3_runtime.complete_live_data_access_completion(
             &execution,
             access.request,
             response_tick,
             latency_ticks,
-            load_data,
+            completion,
         )?
     };
     state.refresh_o3_writeback_wake(response_tick);

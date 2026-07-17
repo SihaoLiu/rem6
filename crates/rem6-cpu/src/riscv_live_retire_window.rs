@@ -668,7 +668,7 @@ pub(crate) fn completed_fetch_instruction_starting_with(
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord,
+        Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
     };
     use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{AccessSize, AgentId};
@@ -951,9 +951,24 @@ mod tests {
             assert!(state.o3_runtime.set_writeback_width(1));
             state.hart.write(Register::new(1).unwrap(), 6);
             state.hart.write(Register::new(2).unwrap(), 7);
+            let seed_raw = 0x0000_0013_u32;
+            let seed_instruction = RiscvInstruction::decode_with_length(seed_raw)
+                .unwrap()
+                .instruction();
+            let seed = RiscvCpuExecutionEvent::new(
+                completed_fetch_with_data(
+                    7,
+                    9,
+                    Address::new(0x7ffc),
+                    seed_raw.to_le_bytes().to_vec(),
+                ),
+                seed_instruction,
+                RiscvExecutionRecord::new(seed_instruction, 0x7ffc, 0x8000, Vec::new(), None),
+            );
+            state.o3_runtime.record_retired_instruction(&seed);
             state
                 .o3_runtime
-                .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(99, 12)])
+                .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(0, 12)])
                 .unwrap();
             let raw = r_type(1, 2, 1, 0x0, 3, 0x33);
             let events = vec![completed_fetch_with_data(
@@ -992,7 +1007,7 @@ mod tests {
                 13,
                 "{label} path must not leave behind a transient raw-tick wake"
             );
-            let head = state.o3_runtime.writeback_reservation(0).unwrap();
+            let head = state.o3_runtime.writeback_reservation(1).unwrap();
             assert_eq!(head.raw_ready_tick(), 12);
             assert_eq!(head.admitted_tick(), 13);
             assert_eq!(head.slot(), 0);

@@ -1,6 +1,6 @@
 use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 
-use crate::{CpuFetchEvent, RiscvCore, RiscvCoreState};
+use crate::{CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError};
 
 impl RiscvCoreState {
     pub(crate) fn wake_ready_o3_scalar_memory_younger_window(
@@ -190,7 +190,12 @@ impl RiscvCore {
         {
             return;
         }
-        state.o3_runtime.discard_all_writeback_reservations();
+        if let Err(error) = state.o3_runtime.finalize_all_writeback_reservations() {
+            state
+                .pending_callback_error
+                .get_or_insert(RiscvCpuError::O3Runtime(error));
+            return;
+        }
         state.o3_writeback_wake.finalize_fired_detached_wakes();
     }
 }
@@ -216,7 +221,7 @@ mod tests {
     use super::*;
     use crate::{
         CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
-        RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
+        O3RuntimeError, RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
     };
 
     #[test]
@@ -286,6 +291,14 @@ mod tests {
         assert!(state.o3_writeback_wake.owned_wakes().is_empty());
         drop(state);
         assert!(core.data_access_lifecycle_is_quiescent());
+        assert_eq!(
+            core.reserve_test_fixed_fu_writeback(5, 20).unwrap_err(),
+            O3RuntimeError::WritebackReservationTickClosed {
+                sequence: 5,
+                raw_ready_tick: 20,
+                closed_before_tick: 21,
+            }
+        );
     }
 
     #[test]
@@ -306,6 +319,22 @@ mod tests {
         assert_eq!(state.o3_writeback_wake.owned_wakes().len(), 1);
         drop(state);
         assert!(!core.data_access_lifecycle_is_quiescent());
+    }
+
+    #[test]
+    fn checkpoint_finalization_reports_max_tick_seal_error_without_clearing() {
+        let core = core();
+        core.reserve_test_fixed_fu_writeback(4, u64::MAX).unwrap();
+
+        core.finalize_quiescent_o3_writeback_for_checkpoint();
+
+        assert_eq!(
+            core.pending_callback_error(),
+            Some(RiscvCpuError::O3Runtime(
+                O3RuntimeError::WritebackClosureTickOverflow { tick: u64::MAX }
+            ))
+        );
+        assert_eq!(core.o3_runtime_writeback_reservations().len(), 1);
     }
 
     #[test]

@@ -1,11 +1,20 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::o3_pipeline::{
-    O3PendingStateSnapshot, O3PipelineStage, O3WritebackCompletion, O3WritebackTransferBuffer,
-    O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
+    O3PendingStateSnapshot, O3PipelineStage, O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
 
 use super::*;
+
+#[path = "o3_runtime_writeback/replan.rs"]
+mod replan;
+use replan::O3WritebackReplanTransaction;
+#[path = "o3_runtime_writeback/ownership.rs"]
+mod ownership;
+pub(super) use ownership::O3FinalizedWritebackPortStats;
+#[cfg(test)]
+#[path = "o3_runtime_writeback/ownership_debug_tests.rs"]
+mod ownership_debug;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3WritebackReservation {
@@ -13,6 +22,7 @@ pub(crate) struct O3WritebackReservation {
     raw_ready_tick: u64,
     admitted_tick: u64,
     slot: usize,
+    source: O3LiveWritebackReadySource,
     decision_counted: bool,
 }
 
@@ -92,6 +102,7 @@ impl O3WritebackReservation {
         raw_ready_tick: u64,
         admitted_tick: u64,
         slot: usize,
+        source: O3LiveWritebackReadySource,
         decision_counted: bool,
     ) -> Self {
         Self {
@@ -99,6 +110,7 @@ impl O3WritebackReservation {
             raw_ready_tick,
             admitted_tick,
             slot,
+            source,
             decision_counted,
         }
     }
@@ -124,6 +136,11 @@ impl O3WritebackReservation {
     #[cfg(test)]
     pub(crate) const fn decision_counted(self) -> bool {
         self.decision_counted
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn source_name(self) -> &'static str {
+        self.source.name()
     }
 }
 
@@ -207,22 +224,8 @@ impl O3WritebackReservationCalendar {
         removed
     }
 
-    pub(crate) fn remove_future_from_sequence(&mut self, sequence: u64, now: u64) {
-        self.by_tick.retain(|_, reservations| {
-            reservations.retain(|reservation| {
-                reservation.sequence < sequence || reservation.admitted_tick <= now
-            });
-            !reservations.is_empty()
-        });
-    }
-
     pub(crate) fn clear(&mut self) {
         self.by_tick.clear();
-    }
-
-    pub(crate) fn prune_before(&mut self, tick: u64) {
-        self.by_tick
-            .retain(|admitted_tick, _| *admitted_tick >= tick);
     }
 
     pub(crate) fn reserved_future_count(&self, now: u64) -> usize {
@@ -247,6 +250,7 @@ pub(crate) struct O3LiveWritebackReady {
     sequence: u64,
     raw_ready_tick: u64,
     source: O3LiveWritebackReadySource,
+    decision_counted: bool,
 }
 
 impl O3LiveWritebackReady {
@@ -255,14 +259,25 @@ impl O3LiveWritebackReady {
             sequence,
             raw_ready_tick,
             source: O3LiveWritebackReadySource::FixedFu,
+            decision_counted: true,
         }
     }
 
-    pub(crate) const fn scalar_load(sequence: u64, raw_ready_tick: u64) -> Self {
+    pub(crate) const fn memory_result(sequence: u64, raw_ready_tick: u64) -> Self {
         Self {
             sequence,
             raw_ready_tick,
-            source: O3LiveWritebackReadySource::ScalarLoad,
+            source: O3LiveWritebackReadySource::MemoryResult,
+            decision_counted: true,
+        }
+    }
+
+    const fn replanned(reservation: O3WritebackReservation) -> Self {
+        Self {
+            sequence: reservation.sequence,
+            raw_ready_tick: reservation.raw_ready_tick,
+            source: reservation.source,
+            decision_counted: reservation.decision_counted,
         }
     }
 
@@ -277,22 +292,108 @@ impl O3LiveWritebackReady {
     const fn source(self) -> O3LiveWritebackReadySource {
         self.source
     }
+
+    const fn decision_counted(self) -> bool {
+        self.decision_counted
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveWritebackReadySource {
     FixedFu,
-    ScalarLoad,
+    MemoryResult,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct O3WritebackPortStatsDelta {
+impl O3LiveWritebackReadySource {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::FixedFu => "FixedFu",
+            Self::MemoryResult => "MemoryResult",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct O3WritebackPortStatsSchedule {
     cycles: u64,
     admitted_rows: u64,
     deferred_rows: u64,
     deferred_row_cycles: u64,
     max_ready_rows_per_cycle: u64,
     max_deferred_rows: u64,
+    cycle_ticks: BTreeSet<u64>,
+    ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
+    deferred_rows_by_tick: BTreeMap<u64, u64>,
+}
+
+impl O3WritebackPortStatsSchedule {
+    fn from_calendar(
+        calendar: &O3WritebackReservationCalendar,
+        counted_sequences: &BTreeSet<u64>,
+    ) -> Result<Self, O3RuntimeError> {
+        let reservations = calendar
+            .by_tick
+            .values()
+            .flatten()
+            .copied()
+            .filter(|reservation| {
+                reservation.decision_counted && counted_sequences.contains(&reservation.sequence)
+            })
+            .collect::<Vec<_>>();
+        let mut schedule = Self {
+            admitted_rows: u64::try_from(reservations.len()).map_err(|_| {
+                O3RuntimeError::WritebackStatisticsOverflow {
+                    counter: "admitted_rows",
+                }
+            })?,
+            ..Self::default()
+        };
+        for reservation in reservations {
+            schedule
+                .ready_rows_by_tick
+                .entry(reservation.raw_ready_tick)
+                .or_default()
+                .insert(reservation.sequence);
+            let mut tick = reservation.raw_ready_tick;
+            loop {
+                schedule.cycle_ticks.insert(tick);
+                if tick == reservation.admitted_tick {
+                    break;
+                }
+                let rows = schedule.deferred_rows_by_tick.entry(tick).or_default();
+                *rows = checked_stat_add(*rows, 1, "max_deferred_rows")?;
+                tick = tick
+                    .checked_add(1)
+                    .ok_or(O3RuntimeError::WritebackStatisticsOverflow { counter: "cycles" })?;
+            }
+            if reservation.admitted_tick > reservation.raw_ready_tick {
+                schedule.deferred_rows =
+                    checked_stat_add(schedule.deferred_rows, 1, "deferred_rows")?;
+                schedule.deferred_row_cycles = checked_stat_add(
+                    schedule.deferred_row_cycles,
+                    reservation.admitted_tick - reservation.raw_ready_tick,
+                    "deferred_row_cycles",
+                )?;
+            }
+        }
+        schedule.cycles = u64::try_from(schedule.cycle_ticks.len())
+            .map_err(|_| O3RuntimeError::WritebackStatisticsOverflow { counter: "cycles" })?;
+        for rows in schedule.ready_rows_by_tick.values() {
+            let rows = u64::try_from(rows.len()).map_err(|_| {
+                O3RuntimeError::WritebackStatisticsOverflow {
+                    counter: "max_ready_rows_per_cycle",
+                }
+            })?;
+            schedule.max_ready_rows_per_cycle = schedule.max_ready_rows_per_cycle.max(rows);
+        }
+        schedule.max_deferred_rows = schedule
+            .deferred_rows_by_tick
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        Ok(schedule)
+    }
 }
 
 impl O3RuntimeState {
@@ -318,6 +419,15 @@ impl O3RuntimeState {
         self.writeback_calendar.reservations()
     }
 
+    #[cfg(test)]
+    pub(crate) fn force_test_writeback_reservation_to_memory_result(&mut self, sequence: u64) {
+        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
+            if reservation.sequence == sequence {
+                reservation.source = O3LiveWritebackReadySource::MemoryResult;
+            }
+        }
+    }
+
     pub(crate) fn reserve_writeback_completions<I>(
         &mut self,
         ready: I,
@@ -325,142 +435,11 @@ impl O3RuntimeState {
     where
         I: IntoIterator<Item = O3LiveWritebackReady>,
     {
-        let mut ready = ready.into_iter().collect::<Vec<_>>();
-        ready.sort_by_key(|row| (row.sequence(), row.raw_ready_tick()));
-        for pair in ready.windows(2) {
-            if pair[0].sequence() == pair[1].sequence() {
-                return Err(O3RuntimeError::DuplicateWritebackReadySequence {
-                    sequence: pair[0].sequence(),
-                });
-            }
-        }
-
-        let mut requested_sequences = ready.iter().map(|row| row.sequence()).collect::<Vec<_>>();
-        requested_sequences.sort_unstable();
-
-        let mut new_rows = Vec::new();
-        for row in &ready {
-            match row.source() {
-                O3LiveWritebackReadySource::FixedFu | O3LiveWritebackReadySource::ScalarLoad => {}
-            }
-            if let Some(existing) = self.writeback_calendar.reservation(row.sequence()) {
-                if existing.raw_ready_tick != row.raw_ready_tick() {
-                    return Err(O3RuntimeError::WritebackReservationMismatch {
-                        sequence: row.sequence(),
-                        existing_raw_ready_tick: existing.raw_ready_tick,
-                        requested_raw_ready_tick: row.raw_ready_tick(),
-                    });
-                }
-            } else {
-                new_rows.push(*row);
-            }
-        }
-        if new_rows.is_empty() {
-            return Ok(self.reservations_for_sequences(&requested_sequences));
-        }
-
-        let writeback = self.snapshot.pending_state().writeback().clone();
-        let deferred = writeback.deferred().len();
-        if deferred != 0 {
-            return Err(O3RuntimeError::StableWritebackQueueNotEmpty { deferred });
-        }
-
-        let mut staged_calendar = self.writeback_calendar.clone();
-        let mut staged_cycle_ticks = self.live_writeback_cycle_ticks.clone();
-        let mut staged_ready_rows_by_tick = self.live_writeback_ready_rows_by_tick.clone();
-        let mut stats_delta = O3WritebackPortStatsDelta::default();
-        let mut buffer = O3WritebackTransferBuffer::from_snapshot(writeback)
-            .map_err(|error| O3RuntimeError::InvalidPendingState { error })?;
-        let mut pending_rows = new_rows;
-        pending_rows.sort_by_key(|row| (row.raw_ready_tick(), row.sequence()));
-        let mut pending_rows = VecDeque::from(pending_rows);
-        let mut raw_ready_by_sequence = pending_rows
-            .iter()
-            .map(|row| (row.sequence(), row.raw_ready_tick()))
-            .collect::<BTreeMap<_, _>>();
-        let mut base_tick = pending_rows
-            .front()
-            .expect("new rows are nonempty")
-            .raw_ready_tick();
-
-        while !pending_rows.is_empty() || !buffer.is_empty() {
-            let mut newly_ready = Vec::new();
-            while pending_rows
-                .front()
-                .is_some_and(|row| row.raw_ready_tick() <= base_tick)
-            {
-                let row = pending_rows
-                    .pop_front()
-                    .expect("front row was just observed");
-                staged_ready_rows_by_tick
-                    .entry(row.raw_ready_tick())
-                    .or_default()
-                    .insert(row.sequence());
-                newly_ready.push(O3WritebackCompletion::new(row.sequence()));
-            }
-            if staged_cycle_ticks.insert(base_tick) {
-                stats_delta.cycles = stats_delta.cycles.saturating_add(1);
-            }
-            if let Some(rows) = staged_ready_rows_by_tick.get(&base_tick) {
-                stats_delta.max_ready_rows_per_cycle = stats_delta
-                    .max_ready_rows_per_cycle
-                    .max(u64::try_from(rows.len()).unwrap_or(u64::MAX));
-            }
-
-            let cycle = buffer
-                .plan_cycle_with_occupied_slots(
-                    staged_calendar.occupied_slots(base_tick),
-                    newly_ready,
-                )
-                .map_err(|error| O3RuntimeError::InvalidPendingState { error })?;
-            for admission in cycle.admissions() {
-                let sequence = admission.completion().sequence();
-                let admitted_tick = base_tick
-                    .checked_add(admission.cycle_offset())
-                    .ok_or(O3RuntimeError::WritebackTickOverflow { tick: base_tick })?;
-                let raw_ready_tick = *raw_ready_by_sequence
-                    .get(&sequence)
-                    .expect("admitted writeback row has a raw-ready tick");
-                let reservation = O3WritebackReservation::new(
-                    sequence,
-                    raw_ready_tick,
-                    admitted_tick,
-                    admission.slot(),
-                    true,
-                );
-                staged_calendar.insert(reservation)?;
-                stats_delta.admitted_rows = stats_delta.admitted_rows.saturating_add(1);
-                if admitted_tick > raw_ready_tick {
-                    stats_delta.deferred_rows = stats_delta.deferred_rows.saturating_add(1);
-                    stats_delta.deferred_row_cycles = stats_delta
-                        .deferred_row_cycles
-                        .saturating_add(admitted_tick - raw_ready_tick);
-                }
-                raw_ready_by_sequence.remove(&sequence);
-            }
-            stats_delta.max_deferred_rows = stats_delta
-                .max_deferred_rows
-                .max(u64::try_from(buffer.pending_deferred_count()).unwrap_or(u64::MAX));
-
-            if buffer.is_empty() {
-                let Some(next) = pending_rows.front() else {
-                    break;
-                };
-                base_tick = next.raw_ready_tick();
-            } else {
-                base_tick = base_tick
-                    .checked_add(1)
-                    .ok_or(O3RuntimeError::WritebackTickOverflow { tick: base_tick })?;
-            }
-        }
-
-        let drained_snapshot = buffer.snapshot();
-        self.rebuild_pending_writeback_snapshot(drained_snapshot)?;
-        self.writeback_calendar = staged_calendar;
-        self.live_writeback_cycle_ticks = staged_cycle_ticks;
-        self.live_writeback_ready_rows_by_tick = staged_ready_rows_by_tick;
-        self.stats.record_writeback_port_delta(stats_delta);
-        Ok(self.reservations_for_sequences(&requested_sequences))
+        let ready = ready.into_iter().collect::<Vec<_>>();
+        let mut transaction = O3WritebackReplanTransaction::capture(self);
+        let reservations = transaction.reserve_writeback_completions_in_place(ready)?;
+        transaction.commit(self);
+        Ok(reservations)
     }
 
     pub(crate) fn reserve_fixed_fu_writeback(
@@ -481,28 +460,6 @@ impl O3RuntimeState {
             .next()
             .expect("single fixed-FU writeback reservation returns one row");
         Ok((reservation.admitted_tick(), Some(reservation.slot())))
-    }
-
-    fn reservations_for_sequences(&self, sequences: &[u64]) -> Vec<O3WritebackReservation> {
-        let mut reservations = sequences
-            .iter()
-            .filter_map(|sequence| self.writeback_calendar.reservation(*sequence))
-            .collect::<Vec<_>>();
-        reservations.sort_by_key(|reservation| reservation.sequence);
-        reservations
-    }
-
-    fn rebuild_pending_writeback_snapshot(
-        &mut self,
-        writeback: O3WritebackTransferSnapshot,
-    ) -> Result<(), O3RuntimeError> {
-        let pending_state = self.snapshot.pending_state();
-        let resolved_dependency_scopes = pending_state.resolved_dependency_scopes().to_vec();
-        let ready = pending_state.ready().to_vec();
-        self.snapshot.pending_state =
-            O3PendingStateSnapshot::new(resolved_dependency_scopes, ready, writeback)
-                .map_err(|error| O3RuntimeError::InvalidPendingState { error })?;
-        Ok(())
     }
 
     pub(super) fn rebuild_writeback_policy(
@@ -527,32 +484,215 @@ impl O3RuntimeState {
     }
 
     pub(super) fn discard_future_writeback_sequence(&mut self, sequence: u64, now: u64) {
-        if self
+        let discarded = self
             .writeback_calendar
             .reservation(sequence)
-            .is_some_and(|reservation| reservation.admitted_tick() > now)
-        {
-            self.writeback_calendar.remove_sequence(sequence);
+            .filter(|reservation| reservation.admitted_tick() > now)
+            .map(|reservation| reservation.sequence)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if !discarded.is_empty() {
+            self.discard_writeback_reservations(&discarded)
+                .expect("discarded future writeback sequence has coherent live statistics");
         }
     }
 
     pub(super) fn discard_future_writeback_from_sequence(&mut self, sequence: u64, now: u64) {
-        self.writeback_calendar
-            .remove_future_from_sequence(sequence, now);
+        let discarded = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .filter(|reservation| {
+                reservation.sequence >= sequence && reservation.admitted_tick() > now
+            })
+            .map(|reservation| reservation.sequence)
+            .collect::<BTreeSet<_>>();
+        if !discarded.is_empty() {
+            self.discard_writeback_reservations(&discarded)
+                .expect("discarded future writeback suffix has coherent live statistics");
+        }
     }
 
-    pub(crate) fn discard_all_writeback_reservations(&mut self) {
-        self.writeback_calendar.clear();
-        self.live_writeback_cycle_ticks.clear();
-        self.live_writeback_ready_rows_by_tick.clear();
+    pub(crate) fn discard_live_writeback_reservations(&mut self) {
+        let discarded = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .filter(|reservation| {
+                !self
+                    .published_writeback_sequences
+                    .contains(&reservation.sequence)
+            })
+            .map(|reservation| reservation.sequence)
+            .collect::<BTreeSet<_>>();
+        self.discard_writeback_reservations(&discarded)
+            .expect("discarded live writeback calendar has coherent statistics");
+    }
+
+    pub(super) fn discard_live_writeback_from_sequence(&mut self, sequence: u64) {
+        let discarded = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .filter(|reservation| {
+                reservation.sequence >= sequence
+                    && !self
+                        .published_writeback_sequences
+                        .contains(&reservation.sequence)
+            })
+            .map(|reservation| reservation.sequence)
+            .collect::<BTreeSet<_>>();
+        self.discard_writeback_reservations(&discarded)
+            .expect("discarded live writeback suffix has coherent statistics");
     }
 
     pub(crate) fn prune_writeback_calendar_before(&mut self, tick: u64) {
-        self.writeback_calendar.prune_before(tick);
+        self.finalize_writeback_reservations_before(tick)
+            .expect("pruned writeback calendar has coherent live statistics");
     }
 
-    pub(super) fn clear_live_writeback_state(&mut self) {
-        self.discard_all_writeback_reservations();
+    pub(super) fn finalize_writeback_publication(&mut self, sequence: u64) {
+        if self.writeback_calendar.reservation(sequence).is_none() {
+            return;
+        }
+        let finalized = BTreeSet::from([sequence]);
+        self.finalize_live_writeback_ownership(&finalized, Some(sequence))
+            .expect("published writeback reservation has coherent live statistics");
+    }
+
+    pub(crate) fn finalize_all_writeback_reservations(&mut self) -> Result<(), O3RuntimeError> {
+        let finalized = self.live_writeback_counted_sequences.clone();
+        let schedule =
+            O3WritebackPortStatsSchedule::from_calendar(&self.writeback_calendar, &finalized)?;
+        let empty = O3WritebackPortStatsSchedule::default();
+        let mut finalized_stats = self.finalized_writeback_port_stats.clone();
+        finalized_stats.observe_finalized_schedule(&schedule, &empty)?;
+        let retained_last_tick = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .flat_map(|reservation| [reservation.raw_ready_tick, reservation.admitted_tick])
+            .max();
+        finalized_stats.close_all_reopenable_ticks(retained_last_tick)?;
+        let mut stats = self.stats;
+        stats.set_writeback_port_schedule(&finalized_stats, &empty)?;
+
+        self.live_writeback_counted_sequences.clear();
+        self.finalized_writeback_port_stats = finalized_stats;
+        self.stats = stats;
+        self.rebuild_live_writeback_schedule_ownership(empty);
+        self.writeback_calendar.clear();
+        self.published_writeback_sequences.clear();
+        Ok(())
+    }
+
+    pub(super) fn clear_all_writeback_state(&mut self) {
+        self.writeback_calendar.clear();
+        self.published_writeback_sequences.clear();
+        self.live_writeback_counted_sequences.clear();
+        self.live_writeback_cycle_ticks.clear();
+        self.live_writeback_ready_rows_by_tick.clear();
+        self.finalized_writeback_port_stats = O3FinalizedWritebackPortStats::default();
+    }
+
+    pub(crate) fn reset_all_writeback_state_preserving_stats(&mut self) {
+        self.clear_all_writeback_state();
+        self.seed_finalized_writeback_stats_from_aggregate();
+    }
+
+    pub(super) fn reset_writeback_stats_ownership(&mut self) {
+        self.live_writeback_counted_sequences.clear();
+        self.live_writeback_cycle_ticks.clear();
+        self.live_writeback_ready_rows_by_tick.clear();
+        self.finalized_writeback_port_stats
+            .reset_counters_preserving_closure();
+    }
+
+    pub(super) fn seed_finalized_writeback_stats_from_aggregate(&mut self) {
+        self.finalized_writeback_port_stats =
+            O3FinalizedWritebackPortStats::from_aggregate(self.stats);
+    }
+
+    fn finalize_writeback_reservations_before(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
+        self.finalize_live_writeback_ownership_before(tick)?;
+        let live = self.live_writeback_schedule()?;
+        self.finalized_writeback_port_stats
+            .close_before(tick, &live)?;
+        self.stats
+            .set_writeback_port_schedule(&self.finalized_writeback_port_stats, &live)?;
+        let finalized = self
+            .writeback_calendar
+            .by_tick
+            .range(..tick)
+            .flat_map(|(_, reservations)| reservations)
+            .map(|reservation| reservation.sequence)
+            .collect::<Vec<_>>();
+        for sequence in finalized {
+            self.writeback_calendar.remove_sequence(sequence);
+            self.published_writeback_sequences.remove(&sequence);
+        }
+        Ok(())
+    }
+
+    fn finalize_live_writeback_ownership_before(
+        &mut self,
+        tick: u64,
+    ) -> Result<(), O3RuntimeError> {
+        let finalized = self
+            .writeback_calendar
+            .by_tick
+            .range(..tick)
+            .flat_map(|(_, reservations)| reservations)
+            .map(|reservation| reservation.sequence)
+            .filter(|sequence| self.live_writeback_counted_sequences.contains(sequence))
+            .collect::<BTreeSet<_>>();
+        self.finalize_live_writeback_ownership(&finalized, None)
+    }
+
+    fn discard_writeback_reservations(
+        &mut self,
+        discarded: &BTreeSet<u64>,
+    ) -> Result<(), O3RuntimeError> {
+        for sequence in discarded {
+            self.writeback_calendar.remove_sequence(*sequence);
+            self.published_writeback_sequences.remove(sequence);
+            self.live_writeback_counted_sequences.remove(sequence);
+        }
+        let live_sequences = self
+            .writeback_calendar
+            .by_tick
+            .values()
+            .flatten()
+            .map(|reservation| reservation.sequence)
+            .collect::<BTreeSet<_>>();
+        self.live_writeback_counted_sequences
+            .retain(|sequence| live_sequences.contains(sequence));
+        let replacement = self.live_writeback_schedule()?;
+        self.finalized_writeback_port_stats
+            .reconcile_live_schedule(&replacement)?;
+        self.stats
+            .set_writeback_port_schedule(&self.finalized_writeback_port_stats, &replacement)?;
+        self.rebuild_live_writeback_schedule_ownership(replacement);
+        Ok(())
+    }
+
+    fn live_writeback_schedule(&self) -> Result<O3WritebackPortStatsSchedule, O3RuntimeError> {
+        O3WritebackPortStatsSchedule::from_calendar(
+            &self.writeback_calendar,
+            &self.live_writeback_counted_sequences,
+        )
+    }
+
+    fn rebuild_live_writeback_schedule_ownership(
+        &mut self,
+        schedule: O3WritebackPortStatsSchedule,
+    ) {
+        self.live_writeback_cycle_ticks = schedule.cycle_ticks;
+        self.live_writeback_ready_rows_by_tick = schedule.ready_rows_by_tick;
     }
 }
 
@@ -581,22 +721,33 @@ impl crate::RiscvCore {
 }
 
 impl O3RuntimeStats {
-    fn record_writeback_port_delta(&mut self, delta: O3WritebackPortStatsDelta) {
-        self.writeback_port_cycles = self.writeback_port_cycles.saturating_add(delta.cycles);
-        self.writeback_port_admitted_rows = self
-            .writeback_port_admitted_rows
-            .saturating_add(delta.admitted_rows);
-        self.writeback_port_deferred_rows = self
-            .writeback_port_deferred_rows
-            .saturating_add(delta.deferred_rows);
-        self.writeback_port_deferred_row_cycles = self
-            .writeback_port_deferred_row_cycles
-            .saturating_add(delta.deferred_row_cycles);
-        self.writeback_port_max_ready_rows_per_cycle = self
-            .writeback_port_max_ready_rows_per_cycle
-            .max(delta.max_ready_rows_per_cycle);
-        self.writeback_port_max_deferred_rows = self
-            .writeback_port_max_deferred_rows
-            .max(delta.max_deferred_rows);
+    fn set_writeback_port_schedule(
+        &mut self,
+        finalized: &O3FinalizedWritebackPortStats,
+        live: &O3WritebackPortStatsSchedule,
+    ) -> Result<(), O3RuntimeError> {
+        self.writeback_port_cycles = finalized.cycles_with_live(live)?;
+        self.writeback_port_admitted_rows =
+            checked_stat_add(finalized.admitted_rows, live.admitted_rows, "admitted_rows")?;
+        self.writeback_port_deferred_rows =
+            checked_stat_add(finalized.deferred_rows, live.deferred_rows, "deferred_rows")?;
+        self.writeback_port_deferred_row_cycles = checked_stat_add(
+            finalized.deferred_row_cycles,
+            live.deferred_row_cycles,
+            "deferred_row_cycles",
+        )?;
+        self.writeback_port_max_ready_rows_per_cycle = finalized.max_ready_rows_with_live(live)?;
+        self.writeback_port_max_deferred_rows = finalized.max_deferred_rows_with_live(live)?;
+        Ok(())
     }
+}
+
+fn checked_stat_add(
+    current: u64,
+    added: u64,
+    counter: &'static str,
+) -> Result<u64, O3RuntimeError> {
+    current
+        .checked_add(added)
+        .ok_or(O3RuntimeError::WritebackStatisticsOverflow { counter })
 }

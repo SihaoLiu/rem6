@@ -21,6 +21,8 @@ use crate::{
     CpuTranslationFrontend, RiscvCluster, RiscvClusterError, RiscvCpuExecutionEvent,
 };
 
+#[path = "riscv_data_issue_tests/atomic.rs"]
+mod atomic;
 #[path = "riscv_data_issue_tests/forwarding.rs"]
 mod forwarding;
 #[path = "riscv_data_issue_tests/multi_load.rs"]

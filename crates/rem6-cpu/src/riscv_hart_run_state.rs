@@ -170,6 +170,9 @@ impl RiscvCore {
         state.executed_fetches.clear();
         state.discard_branch_speculations();
         state.o3_runtime.discard_live_staged_instructions();
+        state
+            .o3_runtime
+            .reset_all_writeback_state_preserving_stats();
         state.o3_writeback_wake.clear();
         state.live_retire_gate.clear_pending_for_pc_redirect();
         state.discard_data_accesses_for_control_boundary();
