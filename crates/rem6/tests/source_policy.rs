@@ -12,6 +12,8 @@ mod execution_mode_lanes;
 mod o3_alias_authority;
 #[path = "source_policy/stats_compat_ownership.rs"]
 mod stats_compat_ownership;
+#[path = "source_policy/writeback_ownership.rs"]
+mod writeback_ownership;
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;

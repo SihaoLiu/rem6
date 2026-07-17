@@ -1235,3 +1235,5 @@ fn scalar_load_admission_binary() -> std::path::PathBuf {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary("m5-switch-cpu-o3-writeback-scalar-load-admission", &elf)
 }
+
+include!("writeback_port/result_classes.rs");
