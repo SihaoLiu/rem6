@@ -64,6 +64,7 @@ mod riscv_drive;
 mod riscv_execute;
 mod riscv_execution_event;
 mod riscv_execution_mode_handoff;
+mod riscv_failure_diagnostic;
 mod riscv_fetch;
 mod riscv_fetch_ahead;
 #[cfg(test)]
@@ -105,6 +106,10 @@ pub(crate) use riscv_selected_branch_speculation::RiscvSelectedBranchSpeculation
 
 pub use public_api::*;
 pub use riscv_defaults::*;
+#[doc(hidden)]
+pub use riscv_failure_diagnostic::{
+    RiscvFailureDiagnosticSnapshot, RiscvFailureDiagnosticSnapshotError,
+};
 
 #[derive(Clone, Debug)]
 pub struct RiscvCore {

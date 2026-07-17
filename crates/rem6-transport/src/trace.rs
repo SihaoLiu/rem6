@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::Tick;
@@ -173,6 +175,17 @@ pub struct MemoryTrace {
     events: Arc<Mutex<Vec<MemoryTraceEvent>>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryTraceSnapshotError;
+
+impl fmt::Display for MemoryTraceSnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "memory trace lock poisoned")
+    }
+}
+
+impl Error for MemoryTraceSnapshotError {}
+
 impl MemoryTrace {
     pub fn new() -> Self {
         Self::default()
@@ -189,7 +202,14 @@ impl MemoryTrace {
     }
 
     pub fn snapshot(&self) -> Vec<MemoryTraceEvent> {
-        self.events.lock().expect("memory trace lock").clone()
+        self.try_snapshot().expect("memory trace lock")
+    }
+
+    pub fn try_snapshot(&self) -> Result<Vec<MemoryTraceEvent>, MemoryTraceSnapshotError> {
+        self.events
+            .lock()
+            .map(|events| events.clone())
+            .map_err(|_| MemoryTraceSnapshotError)
     }
 
     pub fn len(&self) -> usize {
@@ -198,5 +218,22 @@ impl MemoryTrace {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_snapshot_reports_a_poisoned_trace_lock() {
+        let trace = MemoryTrace::new();
+        let poison = trace.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poison.events.lock().unwrap();
+            panic!("poison memory trace");
+        });
+
+        assert!(trace.try_snapshot().is_err());
     }
 }

@@ -1417,7 +1417,7 @@ fn read_memory_dump_from_store(
     .map_err(execute_error)?;
     let outcome = store
         .lock()
-        .expect("CLI memory store lock")
+        .map_err(|error| execute_error(format!("CLI memory store lock poisoned: {error}")))?
         .respond(&request)
         .map_err(execute_error)?;
     let data = outcome
@@ -1450,7 +1450,9 @@ fn read_memory_dump_from_dram(
         .address()
         .checked_add(dump.bytes())
         .ok_or_else(|| execute_error("memory dump range overflow"))?;
-    let memory = memory.lock().expect("CLI DRAM memory lock");
+    let memory = memory
+        .lock()
+        .map_err(|error| execute_error(format!("CLI DRAM memory lock poisoned: {error}")))?;
     while cursor < end {
         let address = Address::new(cursor);
         let line = line_layout.line_address(address);
@@ -1468,4 +1470,32 @@ fn read_memory_dump_from_dram(
         address: dump.address(),
         data,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_dump_reports_a_poisoned_store_lock() {
+        let store = Arc::new(Mutex::new(PartitionedMemoryStore::new()));
+        let poison = Arc::clone(&store);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison CLI memory store");
+        });
+
+        let error = read_memory_dump_from_store(
+            &store,
+            CacheLineLayout::new(16).unwrap(),
+            0,
+            MemoryDumpRequest::parse("0x8000:8").unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            Rem6CliError::Execute { error }
+                if error.starts_with("CLI memory store lock poisoned:")
+        ));
+    }
 }

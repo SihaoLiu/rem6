@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn atomic_result_execution_is_deferred_o3_data_access() {
+    let event = atomic_memory_event(0x8000, 1, 0x9000);
+
+    assert!(!event.is_scalar_memory_access());
+    assert!(event.is_deferred_o3_data_access());
+}
+
+#[test]
 fn denied_atomic_write_never_stages_live_result_authority() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(
@@ -55,6 +63,12 @@ fn denied_atomic_write_never_stages_live_result_authority() {
     assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
     assert!(state.o3_runtime.snapshot().load_store_queue().is_empty());
+    drop(state);
+    let diagnostic = core.try_failure_diagnostic_snapshot().unwrap();
+    assert_eq!(diagnostic.completed_data_access_events(), 0);
+    assert_eq!(diagnostic.rob_entries(), 0);
+    assert_eq!(diagnostic.lsq_entries(), 0);
+    assert_eq!(diagnostic.writeback_reservations(), 0);
 }
 
 #[test]

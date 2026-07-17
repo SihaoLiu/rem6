@@ -539,6 +539,41 @@ mod tests {
     }
 
     #[test]
+    fn atomic_memory_result_execution_turn_defers_o3_retirement() {
+        let cpu = CpuId::new(0);
+        let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
+        let driver = detailed_o3_driver_with_retirement_stats(cpu);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        core.write_register(Register::new(3).unwrap(), 5);
+        issue_fetch_instruction(
+            &core,
+            &mut scheduler,
+            &transport,
+            atomic_add_doubleword_instruction(2, 3, 10),
+        );
+        let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+        assert!(core.owns_pending_o3_live_data_access_retirement(execution.fetch().request_id()));
+
+        let retirement = driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                    cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(execution)),
+                )]),
+            )
+            .unwrap();
+
+        assert_eq!(retirement.count(), 0);
+        assert_eq!(retired_instruction_count(&driver), 0);
+        assert_eq!(core.o3_runtime_stats().instructions(), 0);
+        assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
+        assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
+        assert!(!core.o3_live_data_access_lifecycle_is_quiescent());
+    }
+
+    #[test]
     fn scalar_memory_response_turn_records_o3_and_global_retirement_once_without_trace() {
         let cpu = CpuId::new(0);
         let (core, cluster, mut scheduler, transport) = scalar_memory_core(cpu);
@@ -1442,6 +1477,14 @@ mod tests {
             | (0b010 << 12)
             | (u32::from(rd) << 7)
             | 0x03
+    }
+
+    fn atomic_add_doubleword_instruction(rs1: u8, rs2: u8, rd: u8) -> u32 {
+        (u32::from(rs2) << 20)
+            | (u32::from(rs1) << 15)
+            | (0b011 << 12)
+            | (u32::from(rd) << 7)
+            | 0x2f
     }
 
     fn detailed_o3_driver(cpu: CpuId) -> RiscvSystemRunDriver {

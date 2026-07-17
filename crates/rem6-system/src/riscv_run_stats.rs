@@ -100,26 +100,25 @@ impl RiscvSystemRunDriver {
                         .core(event.cpu())
                         .map_err(SystemError::RiscvCluster)?;
                     let detailed = detailed_cpus.contains(&event.cpu());
-                    let deferred_scalar_memory = instruction.is_scalar_memory_access()
-                        && core.owns_pending_o3_live_data_access_retirement(
-                            instruction.fetch().request_id(),
-                        );
+                    let deferred_data_access = core.owns_pending_o3_live_data_access_retirement(
+                        instruction.fetch().request_id(),
+                    );
                     let owns_inherited_retirement =
                         core.owns_pending_o3_runtime_retirement(instruction.fetch().request_id());
-                    if detailed && instruction.is_scalar_memory_access() {
+                    if detailed && instruction.is_deferred_o3_data_access() {
                         assert!(
-                            deferred_scalar_memory,
-                            "detailed scalar execution must reserve CPU-owned retirement"
+                            deferred_data_access,
+                            "detailed deferred data execution must reserve CPU-owned retirement"
                         );
                     }
-                    if !deferred_scalar_memory {
+                    if !deferred_data_access {
                         retired.push(RiscvRetirementObservation {
                             tick,
                             cpu: event.cpu(),
                             pc: instruction.fetch_pc().get(),
                         });
                     }
-                    if !deferred_scalar_memory && (detailed || owns_inherited_retirement) {
+                    if !deferred_data_access && (detailed || owns_inherited_retirement) {
                         core.record_o3_retired_instruction_with_trace(
                             instruction,
                             self.o3_runtime_trace_enabled,
@@ -144,7 +143,7 @@ impl RiscvSystemRunDriver {
             }
         }
 
-        let mut remaining_scalar_retirements = retirement_budget
+        let mut remaining_data_access_retirements = retirement_budget
             .unwrap_or(u64::MAX)
             .saturating_sub(u64::try_from(retired.len()).unwrap_or(u64::MAX));
         for cpu in o3_authority_cpus {
@@ -152,7 +151,7 @@ impl RiscvSystemRunDriver {
             loop {
                 let kind = core.ready_o3_live_data_access_event_kind();
                 if kind == Some(RiscvDataAccessEventKind::Completed)
-                    && remaining_scalar_retirements == 0
+                    && remaining_data_access_retirements == 0
                 {
                     break;
                 }
@@ -165,7 +164,8 @@ impl RiscvSystemRunDriver {
                 updated_cpus.insert(cpu);
                 if instruction.data_access_event_kind() == Some(RiscvDataAccessEventKind::Completed)
                 {
-                    remaining_scalar_retirements = remaining_scalar_retirements.saturating_sub(1);
+                    remaining_data_access_retirements =
+                        remaining_data_access_retirements.saturating_sub(1);
                     retired.push(RiscvRetirementObservation {
                         tick,
                         cpu,

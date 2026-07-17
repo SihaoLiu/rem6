@@ -12,6 +12,7 @@ const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
+const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -22,6 +23,21 @@ fn cpu_lib_rs_remains_a_facade() {
     assert!(
         lines <= MAX_FACADE_LINES,
         "src/lib.rs should remain a facade over focused CPU modules, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn riscv_failure_diagnostics_use_a_focused_snapshot_owner() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let owner = crate_dir.join("src/riscv_failure_diagnostic.rs");
+
+    assert!(lib
+        .lines()
+        .any(|line| line.trim() == "mod riscv_failure_diagnostic;"));
+    assert!(owner.is_file());
+    assert!(
+        fs::read_to_string(owner).unwrap().lines().count() <= MAX_RISCV_FAILURE_DIAGNOSTIC_LINES
     );
 }
 

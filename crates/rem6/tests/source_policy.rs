@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 mod coroutine_ownership;
 #[path = "source_policy/data_cache_protocol_authority.rs"]
 mod data_cache_protocol_authority;
+#[path = "source_policy/diagnostic_failure_ownership.rs"]
+mod diagnostic_failure_ownership;
 #[path = "source_policy/execution_mode_lanes.rs"]
 mod execution_mode_lanes;
 #[path = "source_policy/o3_alias_authority.rs"]
@@ -16,6 +18,7 @@ mod stats_compat_ownership;
 mod writeback_ownership;
 
 const MAX_FACADE_LINES: usize = 1250;
+const MAX_RUN_FAILURE_DIAGNOSTICS_LINES: usize = 400;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_HOST_ACTIONS_ROOT_LINES: usize = 1200;
 const MAX_HOST_ACTIONS_O3_STATS_DUMP_ALIASES_LINES: usize = 800;
@@ -128,6 +131,55 @@ fn cli_lib_rs_remains_a_facade() {
         lines <= MAX_FACADE_LINES,
         "src/lib.rs should remain a facade over focused CLI modules, but it has {lines} lines"
     );
+}
+
+#[test]
+fn run_failure_diagnostics_has_focused_ownership() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_path = crate_dir.join("src/lib.rs");
+    let module_path = crate_dir.join("src/run_failure_diagnostics.rs");
+    let lib = fs::read_to_string(&lib_path).unwrap();
+
+    assert!(
+        has_exact_trimmed_source_line(&lib, "mod run_failure_diagnostics;"),
+        "src/lib.rs must declare the focused run_failure_diagnostics module"
+    );
+    assert!(
+        module_path.is_file(),
+        "src/run_failure_diagnostics.rs must own PMP failure diagnostics"
+    );
+    let module = fs::read_to_string(&module_path).unwrap();
+    let lines = line_count(&module_path);
+    assert!(
+        lines <= MAX_RUN_FAILURE_DIAGNOSTICS_LINES,
+        "src/run_failure_diagnostics.rs has {lines} lines"
+    );
+    assert!(line_count(&lib_path) <= MAX_FACADE_LINES);
+
+    for marker in [
+        "rem6.cli.riscv_data_pmp_failure.v1",
+        "completed_cpu_data_events",
+        "data_channel_request_sent_events",
+        "writeback_reservations",
+        "capture_errors",
+    ] {
+        assert!(
+            module.contains(marker),
+            "diagnostic owner is missing {marker}"
+        );
+    }
+    for path in rust_source_files(&crate_dir.join("src")) {
+        if path == module_path {
+            continue;
+        }
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("rem6.cli.riscv_data_pmp_failure.v1"),
+            "{} duplicates the diagnostic schema owner",
+            path.strip_prefix(crate_dir).unwrap().display()
+        );
+    }
 }
 
 #[test]

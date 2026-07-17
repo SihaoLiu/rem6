@@ -1243,7 +1243,9 @@ impl fmt::Display for Rem6CliError {
                     isa.as_str()
                 )
             }
-            Self::Execute { error } => write!(formatter, "failed to execute run: {error}"),
+            Self::Execute { error } => {
+                write!(formatter, "failed to execute run: {error}")
+            }
             Self::Stats { error } => write!(formatter, "failed to build run stats: {error}"),
             Self::ConflictingOutputPaths { path } => write!(
                 formatter,
@@ -1275,3 +1277,32 @@ impl fmt::Display for Rem6CliError {
 }
 
 impl Error for Rem6CliError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_failure_adds_diagnostics_without_changing_the_cli_error_variant() {
+        let plain = crate::Rem6CliFailure::from(Rem6CliError::Execute {
+            error: "boom".to_string(),
+        });
+        assert_eq!(plain.diagnostic_json(), None);
+        assert!(matches!(
+            plain.into_error(),
+            Rem6CliError::Execute { error } if error == "boom"
+        ));
+
+        let diagnostic = crate::Rem6CliFailure::with_diagnostic(
+            Rem6CliError::Execute {
+                error: "boom".to_string(),
+            },
+            "{\"schema\":\"test.v1\"}".to_string(),
+        );
+        assert_eq!(diagnostic.to_string(), "failed to execute run: boom");
+        assert_eq!(
+            diagnostic.diagnostic_json(),
+            Some("{\"schema\":\"test.v1\"}")
+        );
+    }
+}

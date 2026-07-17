@@ -31,6 +31,7 @@ mod accelerator_cli;
 mod artifact_json;
 mod branch_predictor_summary;
 mod cli_error;
+mod cli_failure;
 mod cli_output;
 mod config;
 mod core_summary;
@@ -65,6 +66,7 @@ mod riscv_sbi_runtime;
 mod riscv_se_inputs;
 mod run_execution_summary;
 mod run_fabric;
+mod run_failure_diagnostics;
 mod run_gdb;
 mod run_resource_config;
 mod run_validation;
@@ -84,6 +86,8 @@ pub(crate) use branch_predictor_summary::{
     Rem6TageScLBranchPredictorCounterSummary,
 };
 pub use cli_error::Rem6CliError;
+pub use cli_failure::Rem6CliFailure;
+use cli_failure::{run_cli_with_capture_policy, DiagnosticCapturePolicy};
 pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
     CliDramRefreshTiming, CliDramTiming, KernelResourceSelector, LoadBlobRequest, LoadBlobSource,
@@ -142,7 +146,8 @@ use riscv_se_inputs::{read_riscv_sbi_console_input, read_riscv_se_file, read_ris
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
 use run_fabric::{run_fabric_path, run_memory_transport, RunFabricPathDirection};
 pub(crate) use run_fabric::{Rem6RunFabricRouterActivity, Rem6RunFabricSummary};
-use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
+use run_failure_diagnostics::capture_riscv_data_pmp_failure;
+use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeError, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
 use runtime_memory::CliMemoryRuntime;
@@ -477,53 +482,17 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    let Some(command) = args.first() else {
-        return Err(Rem6CliError::MissingCommand);
-    };
-    match command.as_str() {
-        "run" => run_run_cli(args),
-        "multi-run" => multi_run_cli::run_multi_run_cli(args),
-        "accelerator-run" => accelerator_cli::run_accelerator_run_cli(args),
-        "gpu-run" => gpu_cli::run_gpu_run_cli(args),
-        "gups" => gups_cli::run_gups_cli(args),
-        "power-import" => power_import_cli::run_power_import_cli(args),
-        "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),
-        "resource-acquire" => resource_acquire_cli::run_resource_acquire_cli(args),
-        _ => Err(Rem6CliError::UnsupportedCommand {
-            command: command.clone(),
-        }),
-    }
+    run_cli_with_capture_policy(args, DiagnosticCapturePolicy::Disabled)
+        .map_err(Rem6CliFailure::into_error)
 }
 
-fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
-    let config = Rem6RunConfig::parse_args(args)?;
-    let artifact = run_config(config)?;
-    let stats_format = artifact.config.stats_format();
-    let output = match stats_format {
-        StatsFormat::Json => artifact.to_json(),
-        StatsFormat::Text => artifact.stats_text.clone(),
-    };
-    let extra_artifacts = artifact
-        .power_analysis
-        .as_ref()
-        .map(|artifact| {
-            vec![cli_output::ExtraCliArtifact {
-                name: "power_artifact",
-                path: artifact.output(),
-                contents: artifact.contents(),
-            }]
-        })
-        .unwrap_or_default();
-    cli_output::emit_cli_output(
-        output,
-        &artifact.stats_json,
-        &artifact.stats_text,
-        artifact.config.output(),
-        artifact.config.stats_output(),
-        stats_format,
-        &extra_artifacts,
-    )
+#[doc(hidden)]
+pub fn run_cli_with_diagnostics<I, S>(args: I) -> Result<String, Rem6CliFailure>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    run_cli_with_capture_policy(args, DiagnosticCapturePolicy::Enabled)
 }
 
 impl Rem6RunArtifact {
@@ -554,6 +523,14 @@ impl Rem6RunArtifact {
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {
+    run_config_with_capture_policy(config, DiagnosticCapturePolicy::Disabled)
+        .map_err(Rem6CliFailure::into_error)
+}
+
+fn run_config_with_capture_policy(
+    config: Rem6RunConfig,
+    diagnostic_capture: DiagnosticCapturePolicy,
+) -> Result<Rem6RunArtifact, Rem6CliFailure> {
     let resource_payloads = config
         .resource_config()
         .map(run_resource_payloads_from_config)
@@ -573,7 +550,8 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         return Err(Rem6CliError::IsaMismatch {
             requested: config.isa(),
             architecture: metadata.architecture(),
-        });
+        }
+        .into());
     }
 
     validate_run_config_inputs(&config)?;
@@ -606,8 +584,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
                 line_layout,
                 Address::new(start_address),
                 resource_payloads.as_ref(),
+                diagnostic_capture,
             )?,
-            isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }),
+            isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }.into()),
         })
     } else {
         None
@@ -675,7 +654,8 @@ fn execute_riscv(
     line_layout: CacheLineLayout,
     start_address: Address,
     resource_payloads: Option<&RunResourcePayloads>,
-) -> Result<Rem6ExecutionSummary, Rem6CliError> {
+    diagnostic_capture: DiagnosticCapturePolicy,
+) -> Result<Rem6ExecutionSummary, Rem6CliFailure> {
     let core_count = u32::try_from(config.cores()).map_err(|_| Rem6CliError::InvalidCoreCount {
         value: config.cores().to_string(),
     })?;
@@ -944,8 +924,8 @@ fn execute_riscv(
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
     let fabric_wait_for_start = transport.mark_fabric_wait_for();
-    let mut gdb_outcome = if let Some(listen) = config.gdb_listen() {
-        serve_riscv_gdb_with_run_control(
+    let (mut gdb_outcome, gdb_run_error) = if let Some(listen) = config.gdb_listen() {
+        match serve_riscv_gdb_with_run_control(
             gdb_xlen,
             listen,
             &cluster,
@@ -959,11 +939,17 @@ fn execute_riscv(
             data_trace.clone(),
             tick_limit,
             config.max_instructions(),
-        )?
+        ) {
+            Ok(outcome) => (outcome, None),
+            Err(RiscvGdbServeError::Cli(error)) => return Err(error.into()),
+            Err(RiscvGdbServeError::Run(error)) => (RiscvGdbServeOutcome::default(), Some(error)),
+        }
     } else {
-        RiscvGdbServeOutcome::default()
+        (RiscvGdbServeOutcome::default(), None)
     };
-    let run_result = if let Some(run) = gdb_outcome.take_completed_run() {
+    let run_result = if let Some(error) = gdb_run_error {
+        Err(error)
+    } else if let Some(run) = gdb_outcome.take_completed_run() {
         Ok(run)
     } else {
         drive_cli_riscv_run_configured(
@@ -984,16 +970,34 @@ fn execute_riscv(
     };
     if let Some(bus) = readfile_bus.as_ref() {
         if let Some(error) = bus.response_errors().into_iter().next() {
-            return Err(execute_error(error));
+            return Err(execute_error(error).into());
         }
     }
     if let Some(error) = data_cache_hierarchy.take_error() {
-        return Err(error);
+        return Err(error.into());
     }
     if let Some(error) = instruction_cache_hierarchy.take_error() {
-        return Err(error);
+        return Err(error.into());
     }
-    let mut run = run_result.map_err(execute_error)?;
+    let run_failure_diagnostic = diagnostic_capture.capture(|| {
+        run_result.as_ref().err().and_then(|error| {
+            capture_riscv_data_pmp_failure(
+                error,
+                &cluster,
+                &data_trace,
+                &memory,
+                line_layout,
+                config.memory_dumps(),
+            )
+        })
+    });
+    let mut run = run_result.map_err(|error| {
+        let error = execute_error(error);
+        match run_failure_diagnostic {
+            Some(diagnostic_json) => Rem6CliFailure::with_diagnostic(error, diagnostic_json),
+            None => error.into(),
+        }
+    })?;
     if let Some(fabric_wait_for) =
         fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
     {
@@ -1073,7 +1077,7 @@ fn execute_riscv(
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
     };
 
-    execution_summary(&cluster, &run, summary_inputs)
+    Ok(execution_summary(&cluster, &run, summary_inputs)?)
 }
 
 fn write_back_riscv_se_path_files(

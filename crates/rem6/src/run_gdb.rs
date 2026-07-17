@@ -15,7 +15,7 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{MemoryOperation, PartitionedMemoryStore};
 use rem6_system::{
     handle_riscv_gdb_remote_system_packet, riscv_gdb_remote_session_from_cluster, GuestEventId,
-    RiscvGdbRemotePacketError, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvGdbRemotePacketError, RiscvSystemRun, RiscvSystemRunDriver, SystemError,
 };
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
@@ -24,6 +24,17 @@ use crate::data_cache_runtime::{
 };
 use crate::runtime_memory::CliMemoryRuntime;
 use crate::{execute_error, Rem6CliError, Rem6RunConfig, RequestedIsa};
+
+pub(super) enum RiscvGdbServeError {
+    Cli(Rem6CliError),
+    Run(SystemError),
+}
+
+impl From<Rem6CliError> for RiscvGdbServeError {
+    fn from(error: Rem6CliError) -> Self {
+        Self::Cli(error)
+    }
+}
 
 pub(super) fn validate_run_gdb_listen_config(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     if !config.execute() {
@@ -71,7 +82,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
     data_trace: MemoryTrace,
     tick_limit: u64,
     instruction_budget: Option<u64>,
-) -> Result<RiscvGdbServeOutcome, Rem6CliError> {
+) -> Result<RiscvGdbServeOutcome, RiscvGdbServeError> {
     let gdb_memory = memory.clone();
     let gdb_instruction_cache = instruction_cache.clone();
     let gdb_data_cache = data_cache.clone();
@@ -111,7 +122,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |cpu| GuestEventId::new(u64::from(cpu.get())),
                         debug_stop,
                     )
-                    .map_err(execute_error);
+                    .map_err(RiscvGdbServeError::Run);
             }
             match max_instructions {
                 Some(max_instructions) => driver
@@ -140,7 +151,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |cpu| GuestEventId::new(u64::from(cpu.get())),
                     )
                     .map(|run| (run, false))
-                    .map_err(execute_error),
+                    .map_err(RiscvGdbServeError::Run),
                 None => driver
                     .drive_until_host_stop_or_tick_limit_parallel(
                         cluster,
@@ -166,7 +177,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |cpu| GuestEventId::new(u64::from(cpu.get())),
                     )
                     .map(|run| (run, false))
-                    .map_err(execute_error),
+                    .map_err(RiscvGdbServeError::Run),
             }
         },
     )
@@ -183,18 +194,16 @@ pub(super) fn serve_riscv_gdb_once<D>(
     data_cache: CliCacheHierarchy,
     instruction_budget: Option<u64>,
     mut drive: D,
-) -> Result<RiscvGdbServeOutcome, Rem6CliError>
+) -> Result<RiscvGdbServeOutcome, RiscvGdbServeError>
 where
     D: FnMut(
         Option<u64>,
         Option<&mut RiscvGdbDebugStopPredicate<'_>>,
-    ) -> Result<(RiscvSystemRun, bool), Rem6CliError>,
+    ) -> Result<(RiscvSystemRun, bool), RiscvGdbServeError>,
 {
     let listen = parse_loopback_gdb_listen_addr(listen)?;
     let Some(mut session) = riscv_gdb_remote_session_from_cluster(xlen, cluster) else {
-        return Err(execute_error(
-            "RISC-V GDB listener requires at least one hart",
-        ));
+        return Err(execute_error("RISC-V GDB listener requires at least one hart").into());
     };
     let listener = TcpListener::bind(listen)
         .map_err(|error| execute_error(format!("failed to bind GDB listener {listen}: {error}")))?;

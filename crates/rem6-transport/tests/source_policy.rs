@@ -16,6 +16,15 @@ fn transport_lib_rs_remains_a_facade() {
 }
 
 #[test]
+fn memory_trace_exposes_a_poison_aware_snapshot() {
+    let trace =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/trace.rs")).unwrap();
+
+    assert!(trace.contains("pub fn try_snapshot("));
+    assert!(trace.contains("MemoryTraceSnapshotError"));
+}
+
+#[test]
 fn route_contracts_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();

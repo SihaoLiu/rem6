@@ -39,6 +39,17 @@ mod store_store_load;
 mod translated;
 
 #[test]
+fn scalar_memory_classification_keeps_load_store_only_semantics() {
+    for event in [
+        scalar_load_event(0x8000, 1, 5, 0x9000),
+        scalar_store_event_with_width_and_value(0x8004, 2, 0x9008, MemoryWidth::Word, 7),
+    ] {
+        assert!(event.is_scalar_memory_access());
+        assert!(event.is_deferred_o3_data_access());
+    }
+}
+
+#[test]
 fn detailed_scalar_store_submission_does_not_stage_younger_fetch() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(

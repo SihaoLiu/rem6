@@ -473,4 +473,8 @@ impl RiscvCpuExecutionEvent {
             Some(MemoryAccessKind::Load { .. } | MemoryAccessKind::Store { .. })
         )
     }
+
+    pub fn is_deferred_o3_data_access(&self) -> bool {
+        crate::o3_runtime::is_deferred_o3_data_access(self.execution.memory_access())
+    }
 }

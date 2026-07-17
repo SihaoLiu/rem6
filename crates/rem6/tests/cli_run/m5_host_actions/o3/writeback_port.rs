@@ -1237,3 +1237,4 @@ fn scalar_load_admission_binary() -> std::path::PathBuf {
 }
 
 include!("writeback_port/result_classes.rs");
+include!("writeback_port/result_boundaries.rs");

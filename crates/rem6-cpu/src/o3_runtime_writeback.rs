@@ -397,6 +397,10 @@ impl O3WritebackPortStatsSchedule {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn failure_diagnostic_writeback_reservation_count(&self) -> usize {
+        self.writeback_calendar.by_tick.values().map(Vec::len).sum()
+    }
+
     pub(crate) fn writeback_debug_state(&self, now: u64) -> RiscvO3WritebackDebugState {
         RiscvO3WritebackDebugState::new(
             self.snapshot

@@ -37,8 +37,8 @@ pub use route::{
     TransportError, TransportLatency, TransportQosClass,
 };
 pub use trace::{
-    MemoryTrace, MemoryTraceEvent, MemoryTraceKind, RequestDelivery, ResponseDelivery,
-    TargetBatchOutcome, TargetOutcome,
+    MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTraceSnapshotError, RequestDelivery,
+    ResponseDelivery, TargetBatchOutcome, TargetOutcome,
 };
 
 type ParallelRequestResponder =
