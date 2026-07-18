@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 mod coroutine_ownership;
 #[path = "source_policy/data_cache_protocol_authority.rs"]
 mod data_cache_protocol_authority;
+#[path = "source_policy/debug_flags_ownership.rs"]
+mod debug_flags_ownership;
 #[path = "source_policy/diagnostic_failure_ownership.rs"]
 mod diagnostic_failure_ownership;
 #[path = "source_policy/execution_mode_lanes.rs"]
@@ -38,10 +40,8 @@ const MAX_O3_RUNTIME_FOCUSED_STATS_LINES: usize = 800;
 const MAX_REM6_CPU_O3_RUNTIME_ROOT_LINES: usize = 1700;
 const MAX_REM6_SYSTEM_O3_RUNTIME_STATS_MODULE_LINES: usize = 1800;
 const MAX_DATA_CACHE_MULTICORE_LINES: usize = 800;
-const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1500;
+const MAX_SOURCE_POLICY_DRIVER_LINES: usize = 1400;
 const MAX_SOURCE_LINES: usize = 1800;
-const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 14_600;
-const MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES: usize = 1_700;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_LINES: usize = 1700;
 const MAX_PIPELINE_INTERRUPT_STALL_BACKLOG_FLUSH_IPI_LINES: usize = 500;
@@ -410,97 +410,6 @@ fn parsed_source_helpers_ignore_non_items_and_require_attached_module_path() {
             false,
             true,
         )
-    );
-}
-
-#[test]
-fn cli_debug_flags_o3_fu_latency_lives_in_focused_module() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root_path = manifest_dir.join("tests/cli_run/debug_flags.rs");
-    let child_path = manifest_dir.join("tests/cli_run/debug_flags/o3_fu_latency.rs");
-    let root = fs::read_to_string(&root_path).unwrap();
-    let child_exists = child_path.exists();
-    let child = child_exists
-        .then(|| fs::read_to_string(&child_path).unwrap())
-        .unwrap_or_default();
-    let root_functions = rust_function_definition_names(&root);
-    let child_functions = rust_function_definition_names(&child);
-    let moved_definitions = [
-        "rem6_run_o3_debug_flag_emits_fu_latency_event_classes",
-        "rem6_run_o3_debug_flag_classifies_vector_integer_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_vector_mul_family_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_vector_saturating_mul_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_float_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_extended_float_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_float_compare_fu_latency_events",
-        "rem6_run_o3_debug_flag_classifies_float_misc_fu_latency_events",
-        "detailed_o3_fu_latency_debug_binary",
-        "detailed_o3_vector_fu_latency_debug_binary",
-        "detailed_o3_vector_mul_family_fu_latency_debug_binary",
-        "detailed_o3_vector_saturating_mul_fu_latency_debug_binary",
-        "detailed_o3_float_fu_latency_debug_binary",
-        "detailed_o3_float_extended_fu_latency_debug_binary",
-        "detailed_o3_float_compare_fu_latency_debug_binary",
-        "detailed_o3_float_misc_fu_latency_debug_binary",
-        "assert_o3_event_with_fu",
-        "o3_event_fu_latency_class_count",
-    ];
-    let mut failures = Vec::new();
-
-    if !module_has_path_attribute(&root, "o3_fu_latency", "debug_flags/o3_fu_latency.rs") {
-        failures.push(
-            "tests/cli_run/debug_flags.rs must attach #[path = \"debug_flags/o3_fu_latency.rs\"] to mod o3_fu_latency;"
-                .to_string(),
-        );
-    }
-    if !child_exists {
-        failures.push(
-            "O3 FU-latency debug evidence belongs in tests/cli_run/debug_flags/o3_fu_latency.rs"
-                .to_string(),
-        );
-    }
-
-    let root_lines = line_count(&root_path);
-    if root_lines > MAX_DEBUG_FLAGS_ROOT_LINES {
-        failures.push(format!(
-            "tests/cli_run/debug_flags.rs should delegate O3 FU-latency evidence, but it has {root_lines} lines"
-        ));
-    }
-    if child_exists {
-        let child_lines = line_count(&child_path);
-        if child_lines > MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES {
-            failures.push(format!(
-                "tests/cli_run/debug_flags/o3_fu_latency.rs exceeds {MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES} lines: {child_lines}"
-            ));
-        }
-    }
-
-    for name in moved_definitions {
-        let anchor = format!("fn {name}(");
-        if child_exists && !child_functions.contains(name) {
-            failures.push(format!(
-                "tests/cli_run/debug_flags/o3_fu_latency.rs is missing `{anchor}`"
-            ));
-        }
-        if root_functions.contains(name) {
-            failures.push(format!(
-                "tests/cli_run/debug_flags.rs still owns `{anchor}`"
-            ));
-        }
-    }
-
-    if child_exists {
-        for name in root_functions.intersection(&child_functions) {
-            failures.push(format!(
-                "tests/cli_run/debug_flags.rs duplicates child function `fn {name}`"
-            ));
-        }
-    }
-
-    assert!(
-        failures.is_empty(),
-        "O3 FU-latency debug ownership policy failures:\n{}",
-        failures.join("\n")
     );
 }
 
