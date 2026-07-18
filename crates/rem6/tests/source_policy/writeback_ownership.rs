@@ -9,7 +9,20 @@ const RESULT_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries.rs";
 const RESULT_BOUNDARIES_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries/support.rs";
-const WRITEBACK_ROOT_MODULES: [&str; 3] = ["result_support", "result_classes", "result_boundaries"];
+const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 3] = [
+    ExpectedModuleDeclaration {
+        name: "result_support",
+        path: "writeback_port/result_support.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "result_classes",
+        path: "writeback_port/result_classes.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "result_boundaries",
+        path: "writeback_port/result_boundaries.rs",
+    },
+];
 const RESULT_BOUNDARIES_MODULES: [&str; 1] = ["support"];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";
 const RESULT_CLASS_ANCHORS: [&str; 4] = [
@@ -46,6 +59,19 @@ const RESULT_BOUNDARIES_MAX_LINES: usize = 700;
 const RESULT_BOUNDARIES_SUPPORT_MAX_LINES: usize = 140;
 const RESULT_BOUNDARIES_AGGREGATE_MAX_LINES: usize = 800;
 
+#[derive(Clone, Copy)]
+struct ExpectedModuleDeclaration {
+    name: &'static str,
+    path: &'static str,
+}
+
+#[derive(Debug)]
+struct ModuleDeclaration {
+    name: String,
+    path_attributes: Vec<Option<String>>,
+    inline: bool,
+}
+
 #[test]
 fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -75,11 +101,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             ));
         }
     }
-    if top_level_module_names(WRITEBACK_ROOT, &root) != WRITEBACK_ROOT_MODULES {
-        boundary_failures.push(format!(
-            "{WRITEBACK_ROOT} must declare exactly the normal modules {WRITEBACK_ROOT_MODULES:?}"
-        ));
-    }
+    boundary_failures.extend(module_declaration_failures(
+        WRITEBACK_ROOT,
+        &root,
+        &WRITEBACK_ROOT_MODULES,
+    ));
     for (relative, source) in [
         (WRITEBACK_ROOT, root.as_str()),
         (RESULT_CLASSES, child.as_str()),
@@ -161,9 +187,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             <= RESULT_BOUNDARIES_AGGREGATE_MAX_LINES,
         "result-boundary implementation must remain at or below {RESULT_BOUNDARIES_AGGREGATE_MAX_LINES} aggregate lines"
     );
+    let support_leaf_failures = support_leaf_failures(RESULT_SUPPORT, &support);
     assert!(
-        top_level_module_names(RESULT_SUPPORT, &support).is_empty(),
-        "{RESULT_SUPPORT} must remain a leaf support module"
+        support_leaf_failures.is_empty(),
+        "{RESULT_SUPPORT} must remain a leaf support module:\n{}",
+        support_leaf_failures.join("\n")
     );
     assert!(
         top_level_module_names(RESULT_BOUNDARIES_SUPPORT, &boundary_support).is_empty(),
@@ -244,6 +272,81 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert_rustfmt_clean(&boundary_support_path);
 }
 
+#[test]
+fn writeback_result_module_declaration_policy_rejects_non_external_or_wrong_path_modules() {
+    let valid = r#"
+#[path = "writeback_port/result_support.rs"]
+mod result_support;
+
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+"#;
+    assert!(module_declaration_failures("synthetic.rs", valid, &WRITEBACK_ROOT_MODULES).is_empty());
+
+    for (label, source) in [
+        (
+            "inline module",
+            r#"
+#[path = "writeback_port/result_support.rs"]
+mod result_support {}
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+"#,
+        ),
+        (
+            "missing path",
+            r#"
+mod result_support;
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+"#,
+        ),
+        (
+            "duplicate path",
+            r#"
+#[path = "wrong.rs"]
+#[path = "writeback_port/result_support.rs"]
+mod result_support;
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+"#,
+        ),
+        (
+            "wrong path",
+            r#"
+#[path = "writeback_port/wrong.rs"]
+mod result_support;
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+"#,
+        ),
+    ] {
+        assert!(
+            !module_declaration_failures("synthetic.rs", source, &WRITEBACK_ROOT_MODULES)
+                .is_empty(),
+            "{label} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn writeback_result_support_leaf_policy_rejects_includes_and_child_modules() {
+    assert!(support_leaf_failures("synthetic.rs", "use super::*;\nfn helper() {}\n").is_empty());
+    assert!(!support_leaf_failures("synthetic.rs", "mod nested;\n").is_empty());
+    assert!(!support_leaf_failures("synthetic.rs", "include!(\"nested.rs\");\n").is_empty());
+}
+
 fn top_level_test_names(relative: &str, source: &str) -> Vec<String> {
     parsed_source(relative, source)
         .items
@@ -312,6 +415,13 @@ fn top_level_include_paths(relative: &str, source: &str) -> Vec<String> {
 }
 
 fn top_level_module_names(relative: &str, source: &str) -> Vec<String> {
+    top_level_module_declarations(relative, source)
+        .into_iter()
+        .map(|module| module.name)
+        .collect()
+}
+
+fn top_level_module_declarations(relative: &str, source: &str) -> Vec<ModuleDeclaration> {
     parsed_source(relative, source)
         .items
         .into_iter()
@@ -319,9 +429,108 @@ fn top_level_module_names(relative: &str, source: &str) -> Vec<String> {
             let syn::Item::Mod(module) = item else {
                 return None;
             };
-            Some(module.ident.to_string())
+            Some(ModuleDeclaration {
+                name: module.ident.to_string(),
+                path_attributes: module
+                    .attrs
+                    .iter()
+                    .filter(|attr| attr.path().is_ident("path"))
+                    .map(path_attribute_literal)
+                    .collect(),
+                inline: module.content.is_some(),
+            })
         })
         .collect()
+}
+
+fn path_attribute_literal(attr: &syn::Attribute) -> Option<String> {
+    let syn::Meta::NameValue(name_value) = &attr.meta else {
+        return None;
+    };
+    let syn::Expr::Lit(expr) = &name_value.value else {
+        return None;
+    };
+    let syn::Lit::Str(literal) = &expr.lit else {
+        return None;
+    };
+    Some(literal.value())
+}
+
+fn module_declaration_failures(
+    relative: &str,
+    source: &str,
+    expected: &[ExpectedModuleDeclaration],
+) -> Vec<String> {
+    let modules = top_level_module_declarations(relative, source);
+    let actual_names = modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect::<Vec<_>>();
+    let expected_names = expected
+        .iter()
+        .map(|module| module.name)
+        .collect::<Vec<_>>();
+
+    let mut failures = Vec::new();
+    if actual_names != expected_names {
+        failures.push(format!(
+            "{relative} must declare exactly the normal modules {expected_names:?}"
+        ));
+    }
+
+    for expected_module in expected {
+        let Some(module) = modules
+            .iter()
+            .find(|module| module.name == expected_module.name)
+        else {
+            continue;
+        };
+        if module.inline {
+            failures.push(format!(
+                "{relative} module `{}` must be an external module declaration",
+                expected_module.name
+            ));
+        }
+        match module.path_attributes.as_slice() {
+            [] => failures.push(format!(
+                "{relative} module `{}` must declare #[path = \"{}\"]",
+                expected_module.name, expected_module.path
+            )),
+            [Some(actual_path)] if actual_path == expected_module.path => {}
+            [Some(actual_path)] => failures.push(format!(
+                "{relative} module `{}` must use #[path = \"{}\"], got #[path = \"{}\"]",
+                expected_module.name, expected_module.path, actual_path
+            )),
+            [None] => failures.push(format!(
+                "{relative} module `{}` must use a string-literal #[path = \"{}\"]",
+                expected_module.name, expected_module.path
+            )),
+            path_attributes => failures.push(format!(
+                "{relative} module `{}` must declare exactly one #[path = \"{}\"], found {}",
+                expected_module.name,
+                expected_module.path,
+                path_attributes.len()
+            )),
+        }
+    }
+    failures
+}
+
+fn support_leaf_failures(relative: &str, source: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+    let includes = top_level_include_paths(relative, source);
+    if !includes.is_empty() {
+        failures.push(format!(
+            "{relative} must not contain top-level include! fragments: {includes:?}"
+        ));
+    }
+    let modules = top_level_module_names(relative, source);
+    if !modules.is_empty() {
+        failures.push(format!(
+            "{relative} must not declare child modules: {modules:?}"
+        ));
+    }
+    failures
 }
 
 fn assert_rustfmt_clean(path: &Path) {
