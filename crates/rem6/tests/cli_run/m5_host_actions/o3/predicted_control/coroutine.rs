@@ -3,7 +3,7 @@ use super::window_support::{
     assert_integer_rename_maps_to_row_destination, assert_no_data_address, assert_no_fetch_pc,
     assert_no_o3_stats_with_context, assert_ordered_commits, assert_register_absent_or_zero,
     assert_register_absent_or_zero_with_context, assert_stopped_by_host, control_window_command,
-    finish_control_window_binary, resident_rob_pcs, run_control_window_json,
+    fetch_count_at_pc, finish_control_window_binary, resident_rob_pcs, run_control_window_json,
 };
 use super::*;
 
@@ -340,6 +340,8 @@ mod round_trip_lifecycle;
 mod round_trip_lifecycle_assertions;
 #[path = "coroutine/round_trip_repair.rs"]
 mod round_trip_repair;
+#[path = "coroutine/second_linked.rs"]
+mod second_linked;
 #[path = "coroutine/suppression.rs"]
 mod suppression;
 

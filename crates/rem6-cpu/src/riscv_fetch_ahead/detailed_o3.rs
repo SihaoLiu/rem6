@@ -833,11 +833,7 @@ fn ras_required_producer_matches(
                 return false;
             }
         }
-        (
-            BranchTargetKind::Return,
-            ReturnAddressStackOperationKind::PopThenPush,
-            RequiredRasConsumer::Pop,
-        ) => {
+        (BranchTargetKind::Return, ReturnAddressStackOperationKind::PopThenPush, _) => {
             let Some(predicted_return) = expected_after.pop() else {
                 return false;
             };

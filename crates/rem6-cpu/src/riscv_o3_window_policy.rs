@@ -21,16 +21,9 @@ const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bo
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForwardableRasPushKind {
-    Call,
-    CoroutineReplacement,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ForwardableRasPush {
     destination: Register,
     sequence: Option<u64>,
-    kind: ForwardableRasPushKind,
 }
 
 pub(crate) struct RiscvScalarIntegerLiveWindow {
@@ -186,20 +179,11 @@ impl RiscvScalarIntegerLiveWindow {
                     .sources()
                     .iter()
                     .any(|source| self.live_destinations.contains(source));
-            let consumer_writes_link = control
-                .destination()
-                .is_some_and(|destination| !destination.is_zero());
             let forwardable_ras_push = (control.kind() == BranchTargetKind::Return
                 && control.sources().len() == 1)
                 .then(|| self.forwardable_ras_push)
                 .flatten()
-                .filter(|push| {
-                    push.destination == control.sources()[0]
-                        && match push.kind {
-                            ForwardableRasPushKind::Call => true,
-                            ForwardableRasPushKind::CoroutineReplacement => !consumer_writes_link,
-                        }
-                });
+                .filter(|push| push.destination == control.sources()[0]);
             let forwardable_live_return = forwardable_ras_push.is_some();
             if depends_on_unresolved || (indirect_target_is_live && !forwardable_live_return) {
                 self.forwardable_ras_push = None;
@@ -219,20 +203,12 @@ impl RiscvScalarIntegerLiveWindow {
             match control.kind() {
                 BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect => {
                     if let Some(destination) = destination {
-                        self.record_forwardable_ras_push(
-                            destination,
-                            instruction_sequence,
-                            ForwardableRasPushKind::Call,
-                        );
+                        self.record_forwardable_ras_push(destination, instruction_sequence);
                     }
                 }
                 BranchTargetKind::Return if forwardable_live_return => {
                     if let Some(destination) = destination {
-                        self.record_forwardable_ras_push(
-                            destination,
-                            instruction_sequence,
-                            ForwardableRasPushKind::CoroutineReplacement,
-                        );
+                        self.record_forwardable_ras_push(destination, instruction_sequence);
                     } else {
                         self.forwardable_ras_push = None;
                     }
@@ -311,16 +287,10 @@ impl RiscvScalarIntegerLiveWindow {
         self.record_live_destination(destination);
     }
 
-    fn record_forwardable_ras_push(
-        &mut self,
-        destination: Register,
-        sequence: Option<u64>,
-        kind: ForwardableRasPushKind,
-    ) {
+    fn record_forwardable_ras_push(&mut self, destination: Register, sequence: Option<u64>) {
         self.forwardable_ras_push = Some(ForwardableRasPush {
             destination,
             sequence,
-            kind,
         });
     }
 
@@ -1083,7 +1053,6 @@ mod tests {
                 Some(ForwardableRasPush {
                     destination: Register::new(expected_destination).unwrap(),
                     sequence: Some(52),
-                    kind: ForwardableRasPushKind::CoroutineReplacement,
                 })
             );
 
@@ -1141,17 +1110,47 @@ mod tests {
     }
 
     #[test]
-    fn coroutine_replacement_rejects_linked_consumer() {
-        let mut window = scalar_load_window(4);
-        window.classify_sequenced_younger(jal_with_destination(1), 51);
-        window.classify_sequenced_younger(jalr_with_registers(5, 1), 52);
-        let linked_consumer = window.classify_sequenced_younger(jalr_with_registers(1, 5), 53);
-        assert_eq!(
-            linked_consumer.decision(),
-            RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-        );
-        assert_eq!(linked_consumer.ras_push_sequence(), None);
-        assert_eq!(window.forwardable_ras_push, None);
+    fn coroutine_replacement_feeds_second_linked_coroutine() {
+        for (call, first_coroutine, second_coroutine, expected_destination) in [
+            (
+                jal_with_destination(1),
+                jalr_with_registers(5, 1),
+                jalr_with_registers(1, 5),
+                1,
+            ),
+            (
+                jalr_with_registers(5, 9),
+                jalr_with_registers(1, 5),
+                jalr_with_registers(5, 1),
+                5,
+            ),
+        ] {
+            let mut window = scalar_load_window(4);
+            assert_eq!(
+                window.classify_sequenced_younger(call, 51).decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+            );
+            assert_eq!(
+                window
+                    .classify_sequenced_younger(first_coroutine, 52)
+                    .decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            );
+            let second = window.classify_sequenced_younger(second_coroutine, 53);
+            assert_eq!(
+                second.decision(),
+                RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            );
+            assert_eq!(second.ras_push_sequence(), Some(52));
+            assert_eq!(
+                window.forwardable_ras_push,
+                Some(ForwardableRasPush {
+                    destination: Register::new(expected_destination).unwrap(),
+                    sequence: Some(53),
+                })
+            );
+            assert!(window.is_full());
+        }
     }
 
     #[test]

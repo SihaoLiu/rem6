@@ -1,7 +1,7 @@
 use super::*;
 
 const COROUTINE_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs";
-const COROUTINE_MODULES: [(&str, &str); 7] = [
+const COROUTINE_MODULES: [(&str, &str); 8] = [
     ("lifecycle", "coroutine/lifecycle.rs"),
     ("repair", "coroutine/repair.rs"),
     ("round_trip", "coroutine/round_trip.rs"),
@@ -11,9 +11,10 @@ const COROUTINE_MODULES: [(&str, &str); 7] = [
         "coroutine/round_trip_lifecycle_assertions.rs",
     ),
     ("round_trip_repair", "coroutine/round_trip_repair.rs"),
+    ("second_linked", "coroutine/second_linked.rs"),
     ("suppression", "coroutine/suppression.rs"),
 ];
-const COROUTINE_CONCERNS: [CoroutineConcern; 7] = [
+const COROUTINE_CONCERNS: [CoroutineConcern; 8] = [
     CoroutineConcern {
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/suppression.rs",
         anchors: &[
@@ -68,6 +69,15 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 7] = [
             "rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip",
             "rem6_run_o3_same_window_coroutine_round_trip_checkpoint_boundary",
             "rem6_run_timing_suppresses_o3_same_window_coroutine_round_trip",
+        ],
+    },
+    CoroutineConcern {
+        relative:
+            "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/second_linked.rs",
+        anchors: &[
+            "rem6_run_o3_second_linked_coroutine_consumes_replacement_direct",
+            "rem6_run_o3_second_linked_coroutine_consumes_replacement_cache_fabric_dram",
+            "rem6_run_o3_second_linked_coroutine_requires_branch_lookahead_three",
         ],
     },
 ];

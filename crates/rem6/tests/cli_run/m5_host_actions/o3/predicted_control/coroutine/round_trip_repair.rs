@@ -140,7 +140,7 @@ fn round_trip_fetches_at_pc<'a>(json: &'a Value, label: &str, pc: &str) -> Vec<&
 }
 
 fn assert_round_trip_fetch_count(json: &Value, label: &str, pc: &str, expected: usize) {
-    let actual = round_trip_fetches_at_pc(json, label, pc).len();
+    let actual = fetch_count_at_pc(json, pc);
     assert_eq!(
         actual, expected,
         "{label}: expected exactly {expected} fetches at {pc}: {json}"
