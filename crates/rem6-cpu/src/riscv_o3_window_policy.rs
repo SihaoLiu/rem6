@@ -1168,14 +1168,55 @@ mod tests {
     }
 
     #[test]
+    fn scalar_memory_prefix_admits_committed_source_same_link_calls() {
+        for link in [1, 5] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_sequenced_younger(jalr_with_registers(link, link), 51),
+                RiscvSequencedScalarIntegerYoungerDecision {
+                    decision: RiscvScalarIntegerYoungerDecision::AdmitPredictedControl,
+                    ras_push_sequence: None,
+                }
+            );
+            assert_eq!(
+                window.forwardable_ras_push,
+                Some(ForwardableRasPush {
+                    destination: Register::new(link).unwrap(),
+                    sequence: Some(51),
+                })
+            );
+            assert_eq!(
+                window.classify_younger(addi(13, link)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_memory_prefix_keeps_live_same_link_targets_terminal() {
+        for link in [1, 5] {
+            let mut window = scalar_load_window(4);
+
+            assert_eq!(
+                window.classify_younger(addi(link, 11)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+            assert_eq!(
+                window.classify_younger(jalr_with_registers(link, link)),
+                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+            );
+            assert_eq!(window.forwardable_ras_push, None);
+        }
+    }
+
+    #[test]
     fn scalar_memory_prefix_rejects_unsupported_link_forms() {
         for instruction in [
             jal_with_destination(2),
             jalr_with_registers(2, 9),
             jalr_with_registers(2, 1),
             jalr_with_registers(2, 5),
-            jalr_with_registers(1, 1),
-            jalr_with_registers(5, 5),
         ] {
             let mut window = scalar_load_window(4);
 
@@ -1227,8 +1268,6 @@ mod tests {
             jal_with_destination(2),
             jalr_with_registers(2, 1),
             jalr_with_registers(2, 5),
-            jalr_with_registers(1, 1),
-            jalr_with_registers(5, 5),
             RiscvInstruction::Ecall,
             scalar_load(),
         ] {

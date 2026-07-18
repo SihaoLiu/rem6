@@ -2354,6 +2354,21 @@ fn hart_executes_upper_immediate_jumps_and_branches() {
 }
 
 #[test]
+fn hart_jalr_reads_same_register_source_before_writing_link() {
+    for link in [1, 5] {
+        let mut hart = RiscvHartState::new(0x1000);
+        hart.write(reg(link), 0x2003);
+
+        let jalr = hart
+            .execute(RiscvInstruction::decode(i_type(4, link, 0x0, link, 0x67)).unwrap())
+            .unwrap();
+
+        assert_eq!(jalr.next_pc(), 0x2006, "same-link JALR through x{link}");
+        assert_eq!(hart.read(reg(link)), 0x1004, "same-link write to x{link}");
+    }
+}
+
+#[test]
 fn hart_executes_integer_branch_comparisons() {
     assert_branch_next_pc(0x4, (-2_i64) as u64, 1, 0x2010);
     assert_branch_next_pc(0x4, 3, (-1_i64) as u64, 0x2004);

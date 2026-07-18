@@ -267,12 +267,7 @@ pub(crate) fn o3_live_control_operands(
         RiscvInstruction::Jal { rd, .. } if rd.is_zero() => Some(None),
         RiscvInstruction::Jal { rd, .. } if is_riscv_link_register(rd) => Some(Some(rd)),
         RiscvInstruction::Jalr { rd, .. } if rd.is_zero() => Some(None),
-        RiscvInstruction::Jalr { rd, rs1, .. }
-            if is_riscv_link_register(rd)
-                && (!is_riscv_link_register(rs1) || rd.index() != rs1.index()) =>
-        {
-            Some(Some(rd))
-        }
+        RiscvInstruction::Jalr { rd, .. } if is_riscv_link_register(rd) => Some(Some(rd)),
         _ => None,
     };
     supported_destination.map(|control_destination| O3LiveControlOperands {
@@ -404,8 +399,7 @@ mod tests {
         for rd in [0, 1, 2, 5, 9] {
             for rs1 in [0, 1, 2, 5, 9] {
                 let rd_is_link = is_riscv_link_register(register(rd));
-                let rs1_is_link = is_riscv_link_register(register(rs1));
-                let expected_supported = rd == 0 || (rd_is_link && (!rs1_is_link || rd != rs1));
+                let expected_supported = rd == 0 || rd_is_link;
 
                 assert_eq!(
                     o3_live_control_operands(jalr(rd, rs1)).is_some(),
@@ -417,8 +411,20 @@ mod tests {
     }
 
     #[test]
+    fn live_control_descriptor_classifies_same_link_jalr_as_indirect_call() {
+        for link in [1, 5] {
+            assert_live_control(
+                jalr(link, link),
+                BranchTargetKind::CallIndirect,
+                &[register(link)],
+                Some(register(link)),
+            );
+        }
+    }
+
+    #[test]
     fn live_control_descriptor_rejects_unsupported_link_forms() {
-        for instruction in [jal(2), jalr(2, 9), jalr(2, 1), jalr(1, 1), jalr(5, 5)] {
+        for instruction in [jal(2), jalr(2, 9), jalr(2, 1), jalr(2, 5)] {
             assert_eq!(
                 o3_live_control_operands(instruction),
                 None,

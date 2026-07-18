@@ -431,8 +431,9 @@ impl RiscvHartState {
                 next_pc = add_signed(pc, offset.value())?;
             }
             RiscvInstruction::Jalr { rd, rs1, offset } => {
+                let target_base = self.read(rs1);
                 write_register(self, &mut register_writes, rd, next_pc);
-                next_pc = add_signed(self.read(rs1), offset.value())? & !1;
+                next_pc = add_signed(target_base, offset.value())? & !1;
             }
             RiscvInstruction::VectorSetVli { rd, rs1, vtype } => {
                 vector_config_execute::execute_vsetvli(self, &mut register_writes, rd, rs1, vtype);
