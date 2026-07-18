@@ -232,6 +232,9 @@ impl O3RuntimeState {
                 self.stats
                     .record_lsq_operation_latency(o3_lsq_operation(access), latency_ticks);
             }
+            if o3_store_conditional_failed(execution) {
+                self.stats.record_store_conditional_failure();
+            }
             let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();
             self.stats.set_rename_map_entries(rename_map_entries);
             return trace_record;

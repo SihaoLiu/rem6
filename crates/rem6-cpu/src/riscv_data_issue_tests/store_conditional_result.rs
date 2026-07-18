@@ -47,6 +47,7 @@ fn detailed_local_sc_failure_waits_for_admitted_writeback() {
     let streak = core.store_conditional_failure_streak().unwrap();
     assert_eq!(streak.first_failure_tick(), response_tick);
     assert_eq!(streak.last_failure_tick(), response_tick);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 1);
 }
 
 #[test]
@@ -93,6 +94,7 @@ fn detailed_target_sc_failure_waits_for_admitted_writeback() {
     let streak = core.store_conditional_failure_streak().unwrap();
     assert_eq!(streak.first_failure_tick(), response_tick);
     assert_eq!(streak.last_failure_tick(), response_tick);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 1);
 }
 
 #[test]
@@ -112,6 +114,7 @@ fn sc_failure_retry_or_redirect_never_publishes_stale_status() {
 
     assert_eq!(core.read_register(reg(7)), 9);
     assert_eq!(core.store_conditional_failure_streak(), None);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 0);
     assert!(!core
         .state
         .lock()
@@ -127,6 +130,7 @@ fn sc_failure_retry_or_redirect_never_publishes_stale_status() {
         .is_none());
     assert_eq!(core.read_register(reg(7)), 9);
     assert_eq!(core.store_conditional_failure_streak(), None);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 0);
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.o3_runtime.writeback_reservations().is_empty());
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
@@ -152,6 +156,7 @@ fn zero_destination_sc_failure_redirect_suppresses_progress() {
     scheduler.run_until_idle_conservative();
 
     assert_eq!(core.store_conditional_failure_streak(), None);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 0);
     {
         let state = core.state.lock().expect("riscv core lock");
         assert!(state.o3_runtime.writeback_reservations().is_empty());
@@ -167,6 +172,7 @@ fn zero_destination_sc_failure_redirect_suppresses_progress() {
         .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
         .is_none());
     assert_eq!(core.store_conditional_failure_streak(), None);
+    assert_eq!(core.o3_runtime_stats().lsq_store_conditional_failures(), 0);
     let state = core.state.lock().expect("riscv core lock");
     assert!(state.o3_runtime.writeback_reservations().is_empty());
     assert!(state.o3_runtime.snapshot().reorder_buffer().is_empty());
