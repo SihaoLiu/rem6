@@ -751,7 +751,7 @@ impl RiscvCore {
                         return;
                     }
                 }
-                if !deferred_o3_memory_result_writeback(&state, &access) {
+                if !deferred_o3_data_completion_publication(&state, &access) {
                     apply_data_completion(&mut state, self.id(), &completion, "load response data");
                     riscv_checker::sync_checker_hart(&mut state);
                 }
@@ -797,36 +797,7 @@ impl RiscvCore {
                         .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
                     return;
                 }
-                let completion = access.store_conditional_failure_completion(delivery.tick());
-                apply_data_completion(
-                    &mut state,
-                    self.id(),
-                    &completion,
-                    "store-conditional failure has no response data",
-                );
-                riscv_checker::sync_checker_hart(&mut state);
-                let completed_event = record_data_retire_cycle(
-                    &mut state,
-                    &access,
-                    delivery.tick(),
-                    completion.data_event_kind(),
-                );
-                if let Err(error) = record_o3_data_access_outcome(
-                    &mut state,
-                    &access,
-                    completed_event,
-                    delivery.tick(),
-                    None,
-                    None,
-                ) {
-                    record_callback_error(&mut state, error);
-                    return;
-                }
-                state
-                    .data_events
-                    .push(RiscvDataAccessEvent::conditional_failed(
-                        access.record(delivery.tick()),
-                    ));
+                self.record_store_conditional_failure_outcome(&mut state, access, delivery.tick());
             }
         }
     }
@@ -918,7 +889,7 @@ impl RiscvCore {
                         return;
                     }
                 }
-                if !deferred_o3_memory_result_writeback(&state, &access) {
+                if !deferred_o3_data_completion_publication(&state, &access) {
                     apply_data_completion(
                         &mut state,
                         self.id(),
@@ -979,13 +950,11 @@ pub(crate) fn record_deferred_o3_data_retire_cycle(
     issue_tick: Tick,
     completion_tick: Tick,
 ) -> Option<RiscvCpuExecutionEvent> {
-    record_data_retire_cycle_for_fetch(
-        state,
-        fetch_request,
-        issue_tick,
-        completion_tick,
-        RiscvDataAccessEventKind::Completed,
-    )
+    let kind = state
+        .o3_runtime
+        .ready_live_data_access_event_kind()
+        .expect("completed O3 data access has a terminal event kind");
+    record_data_retire_cycle_for_fetch(state, fetch_request, issue_tick, completion_tick, kind)
 }
 
 fn record_data_retire_cycle_for_fetch(
@@ -1049,9 +1018,13 @@ fn deferred_o3_live_data_access_retirement(
         .owns_pending_live_data_access_retirement(access.fetch_request)
 }
 
-fn deferred_o3_memory_result_writeback(state: &RiscvCoreState, access: &IssuedDataAccess) -> bool {
-    o3_memory_result_destination(&access.access).is_some()
-        && deferred_o3_live_data_access_retirement(state, access)
+fn deferred_o3_data_completion_publication(
+    state: &RiscvCoreState,
+    access: &IssuedDataAccess,
+) -> bool {
+    deferred_o3_live_data_access_retirement(state, access)
+        && (o3_memory_result_destination(&access.access).is_some()
+            || matches!(&access.access, MemoryAccessKind::StoreConditional { .. }))
 }
 
 fn retag_existing_fetch_wait_cycles_for_data_access(

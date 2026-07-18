@@ -24,6 +24,8 @@ use crate::{
 
 #[path = "o3_runtime_memory_result_tests/replan.rs"]
 mod replan;
+#[path = "o3_runtime_memory_result_tests/store_conditional.rs"]
+mod store_conditional;
 #[path = "o3_runtime_memory_result_tests/writeback_maxima.rs"]
 mod writeback_maxima;
 #[path = "o3_runtime_memory_result_tests/younger_window.rs"]
@@ -700,6 +702,21 @@ fn supported_results() -> Vec<(
             2,
         ),
         (
+            "store conditional",
+            store_conditional_instruction(),
+            MemoryAccessKind::StoreConditional {
+                rd: reg(7),
+                address: 0x9000,
+                width: MemoryWidth::Doubleword,
+                value: 1,
+                acquire: false,
+                release: false,
+            },
+            O3RegisterClass::Integer,
+            7,
+            1,
+        ),
+        (
             "float load",
             float_load_instruction(),
             MemoryAccessKind::FloatLoad {
@@ -744,18 +761,6 @@ fn unsupported_results() -> Vec<(&'static str, RiscvInstruction, MemoryAccessKin
             load_reserved_access(0, 0x9000),
         ),
         ("x0 atomic", atomic_instruction(0), atomic_access(0, 0x9000)),
-        (
-            "store conditional",
-            store_conditional_instruction(),
-            MemoryAccessKind::StoreConditional {
-                rd: reg(7),
-                address: 0x9000,
-                width: MemoryWidth::Doubleword,
-                value: 1,
-                acquire: false,
-                release: false,
-            },
-        ),
         (
             "vector word width",
             vector_unit_instruction(MemoryWidth::Word, false),

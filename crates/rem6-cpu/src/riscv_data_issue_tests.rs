@@ -31,6 +31,8 @@ mod lifecycle;
 mod multi_load;
 #[path = "riscv_data_issue_tests/result_younger_window.rs"]
 mod result_younger_window;
+#[path = "riscv_data_issue_tests/store_conditional_result.rs"]
+mod store_conditional_result;
 #[path = "riscv_data_issue_tests/store_led.rs"]
 mod store_led;
 #[path = "riscv_data_issue_tests/store_store_load.rs"]

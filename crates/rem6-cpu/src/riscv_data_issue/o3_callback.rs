@@ -84,6 +84,11 @@ pub(super) fn record_o3_data_access_outcome(
                     access.request,
                     response_tick,
                     latency_ticks,
+                    (
+                        access.physical_address,
+                        access.size,
+                        access.request_byte_offset,
+                    ),
                     completion,
                     forwarding_plan,
                 )?,
@@ -95,6 +100,11 @@ pub(super) fn record_o3_data_access_outcome(
             access.request,
             response_tick,
             latency_ticks,
+            (
+                access.physical_address,
+                access.size,
+                access.request_byte_offset,
+            ),
             completion,
         )?
     };

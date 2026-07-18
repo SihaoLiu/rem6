@@ -487,10 +487,10 @@ impl RiscvCore {
         state.hart.set_pc(pc.get());
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.discard_data_accesses_for_control_boundary();
         state.o3_runtime.discard_live_retire_window();
         state.o3_writeback_wake.clear();
         state.live_retire_gate.clear_pending_for_pc_redirect();
-        state.discard_data_accesses_for_control_boundary();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(pc);
@@ -1024,6 +1024,24 @@ impl RiscvCoreState {
             .replace_in_flight([])
             .expect("empty in-order pipeline state is valid");
         self.rebound_in_order_execute_waits.clear();
+        let mut pending_retirement_fetches = self
+            .events
+            .iter()
+            .filter(|event| {
+                event.execution().memory_access().is_some()
+                    && self
+                        .o3_runtime
+                        .owns_pending_live_data_access_retirement(event.fetch().request_id())
+            })
+            .map(|event| event.fetch().request_id())
+            .collect::<BTreeSet<_>>();
+        if let Some(fetch_request) = self
+            .pending_terminal_memory_result
+            .as_ref()
+            .map(|pending| pending.execution().fetch().request_id())
+        {
+            pending_retirement_fetches.insert(fetch_request);
+        }
         let stale_data_fetches = self
             .events
             .iter()
@@ -1037,6 +1055,13 @@ impl RiscvCoreState {
             .collect::<Vec<_>>();
         for fetch_request in &stale_data_fetches {
             self.o3_runtime.discard_data_access_outcome(*fetch_request);
+        }
+        for event in &mut self.events {
+            if pending_retirement_fetches.contains(&event.fetch().request_id())
+                && event.data_access_event_kind().is_some()
+            {
+                event.clear_data_access_retirement();
+            }
         }
         self.issued_data_for_fetches.extend(stale_data_fetches);
         self.cached_translated_scalar_load_window_fetches.clear();

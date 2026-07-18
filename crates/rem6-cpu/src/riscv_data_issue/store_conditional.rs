@@ -70,21 +70,50 @@ impl RiscvCore {
             debug_assert!(false, "store-conditional failure for non-SC access");
             return;
         }
+        self.record_store_conditional_failure_outcome(&mut state, access, tick);
+    }
+
+    pub(super) fn record_store_conditional_failure_outcome(
+        &self,
+        state: &mut RiscvCoreState,
+        access: IssuedDataAccess,
+        tick: Tick,
+    ) {
+        debug_assert!(matches!(
+            &access.access,
+            MemoryAccessKind::StoreConditional { .. }
+        ));
         let completion = access.store_conditional_failure_completion(tick);
-        apply_data_completion(
-            &mut state,
-            self.id(),
-            &completion,
-            "store-conditional failure has no response data",
-        );
-        riscv_checker::sync_checker_hart(&mut state);
-        let completed_event =
-            record_data_retire_cycle(&mut state, &access, tick, completion.data_event_kind());
-        if let Err(error) =
-            record_o3_data_access_outcome(&mut state, &access, completed_event, tick, None, None)
-        {
-            record_callback_error(&mut state, error);
+        let event_kind = completion.data_event_kind();
+        let deferred_retirement = deferred_o3_live_data_access_retirement(state, &access);
+        let completed_event = if deferred_retirement {
+            cloned_data_access_event_with_kind(state, &access, event_kind)
+        } else {
+            record_data_retire_cycle(state, &access, tick, event_kind)
+        };
+        if let Err(error) = record_o3_data_access_outcome(
+            state,
+            &access,
+            completed_event,
+            tick,
+            Some(completion.clone()),
+            None,
+        ) {
+            record_callback_error(state, error);
             return;
+        }
+        if deferred_retirement {
+            let completed_event = mark_data_access_event_kind(state, &access, event_kind);
+            debug_assert!(completed_event.is_some());
+        }
+        if !deferred_o3_data_completion_publication(state, &access) {
+            apply_data_completion(
+                state,
+                self.id(),
+                &completion,
+                "store-conditional failure has no response data",
+            );
+            riscv_checker::sync_checker_hart(state);
         }
         state
             .data_events

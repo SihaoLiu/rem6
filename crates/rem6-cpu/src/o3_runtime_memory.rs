@@ -1,7 +1,6 @@
 use super::o3_runtime_writeback::O3LiveWritebackReady;
 use super::*;
 use crate::riscv_data_completion::RiscvDataCompletion;
-#[cfg(test)]
 use rem6_memory::{AccessSize, Address};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +45,7 @@ struct O3LiveDataAccessResponse {
     response_tick: u64,
     latency_ticks: u64,
     load_data: Option<Vec<u8>>,
+    expected_memory_result_identity: Option<(Address, AccessSize, usize)>,
     memory_result: Option<RiscvDataCompletion>,
     forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 }
@@ -64,6 +64,7 @@ pub(crate) fn o3_memory_result_destination(
         MemoryAccessKind::Load { rd, .. }
         | MemoryAccessKind::LoadReserved { rd, .. }
         | MemoryAccessKind::AtomicMemory { rd, .. }
+        | MemoryAccessKind::StoreConditional { rd, .. }
             if !rd.is_zero() =>
         {
             Some((O3RegisterClass::Integer, u32::from(rd.index())))
@@ -93,7 +94,9 @@ pub(crate) fn o3_memory_result_destination(
 
 pub(crate) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
     access.is_some_and(|access| {
-        is_scalar_window_access(access) || o3_memory_result_destination(access).is_some()
+        matches!(access, MemoryAccessKind::StoreConditional { .. })
+            || is_scalar_window_access(access)
+            || o3_memory_result_destination(access).is_some()
     })
 }
 
@@ -134,6 +137,7 @@ fn memory_result_test_address_size(access: &MemoryAccessKind) -> Option<(Address
         MemoryAccessKind::Load { address, width, .. }
         | MemoryAccessKind::LoadReserved { address, width, .. }
         | MemoryAccessKind::AtomicMemory { address, width, .. }
+        | MemoryAccessKind::StoreConditional { address, width, .. }
         | MemoryAccessKind::FloatLoad { address, width, .. } => Some((
             Address::new(*address),
             AccessSize::new(width.bytes() as u64).ok()?,
@@ -155,6 +159,7 @@ pub(super) fn is_deferred_o3_data_instruction(instruction: RiscvInstruction) -> 
             | RiscvInstruction::Store { .. }
             | RiscvInstruction::FloatLoad { .. }
             | RiscvInstruction::LoadReserved { .. }
+            | RiscvInstruction::StoreConditional { .. }
             | RiscvInstruction::AtomicMemory { .. }
             | RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride { .. })
     )
@@ -174,6 +179,7 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
             execution.data_access_event_kind(),
             Some(
                 RiscvDataAccessEventKind::Completed
+                    | RiscvDataAccessEventKind::ConditionalFailed
                     | RiscvDataAccessEventKind::Retry
                     | RiscvDataAccessEventKind::Failed
             )
@@ -465,6 +471,7 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         response_tick: u64,
         latency_ticks: u64,
+        expected_memory_result_identity: (Address, AccessSize, usize),
         completion: Option<RiscvDataCompletion>,
     ) -> Result<bool, O3RuntimeError> {
         let load_data = completion
@@ -477,6 +484,7 @@ impl O3RuntimeState {
                 response_tick,
                 latency_ticks,
                 load_data,
+                expected_memory_result_identity: Some(expected_memory_result_identity),
                 memory_result: completion,
                 forwarding_plan: None,
             },
@@ -493,6 +501,13 @@ impl O3RuntimeState {
         load_data: Option<&[u8]>,
     ) -> Result<bool, O3RuntimeError> {
         let completion = test_memory_result_completion(execution, load_data);
+        let expected_memory_result_identity = completion.as_ref().map(|completion| {
+            (
+                completion.physical_address(),
+                completion.size(),
+                completion.request_byte_offset(),
+            )
+        });
         self.complete_live_data_access(
             execution,
             data_request,
@@ -500,6 +515,7 @@ impl O3RuntimeState {
                 response_tick,
                 latency_ticks,
                 load_data: load_data.map(ToOwned::to_owned),
+                expected_memory_result_identity,
                 memory_result: completion,
                 forwarding_plan: None,
             },
@@ -512,6 +528,7 @@ impl O3RuntimeState {
         data_request: MemoryRequestId,
         response_tick: u64,
         latency_ticks: u64,
+        expected_memory_result_identity: (Address, AccessSize, usize),
         completion: RiscvDataCompletion,
         forwarding_plan: O3StoreLoadForwardingPlan,
     ) -> Result<bool, O3RuntimeError> {
@@ -523,6 +540,7 @@ impl O3RuntimeState {
                 response_tick,
                 latency_ticks,
                 load_data,
+                expected_memory_result_identity: Some(expected_memory_result_identity),
                 memory_result: Some(completion),
                 forwarding_plan: Some(forwarding_plan),
             },
@@ -540,6 +558,13 @@ impl O3RuntimeState {
         forwarding_plan: O3StoreLoadForwardingPlan,
     ) -> Result<bool, O3RuntimeError> {
         let completion = test_memory_result_completion(execution, Some(load_data));
+        let expected_memory_result_identity = completion.as_ref().map(|completion| {
+            (
+                completion.physical_address(),
+                completion.size(),
+                completion.request_byte_offset(),
+            )
+        });
         self.complete_live_data_access(
             execution,
             data_request,
@@ -547,6 +572,7 @@ impl O3RuntimeState {
                 response_tick,
                 latency_ticks,
                 load_data: Some(load_data.to_vec()),
+                expected_memory_result_identity,
                 memory_result: completion,
                 forwarding_plan: Some(forwarding_plan),
             },
@@ -563,6 +589,7 @@ impl O3RuntimeState {
             response_tick,
             latency_ticks,
             load_data,
+            expected_memory_result_identity,
             memory_result,
             forwarding_plan,
         } = response;
@@ -575,9 +602,60 @@ impl O3RuntimeState {
         };
         let sequence = self.live_data_accesses[index].sequence;
         let lsq_sequence_span = self.live_data_accesses[index].lsq_sequence_span;
+        let event_kind = execution.data_access_event_kind();
+        let access = execution.execution().memory_access();
+        if let Some(completion) = memory_result.as_ref() {
+            let Some((physical_address, size, request_byte_offset)) =
+                expected_memory_result_identity
+            else {
+                return Ok(false);
+            };
+            let Some(access) = access else {
+                return Ok(false);
+            };
+            if !completion.matches_issued_request(
+                execution.fetch().request_id(),
+                access,
+                physical_address,
+                size,
+                request_byte_offset,
+            ) {
+                return Ok(false);
+            }
+        }
+        if matches!(
+            event_kind,
+            Some(RiscvDataAccessEventKind::ConditionalFailed)
+        ) && !matches!(access, Some(MemoryAccessKind::StoreConditional { .. }))
+        {
+            return Ok(false);
+        }
+        if matches!(
+            event_kind,
+            Some(RiscvDataAccessEventKind::Completed | RiscvDataAccessEventKind::ConditionalFailed)
+        ) && memory_result
+            .as_ref()
+            .is_some_and(|completion| Some(completion.data_event_kind()) != event_kind)
+        {
+            return Ok(false);
+        }
+        if matches!(access, Some(MemoryAccessKind::StoreConditional { .. }))
+            && matches!(
+                event_kind,
+                Some(
+                    RiscvDataAccessEventKind::Completed
+                        | RiscvDataAccessEventKind::ConditionalFailed
+                )
+            )
+            && memory_result.is_none()
+        {
+            return Ok(false);
+        }
 
-        let outcome = match execution.data_access_event_kind() {
-            Some(RiscvDataAccessEventKind::Completed) => {
+        let outcome = match event_kind {
+            Some(
+                RiscvDataAccessEventKind::Completed | RiscvDataAccessEventKind::ConditionalFailed,
+            ) => {
                 let Some(rob_index) = self
                     .snapshot
                     .reorder_buffer
@@ -596,9 +674,14 @@ impl O3RuntimeState {
                 if lsq_rows != usize::try_from(lsq_sequence_span).unwrap_or(usize::MAX) {
                     return Ok(false);
                 }
-                let memory_result = memory_result
-                    .filter(|result| o3_memory_result_destination(result.access()).is_some());
-                let (raw_ready_tick, reservation) = if memory_result.is_some()
+                let memory_result = memory_result.filter(|result| {
+                    o3_memory_result_destination(result.access()).is_some()
+                        || matches!(result.access(), MemoryAccessKind::StoreConditional { .. })
+                });
+                let has_result_destination = memory_result
+                    .as_ref()
+                    .is_some_and(|result| o3_memory_result_destination(result.access()).is_some());
+                let (raw_ready_tick, reservation) = if has_result_destination
                     && self.snapshot.reorder_buffer[rob_index]
                         .rename_destination()
                         .is_some()
@@ -634,10 +717,7 @@ impl O3RuntimeState {
             }
             Some(RiscvDataAccessEventKind::Retry) => O3LiveDataAccessOutcome::Retried,
             Some(RiscvDataAccessEventKind::Failed) => O3LiveDataAccessOutcome::Failed,
-            Some(
-                RiscvDataAccessEventKind::Issued | RiscvDataAccessEventKind::ConditionalFailed,
-            )
-            | None => return Ok(false),
+            Some(RiscvDataAccessEventKind::Issued) | None => return Ok(false),
         };
 
         let live = &mut self.live_data_accesses[index];

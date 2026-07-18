@@ -89,6 +89,21 @@ impl RiscvDataCompletion {
         self.request_byte_offset
     }
 
+    pub(crate) fn matches_issued_request(
+        &self,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+        physical_address: Address,
+        size: AccessSize,
+        request_byte_offset: usize,
+    ) -> bool {
+        self.fetch_request == fetch_request
+            && &self.access == access
+            && self.physical_address == physical_address
+            && self.size == size
+            && self.request_byte_offset == request_byte_offset
+    }
+
     pub(crate) fn bytes(&self) -> Option<&[u8]> {
         self.bytes.as_deref()
     }

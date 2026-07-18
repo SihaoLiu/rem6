@@ -50,17 +50,6 @@ fn scalar_store_issue_records_real_issue_tick_and_single_occupancy() {
 }
 
 #[test]
-fn excluded_memory_kinds_do_not_stage_live_scalar_rows() {
-    let mut runtime = O3RuntimeState::default();
-    let execution = store_conditional_event(0x8008, 12);
-
-    assert!(!runtime.stage_live_data_access_issue_for_test(&execution, memory_request(22), 41));
-    assert!(runtime.snapshot().reorder_buffer().is_empty());
-    assert!(runtime.snapshot().load_store_queue().is_empty());
-    assert!(runtime.live_data_accesses.is_empty());
-}
-
-#[test]
 fn completed_response_marks_only_matching_rows_ready() {
     let mut runtime = O3RuntimeState::default();
     let execution = scalar_load_event(0x8000, 10);
@@ -807,26 +796,6 @@ fn scalar_store_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {
         address: 0x9000,
         width: MemoryWidth::Word,
         value: 0x2a,
-    };
-    execution_event(pc, sequence, instruction, access)
-}
-
-fn store_conditional_event(pc: u64, sequence: u64) -> RiscvCpuExecutionEvent {
-    let instruction = RiscvInstruction::StoreConditional {
-        rd: reg(7),
-        rs1: reg(10),
-        rs2: reg(11),
-        width: MemoryWidth::Word,
-        acquire: false,
-        release: false,
-    };
-    let access = MemoryAccessKind::StoreConditional {
-        rd: reg(7),
-        address: 0x9000,
-        width: MemoryWidth::Word,
-        value: 0x2a,
-        acquire: false,
-        release: false,
     };
     execution_event(pc, sequence, instruction, access)
 }

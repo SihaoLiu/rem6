@@ -3,7 +3,7 @@ use rem6_kernel::{PartitionEventId, PartitionedScheduler, Tick};
 use rem6_memory::MemoryRequestId;
 
 use super::{
-    cloned_data_access_event_with_kind, deferred_o3_memory_result_writeback,
+    cloned_data_access_event_with_kind, deferred_o3_data_completion_publication,
     mark_data_access_event_kind, record_callback_error, record_o3_data_access_outcome,
     OutstandingDataAccess,
 };
@@ -89,7 +89,7 @@ impl RiscvCore {
         }
         let completion = access.completion(Some(data.clone()));
         assert!(
-            deferred_o3_memory_result_writeback(&state, &access),
+            deferred_o3_data_completion_publication(&state, &access),
             "forwarded scalar load must defer architectural writeback"
         );
         let completed_event = cloned_data_access_event_with_kind(
