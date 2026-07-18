@@ -2,17 +2,19 @@ use std::{fs, path::Path};
 
 use super::{line_count, module_has_path_attribute, rust_function_definition_names};
 
-const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 12_800;
+const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 12_200;
 const MAX_DEBUG_FLAGS_HOST_ACTION_LINES: usize = 800;
 const MAX_DEBUG_FLAGS_O3_CHECKPOINT_RESTORE_LINES: usize = 1_100;
 const MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES: usize = 1_700;
-const DEBUG_FLAGS_MODULES: [(&str, &str); 3] = [
+const MAX_DEBUG_FLAGS_O3_STORE_FORWARDING_LINES: usize = 700;
+const DEBUG_FLAGS_MODULES: [(&str, &str); 4] = [
     ("host_action", "debug_flags/host_action.rs"),
     (
         "o3_checkpoint_restore",
         "debug_flags/o3_checkpoint_restore.rs",
     ),
     ("o3_fu_latency", "debug_flags/o3_fu_latency.rs"),
+    ("o3_store_forwarding", "debug_flags/o3_store_forwarding.rs"),
 ];
 const HOST_ACTION_TESTS: [&str; 4] = [
     "rem6_run_host_action_debug_flag_emits_real_m5_host_action_trace",
@@ -53,6 +55,20 @@ const O3_FU_LATENCY_DEFINITIONS: [&str; 18] = [
     "detailed_o3_float_misc_fu_latency_debug_binary",
     "assert_o3_event_with_fu",
     "o3_event_fu_latency_class_count",
+];
+const O3_STORE_FORWARDING_TESTS: [&str; 2] = [
+    "rem6_run_o3_debug_flag_emits_store_forwarding_events",
+    "rem6_run_o3_debug_flag_classifies_store_forwarding_relations",
+];
+const O3_STORE_FORWARDING_DEFINITIONS: [&str; 8] = [
+    "detailed_o3_store_forwarding_debug_binary",
+    "detailed_o3_store_forwarding_suppression_debug_binary",
+    "detailed_o3_store_forwarding_mismatch_debug_binary",
+    "detailed_o3_store_forwarding_partial_overlap_debug_binary",
+    "detailed_o3_store_forwarding_address_mismatch_byte_load_debug_binary",
+    "assert_o3_event_with_store_forwarding",
+    "rem6_run_o3_debug_flag_emits_store_forwarding_events",
+    "rem6_run_o3_debug_flag_classifies_store_forwarding_relations",
 ];
 
 #[test]
@@ -244,6 +260,60 @@ fn debug_flags_o3_fu_latency_lives_in_focused_module() {
         duplicates.is_empty(),
         "tests/cli_run/debug_flags.rs duplicates child functions: {duplicates:?}"
     );
+}
+
+#[test]
+fn debug_flags_o3_store_forwarding_lives_in_focused_module() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = manifest_dir.join("tests/cli_run/debug_flags.rs");
+    let child_path = manifest_dir.join("tests/cli_run/debug_flags/o3_store_forwarding.rs");
+    let root = fs::read_to_string(root_path).unwrap();
+    let root_functions = rust_function_definition_names(&root);
+
+    assert!(
+        child_path.exists(),
+        "O3 store-forwarding debug evidence belongs in tests/cli_run/debug_flags/o3_store_forwarding.rs"
+    );
+    let child = fs::read_to_string(&child_path).unwrap();
+    let child_lines = line_count(&child_path);
+    assert!(
+        child_lines <= MAX_DEBUG_FLAGS_O3_STORE_FORWARDING_LINES,
+        "tests/cli_run/debug_flags/o3_store_forwarding.rs exceeds {MAX_DEBUG_FLAGS_O3_STORE_FORWARDING_LINES} lines: {child_lines}"
+    );
+    let syntax = parsed_source("tests/cli_run/debug_flags/o3_store_forwarding.rs", &child);
+    let includes = top_level_include_tokens(&syntax);
+    assert!(
+        includes.is_empty(),
+        "tests/cli_run/debug_flags/o3_store_forwarding.rs must not inline sources with include!: {includes:?}"
+    );
+    assert!(
+        focused_module_has_only_super_glob_use_and_functions(&syntax),
+        "tests/cli_run/debug_flags/o3_store_forwarding.rs must contain only `use super::*;` and its exact helper/test functions"
+    );
+    let expected_definitions = O3_STORE_FORWARDING_DEFINITIONS
+        .iter()
+        .map(|function| function.to_string())
+        .collect::<Vec<_>>();
+    let expected_tests = O3_STORE_FORWARDING_TESTS
+        .iter()
+        .map(|function| function.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        top_level_function_names(&syntax),
+        expected_definitions,
+        "tests/cli_run/debug_flags/o3_store_forwarding.rs must own exactly the O3 store-forwarding helpers and tests"
+    );
+    assert_eq!(
+        top_level_test_function_names(&syntax),
+        expected_tests,
+        "tests/cli_run/debug_flags/o3_store_forwarding.rs must own exactly the O3 store-forwarding tests"
+    );
+    for function in O3_STORE_FORWARDING_DEFINITIONS {
+        assert!(
+            !root_functions.contains(function),
+            "tests/cli_run/debug_flags.rs still owns `fn {function}`"
+        );
+    }
 }
 
 #[test]
