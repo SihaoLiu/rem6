@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn rem6_run_in_order_pipeline_models_masked_vector_unit_stride_memory() {
     let vector_stats = in_order_pipeline_payload_stats_with_max_tick(

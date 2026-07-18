@@ -328,12 +328,20 @@ fn rem6_run_o3_same_window_indirect_coroutine_commits_cache_fabric_dram() {
     }
 }
 
-include!("coroutine/suppression.rs");
-include!("coroutine/repair.rs");
-include!("coroutine/lifecycle.rs");
-include!("coroutine/round_trip.rs");
-include!("coroutine/round_trip_repair.rs");
-include!("coroutine/round_trip_lifecycle.rs");
+#[path = "coroutine/lifecycle.rs"]
+mod lifecycle;
+#[path = "coroutine/repair.rs"]
+mod repair;
+#[path = "coroutine/round_trip.rs"]
+mod round_trip;
+#[path = "coroutine/round_trip_lifecycle.rs"]
+mod round_trip_lifecycle;
+#[path = "coroutine/round_trip_lifecycle_assertions.rs"]
+mod round_trip_lifecycle_assertions;
+#[path = "coroutine/round_trip_repair.rs"]
+mod round_trip_repair;
+#[path = "coroutine/suppression.rs"]
+mod suppression;
 
 fn run_coroutine_json(
     path: &Path,

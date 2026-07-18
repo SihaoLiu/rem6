@@ -1,36 +1,69 @@
 use std::{fs, path::Path};
 
-use super::{has_exact_trimmed_source_line, line_count};
+use super::{line_count, module_has_path_attribute};
 
 const MAX_STATS_COMPAT_ROOT_LINES: usize = 15_800;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
 const MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES: usize = 1000;
 const MAX_STATS_COMPAT_MASKED_UNIT_STRIDE_VECTOR_MEMORY_LINES: usize = 1000;
-
-#[test]
-fn exact_trimmed_source_line_rejects_commented_include() {
-    let include = "include!(\"stats_compat/selected_branch_predictor_matrix.rs\");";
-
-    assert!(has_exact_trimmed_source_line(
-        "  include!(\"stats_compat/selected_branch_predictor_matrix.rs\");\n",
-        include,
-    ));
-    assert!(!has_exact_trimmed_source_line(
-        "// include!(\"stats_compat/selected_branch_predictor_matrix.rs\");\n",
-        include,
-    ));
-}
+const STATS_COMPAT_MODULES: [(&str, &str); 5] = [
+    ("cache", "stats_compat/cache.rs"),
+    ("dram", "stats_compat/dram.rs"),
+    (
+        "in_order_branch_prediction_matrix",
+        "stats_compat/in_order_branch_prediction_matrix.rs",
+    ),
+    (
+        "masked_unit_stride_vector_memory",
+        "stats_compat/masked_unit_stride_vector_memory.rs",
+    ),
+    (
+        "selected_branch_predictor_matrix",
+        "stats_compat/selected_branch_predictor_matrix.rs",
+    ),
+];
 
 #[test]
 fn stats_compat_root_keeps_current_ratchet() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run/stats_compat.rs");
     let lines = line_count(&path);
+    let source = fs::read_to_string(&path).unwrap();
+    let syntax = parsed_source("tests/cli_run/stats_compat.rs", &source);
 
     assert!(
         lines <= MAX_STATS_COMPAT_ROOT_LINES,
         "tests/cli_run/stats_compat.rs exceeds the current decomposition ratchet: {lines} lines"
     );
+    let includes = top_level_include_tokens(&syntax);
+    assert!(
+        includes.is_empty(),
+        "tests/cli_run/stats_compat.rs must not inline child sources with include!: {includes:?}"
+    );
+    let modules = syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Mod(module) = item else {
+                return None;
+            };
+            Some(module.ident.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        modules,
+        STATS_COMPAT_MODULES
+            .iter()
+            .map(|(module, _)| module.to_string())
+            .collect::<Vec<_>>(),
+        "tests/cli_run/stats_compat.rs must declare exactly the focused child modules in order"
+    );
+    for (module, module_path) in STATS_COMPAT_MODULES {
+        assert!(
+            module_has_path_attribute(&source, module, module_path),
+            "tests/cli_run/stats_compat.rs must declare `{module}` from `{module_path}`"
+        );
+    }
 }
 
 #[test]
@@ -38,11 +71,6 @@ fn stats_compat_in_order_branch_prediction_matrix_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
-
-    assert!(
-        root.contains("include!(\"stats_compat/in_order_branch_prediction_matrix.rs\");"),
-        "tests/cli_run/stats_compat.rs must include the focused in-order branch prediction matrix"
-    );
 
     let module_path =
         crate_dir.join("tests/cli_run/stats_compat/in_order_branch_prediction_matrix.rs");
@@ -91,12 +119,6 @@ fn stats_compat_selected_branch_prediction_matrix_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
-    let include = "include!(\"stats_compat/selected_branch_predictor_matrix.rs\");";
-
-    assert!(
-        has_exact_trimmed_source_line(&root, include),
-        "tests/cli_run/stats_compat.rs must include the focused selected branch predictor matrix"
-    );
 
     let module_path =
         crate_dir.join("tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs");
@@ -161,11 +183,6 @@ fn stats_compat_dram_aliases_live_in_focused_module() {
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
 
-    assert!(
-        root.contains("include!(\"stats_compat/dram.rs\");"),
-        "tests/cli_run/stats_compat.rs must include the focused DRAM test file"
-    );
-
     let module_path = crate_dir.join("tests/cli_run/stats_compat/dram.rs");
     assert!(
         module_path.exists(),
@@ -216,11 +233,6 @@ fn stats_compat_cache_aliases_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
-
-    assert!(
-        root.contains("include!(\"stats_compat/cache.rs\");"),
-        "tests/cli_run/stats_compat.rs must include the focused cache test file"
-    );
 
     let module_path = crate_dir.join("tests/cli_run/stats_compat/cache.rs");
     assert!(
@@ -318,12 +330,6 @@ fn stats_compat_masked_unit_stride_vector_memory_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
     let root = fs::read_to_string(&root_path).unwrap();
-    let include = "include!(\"stats_compat/masked_unit_stride_vector_memory.rs\");";
-
-    assert!(
-        has_exact_trimmed_source_line(&root, include),
-        "tests/cli_run/stats_compat.rs must include the focused masked unit-stride vector memory tests with an exact non-commented include"
-    );
 
     let module_path =
         crate_dir.join("tests/cli_run/stats_compat/masked_unit_stride_vector_memory.rs");
@@ -392,4 +398,32 @@ fn stats_compat_masked_unit_stride_vector_memory_lives_in_focused_module() {
             "tests/cli_run/stats_compat.rs still owns binary family `{family}`"
         );
     }
+}
+
+#[test]
+fn stats_compat_include_policy_rejects_non_literal_top_level_include() {
+    let syntax = parsed_source("synthetic.rs", "include!(concat!(\"nested\", \".rs\"));\n");
+
+    assert_eq!(top_level_include_tokens(&syntax).len(), 1);
+}
+
+fn top_level_include_tokens(syntax: &syn::File) -> Vec<String> {
+    syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Macro(item) = item else {
+                return None;
+            };
+            if !item.mac.path.is_ident("include") {
+                return None;
+            }
+            Some(item.mac.tokens.to_string())
+        })
+        .collect()
+}
+
+fn parsed_source(relative: &str, source: &str) -> syn::File {
+    syn::parse_file(source)
+        .unwrap_or_else(|error| panic!("failed to parse {relative} for ownership: {error}"))
 }

@@ -1,3 +1,8 @@
+use super::selected_branch_predictor_matrix::{
+    selected_branch_predictor_program, selected_branch_predictor_stdout,
+};
+use super::*;
+
 #[test]
 fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     let program = selected_branch_predictor_program();

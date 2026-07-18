@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
     for case in COROUTINE_LIFECYCLE_CASES {
@@ -93,11 +95,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
             "{}: coroutine switch must preserve final memory: baseline={baseline}, switched={switched}",
             case.label
         );
-        assert_coroutine_lifecycle_no_data_address(
-            &switched,
-            WRONG_STORE_ADDRESS,
-            case.label,
-        );
+        assert_coroutine_lifecycle_no_data_address(&switched, WRONG_STORE_ADDRESS, case.label);
 
         let timing_switch = switched
             .pointer("/host_actions/execution_mode_switches")
@@ -125,8 +123,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
             "{}: live coroutine transfer must not be restorable: {transfer}",
             case.label
         );
-        let runtime =
-            transfer_o3_runtime_chunk_with_context(transfer, "cpu0", case.label);
+        let runtime = transfer_o3_runtime_chunk_with_context(transfer, "cpu0", case.label);
         assert_eq!(
             runtime
                 .pointer("/snapshot_rob_entries")
@@ -143,8 +140,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
             "{}: unexpected transferred LSQ snapshot: {runtime}",
             case.label
         );
-        let handoff =
-            transfer_live_data_handoff_chunk_with_context(transfer, "cpu0", case.label);
+        let handoff = transfer_live_data_handoff_chunk_with_context(transfer, "cpu0", case.label);
         for (pointer, expected) in [
             ("/schema_version", 7),
             ("/outstanding_requests", 1),
@@ -197,56 +193,32 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
         };
         let predictor_expectations = [
             (
-                format!(
-                    "/cores/0/branch_predictor/lookups/{}",
-                    case.call_kind
-                ),
+                format!("/cores/0/branch_predictor/lookups/{}", case.call_kind),
                 1,
             ),
             (
-                format!(
-                    "/cores/0/branch_predictor/lookups/{opposite_call_kind}"
-                ),
+                format!("/cores/0/branch_predictor/lookups/{opposite_call_kind}"),
                 0,
             ),
+            ("/cores/0/branch_predictor/lookups/return".to_owned(), 1),
             (
-                "/cores/0/branch_predictor/lookups/return".to_owned(),
+                format!("/cores/0/branch_predictor/committed/{}", case.call_kind),
                 1,
             ),
             (
-                format!(
-                    "/cores/0/branch_predictor/committed/{}",
-                    case.call_kind
-                ),
-                1,
+                format!("/cores/0/branch_predictor/committed/{opposite_call_kind}"),
+                0,
             ),
+            ("/cores/0/branch_predictor/committed/return".to_owned(), 1),
             (
-                format!(
-                    "/cores/0/branch_predictor/committed/{opposite_call_kind}"
-                ),
+                format!("/cores/0/branch_predictor/squashes/{}", case.call_kind),
                 0,
             ),
             (
-                "/cores/0/branch_predictor/committed/return".to_owned(),
-                1,
-            ),
-            (
-                format!(
-                    "/cores/0/branch_predictor/squashes/{}",
-                    case.call_kind
-                ),
+                format!("/cores/0/branch_predictor/squashes/{opposite_call_kind}"),
                 0,
             ),
-            (
-                format!(
-                    "/cores/0/branch_predictor/squashes/{opposite_call_kind}"
-                ),
-                0,
-            ),
-            (
-                "/cores/0/branch_predictor/squashes/return".to_owned(),
-                0,
-            ),
+            ("/cores/0/branch_predictor/squashes/return".to_owned(), 0),
             (
                 "/cores/0/branch_predictor/target_provider/no_target".to_owned(),
                 case.provider_no_target,
@@ -267,24 +239,12 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine() {
                 "/cores/0/branch_predictor/target_provider/total".to_owned(),
                 2,
             ),
-            (
-                "/cores/0/branch_predictor/ras/pushes".to_owned(),
-                2,
-            ),
+            ("/cores/0/branch_predictor/ras/pushes".to_owned(), 2),
             ("/cores/0/branch_predictor/ras/pops".to_owned(), 1),
-            (
-                "/cores/0/branch_predictor/ras/squashes".to_owned(),
-                0,
-            ),
+            ("/cores/0/branch_predictor/ras/squashes".to_owned(), 0),
             ("/cores/0/branch_predictor/ras/used".to_owned(), 1),
-            (
-                "/cores/0/branch_predictor/ras/correct".to_owned(),
-                1,
-            ),
-            (
-                "/cores/0/branch_predictor/ras/incorrect".to_owned(),
-                0,
-            ),
+            ("/cores/0/branch_predictor/ras/correct".to_owned(), 1),
+            ("/cores/0/branch_predictor/ras/incorrect".to_owned(), 0),
             (
                 "/cores/0/branch_predictor/indirect_hits".to_owned(),
                 case.provider_indirect,
@@ -407,11 +367,7 @@ fn rem6_run_o3_same_window_coroutine_checkpoint_boundary() {
             "{}: coroutine checkpoint restore must preserve final memory: baseline={baseline}, restored={restored}",
             case.label
         );
-        assert_coroutine_lifecycle_no_data_address(
-            &restored,
-            WRONG_STORE_ADDRESS,
-            case.label,
-        );
+        assert_coroutine_lifecycle_no_data_address(&restored, WRONG_STORE_ADDRESS, case.label);
         assert_eq!(
             restored
                 .pointer("/host_actions/checkpoint_count")
@@ -435,22 +391,19 @@ fn rem6_run_o3_same_window_coroutine_checkpoint_boundary() {
         let chunks = checkpoint_component_chunks_with_context(cpu0, case.label);
         assert!(
             chunks.iter().all(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str)
-                    != Some("o3-live-data-handoff")
+                chunk.pointer("/name").and_then(Value::as_str) != Some("o3-live-data-handoff")
             }),
             "{}: drained checkpoint must not contain a live-data handoff: {cpu0}",
             case.label
         );
         let runtime_chunk =
             checkpoint_component_chunk_with_context(chunks, "o3-runtime-state", case.label);
-        let runtime = runtime_chunk
-            .pointer("/o3_runtime")
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: missing decoded drained coroutine O3 runtime checkpoint: {cpu0}",
-                    case.label
-                )
-            });
+        let runtime = runtime_chunk.pointer("/o3_runtime").unwrap_or_else(|| {
+            panic!(
+                "{}: missing decoded drained coroutine O3 runtime checkpoint: {cpu0}",
+                case.label
+            )
+        });
         assert_eq!(
             runtime
                 .pointer("/snapshot_rob_entries")
@@ -478,14 +431,7 @@ fn rem6_run_timing_suppresses_o3_same_window_coroutine() {
             &format!("o3-same-window-coroutine-timing-{}", case.label),
             0,
         );
-        let timing = run_coroutine_json(
-            &path,
-            case.memory_system,
-            case.max_tick,
-            "timing",
-            2,
-            &[],
-        );
+        let timing = run_coroutine_json(&path, case.memory_system, case.max_tick, "timing", 2, &[]);
 
         assert_coroutine_lifecycle_stopped_by_host(&timing, case.label);
         assert_coroutine_lifecycle_execution_mode(&timing, "timing", case.label);
@@ -508,7 +454,7 @@ fn rem6_run_timing_suppresses_o3_same_window_coroutine() {
     }
 }
 
-fn assert_coroutine_lifecycle_stopped_by_host(json: &Value, label: &str) {
+pub(super) fn assert_coroutine_lifecycle_stopped_by_host(json: &Value, label: &str) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host"),
@@ -516,7 +462,7 @@ fn assert_coroutine_lifecycle_stopped_by_host(json: &Value, label: &str) {
     );
 }
 
-fn assert_coroutine_lifecycle_execution_mode(json: &Value, expected: &str, label: &str) {
+pub(super) fn assert_coroutine_lifecycle_execution_mode(json: &Value, expected: &str, label: &str) {
     let execution_modes = json
         .pointer("/host_actions/execution_modes")
         .and_then(Value::as_array)
@@ -565,7 +511,7 @@ fn assert_coroutine_lifecycle_final_state(
     );
 }
 
-fn assert_coroutine_lifecycle_rename_maps_to_row_destination(
+pub(super) fn assert_coroutine_lifecycle_rename_maps_to_row_destination(
     json: &Value,
     row_pc: &str,
     register: u64,
@@ -582,9 +528,7 @@ fn assert_coroutine_lifecycle_rename_maps_to_row_destination(
     let destination = row
         .pointer("/destination")
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| {
-            panic!("{label}: integer row {row_pc} should own a destination: {row}")
-        });
+        .unwrap_or_else(|| panic!("{label}: integer row {row_pc} should own a destination: {row}"));
     let rename_entry = json
         .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
         .and_then(Value::as_array)
@@ -615,7 +559,7 @@ fn assert_coroutine_lifecycle_no_data_address(json: &Value, address: &str, label
     }
 }
 
-fn assert_coroutine_lifecycle_runtime_drained(json: &Value, label: &str) {
+pub(super) fn assert_coroutine_lifecycle_runtime_drained(json: &Value, label: &str) {
     for pointer in [
         "/cores/0/o3_runtime/snapshot/rob/count",
         "/cores/0/o3_runtime/snapshot/lsq/count",

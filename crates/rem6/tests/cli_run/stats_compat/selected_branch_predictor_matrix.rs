@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
     let program = nested_branch_speculation_program();
@@ -602,8 +604,7 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
     ] {
         let stdout = selected_branch_predictor_stdout_with_boot_a0(path, predictor, boot_a0);
         let aggregate_repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
-        let removed_youngers =
-            json_u64_field(&stdout, "\"branch_speculation_removed_youngers\":");
+        let removed_youngers = json_u64_field(&stdout, "\"branch_speculation_removed_youngers\":");
         let rollback_count = json_object_u64_field(
             &stdout,
             &format!("\"{family}\":{{"),
@@ -723,17 +724,23 @@ fn rem6_run_stats_use_retired_tage_sc_l_training_for_later_fetch_steering() {
 
     assert_eq!(overlap_predictions, 4, "{overlap}");
     assert_eq!(overlap_repairs, 3, "{overlap}");
-    assert_eq!(overlap_retired_updates, overlap_conditional_branches, "{overlap}");
+    assert_eq!(
+        overlap_retired_updates, overlap_conditional_branches,
+        "{overlap}"
+    );
     assert_eq!(trained_predictions, 5, "{trained}");
     assert_eq!(trained_repairs, 2, "{trained}");
-    assert_eq!(trained_retired_updates, trained_conditional_branches, "{trained}");
+    assert_eq!(
+        trained_retired_updates, trained_conditional_branches,
+        "{trained}"
+    );
     assert!(trained_predictions > overlap_predictions, "{trained}");
     assert!(trained_repairs < overlap_repairs, "{trained}");
     assert!(trained.contains("\"x5\":\"0x7\""));
     assert!(!trained.contains("\"x6\":\"0x1\""));
 }
 
-fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
+pub(super) fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
     selected_branch_predictor_stdout_with_boot_a0(path, predictor, None)
 }
 
@@ -837,7 +844,7 @@ fn indirect_wrong_path_branch_speculation_program() -> Vec<u8> {
     ])
 }
 
-fn selected_branch_predictor_program() -> Vec<u8> {
+pub(super) fn selected_branch_predictor_program() -> Vec<u8> {
     riscv64_program(&[
         i_type(1, 8, 0x0, 8, 0x13), // addi x8, x8, 1
         i_type(3, 0, 0x0, 9, 0x13), // addi x9, x0, 3
@@ -861,15 +868,15 @@ fn tage_sc_l_initial_bias_program() -> Vec<u8> {
 
 fn tage_sc_l_repeated_not_taken_training_program(iterations: i32) -> Vec<u8> {
     riscv64_program(&[
-        i_type(0, 0, 0x0, 8, 0x13),    // addi x8, x0, 0
-        i_type(0, 0, 0x0, 9, 0x13),    // addi x9, x0, 0
+        i_type(0, 0, 0x0, 8, 0x13),           // addi x8, x0, 0
+        i_type(0, 0, 0x0, 9, 0x13),           // addi x9, x0, 0
         i_type(iterations, 0, 0x0, 10, 0x13), // addi x10, x0, iterations
-        b_type(20, 9, 8, 0x1),         // bne x8, x9, wrong_path
-        i_type(-1, 10, 0x0, 10, 0x13), // addi x10, x10, -1
-        b_type(-8, 0, 10, 0x1),        // bne x10, x0, loop
-        0x0070_0293,                   // addi x5, x0, 7
-        0x0000_0073,                   // ecall
-        0x0010_0313,                   // addi x6, x0, 1
-        0x0000_0073,                   // ecall
+        b_type(20, 9, 8, 0x1),                // bne x8, x9, wrong_path
+        i_type(-1, 10, 0x0, 10, 0x13),        // addi x10, x10, -1
+        b_type(-8, 0, 10, 0x1),               // bne x10, x0, loop
+        0x0070_0293,                          // addi x5, x0, 7
+        0x0000_0073,                          // ecall
+        0x0010_0313,                          // addi x6, x0, 1
+        0x0000_0073,                          // ecall
     ])
 }

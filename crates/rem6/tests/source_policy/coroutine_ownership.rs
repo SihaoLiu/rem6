@@ -1,15 +1,19 @@
 use super::*;
 
 const COROUTINE_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine.rs";
-const COROUTINE_INCLUDES: [&str; 6] = [
-    "coroutine/suppression.rs",
-    "coroutine/repair.rs",
-    "coroutine/lifecycle.rs",
-    "coroutine/round_trip.rs",
-    "coroutine/round_trip_repair.rs",
-    "coroutine/round_trip_lifecycle.rs",
+const COROUTINE_MODULES: [(&str, &str); 7] = [
+    ("lifecycle", "coroutine/lifecycle.rs"),
+    ("repair", "coroutine/repair.rs"),
+    ("round_trip", "coroutine/round_trip.rs"),
+    ("round_trip_lifecycle", "coroutine/round_trip_lifecycle.rs"),
+    (
+        "round_trip_lifecycle_assertions",
+        "coroutine/round_trip_lifecycle_assertions.rs",
+    ),
+    ("round_trip_repair", "coroutine/round_trip_repair.rs"),
+    ("suppression", "coroutine/suppression.rs"),
 ];
-const COROUTINE_CONCERNS: [CoroutineConcern; 6] = [
+const COROUTINE_CONCERNS: [CoroutineConcern; 7] = [
     CoroutineConcern {
         relative: "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/suppression.rs",
         anchors: &[
@@ -54,6 +58,11 @@ const COROUTINE_CONCERNS: [CoroutineConcern; 6] = [
     },
     CoroutineConcern {
         relative:
+            "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_lifecycle_assertions.rs",
+        anchors: &[],
+    },
+    CoroutineConcern {
+        relative:
             "tests/cli_run/m5_host_actions/o3/predicted_control/coroutine/round_trip_lifecycle.rs",
         anchors: &[
             "rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip",
@@ -70,14 +79,39 @@ struct CoroutineConcern {
 }
 
 #[test]
-fn coroutine_cli_evidence_uses_focused_same_namespace_includes() {
+fn coroutine_cli_evidence_uses_focused_modules() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join(COROUTINE_ROOT)).unwrap();
-    let includes = coroutine_include_paths(COROUTINE_ROOT, &source);
-    assert_eq!(
-        includes, COROUTINE_INCLUDES,
-        "{COROUTINE_ROOT} must contain exactly the focused same-namespace includes in order"
+    let syntax = parsed_source(COROUTINE_ROOT, &source);
+    let includes = top_level_include_tokens(&syntax);
+    assert!(
+        includes.is_empty(),
+        "{COROUTINE_ROOT} must not inline child sources with include!: {includes:?}"
     );
+    let modules = syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Mod(module) = item else {
+                return None;
+            };
+            Some(module.ident.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        modules,
+        COROUTINE_MODULES
+            .iter()
+            .map(|(module, _)| module.to_string())
+            .collect::<Vec<_>>(),
+        "{COROUTINE_ROOT} must declare exactly the focused child modules in order"
+    );
+    for (module, path) in COROUTINE_MODULES {
+        assert!(
+            module_has_path_attribute(&source, module, path),
+            "{COROUTINE_ROOT} must declare `{module}` from `{path}`"
+        );
+    }
     assert!(line_count(&root.join(COROUTINE_ROOT)) <= 500);
 
     let root_functions = top_level_function_names(COROUTINE_ROOT, &source);
@@ -125,10 +159,17 @@ fn coroutine_cli_evidence_uses_focused_same_namespace_includes() {
     }
 }
 
-fn coroutine_include_paths(relative: &str, source: &str) -> Vec<String> {
-    parsed_source(relative, source)
+#[test]
+fn coroutine_include_policy_rejects_non_literal_top_level_include() {
+    let syntax = parsed_source("synthetic.rs", "include!(concat!(\"nested\", \".rs\"));\n");
+
+    assert_eq!(top_level_include_tokens(&syntax).len(), 1);
+}
+
+fn top_level_include_tokens(syntax: &syn::File) -> Vec<String> {
+    syntax
         .items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
             let syn::Item::Macro(item) = item else {
                 return None;
@@ -136,9 +177,7 @@ fn coroutine_include_paths(relative: &str, source: &str) -> Vec<String> {
             if !item.mac.path.is_ident("include") {
                 return None;
             }
-            let literal = syn::parse2::<syn::LitStr>(item.mac.tokens).ok()?;
-            let path = literal.value();
-            path.starts_with("coroutine/").then_some(path)
+            Some(item.mac.tokens.to_string())
         })
         .collect()
 }

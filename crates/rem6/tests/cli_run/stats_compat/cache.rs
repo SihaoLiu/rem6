@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn rem6_run_text_stats_omit_ambiguous_gem5_l1_cache_aliases_for_multicore() {
     let path = gem5_l1_cache_alias_binary("gem5-l1-cache-aliases-multicore");

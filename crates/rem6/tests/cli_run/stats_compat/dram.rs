@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");

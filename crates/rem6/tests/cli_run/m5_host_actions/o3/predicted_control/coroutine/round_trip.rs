@@ -1,24 +1,24 @@
-use std::path::PathBuf;
+use {super::*, std::path::PathBuf};
 
 #[derive(Clone, Copy)]
-struct CoroutineRoundTripCase {
-    label: &'static str,
-    binary: fn(&str, usize) -> PathBuf,
-    memory_system: &'static str,
-    max_tick: u64,
-    load_pc: &'static str,
-    call_pc: &'static str,
-    coroutine_pc: &'static str,
-    return_pc: &'static str,
-    success_store_pc: &'static str,
-    call_kind: &'static str,
-    call_destination: u8,
-    coroutine_destination: u8,
-    final_x1: u64,
-    final_x5: u64,
-    memory_hex: &'static str,
-    provider_no_target: u64,
-    provider_indirect: u64,
+pub(super) struct CoroutineRoundTripCase {
+    pub(super) label: &'static str,
+    pub(super) binary: fn(&str, usize) -> PathBuf,
+    pub(super) memory_system: &'static str,
+    pub(super) max_tick: u64,
+    pub(super) load_pc: &'static str,
+    pub(super) call_pc: &'static str,
+    pub(super) coroutine_pc: &'static str,
+    pub(super) return_pc: &'static str,
+    pub(super) success_store_pc: &'static str,
+    pub(super) call_kind: &'static str,
+    pub(super) call_destination: u8,
+    pub(super) coroutine_destination: u8,
+    pub(super) final_x1: u64,
+    pub(super) final_x5: u64,
+    pub(super) memory_hex: &'static str,
+    pub(super) provider_no_target: u64,
+    pub(super) provider_indirect: u64,
     transport: CoroutineTransportExpected,
 }
 
@@ -37,24 +37,27 @@ struct CoroutineTransportExpected {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct CoroutineMemoryTraceSnapshot {
-    kind_counts: [usize; 4],
-    first_request: u64,
-    first_request_kind_counts: [usize; 4],
-    request_agents: Vec<u64>,
-    routes: Vec<u64>,
-    response_latencies: Vec<u64>,
+pub(super) struct CoroutineMemoryTraceSnapshot {
+    pub(super) kind_counts: [usize; 4],
+    pub(super) first_request: u64,
+    pub(super) first_request_kind_counts: [usize; 4],
+    pub(super) request_agents: Vec<u64>,
+    pub(super) routes: Vec<u64>,
+    pub(super) response_latencies: Vec<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct CoroutineTransportSnapshot<'a> {
-    route: u64,
-    source: &'a str,
-    aggregate: [u64; 6],
-    per_route: [u64; 6],
+pub(super) struct CoroutineTransportSnapshot<'a> {
+    pub(super) route: u64,
+    pub(super) source: &'a str,
+    pub(super) aggregate: [u64; 6],
+    pub(super) per_route: [u64; 6],
 }
 
-fn coroutine_memory_trace_snapshot(json: &Value, context: &str) -> CoroutineMemoryTraceSnapshot {
+pub(super) fn coroutine_memory_trace_snapshot(
+    json: &Value,
+    context: &str,
+) -> CoroutineMemoryTraceSnapshot {
     let records = json
         .pointer("/debug/memory_trace")
         .and_then(Value::as_array)
@@ -87,10 +90,14 @@ fn coroutine_memory_trace_snapshot(json: &Value, context: &str) -> CoroutineMemo
         if request == snapshot.first_request {
             snapshot.first_request_kind_counts[index] += 1;
         }
-        snapshot.request_agents.push(event_u64(record, "request_agent"));
+        snapshot
+            .request_agents
+            .push(event_u64(record, "request_agent"));
         snapshot.routes.push(event_u64(record, "route"));
         if index == 3 {
-            snapshot.response_latencies.push(event_u64(record, "response_latency_ticks"));
+            snapshot
+                .response_latencies
+                .push(event_u64(record, "response_latency_ticks"));
         }
     }
     snapshot.request_agents.sort_unstable();
@@ -100,7 +107,7 @@ fn coroutine_memory_trace_snapshot(json: &Value, context: &str) -> CoroutineMemo
     snapshot
 }
 
-fn coroutine_transport_snapshot<'a>(
+pub(super) fn coroutine_transport_snapshot<'a>(
     json: &'a Value,
     context: &str,
 ) -> CoroutineTransportSnapshot<'a> {
@@ -111,7 +118,11 @@ fn coroutine_transport_snapshot<'a>(
         .pointer("/routes")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("{context}: missing data transport routes: {transport}"));
-    assert_eq!(routes.len(), 1, "{context}: expected one route: {transport}");
+    assert_eq!(
+        routes.len(),
+        1,
+        "{context}: expected one route: {transport}"
+    );
     let route = &routes[0];
     let counts = |node: &Value| {
         [
@@ -135,7 +146,7 @@ fn coroutine_transport_snapshot<'a>(
     }
 }
 
-const COROUTINE_ROUND_TRIP_CASES: [CoroutineRoundTripCase; 2] = [
+pub(super) const COROUTINE_ROUND_TRIP_CASES: [CoroutineRoundTripCase; 2] = [
     CoroutineRoundTripCase {
         label: "forward-direct",
         binary: direct_coroutine_round_trip_binary,
@@ -273,7 +284,6 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         3,
         &DIRECT_WIDTH_ARGS,
     );
-
     assert_stopped_by_host(&completed);
     assert_eq!(
         register_value(&completed, "x1"),
@@ -294,7 +304,6 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         case.label
     );
     assert_no_data_address(&completed, WRONG_STORE_ADDRESS);
-
     let load = event_at_pc(&completed, case.load_pc);
     let call = event_at_pc(&completed, case.call_pc);
     let coroutine = event_at_pc(&completed, case.coroutine_pc);
@@ -413,10 +422,7 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         case.label
     );
     let lsq_entry = &lsq_entries[0];
-    for (pointer, expected) in [
-        ("/sequence", Some(load_sequence)),
-        ("/bytes", Some(4)),
-    ] {
+    for (pointer, expected) in [("/sequence", Some(load_sequence)), ("/bytes", Some(4))] {
         assert_eq!(
             lsq_entry.pointer(pointer).and_then(Value::as_u64),
             expected,
@@ -479,55 +485,34 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
     };
     let predictor_expectations = [
         (
-            format!(
-                "/cores/0/branch_predictor/lookups/{}",
-                case.call_kind
-            ),
+            format!("/cores/0/branch_predictor/lookups/{}", case.call_kind),
             1,
         ),
         (
             format!("/cores/0/branch_predictor/lookups/{opposite_call_kind}"),
             0,
         ),
+        ("/cores/0/branch_predictor/lookups/return".to_owned(), 2),
         (
-            "/cores/0/branch_predictor/lookups/return".to_owned(),
-            2,
-        ),
-        (
-            format!(
-                "/cores/0/branch_predictor/committed/{}",
-                case.call_kind
-            ),
+            format!("/cores/0/branch_predictor/committed/{}", case.call_kind),
             1,
         ),
         (
             format!("/cores/0/branch_predictor/committed/{opposite_call_kind}"),
             0,
         ),
+        ("/cores/0/branch_predictor/committed/return".to_owned(), 2),
         (
-            "/cores/0/branch_predictor/committed/return".to_owned(),
-            2,
-        ),
-        (
-            format!(
-                "/cores/0/branch_predictor/squashes/{}",
-                case.call_kind
-            ),
+            format!("/cores/0/branch_predictor/squashes/{}", case.call_kind),
             0,
         ),
         (
             format!("/cores/0/branch_predictor/squashes/{opposite_call_kind}"),
             0,
         ),
+        ("/cores/0/branch_predictor/squashes/return".to_owned(), 0),
         (
-            "/cores/0/branch_predictor/squashes/return".to_owned(),
-            0,
-        ),
-        (
-            format!(
-                "/cores/0/branch_predictor/mispredicted/{}",
-                case.call_kind
-            ),
+            format!("/cores/0/branch_predictor/mispredicted/{}", case.call_kind),
             0,
         ),
         (
@@ -608,10 +593,7 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         ("responses", case.transport.responses),
         ("response_arrivals", case.transport.response_arrivals),
         ("round_trip_ticks", case.transport.round_trip_ticks),
-        (
-            "max_round_trip_ticks",
-            case.transport.max_round_trip_ticks,
-        ),
+        ("max_round_trip_ticks", case.transport.max_round_trip_ticks),
     ] {
         let pointer = format!("/memory_resources/transport/data/{field}");
         assert_eq!(
@@ -635,10 +617,7 @@ fn assert_coroutine_round_trip_commits(case: CoroutineRoundTripCase) {
         ("responses", case.transport.responses),
         ("response_arrivals", case.transport.response_arrivals),
         ("round_trip_ticks", case.transport.round_trip_ticks),
-        (
-            "max_round_trip_ticks",
-            case.transport.max_round_trip_ticks,
-        ),
+        ("max_round_trip_ticks", case.transport.max_round_trip_ticks),
     ];
     for (field, expected) in transport_counters {
         let pointer = format!("/{field}");

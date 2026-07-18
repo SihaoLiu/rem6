@@ -1,3 +1,5 @@
+use super::*;
+
 fn older_branch_coroutine_binary(name: &str) -> std::path::PathBuf {
     let mut words = vec![m5op(M5_SWITCH_CPU)];
     let data_auipc_pc = (words.len() * 4) as i32;
@@ -221,9 +223,7 @@ fn rem6_run_o3_older_branch_discards_same_window_coroutine_chain() {
 
 #[test]
 fn rem6_run_o3_older_branch_discards_same_window_indirect_coroutine_chain() {
-    let path = older_branch_indirect_coroutine_binary(
-        "o3-older-branch-indirect-coroutine-chain",
-    );
+    let path = older_branch_indirect_coroutine_binary("o3-older-branch-indirect-coroutine-chain");
     let completed = run_coroutine_json(
         &path,
         "cache-fabric-dram",
@@ -512,9 +512,8 @@ fn rem6_run_o3_same_window_coroutine_wrong_target_repairs_descendants() {
 
 #[test]
 fn rem6_run_o3_same_window_indirect_coroutine_wrong_target_repairs_descendants() {
-    let path = wrong_target_indirect_coroutine_binary(
-        "o3-same-window-indirect-coroutine-wrong-target",
-    );
+    let path =
+        wrong_target_indirect_coroutine_binary("o3-same-window-indirect-coroutine-wrong-target");
     let completed = run_coroutine_json(&path, "direct", 2_500, "detailed", 2, &DIRECT_WIDTH_ARGS);
 
     assert_stopped_by_host(&completed);
@@ -578,9 +577,7 @@ fn rem6_run_o3_same_window_indirect_coroutine_wrong_target_repairs_descendants()
         );
     }
     assert_eq!(
-        coroutine
-            .pointer("/branch_repair")
-            .and_then(Value::as_str),
+        coroutine.pointer("/branch_repair").and_then(Value::as_str),
         Some("wrong_target")
     );
     assert_eq!(

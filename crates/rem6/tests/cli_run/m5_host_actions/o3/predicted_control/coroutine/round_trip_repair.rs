@@ -1,9 +1,7 @@
-fn push_round_trip_repair_word(
-    words: &mut Vec<u32>,
-    expected_pc: usize,
-    word: u32,
-    fixture: &str,
-) {
+use super::round_trip::COROUTINE_ROUND_TRIP_CASES;
+use super::*;
+
+fn push_round_trip_repair_word(words: &mut Vec<u32>, expected_pc: usize, word: u32, fixture: &str) {
     assert_eq!(
         words.len() * 4,
         expected_pc,
@@ -41,24 +39,14 @@ fn middle_round_trip_repair_binary(name: &str) -> std::path::PathBuf {
         i_type(0, 5, 0x0, 0, 0x67),
         "middle repair",
     );
-    push_round_trip_repair_word(
-        &mut words,
-        0x1c,
-        s_type(8, 7, 18, 0b010),
-        "middle repair",
-    );
+    push_round_trip_repair_word(&mut words, 0x1c, s_type(8, 7, 18, 0b010), "middle repair");
     push_round_trip_repair_word(
         &mut words,
         0x20,
         i_type(24, 1, 0x0, 5, 0x67),
         "middle repair",
     );
-    push_round_trip_repair_word(
-        &mut words,
-        0x24,
-        s_type(4, 5, 18, 0b010),
-        "middle repair",
-    );
+    push_round_trip_repair_word(&mut words, 0x24, s_type(4, 5, 18, 0b010), "middle repair");
     push_round_trip_repair_word(&mut words, 0x28, m5op(M5_EXIT), "middle repair");
     push_round_trip_repair_word(&mut words, 0x2c, m5op(M5_FAIL), "middle repair");
     push_round_trip_repair_word(
@@ -106,31 +94,16 @@ fn terminal_round_trip_direction_only_binary(name: &str) -> std::path::PathBuf {
         i_type(8, 5, 0x0, 0, 0x67),
         "terminal repair",
     );
-    push_round_trip_repair_word(
-        &mut words,
-        0x1c,
-        s_type(8, 7, 18, 0b010),
-        "terminal repair",
-    );
+    push_round_trip_repair_word(&mut words, 0x1c, s_type(8, 7, 18, 0b010), "terminal repair");
     push_round_trip_repair_word(
         &mut words,
         0x20,
         i_type(0, 1, 0x0, 5, 0x67),
         "terminal repair",
     );
-    push_round_trip_repair_word(
-        &mut words,
-        0x24,
-        s_type(8, 7, 18, 0b010),
-        "terminal repair",
-    );
+    push_round_trip_repair_word(&mut words, 0x24, s_type(8, 7, 18, 0b010), "terminal repair");
     push_round_trip_repair_word(&mut words, 0x28, m5op(M5_FAIL), "terminal repair");
-    push_round_trip_repair_word(
-        &mut words,
-        0x2c,
-        s_type(4, 5, 18, 0b010),
-        "terminal repair",
-    );
+    push_round_trip_repair_word(&mut words, 0x2c, s_type(4, 5, 18, 0b010), "terminal repair");
     push_round_trip_repair_word(&mut words, 0x30, m5op(M5_EXIT), "terminal repair");
     push_round_trip_repair_word(&mut words, 0x34, m5op(M5_FAIL), "terminal repair");
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
@@ -158,8 +131,7 @@ fn assert_round_trip_no_data_address(json: &Value, label: &str, address: &str) {
 }
 
 fn round_trip_fetches_at_pc<'a>(json: &'a Value, label: &str, pc: &str) -> Vec<&'a Value> {
-    json
-        .pointer("/debug/fetch_trace")
+    json.pointer("/debug/fetch_trace")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("{label}: missing fetch trace: {json}"))
         .iter()
@@ -585,10 +557,7 @@ fn rem6_run_o3_same_window_coroutine_round_trip_terminal_return_repairs_directio
             "/cores/0/o3_runtime/branch_repair/direction_only_kind/return",
             1,
         ),
-        (
-            "/cores/0/o3_runtime/branch_repair/targetless_mismatches",
-            0,
-        ),
+        ("/cores/0/o3_runtime/branch_repair/targetless_mismatches", 0),
         ("/cores/0/o3_runtime/branch_repair/wrong_targets", 0),
         (
             "/cores/0/o3_runtime/branch_repair/wrong_target_kind/return",

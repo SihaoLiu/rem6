@@ -1,8 +1,13 @@
-include!("stats_compat/cache.rs");
-include!("stats_compat/dram.rs");
-include!("stats_compat/in_order_branch_prediction_matrix.rs");
-include!("stats_compat/masked_unit_stride_vector_memory.rs");
-include!("stats_compat/selected_branch_predictor_matrix.rs");
+#[path = "stats_compat/cache.rs"]
+mod cache;
+#[path = "stats_compat/dram.rs"]
+mod dram;
+#[path = "stats_compat/in_order_branch_prediction_matrix.rs"]
+mod in_order_branch_prediction_matrix;
+#[path = "stats_compat/masked_unit_stride_vector_memory.rs"]
+mod masked_unit_stride_vector_memory;
+#[path = "stats_compat/selected_branch_predictor_matrix.rs"]
+mod selected_branch_predictor_matrix;
 
 use std::{env, process::Command};
 
@@ -256,7 +261,7 @@ fn rem6_run_json_stats_omit_text_only_gem5_cpu_rate_aliases() {
 
 #[test]
 fn rem6_run_json_stats_emit_gem5_multicore_branch_prediction_aliases_without_ambiguous_cpu_path() {
-    let program = selected_branch_predictor_program();
+    let program = selected_branch_predictor_matrix::selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("gem5-multicore-branch-pred-json-aliases", &elf);
 

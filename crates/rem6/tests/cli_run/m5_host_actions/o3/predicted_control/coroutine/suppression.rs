@@ -1,3 +1,5 @@
+use super::*;
+
 fn assert_terminal_coroutine_frontend(
     resident: &Value,
     call_kind: &str,
@@ -314,9 +316,8 @@ fn rem6_run_o3_same_window_overwritten_coroutine_source_stays_terminal() {
 
 #[test]
 fn rem6_run_o3_same_window_indirect_overwritten_coroutine_source_stays_terminal() {
-    let path = overwritten_indirect_coroutine_binary(
-        "o3-same-window-indirect-overwritten-coroutine",
-    );
+    let path =
+        overwritten_indirect_coroutine_binary("o3-same-window-indirect-overwritten-coroutine");
     let completed = run_coroutine_json(
         &path,
         "cache-fabric-dram",
@@ -388,12 +389,7 @@ fn rem6_run_o3_same_window_indirect_overwritten_coroutine_source_stays_terminal(
     );
     assert_eq!(
         resident_rob_pcs(&resident),
-        [
-            "0x80000014",
-            "0x80000018",
-            "0x80000024",
-            "0x80000028",
-        ],
+        ["0x80000014", "0x80000018", "0x80000024", "0x80000028",],
         "unexpected reverse overwritten-coroutine resident ROB at tick {live_tick}: {resident}"
     );
     assert_eq!(
