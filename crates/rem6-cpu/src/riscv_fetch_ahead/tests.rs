@@ -27,6 +27,7 @@ mod btb;
 mod checkpoint;
 mod data_access_result;
 mod detailed_o3_control;
+mod producer_forwarded_return;
 mod selected;
 mod speculative_history;
 

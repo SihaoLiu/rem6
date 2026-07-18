@@ -8,6 +8,9 @@ const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES: usize = 150;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES: usize = 180;
+const MAX_O3_PRODUCER_FORWARDED_RETURN_LINES: usize = 240;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -659,6 +662,17 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
         assert!(
             driver.contains(&format!("pub(crate) fn {helper}(")),
             "src/riscv_fetch_ahead/driver.rs must own `{helper}`"
+        );
+    }
+    let decision_filter = rust_function_definition(&driver, "producer_forwarded_control_decision")
+        .expect("missing producer_forwarded_control_decision definition");
+    for marker in [
+        "producer_forwarded_control_target.is_some()",
+        "producer_forwarded_return_descendant.is_some()",
+    ] {
+        assert!(
+            decision_filter.contains(marker),
+            "the fetch-only decision filter must require carried authority marker `{marker}`"
         );
     }
     assert_eq!(
@@ -1464,6 +1478,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let root_path = crate_dir.join("src/o3_runtime_control_window_tests.rs");
     let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
     let same_link_path = crate_dir.join("src/o3_runtime_control_window_tests/same_link.rs");
+    let same_link_return_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/same_link_return.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let root_code = rust_code_without_comments_and_literals(&root);
     let root_include_lines = include_macro_lines(&root);
@@ -1489,6 +1505,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         ),
         1,
         "control-window same-link tests must have exactly one attached path-owned child declaration"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/same_link_return.rs",
+            "same_link_return",
+        ),
+        1,
+        "control-window same-link return tests must have exactly one attached path-owned child declaration"
     );
     assert!(
         line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
@@ -1569,6 +1594,131 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         !root_code.contains(same_link_anchor),
         "src/o3_runtime_control_window_tests.rs still owns same-link test `{same_link_anchor}`"
     );
+
+    assert!(
+        same_link_return_path.exists(),
+        "producer-forwarded return tests belong in src/o3_runtime_control_window_tests/same_link_return.rs"
+    );
+    let same_link_return = fs::read_to_string(&same_link_return_path).unwrap();
+    let same_link_return_code = rust_code_without_comments_and_literals(&same_link_return);
+    assert!(
+        include_macro_lines(&same_link_return).is_empty(),
+        "same_link_return.rs must not inline hidden test fragments"
+    );
+    assert!(
+        line_count(&same_link_return_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES,
+        "same_link_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES} lines"
+    );
+    for anchor in [
+        "producer_forwarded_same_link_call_appends_target_return",
+        "producer_forwarded_same_link_call_rejects_nonordinary_target_controls",
+        "producer_forwarded_same_link_call_appends_return_after_data_head_retires",
+    ] {
+        assert!(
+            production_defines_exact_function(&same_link_return_code, anchor),
+            "missing exact test definition `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, anchor),
+            "root still owns `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn producer_forwarded_return_authority_stays_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime_root_path = crate_dir.join("src/o3_runtime.rs");
+    let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_return.rs");
+    let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
+    let fetch_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return.rs");
+    let runtime_root = fs::read_to_string(&runtime_root_path).unwrap();
+    let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
+
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime_root,
+            "o3_runtime_producer_forwarded_return.rs",
+            "o3_runtime_producer_forwarded_return",
+        ),
+        1,
+        "the O3 root must attach the focused producer-forwarded return owner exactly once"
+    );
+    assert!(runtime_path.exists());
+    assert!(
+        line_count(&runtime_path) <= MAX_O3_PRODUCER_FORWARDED_RETURN_LINES,
+        "o3_runtime_producer_forwarded_return.rs exceeds {MAX_O3_PRODUCER_FORWARDED_RETURN_LINES} lines"
+    );
+    let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
+    assert!(production_defines_exact_named_item(
+        &runtime,
+        "struct",
+        "O3ProducerForwardedReturnDescendant",
+    ));
+    for anchor in [
+        "producer_forwarded_same_link_control_target_after_head_retire",
+        "producer_forwarded_same_link_return_descendant",
+    ] {
+        assert!(
+            production_defines_exact_function(&runtime, anchor),
+            "missing runtime owner `{anchor}`"
+        );
+    }
+    let mut escaped_owners = Vec::new();
+    for path in rust_source_files(&crate_dir.join("src")) {
+        if path == runtime_path || is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap()) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        if production_defines_exact_named_item(
+            &source,
+            "struct",
+            "O3ProducerForwardedReturnDescendant",
+        ) || production_defines_exact_function(
+            &source,
+            "producer_forwarded_same_link_control_target_after_head_retire",
+        ) || production_defines_exact_function(
+            &source,
+            "producer_forwarded_same_link_return_descendant",
+        ) {
+            escaped_owners.push(path.strip_prefix(crate_dir).unwrap().display().to_string());
+        }
+    }
+    assert!(
+        escaped_owners.is_empty(),
+        "producer-forwarded return authority escaped its focused owner: {}",
+        escaped_owners.join(", ")
+    );
+
+    let fetch_tests_root_code = rust_code_without_comments_and_literals(&fetch_tests_root);
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_return;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach producer_forwarded_return exactly once"
+    );
+    assert!(fetch_test_path.exists());
+    assert!(
+        line_count(&fetch_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES,
+        "producer_forwarded_return.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES} lines"
+    );
+    let fetch_test =
+        rust_code_without_comments_and_literals(&fs::read_to_string(&fetch_test_path).unwrap());
+    for anchor in [
+        "pending_data_gate_admits_producer_forwarded_call_target_return",
+        "producer_forwarded_return_apply_fails_closed_after_descendant_invalidation",
+        "producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes",
+        "branch_lookahead_one_does_not_stage_producer_forwarded_return",
+    ] {
+        assert!(
+            production_defines_exact_function(&fetch_test, anchor),
+            "missing exact fetch test definition `{anchor}`"
+        );
+    }
 }
 
 #[test]
@@ -1680,6 +1830,68 @@ fn production_defines_exact_function(source: &str, name: &str) -> bool {
     false
 }
 
+fn production_defines_exact_named_item(source: &str, keyword: &str, name: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == keyword {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((item_name, name_end)) = rust_identifier_at(&chars, name_start) {
+                if item_name == name {
+                    let after_name = skip_rust_whitespace(&chars, name_end);
+                    if matches!(chars.get(after_name), Some('<' | '{' | '(' | ';')) {
+                        return true;
+                    }
+                }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn rust_function_definition(source: &str, name: &str) -> Option<String> {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "fn" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            let Some((function_name, name_end)) = rust_identifier_at(&chars, name_start) else {
+                index = end;
+                continue;
+            };
+            if function_name == name {
+                let Some(open) =
+                    chars
+                        .iter()
+                        .enumerate()
+                        .skip(name_end)
+                        .find_map(|(index, character)| match character {
+                            '{' => Some(index),
+                            ';' => None,
+                            _ => None,
+                        })
+                else {
+                    return None;
+                };
+                let close = matching_delimiter(&chars, open, '{', '}')?;
+                return Some(chars[index..=close].iter().collect());
+            }
+        }
+        index = end;
+    }
+    None
+}
+
 #[test]
 fn o3_store_forwarding_policy_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1772,6 +1984,7 @@ fn block_comment_owner() {}
 */
 let another_production_value = 2; /* fn inline_block_comment_owner() {} */
 fn production_before_inline_block() {} /* removed */ fn production_after_inline_block() {}
+fn lifetime_owner<'a>(value: &'a str) -> &'a str { value }
 #[cfg(test)]
 const TEST_ONLY_BRACE: &str = "{";
 const PRODUCTION_AFTER_CONST: &str = "production";
@@ -1785,6 +1998,36 @@ fn test_only_owner() {
     let text = "{ ignored brace }";
 }
 fn production_owner() {}
+#[cfg(test)]
+fn inline_test_owner() {}
+fn production_after_inline_test() {}
+#[cfg(test)]
+fn multiline_test_owner(
+    value: u64,
+) {
+    let _ = value;
+    fn multiline_test_body_owner() {}
+}
+fn production_after_multiline_test() {}
+#[cfg(test)]
+fn where_test_owner<T>()
+where
+    T: Copy,
+{
+    fn where_test_body_owner() {}
+}
+fn production_after_where_test() {}
+#[cfg(test)]
+const TEST_ONLY_VALUES: &[u64] = &[
+    TEST_ONLY_FIRST_ELEMENT,
+    TEST_ONLY_SECOND_ELEMENT,
+];
+fn production_after_multiline_const() {}
+#[cfg(test)]
+fn char_literal_test_owner() {
+    let _ = '{';
+}
+fn production_after_char_literal_test() {}
 #[cfg(test)]
 mod tests {
     fn nested_test_owner() {}
@@ -1804,6 +2047,14 @@ fn production_after_tests() {}
         "TEST_ONLY_BRACE",
         "test_only",
         "test_only_owner",
+        "inline_test_owner",
+        "multiline_test_owner",
+        "multiline_test_body_owner",
+        "where_test_owner",
+        "where_test_body_owner",
+        "TEST_ONLY_VALUES",
+        "TEST_ONLY_SECOND_ELEMENT",
+        "char_literal_test_owner",
         "nested_test_owner",
     ] {
         assert!(
@@ -1815,6 +2066,12 @@ fn production_after_tests() {}
         "production: u64",
         "PRODUCTION_AFTER_CONST",
         "production_owner",
+        "lifetime_owner<'a>",
+        "production_after_inline_test",
+        "production_after_multiline_test",
+        "production_after_where_test",
+        "production_after_multiline_const",
+        "production_after_char_literal_test",
         "production_after_inline_block",
         "production_after_tests",
     ] {
@@ -2092,22 +2349,53 @@ fn production_rust_source(source: &str) -> String {
             continue;
         }
         if trimmed == "#[cfg(test)]" {
-            let item_indent = line.len() - trimmed.len();
             index += 1;
             while index < lines.len() && lines[index].trim().is_empty() {
                 index += 1;
             }
-            let mut opened = false;
+            let termination = cfg_test_item_termination(&lines, index);
+            let mut parenthesis_depth = 0isize;
+            let mut bracket_depth = 0isize;
+            let mut brace_depth = 0isize;
+            let mut angle_depth = 0isize;
+            let mut opened_brace = false;
             while index < lines.len() {
                 let item = lines[index];
                 let item_trimmed = item.trim();
-                let single_line =
-                    !opened && (item_trimmed.ends_with(';') || item_trimmed.ends_with(','));
-                opened |= item_trimmed.contains('{');
-                let indent = item.len() - item.trim_start().len();
-                let closed = opened && indent == item_indent && item_trimmed == "}";
+                for character in item.chars() {
+                    match character {
+                        '(' => parenthesis_depth += 1,
+                        ')' => parenthesis_depth -= 1,
+                        '[' => bracket_depth += 1,
+                        ']' => bracket_depth -= 1,
+                        '{' => {
+                            brace_depth += 1;
+                            opened_brace = true;
+                        }
+                        '}' => brace_depth -= 1,
+                        '<' => angle_depth += 1,
+                        '>' if angle_depth > 0 => angle_depth -= 1,
+                        _ => {}
+                    }
+                }
+                let delimiters_closed =
+                    parenthesis_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+                let terminated = match termination {
+                    CfgTestItemTermination::Brace => {
+                        (opened_brace && brace_depth == 0)
+                            || (delimiters_closed && item_trimmed.ends_with(';'))
+                    }
+                    CfgTestItemTermination::Semicolon => {
+                        delimiters_closed && item_trimmed.ends_with(';')
+                    }
+                    CfgTestItemTermination::Comma => {
+                        delimiters_closed
+                            && (item_trimmed.ends_with(';')
+                                || (angle_depth == 0 && item_trimmed.ends_with(',')))
+                    }
+                };
                 index += 1;
-                if single_line || closed {
+                if terminated {
                     break;
                 }
             }
@@ -2118,6 +2406,64 @@ fn production_rust_source(source: &str) -> String {
         index += 1;
     }
     production
+}
+
+#[derive(Clone, Copy)]
+enum CfgTestItemTermination {
+    Brace,
+    Semicolon,
+    Comma,
+}
+
+fn cfg_test_item_termination(lines: &[&str], start: usize) -> CfgTestItemTermination {
+    let source = lines[start..].join("\n");
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut saw_const = false;
+    while index < chars.len() {
+        index = skip_rust_whitespace(&chars, index);
+        if chars.get(index) == Some(&'#') {
+            let attribute = skip_rust_whitespace(&chars, index + 1);
+            if chars.get(attribute) == Some(&'[') {
+                index = matching_delimiter(&chars, attribute, '[', ']')
+                    .map(|close| close + 1)
+                    .unwrap_or(chars.len());
+                continue;
+            }
+        }
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            return match chars.get(index) {
+                Some('{') => CfgTestItemTermination::Brace,
+                _ if saw_const => CfgTestItemTermination::Semicolon,
+                _ => CfgTestItemTermination::Comma,
+            };
+        };
+        match identifier.as_str() {
+            "pub" => {
+                index = skip_rust_whitespace(&chars, end);
+                if chars.get(index) == Some(&'(') {
+                    index = matching_delimiter(&chars, index, '(', ')')
+                        .map(|close| close + 1)
+                        .unwrap_or(chars.len());
+                }
+            }
+            "async" | "unsafe" | "default" | "auto" => index = end,
+            "const" => {
+                saw_const = true;
+                index = end;
+            }
+            "fn" | "mod" | "struct" | "enum" | "union" | "trait" | "impl" | "extern"
+            | "macro_rules" | "macro" | "if" | "match" | "loop" | "while" | "for" => {
+                return CfgTestItemTermination::Brace
+            }
+            "static" | "type" | "use" | "let" => {
+                return CfgTestItemTermination::Semicolon;
+            }
+            _ if saw_const => return CfgTestItemTermination::Semicolon,
+            _ => return CfgTestItemTermination::Comma,
+        }
+    }
+    CfgTestItemTermination::Semicolon
 }
 
 fn rust_code_without_comments_and_literals(source: &str) -> String {
@@ -2182,6 +2528,15 @@ fn rust_code_without_comments_and_literals(source: &str) -> String {
                 continue;
             }
         }
+        if chars[index] == '\'' {
+            if let Some(end) = rust_char_literal_end(&chars, index) {
+                while index < end {
+                    push_rust_blank(&mut code, chars[index]);
+                    index += 1;
+                }
+                continue;
+            }
+        }
         if chars[index] == '"' {
             push_rust_blank(&mut code, chars[index]);
             index += 1;
@@ -2204,6 +2559,53 @@ fn rust_code_without_comments_and_literals(source: &str) -> String {
         index += 1;
     }
     code
+}
+
+fn rust_char_literal_end(chars: &[char], start: usize) -> Option<usize> {
+    if chars.get(start) != Some(&'\'') {
+        return None;
+    }
+    let mut index = start + 1;
+    let character = *chars.get(index)?;
+    if character == '\\' {
+        index += 1;
+        match *chars.get(index)? {
+            'x' => {
+                if !chars.get(index + 1)?.is_ascii_hexdigit()
+                    || !chars.get(index + 2)?.is_ascii_hexdigit()
+                {
+                    return None;
+                }
+                index += 3;
+            }
+            'u' => {
+                index += 1;
+                if chars.get(index) != Some(&'{') {
+                    return None;
+                }
+                index += 1;
+                let digits_start = index;
+                while chars
+                    .get(index)
+                    .is_some_and(|character| character.is_ascii_hexdigit() || *character == '_')
+                {
+                    index += 1;
+                }
+                if index == digits_start || chars.get(index) != Some(&'}') {
+                    return None;
+                }
+                index += 1;
+            }
+            '\n' | '\r' => return None,
+            _ => index += 1,
+        }
+    } else {
+        if matches!(character, '\n' | '\r' | '\'') {
+            return None;
+        }
+        index += 1;
+    }
+    (chars.get(index) == Some(&'\'')).then_some(index + 1)
 }
 
 fn push_rust_blank(output: &mut String, character: char) {

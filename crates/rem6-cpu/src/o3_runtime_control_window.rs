@@ -31,7 +31,7 @@ pub(crate) struct O3ProducerForwardedControlTarget {
 }
 
 impl O3ProducerForwardedControlTarget {
-    fn same_control_identity(self, other: Self) -> bool {
+    pub(super) fn same_control_identity(self, other: Self) -> bool {
         self.data_access_fetch_request == other.data_access_fetch_request
             && self.fetch_request == other.fetch_request
             && self.last_fetch_request == other.last_fetch_request
@@ -72,7 +72,6 @@ impl O3ProducerForwardedControlTarget {
         self.consumer_sequence
     }
 
-    #[cfg(test)]
     pub(crate) const fn producer_sequence(self) -> u64 {
         self.producer_sequence
     }
@@ -201,6 +200,19 @@ impl O3RuntimeState {
         let mut younger_sequences = self.live_data_access_younger_sequences.iter().copied();
         let producer_sequence = younger_sequences.next()?;
         let consumer_sequence = younger_sequences.next()?;
+        self.producer_forwarded_same_link_control_target_for_sequences(
+            allow_completed,
+            producer_sequence,
+            consumer_sequence,
+        )
+    }
+
+    pub(super) fn producer_forwarded_same_link_control_target_for_sequences(
+        &self,
+        allow_completed: bool,
+        producer_sequence: u64,
+        consumer_sequence: u64,
+    ) -> Option<O3ProducerForwardedControlTarget> {
         if self.live_data_accesses.len() != 1 {
             return None;
         }
@@ -213,6 +225,19 @@ impl O3RuntimeState {
         if live_data_access.event_taken || !valid_outcome {
             return None;
         }
+        self.producer_forwarded_same_link_control_target_from_rows(
+            producer_sequence,
+            consumer_sequence,
+            live_data_access.fetch_request,
+        )
+    }
+
+    pub(super) fn producer_forwarded_same_link_control_target_from_rows(
+        &self,
+        producer_sequence: u64,
+        consumer_sequence: u64,
+        data_access_fetch_request: MemoryRequestId,
+    ) -> Option<O3ProducerForwardedControlTarget> {
         let producer = self
             .snapshot
             .reorder_buffer
@@ -267,7 +292,7 @@ impl O3RuntimeState {
         let fetch_request = *consumer_execution.consumed_requests.first()?;
         let last_fetch_request = *consumer_execution.consumed_requests.last()?;
         Some(O3ProducerForwardedControlTarget {
-            data_access_fetch_request: live_data_access.fetch_request,
+            data_access_fetch_request,
             fetch_request,
             last_fetch_request,
             pc: consumer.pc(),
@@ -494,6 +519,7 @@ impl O3RuntimeState {
                 writeback_slot,
                 execution,
             });
+        self.record_producer_forwarded_same_link_return_descendant();
         Ok(true)
     }
 

@@ -8,7 +8,7 @@ use rem6_memory::{
 };
 
 use crate::{
-    o3_runtime::O3ProducerForwardedControlTarget,
+    o3_runtime::{O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant},
     riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
@@ -53,11 +53,24 @@ pub(crate) enum RequiredRasConsumer {
 pub(crate) enum PredictedControlTargetAuthority {
     Normal,
     ProducerForwarded(O3ProducerForwardedControlTarget),
+    ProducerForwardedReturn(O3ProducerForwardedReturnDescendant),
     RasRequired {
         push_sequence: u64,
         pushed_address: Address,
         consumer: RequiredRasConsumer,
     },
+}
+
+pub(super) fn with_producer_forwarded_return_descendant(
+    mut decision: super::RiscvFetchAheadDecision,
+    descendant: O3ProducerForwardedReturnDescendant,
+) -> super::RiscvFetchAheadDecision {
+    decision
+        .branch_speculation
+        .as_mut()
+        .expect("producer-forwarded return requires branch speculation")
+        .producer_forwarded_return_descendant = Some(descendant);
+    decision
 }
 
 pub(crate) fn predicted_control_target_authority(
@@ -303,6 +316,9 @@ pub(super) fn additional_fetch_candidate(
     if let Some(candidate) = producer_forwarded_control_fetch_candidate(state, fetch_events) {
         return candidate;
     }
+    if let Some(candidate) = producer_forwarded_return_fetch_candidate(state, fetch_events) {
+        return candidate;
+    }
     let architectural = Address::new(state.hart.pc());
     let Some(current) = completed
         .iter()
@@ -382,6 +398,50 @@ fn producer_forwarded_control_fetch_candidate(
                     pc: forwarded.pc(),
                     sequential_pc: forwarded.sequential_pc(),
                     instruction: forwarded.instruction(),
+                    target_authority,
+                }
+            }
+            RecordedPredictedPc::Ready(_)
+            | RecordedPredictedPc::Missing
+            | RecordedPredictedPc::Invalid => DetailedFetchAheadCandidate::Blocked,
+        },
+    )
+}
+
+fn producer_forwarded_return_fetch_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Option<DetailedFetchAheadCandidate> {
+    let descendant = state
+        .o3_runtime
+        .producer_forwarded_same_link_return_descendant()?;
+    let target_authority = PredictedControlTargetAuthority::ProducerForwardedReturn(descendant);
+    Some(
+        match recorded_predicted_pc(
+            state,
+            descendant.fetch_request(),
+            descendant.sequential_pc(),
+            target_authority,
+        ) {
+            RecordedPredictedPc::Ready(target) if target == descendant.target() => {
+                match completed_window_instruction_or_candidate(
+                    state,
+                    fetch_events,
+                    descendant.last_fetch_request(),
+                    target,
+                ) {
+                    Ok(_) => DetailedFetchAheadCandidate::Blocked,
+                    Err(candidate) => candidate,
+                }
+            }
+            RecordedPredictedPc::Missing
+                if state.branch_speculations.len() < state.branch_lookahead =>
+            {
+                DetailedFetchAheadCandidate::ReadyPredictedControl {
+                    request: descendant.fetch_request(),
+                    pc: descendant.pc(),
+                    sequential_pc: descendant.sequential_pc(),
+                    instruction: descendant.instruction(),
                     target_authority,
                 }
             }
@@ -819,10 +879,20 @@ pub(crate) fn recorded_predicted_pc(
     sequential_pc: Address,
     target_authority: PredictedControlTargetAuthority,
 ) -> RecordedPredictedPc {
-    if let PredictedControlTargetAuthority::ProducerForwarded(forwarded) = target_authority {
-        if request != forwarded.fetch_request() || sequential_pc != forwarded.sequential_pc() {
+    match target_authority {
+        PredictedControlTargetAuthority::ProducerForwarded(forwarded)
+            if request != forwarded.fetch_request()
+                || sequential_pc != forwarded.sequential_pc() =>
+        {
             return RecordedPredictedPc::Invalid;
         }
+        PredictedControlTargetAuthority::ProducerForwardedReturn(descendant)
+            if request != descendant.fetch_request()
+                || sequential_pc != descendant.sequential_pc() =>
+        {
+            return RecordedPredictedPc::Invalid;
+        }
+        _ => {}
     }
     let Some(speculation) = state.branch_speculations.get(&request.sequence()) else {
         return RecordedPredictedPc::Missing;
@@ -841,16 +911,45 @@ pub(crate) fn recorded_predicted_pc(
             }
         }
         PredictedControlTargetAuthority::ProducerForwarded(forwarded) => {
-            if state
+            let live_head = state
                 .o3_runtime
                 .retained_producer_forwarded_same_link_control_target()
-                != Some(forwarded)
+                == Some(forwarded);
+            let retired_head = state
+                .o3_runtime
+                .producer_forwarded_same_link_control_target_after_head_retire()
+                == Some(forwarded);
+            if (!live_head && !retired_head)
                 || !pending.predicted_taken()
                 || pending.target() != Some(forwarded.target())
             {
                 RecordedPredictedPc::Invalid
             } else {
                 RecordedPredictedPc::Ready(forwarded.target())
+            }
+        }
+        PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => {
+            if state
+                .o3_runtime
+                .producer_forwarded_same_link_return_descendant()
+                != Some(descendant)
+            {
+                return RecordedPredictedPc::Invalid;
+            }
+            let parent = descendant.parent();
+            let Some(target) = recorded_ras_required_target(
+                state,
+                parent.fetch_request().sequence(),
+                parent.sequential_pc(),
+                RequiredRasConsumer::Pop,
+                request.sequence(),
+            ) else {
+                return RecordedPredictedPc::Invalid;
+            };
+            if pending.predicted_taken() && pending.target() == Some(target) {
+                RecordedPredictedPc::Ready(target)
+            } else {
+                RecordedPredictedPc::Invalid
             }
         }
         PredictedControlTargetAuthority::RasRequired {
@@ -939,6 +1038,24 @@ pub(super) fn unconsumed_ras_required_target(
         return None;
     }
     (state.return_address_stack.top() == Some(pushed_address)).then_some(pushed_address)
+}
+
+pub(super) fn unconsumed_producer_forwarded_return_target(
+    state: &RiscvCoreState,
+    fetch_pc: Address,
+    instruction: RiscvInstruction,
+    descendant: O3ProducerForwardedReturnDescendant,
+) -> Option<Address> {
+    if fetch_pc != descendant.pc() || instruction != descendant.instruction() {
+        return None;
+    }
+    let parent = descendant.parent();
+    unconsumed_ras_required_target(
+        state,
+        parent.fetch_request().sequence(),
+        parent.sequential_pc(),
+        RequiredRasConsumer::Pop,
+    )
 }
 
 fn recorded_ras_required_target(

@@ -307,6 +307,17 @@ pub(crate) fn o3_live_control_operands(
     )
 }
 
+pub(crate) fn o3_exact_link_return_source(instruction: RiscvInstruction) -> Option<Register> {
+    match instruction {
+        RiscvInstruction::Jalr { rd, rs1, offset }
+            if rd.is_zero() && is_riscv_link_register(rs1) && offset.value() == 0 =>
+        {
+            Some(rs1)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn o3_predicted_scalar_descendant_operands(
     instruction: RiscvInstruction,
 ) -> Option<(Register, Vec<Register>)> {

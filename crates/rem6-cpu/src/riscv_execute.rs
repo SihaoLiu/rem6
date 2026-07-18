@@ -264,6 +264,11 @@ impl RiscvCore {
                     .o3_runtime
                     .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence)
             });
+        let producer_forwarded_return_descendant = live_control_sequence.is_some_and(|sequence| {
+            state
+                .o3_runtime
+                .has_recorded_producer_forwarded_same_link_return_descendant(sequence)
+        });
         let retired_branch = retire_branch_predictions(
             state,
             fetch.request_id().sequence(),
@@ -352,7 +357,9 @@ impl RiscvCore {
             execution,
             retired_branch.into_updates(
                 live_control_sequence.is_some()
-                    && (live_coroutine_control || producer_forwarded_same_link_control),
+                    && (live_coroutine_control
+                        || producer_forwarded_same_link_control
+                        || producer_forwarded_return_descendant),
             ),
             pipeline_cycle,
             0,

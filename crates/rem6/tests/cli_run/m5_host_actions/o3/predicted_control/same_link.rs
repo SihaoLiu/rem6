@@ -7,6 +7,9 @@ use super::window_support::{
 };
 use super::*;
 
+#[path = "same_link/return_descendant.rs"]
+mod return_descendant;
+
 const DATA_START: i32 = 0x100;
 const DATA_ADDRESS: &str = "0x80000100";
 const SUCCESS_STORE_ADDRESS: &str = "0x80000104";

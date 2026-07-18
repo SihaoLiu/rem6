@@ -24,6 +24,7 @@ pub(super) struct O3LiveStagedFetchIdentity {
     instruction: RiscvInstruction,
     consumed_requests: Option<Vec<MemoryRequestId>>,
     producer_forwarded_same_link_target: Option<O3ProducerForwardedControlTarget>,
+    producer_forwarded_return_descendant: Option<O3ProducerForwardedReturnDescendant>,
 }
 
 impl O3LiveStagedFetchIdentity {
@@ -32,6 +33,7 @@ impl O3LiveStagedFetchIdentity {
             instruction,
             consumed_requests: None,
             producer_forwarded_same_link_target: None,
+            producer_forwarded_return_descendant: None,
         }
     }
 
@@ -46,6 +48,19 @@ impl O3LiveStagedFetchIdentity {
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
         self.producer_forwarded_same_link_target
+    }
+
+    pub(super) fn record_producer_forwarded_return_descendant(
+        &mut self,
+        descendant: O3ProducerForwardedReturnDescendant,
+    ) {
+        self.producer_forwarded_return_descendant = Some(descendant);
+    }
+
+    pub(super) const fn producer_forwarded_return_descendant(
+        &self,
+    ) -> Option<O3ProducerForwardedReturnDescendant> {
+        self.producer_forwarded_return_descendant
     }
 
     fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
@@ -99,19 +114,34 @@ impl O3RuntimeState {
         instruction: RiscvInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
-        if self.retained_producer_forwarded_same_link_control_target()? != authority
+        let live_data_head =
+            self.retained_producer_forwarded_same_link_control_target() == Some(authority);
+        let retired_data_head =
+            self.producer_forwarded_same_link_control_target_after_head_retire() == Some(authority);
+        if (!live_data_head && !retired_data_head)
             || pc != authority.target()
             || self.live_data_accesses.len() + self.live_data_access_younger_sequences.len()
                 >= self.scalar_memory_window_limit
         {
             return None;
         }
-        let unresolved = match self.live_data_accesses.first()?.execution.instruction() {
-            RiscvInstruction::Load { rd, .. } if !rd.is_zero() => rd,
-            _ => return None,
+        let unresolved = match self.live_data_accesses.first() {
+            Some(live) => match live.execution.instruction() {
+                RiscvInstruction::Load { rd, .. } if !rd.is_zero() => Some(rd),
+                _ => return None,
+            },
+            None => None,
         };
-        let (destination, sources) = o3_predicted_scalar_descendant_operands(instruction)?;
-        if destination.is_zero() || sources.contains(&unresolved) {
+        let scalar = o3_predicted_scalar_descendant_operands(instruction);
+        let sources = match scalar {
+            Some((destination, sources)) if live_data_head && !destination.is_zero() => sources,
+            Some(_) => return None,
+            None if o3_exact_link_return_source(instruction) == Some(authority.source()) => {
+                vec![authority.source()]
+            }
+            None => return None,
+        };
+        if unresolved.is_some_and(|unresolved| sources.contains(&unresolved)) {
             return None;
         }
         let sequence = self.stage_live_instruction(pc, instruction, 0)?;

@@ -766,9 +766,9 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
     state: &mut RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> bool {
-    let Some(authority) = state
+    let Some((authority, head)) = state
         .o3_runtime
-        .retained_producer_forwarded_same_link_control_target()
+        .producer_forwarded_descendant_issue_context()
     else {
         return false;
     };
@@ -787,22 +787,24 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
     else {
         return false;
     };
+    let descendant_instruction = descendant.decoded().instruction();
+    if crate::o3_runtime::o3_exact_link_return_source(descendant_instruction).is_some()
+        && state.branch_speculations.len() >= state.branch_lookahead
+    {
+        return false;
+    }
     if state
         .o3_runtime
         .append_producer_forwarded_control_descendant(
             authority,
             descendant.pc(),
-            descendant.decoded().instruction(),
+            descendant_instruction,
             descendant.consumed_requests(),
         )
         .is_none()
     {
         return false;
     }
-    let head = state
-        .o3_runtime
-        .live_data_access_head_reservation(authority.data_access_fetch_request())
-        .expect("producer-forwarded control retains its live data-access head");
     let issue_tick = descendant.fetch().tick();
     schedule_o3_live_speculative_younger_executions(
         state,

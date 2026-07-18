@@ -18,6 +18,8 @@ mod m5_host_action_fixture_ownership;
 mod m5_host_action_o3_runtime_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
+#[path = "source_policy/producer_forwarded_return_ownership.rs"]
+mod producer_forwarded_return_ownership;
 #[path = "source_policy/stats_compat_ownership.rs"]
 mod stats_compat_ownership;
 #[path = "source_policy/writeback_ownership.rs"]

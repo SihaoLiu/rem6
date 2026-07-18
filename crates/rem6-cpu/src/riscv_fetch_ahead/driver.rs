@@ -108,13 +108,19 @@ impl RiscvCore {
             })
             .collect::<Vec<_>>();
         completed.sort_by_key(|event| event.request_id().sequence());
-        if crate::riscv_live_retire_window::stage_o3_producer_forwarded_control_descendant(
-            &mut state,
-            &fetch_events,
-        ) {
+        let staged_producer_forwarded_descendant =
+            crate::riscv_live_retire_window::stage_o3_producer_forwarded_control_descendant(
+                &mut state,
+                &fetch_events,
+            );
+        let has_producer_forwarded_return = state
+            .o3_runtime
+            .producer_forwarded_same_link_return_descendant()
+            .is_some();
+        if staged_producer_forwarded_descendant && !has_producer_forwarded_return {
             return None;
         }
-        if state.o3_runtime.has_ready_live_data_access_event() {
+        if state.o3_runtime.has_ready_live_data_access_event() && !has_producer_forwarded_return {
             return None;
         }
 
@@ -343,8 +349,9 @@ fn producer_forwarded_control_decision(
     decision: Option<RiscvFetchAheadDecision>,
 ) -> Option<RiscvFetchAheadDecision> {
     decision.filter(|decision| {
-        decision
-            .branch_speculation()
-            .is_some_and(|speculation| speculation.producer_forwarded_control_target.is_some())
+        decision.branch_speculation().is_some_and(|speculation| {
+            speculation.producer_forwarded_control_target.is_some()
+                || speculation.producer_forwarded_return_descendant.is_some()
+        })
     })
 }

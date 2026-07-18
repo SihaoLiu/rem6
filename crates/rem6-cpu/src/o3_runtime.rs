@@ -1,11 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
-
-use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMemoryInstruction,
-    RISCV_VECTOR_REGISTER_BYTES,
-};
-use rem6_memory::{Address, MemoryRequestId};
-
 use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
@@ -18,7 +10,12 @@ use crate::riscv_defaults::{
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
 use crate::{branch_predictor::BranchTargetKind, RiscvDataAccessEventKind};
-
+use rem6_isa_riscv::{
+    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMemoryInstruction,
+    RISCV_VECTOR_REGISTER_BYTES,
+};
+use rem6_memory::{Address, MemoryRequestId};
+use std::collections::{BTreeMap, BTreeSet};
 #[path = "o3_runtime_authority.rs"]
 mod o3_runtime_authority;
 #[path = "o3_runtime_checkpoint.rs"]
@@ -53,6 +50,8 @@ mod o3_runtime_memory_result_tests;
 mod o3_runtime_memory_tests;
 #[path = "o3_runtime_memory_window.rs"]
 mod o3_runtime_memory_window;
+#[path = "o3_runtime_producer_forwarded_return.rs"]
+mod o3_runtime_producer_forwarded_return;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
 #[path = "o3_runtime_snapshot_entries.rs"]
@@ -92,6 +91,7 @@ use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
     o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
+pub(crate) use o3_runtime_producer_forwarded_return::O3ProducerForwardedReturnDescendant;
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
@@ -102,7 +102,7 @@ pub(crate) use o3_runtime_writeback::O3WritebackReservationCalendar;
 pub(crate) use o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
 pub use o3_runtime_writeback::{O3RuntimeWritebackReservation, RiscvO3WritebackDebugState};
 pub(crate) use o3_source_operands::{
-    o3_live_control_operands, o3_predicted_scalar_descendant_operands,
+    o3_exact_link_return_source, o3_live_control_operands, o3_predicted_scalar_descendant_operands,
     o3_scalar_integer_destination, o3_scalar_integer_source_registers,
     o3_speculative_scalar_alu_operands,
 };
