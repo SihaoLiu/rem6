@@ -813,6 +813,75 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
         issue_tick,
     )
     .expect("producer-forwarded control descendant writeback reservation");
+    if let Some(descendant) = state
+        .o3_runtime
+        .producer_forwarded_same_link_scalar_descendant()
+    {
+        let continuation = crate::riscv_fetch_ahead::ProducerForwardedScalarContinuation::capture(
+            state, descendant,
+        );
+        state.producer_forwarded_scalar_continuation = continuation;
+    }
+    true
+}
+
+pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> bool {
+    let Some((descendant, head, retirement_tick)) = state
+        .o3_runtime
+        .producer_forwarded_scalar_return_issue_context()
+    else {
+        return false;
+    };
+    let parent = descendant.parent();
+    if crate::riscv_fetch_ahead::recorded_predicted_pc(
+        state,
+        parent.fetch_request(),
+        parent.sequential_pc(),
+        crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(parent),
+    ) != crate::riscv_fetch_ahead::RecordedPredictedPc::Ready(parent.target())
+        || state.branch_speculations.len() >= state.branch_lookahead
+        || crate::riscv_fetch_ahead::detailed_o3::unconsumed_ras_required_target(
+            state,
+            parent.fetch_request().sequence(),
+            parent.sequential_pc(),
+            crate::riscv_fetch_ahead::detailed_o3::RequiredRasConsumer::Pop,
+        ) != Some(parent.sequential_pc())
+    {
+        return false;
+    }
+    let Some(returned) = completed_fetch_instruction_at(
+        state,
+        fetch_events,
+        descendant.last_fetch_request(),
+        descendant.sequential_pc(),
+    ) else {
+        return false;
+    };
+    let instruction = returned.decoded().instruction();
+    if crate::o3_runtime::o3_exact_link_return_source(instruction) != Some(parent.source())
+        || state
+            .o3_runtime
+            .append_producer_forwarded_scalar_return_descendant(
+                descendant,
+                returned.pc(),
+                instruction,
+                returned.consumed_requests(),
+            )
+            .is_none()
+    {
+        return false;
+    }
+    schedule_o3_live_speculative_younger_executions(
+        state,
+        head,
+        std::slice::from_ref(&returned),
+        returned.fetch().tick().max(retirement_tick),
+    )
+    .expect("producer-forwarded scalar-return writeback reservation");
+    state.producer_forwarded_scalar_continuation = None;
     true
 }
 

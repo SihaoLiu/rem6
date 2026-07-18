@@ -40,7 +40,7 @@ fn live_same_link_return_binary(name: &str, link: u8) -> std::path::PathBuf {
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
-fn assert_control_prediction(event: &Value, target: &str) {
+pub(super) fn assert_control_prediction(event: &Value, target: &str) {
     assert_eq!(
         event
             .pointer("/branch_predicted_target")

@@ -664,6 +664,7 @@ impl RiscvCore {
             .extend(active_return_address_stack_operations);
         state.branch_speculation_kinds.clear();
         state.branch_speculation_kinds.extend(active_branch_kinds);
+        state.producer_forwarded_scalar_continuation = None;
         Ok(())
     }
 
@@ -882,6 +883,8 @@ struct RiscvCoreState {
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
     branch_speculation_kinds: BTreeMap<u64, BranchTargetKind>,
     return_address_stack_operations: BTreeMap<u64, ReturnAddressStackOperationId>,
+    producer_forwarded_scalar_continuation:
+        Option<riscv_fetch_ahead::ProducerForwardedScalarContinuation>,
     selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
     selected_tage_sc_l_branch_predictor_rollbacks: u64,
     selected_multiperspective_perceptron_rollbacks: u64,
@@ -954,6 +957,7 @@ impl RiscvCoreState {
             branch_speculations: BTreeMap::new(),
             branch_speculation_kinds: BTreeMap::new(),
             return_address_stack_operations: BTreeMap::new(),
+            producer_forwarded_scalar_continuation: None,
             selected_branch_speculations: BTreeMap::new(),
             selected_tage_sc_l_branch_predictor_rollbacks: 0,
             selected_multiperspective_perceptron_rollbacks: 0,
@@ -1009,6 +1013,7 @@ impl RiscvCoreState {
     }
 
     fn discard_branch_speculations(&mut self) {
+        self.producer_forwarded_scalar_continuation = None;
         self.rollback_all_selected_branch_speculations()
             .expect("selected branch speculation rollback is internally consistent");
         self.discard_return_address_stack_speculations();
@@ -1126,6 +1131,17 @@ impl RiscvCoreState {
         sequence: u64,
         predicted_correctly: bool,
     ) -> Result<(), RiscvCpuError> {
+        if self
+            .producer_forwarded_scalar_continuation
+            .as_ref()
+            .is_some_and(|continuation| {
+                (!predicted_correctly && continuation.parent_sequence() == sequence)
+                    || (continuation.parent_sequence() != sequence
+                        && self.return_address_stack_operations.contains_key(&sequence))
+            })
+        {
+            self.producer_forwarded_scalar_continuation = None;
+        }
         let Some(operation_id) = self.return_address_stack_operations.remove(&sequence) else {
             return Ok(());
         };
@@ -1142,6 +1158,13 @@ impl RiscvCoreState {
         &mut self,
         sequence: u64,
     ) -> Result<(), RiscvCpuError> {
+        if self
+            .producer_forwarded_scalar_continuation
+            .as_ref()
+            .is_some_and(|continuation| continuation.parent_sequence() >= sequence)
+        {
+            self.producer_forwarded_scalar_continuation = None;
+        }
         let Some(operation_id) = self.return_address_stack_operations.remove(&sequence) else {
             return Ok(());
         };

@@ -16,91 +16,20 @@ use crate::{
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
-mod detailed_o3;
+pub(crate) mod detailed_o3;
 mod driver;
+mod prepared;
 mod speculation;
 
 pub(crate) use detailed_o3::{
     predicted_control_target_authority, recorded_predicted_pc, PredictedControlTargetAuthority,
     RecordedPredictedPc,
 };
+pub(crate) use prepared::{
+    PreparedRiscvFetchAheadSpeculation, ProducerForwardedScalarContinuation,
+};
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
-
-pub(crate) struct PreparedRiscvFetchAheadSpeculation {
-    speculation: RiscvFetchAheadSpeculation,
-    selected: Option<SelectedBranchRecordedState>,
-}
-
-impl PreparedRiscvFetchAheadSpeculation {
-    fn apply(self, state: &mut RiscvCoreState) {
-        let Self {
-            speculation,
-            selected,
-        } = self;
-        if state
-            .branch_speculations
-            .contains_key(&speculation.sequence)
-        {
-            return;
-        }
-        if let Some(forwarded) = speculation.producer_forwarded_control_target {
-            if !state
-                .o3_runtime
-                .record_producer_forwarded_same_link_control_target(forwarded)
-            {
-                return;
-            }
-        }
-        if let Some(descendant) = speculation.producer_forwarded_return_descendant {
-            if state
-                .o3_runtime
-                .producer_forwarded_same_link_return_descendant()
-                != Some(descendant)
-                || speculation.sequence != descendant.fetch_request().sequence()
-                || speculation.pc != descendant.pc()
-                || detailed_o3::unconsumed_producer_forwarded_return_target(
-                    state,
-                    descendant.pc(),
-                    descendant.instruction(),
-                    descendant,
-                ) != speculation.target
-            {
-                return;
-            }
-        }
-        if let Some(selected) = selected {
-            selected.apply(state);
-        }
-        let prediction = state.branch_predictor.predict_speculative_with_prediction(
-            speculation.pc,
-            speculation.predicted_taken,
-            speculation.target,
-        );
-        state
-            .branch_speculations
-            .insert(speculation.sequence, prediction.id());
-        state
-            .branch_speculation_kinds
-            .insert(speculation.sequence, speculation.branch_kind);
-        if let Some(branch_target_prediction) = speculation.branch_target_prediction {
-            state
-                .branch_target_predictions
-                .insert(speculation.sequence, branch_target_prediction);
-        }
-        if let Some(operation_id) = record_return_address_stack_speculation(state, &speculation) {
-            state
-                .return_address_stack_operations
-                .insert(speculation.sequence, operation_id);
-        }
-        let pending = state.branch_speculations.len() as u64;
-        state.branch_speculation_summary.record_prediction(
-            speculation.branch_kind,
-            speculation.target_provider,
-            pending,
-        );
-    }
-}
 
 struct SelectedBranchRecordingState<'a> {
     branch_predictor: &'a BranchPredictor,
@@ -509,6 +438,8 @@ fn record_multiperspective_selected_prediction(
 pub(crate) struct RiscvFetchAheadDecision {
     pc: Address,
     branch_speculation: Option<RiscvFetchAheadSpeculation>,
+    producer_forwarded_scalar_continuation:
+        Option<crate::o3_runtime::O3ProducerForwardedScalarDescendant>,
 }
 
 impl RiscvFetchAheadDecision {
@@ -516,6 +447,7 @@ impl RiscvFetchAheadDecision {
         Self {
             pc,
             branch_speculation: None,
+            producer_forwarded_scalar_continuation: None,
         }
     }
 
@@ -546,6 +478,7 @@ impl RiscvFetchAheadDecision {
                 producer_forwarded_control_target: None,
                 producer_forwarded_return_descendant: None,
             }),
+            producer_forwarded_scalar_continuation: None,
         }
     }
 
@@ -557,6 +490,14 @@ impl RiscvFetchAheadDecision {
             .as_mut()
             .expect("producer-forwarded target requires branch speculation")
             .producer_forwarded_control_target = Some(forwarded);
+        self
+    }
+
+    fn with_producer_forwarded_scalar_continuation(
+        mut self,
+        descendant: crate::o3_runtime::O3ProducerForwardedScalarDescendant,
+    ) -> Self {
+        self.producer_forwarded_scalar_continuation = Some(descendant);
         self
     }
 

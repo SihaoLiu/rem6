@@ -269,6 +269,18 @@ impl RiscvCore {
                 .o3_runtime
                 .has_recorded_producer_forwarded_same_link_return_descendant(sequence)
         });
+        let retained_producer_forwarded_return = state
+            .producer_forwarded_scalar_continuation
+            .as_ref()
+            .is_some_and(|continuation| {
+                continuation.retains_return_fetch(
+                    state,
+                    fetch.pc(),
+                    instruction,
+                    execution.instruction_bytes(),
+                    consumed_requests,
+                )
+            });
         let retired_branch = retire_branch_predictions(
             state,
             fetch.request_id().sequence(),
@@ -287,7 +299,19 @@ impl RiscvCore {
                 && !branch_prediction_redirects
                 && state.o3_runtime.has_live_control_descendants(sequence)
         });
-        let redirects_fetch_path = redirects_fetch && !preserves_live_control_path;
+        let preserves_retained_control_path = fetch_prediction.is_some()
+            && !branch_prediction_redirects
+            && crate::riscv_fetch_ahead::detailed_o3::retained_parent_resolution_preserves_fetch_path(
+                state,
+                &self.core.fetch_events(),
+                fetch.request_id(),
+                fetch.pc(),
+                instruction,
+                next_pc,
+                self.core.pc(),
+            );
+        let redirects_fetch_path =
+            redirects_fetch && !preserves_live_control_path && !preserves_retained_control_path;
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
@@ -296,7 +320,7 @@ impl RiscvCore {
         });
         if redirects_fetch_path
             || !has_completed_successor_fetch
-            || self.core.pc().get() < next_pc.get()
+            || (!preserves_retained_control_path && self.core.pc().get() < next_pc.get())
         {
             self.core.set_pc(next_pc);
         }
@@ -356,7 +380,8 @@ impl RiscvCore {
             instruction,
             execution,
             retired_branch.into_updates(
-                live_control_sequence.is_some()
+                retained_producer_forwarded_return
+                    || live_control_sequence.is_some()
                     && (live_coroutine_control
                         || producer_forwarded_same_link_control
                         || producer_forwarded_return_descendant),

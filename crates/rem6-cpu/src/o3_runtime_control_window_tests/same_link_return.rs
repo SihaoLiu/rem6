@@ -1,6 +1,7 @@
 use super::*;
 
-fn recorded_x1_same_link_runtime() -> (O3RuntimeState, O3ProducerForwardedControlTarget, u64) {
+pub(super) fn recorded_x1_same_link_runtime(
+) -> (O3RuntimeState, O3ProducerForwardedControlTarget, u64) {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();

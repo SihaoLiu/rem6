@@ -671,7 +671,7 @@ impl O3RuntimeState {
             })
     }
 
-    fn stage_live_instruction(
+    pub(super) fn stage_live_instruction(
         &mut self,
         pc: Address,
         instruction: RiscvInstruction,

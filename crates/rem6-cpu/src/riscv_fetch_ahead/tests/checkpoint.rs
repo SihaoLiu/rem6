@@ -1,4 +1,27 @@
+use super::producer_forwarded_scalar_return::{record_call_and_scalar, scalar_return_core};
 use super::*;
+
+#[test]
+fn o3_checkpoint_restore_discards_retained_scalar_authority() {
+    let core = scalar_return_core(2, false);
+    record_call_and_scalar(&core);
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .producer_forwarded_scalar_continuation
+        .is_some());
+
+    core.restore_o3_runtime_checkpoint_payload(RiscvCore::default_o3_runtime_checkpoint_payload())
+        .unwrap();
+
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .producer_forwarded_scalar_continuation
+        .is_none());
+}
 
 #[test]
 fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {

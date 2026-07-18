@@ -8,7 +8,7 @@ use super::{
     can_retire_completed_fetch_with_branch_speculations, completed_fetch_window, detailed_o3,
     fetch_ahead_decision, hart_has_enabled_pending_interrupt, next_fetch_ahead_candidate,
     preview_selected_branch_speculation, PreparedRiscvFetchAheadSpeculation,
-    RiscvFetchAheadDecision,
+    ProducerForwardedScalarContinuation, RiscvFetchAheadDecision,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,14 +113,28 @@ impl RiscvCore {
                 &mut state,
                 &fetch_events,
             );
+        crate::riscv_live_retire_window::stage_o3_producer_forwarded_scalar_return_descendant(
+            &mut state,
+            &fetch_events,
+        );
         let has_producer_forwarded_return = state
             .o3_runtime
             .producer_forwarded_same_link_return_descendant()
             .is_some();
-        if staged_producer_forwarded_descendant && !has_producer_forwarded_return {
+        let has_producer_forwarded_scalar = state
+            .o3_runtime
+            .producer_forwarded_same_link_scalar_descendant()
+            .is_some();
+        if staged_producer_forwarded_descendant
+            && !has_producer_forwarded_return
+            && !has_producer_forwarded_scalar
+        {
             return None;
         }
-        if state.o3_runtime.has_ready_live_data_access_event() && !has_producer_forwarded_return {
+        if state.o3_runtime.has_ready_live_data_access_event()
+            && !has_producer_forwarded_return
+            && !has_producer_forwarded_scalar
+        {
             return None;
         }
 
@@ -132,6 +146,15 @@ impl RiscvCore {
         ) {
             detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
+            }
+            detailed_o3::DetailedFetchAheadCandidate::ReadyProducerForwardedScalar {
+                pc,
+                descendant,
+            } => {
+                return Some(
+                    RiscvFetchAheadDecision::straight_line(pc)
+                        .with_producer_forwarded_scalar_continuation(descendant),
+                );
             }
             detailed_o3::DetailedFetchAheadCandidate::ReadyPredictedControl {
                 request,
@@ -208,11 +231,17 @@ impl RiscvCore {
         &self,
         decision: &RiscvFetchAheadDecision,
     ) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvCpuError> {
+        let fetch_events = self.core.fetch_events();
+        let state = self.state.lock().expect("riscv core lock");
+        if let Some(descendant) = decision.producer_forwarded_scalar_continuation {
+            return Ok(
+                ProducerForwardedScalarContinuation::capture(&state, descendant)
+                    .map(PreparedRiscvFetchAheadSpeculation::scalar),
+            );
+        }
         let Some(speculation) = decision.branch_speculation() else {
             return Ok(None);
         };
-        let fetch_events = self.core.fetch_events();
-        let state = self.state.lock().expect("riscv core lock");
         if state
             .branch_speculations
             .contains_key(&speculation.sequence)
@@ -231,10 +260,10 @@ impl RiscvCore {
                 )
             })
             .transpose()?;
-        Ok(Some(PreparedRiscvFetchAheadSpeculation {
-            speculation: speculation.clone(),
+        Ok(Some(PreparedRiscvFetchAheadSpeculation::branch(
+            speculation.clone(),
             selected,
-        }))
+        )))
     }
 
     pub(crate) fn record_prepared_fetch_ahead_speculation(
@@ -340,6 +369,13 @@ impl RiscvCore {
         if detailed_o3::data_access_waits_for_younger_fetch(&state, &fetch_events, translated) {
             return Ok(false);
         }
+        if state
+            .producer_forwarded_scalar_continuation
+            .as_ref()
+            .is_some_and(|continuation| continuation.waits_for_fetch(&state, &fetch_events))
+        {
+            return Ok(false);
+        }
 
         can_retire_completed_fetch_with_branch_speculations(&mut state, &fetch_events)
     }
@@ -349,9 +385,10 @@ fn producer_forwarded_control_decision(
     decision: Option<RiscvFetchAheadDecision>,
 ) -> Option<RiscvFetchAheadDecision> {
     decision.filter(|decision| {
-        decision.branch_speculation().is_some_and(|speculation| {
-            speculation.producer_forwarded_control_target.is_some()
-                || speculation.producer_forwarded_return_descendant.is_some()
-        })
+        decision.producer_forwarded_scalar_continuation.is_some()
+            || decision.branch_speculation().is_some_and(|speculation| {
+                speculation.producer_forwarded_control_target.is_some()
+                    || speculation.producer_forwarded_return_descendant.is_some()
+            })
     })
 }

@@ -5,6 +5,8 @@ use super::o3_store_forwarding::{
     O3StoreLoadForwardingPlan, O3StoreLoadRelation,
 };
 use super::*;
+
+const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
 use crate::{
     riscv_o3_window_policy::RiscvScalarIntegerLiveWindow,
     riscv_scalar_memory_window::{

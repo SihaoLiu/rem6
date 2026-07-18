@@ -6,7 +6,9 @@ use crate::o3_pipeline::{
 };
 use crate::O3RegisterClass;
 
-use super::{O3RuntimeError, O3RuntimeSnapshot, O3_RUNTIME_U32_MAX};
+use super::{O3RuntimeError, O3RuntimeSnapshot};
+
+const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum O3RuntimeUniqueKey {

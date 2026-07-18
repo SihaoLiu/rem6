@@ -1,0 +1,177 @@
+use super::*;
+
+fn recorded_same_link_scalar_runtime() -> (
+    O3RuntimeState,
+    O3ProducerForwardedControlTarget,
+    O3ProducerForwardedScalarDescendant,
+) {
+    let (mut runtime, forwarded, consumer_sequence) =
+        super::same_link_return::recorded_x1_same_link_runtime();
+    let scalar = addi(13, 1, 0);
+    let scalar_sequence = runtime
+        .append_producer_forwarded_control_descendant(
+            forwarded,
+            Address::new(0x9000),
+            scalar,
+            &[request(13)],
+        )
+        .expect("same-link scalar descendant append");
+    let candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x9000), scalar)
+        .expect("same-link scalar descendant candidate");
+    assert_eq!(candidate.sequence(), scalar_sequence);
+    assert_eq!(candidate.producer_sequences(), &[consumer_sequence]);
+    assert!(runtime
+        .record_live_speculative_execution(
+            candidate,
+            &[request(13)],
+            22,
+            RiscvExecutionRecord::new(
+                scalar,
+                0x9000,
+                0x9004,
+                vec![RegisterWrite::new(reg(13), 0x800c)],
+                None,
+            ),
+        )
+        .unwrap());
+    let descendant = runtime
+        .producer_forwarded_same_link_scalar_descendant()
+        .expect("typed producer-forwarded scalar lineage");
+    assert_eq!(descendant.parent(), forwarded);
+    assert_eq!(descendant.fetch_request(), request(13));
+    assert_eq!(descendant.pc(), Address::new(0x9000));
+    assert_eq!(descendant.sequential_pc(), Address::new(0x9004));
+    assert_eq!(descendant.sequence(), scalar_sequence);
+    (runtime, forwarded, descendant)
+}
+
+fn retire_data_head(runtime: &mut O3RuntimeState) {
+    runtime.live_data_accesses.clear();
+    runtime.snapshot.reorder_buffer.remove(0);
+    runtime.last_live_commit_tick = Some(30);
+}
+
+#[test]
+fn producer_forwarded_scalar_lineage_survives_successful_data_head_retirement() {
+    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+
+    retire_data_head(&mut runtime);
+
+    assert_eq!(
+        runtime.producer_forwarded_same_link_scalar_descendant(),
+        Some(descendant)
+    );
+}
+
+#[test]
+fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
+    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+    let return_jump = jalr_return(1);
+
+    assert_eq!(
+        runtime.append_producer_forwarded_scalar_return_descendant(
+            descendant,
+            Address::new(0x9004),
+            return_jump,
+            &[request(14)],
+        ),
+        None
+    );
+    assert_eq!(runtime.snapshot.reorder_buffer.len(), 4);
+
+    retire_data_head(&mut runtime);
+    let return_sequence = runtime
+        .append_producer_forwarded_scalar_return_descendant(
+            descendant,
+            Address::new(0x9004),
+            return_jump,
+            &[request(14)],
+        )
+        .expect("post-head scalar-sequential return append");
+    assert_eq!(runtime.snapshot.reorder_buffer.len(), 4);
+    assert_eq!(runtime.live_data_access_younger_sequences.len(), 4);
+    assert_eq!(
+        runtime.live_control_dependencies.get(&return_sequence),
+        Some(&descendant.parent().consumer_sequence())
+    );
+
+    let candidate = runtime
+        .live_speculative_issue_candidate(Address::new(0x9004), return_jump)
+        .expect("scalar-sequential return candidate");
+    assert_eq!(
+        candidate.producer_sequences(),
+        &[descendant.parent().consumer_sequence()]
+    );
+    assert!(runtime
+        .record_live_speculative_execution(
+            candidate,
+            &[request(14)],
+            23,
+            RiscvExecutionRecord::new(return_jump, 0x9004, 0x800c, Vec::new(), None),
+        )
+        .unwrap());
+    let returned = runtime
+        .producer_forwarded_same_link_return_descendant()
+        .expect("scalar-sequential return lineage");
+    assert_eq!(returned.parent(), descendant.parent());
+    assert_eq!(returned.scalar_descendant(), Some(descendant));
+    assert_eq!(returned.pc(), Address::new(0x9004));
+    assert_eq!(returned.target(), Address::new(0x800c));
+}
+
+#[test]
+fn producer_forwarded_scalar_return_rejects_nonordinary_shapes() {
+    for (pc, instruction) in [
+        (Address::new(0x9000), jalr_return(1)),
+        (
+            Address::new(0x9004),
+            RiscvInstruction::Jalr {
+                rd: reg(0),
+                rs1: reg(1),
+                offset: Immediate::new(4),
+            },
+        ),
+        (Address::new(0x9004), jalr_return(5)),
+        (Address::new(0x9004), jalr_link(1, 1)),
+    ] {
+        let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+        retire_data_head(&mut runtime);
+        assert_eq!(
+            runtime.append_producer_forwarded_scalar_return_descendant(
+                descendant,
+                pc,
+                instruction,
+                &[request(14)],
+            ),
+            None,
+            "unexpected scalar-return admission for {instruction:?} at {pc:?}"
+        );
+    }
+}
+
+#[test]
+fn producer_forwarded_scalar_lineage_fails_closed_after_identity_change() {
+    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+    retire_data_head(&mut runtime);
+    runtime
+        .live_speculative_executions
+        .iter_mut()
+        .find(|execution| execution.sequence == descendant.sequence())
+        .expect("scalar execution")
+        .consumed_requests = vec![request(99)];
+
+    assert_eq!(
+        runtime.producer_forwarded_same_link_scalar_descendant(),
+        None
+    );
+    assert_eq!(
+        runtime.append_producer_forwarded_scalar_return_descendant(
+            descendant,
+            Address::new(0x9004),
+            jalr_return(1),
+            &[request(14)],
+        ),
+        None
+    );
+}

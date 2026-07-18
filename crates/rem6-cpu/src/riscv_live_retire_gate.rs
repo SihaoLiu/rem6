@@ -411,6 +411,7 @@ impl RiscvCore {
         state.live_retire_gate.restore_checkpoint(live_retire_gate);
         state.o3_writeback_wake.clear();
         state.pending_callback_error = None;
+        state.producer_forwarded_scalar_continuation = None;
         Ok(())
     }
 }

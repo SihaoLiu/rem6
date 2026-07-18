@@ -9,8 +9,12 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES: usize = 150;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES: usize = 180;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_PRODUCER_FORWARDED_RETURN_LINES: usize = 240;
+const MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES: usize = 400;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
+const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -667,6 +671,7 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
     let decision_filter = rust_function_definition(&driver, "producer_forwarded_control_decision")
         .expect("missing producer_forwarded_control_decision definition");
     for marker in [
+        "producer_forwarded_scalar_continuation.is_some()",
         "producer_forwarded_control_target.is_some()",
         "producer_forwarded_return_descendant.is_some()",
     ] {
@@ -1480,6 +1485,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let same_link_path = crate_dir.join("src/o3_runtime_control_window_tests/same_link.rs");
     let same_link_return_path =
         crate_dir.join("src/o3_runtime_control_window_tests/same_link_return.rs");
+    let same_link_scalar_return_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/same_link_scalar_return.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let root_code = rust_code_without_comments_and_literals(&root);
     let root_include_lines = include_macro_lines(&root);
@@ -1514,6 +1521,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         ),
         1,
         "control-window same-link return tests must have exactly one attached path-owned child declaration"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/same_link_scalar_return.rs",
+            "same_link_scalar_return",
+        ),
+        1,
+        "control-window same-link scalar-return tests must have exactly one attached path-owned child declaration"
     );
     assert!(
         line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
@@ -1624,6 +1640,38 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
             "root still owns `{anchor}`"
         );
     }
+
+    assert!(
+        same_link_scalar_return_path.exists(),
+        "producer-forwarded scalar-return tests belong in src/o3_runtime_control_window_tests/same_link_scalar_return.rs"
+    );
+    let same_link_scalar_return = fs::read_to_string(&same_link_scalar_return_path).unwrap();
+    let same_link_scalar_return_code =
+        rust_code_without_comments_and_literals(&same_link_scalar_return);
+    assert!(
+        include_macro_lines(&same_link_scalar_return).is_empty(),
+        "same_link_scalar_return.rs must not inline hidden test fragments"
+    );
+    assert!(
+        line_count(&same_link_scalar_return_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES,
+        "same_link_scalar_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES} lines"
+    );
+    for anchor in [
+        "producer_forwarded_scalar_lineage_survives_successful_data_head_retirement",
+        "producer_forwarded_scalar_return_waits_for_data_head_retirement",
+        "producer_forwarded_scalar_return_rejects_nonordinary_shapes",
+        "producer_forwarded_scalar_lineage_fails_closed_after_identity_change",
+    ] {
+        assert!(
+            production_defines_exact_function(&same_link_scalar_return_code, anchor),
+            "missing exact scalar-return runtime test definition `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, anchor),
+            "root still owns scalar-return runtime test `{anchor}`"
+        );
+    }
 }
 
 #[test]
@@ -1631,10 +1679,18 @@ fn producer_forwarded_return_authority_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_root_path = crate_dir.join("src/o3_runtime.rs");
     let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_return.rs");
+    let scalar_runtime_path = crate_dir.join("src/o3_runtime_scalar_return.rs");
+    let fetch_root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
+    let prepared_path = crate_dir.join("src/riscv_fetch_ahead/prepared.rs");
+    let detailed_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
     let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
+    let checkpoint_test_path = crate_dir.join("src/riscv_fetch_ahead/tests/checkpoint.rs");
     let fetch_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return.rs");
+    let scalar_fetch_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs");
     let runtime_root = fs::read_to_string(&runtime_root_path).unwrap();
+    let fetch_root = fs::read_to_string(&fetch_root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
 
     assert_eq!(
@@ -1719,6 +1775,113 @@ fn producer_forwarded_return_authority_stays_focused() {
             "missing exact fetch test definition `{anchor}`"
         );
     }
+
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime_root,
+            "o3_runtime_scalar_return.rs",
+            "o3_runtime_scalar_return",
+        ),
+        1,
+        "the O3 root must attach the focused scalar-return owner exactly once"
+    );
+    assert!(scalar_runtime_path.exists());
+    assert!(
+        line_count(&scalar_runtime_path) <= MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES,
+        "o3_runtime_scalar_return.rs exceeds {MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES} lines"
+    );
+    let scalar_runtime = production_rust_source(&fs::read_to_string(&scalar_runtime_path).unwrap());
+    assert!(production_defines_exact_named_item(
+        &scalar_runtime,
+        "struct",
+        "O3ProducerForwardedScalarDescendant",
+    ));
+    for anchor in [
+        "producer_forwarded_same_link_scalar_descendant",
+        "producer_forwarded_scalar_return_issue_context",
+        "append_producer_forwarded_scalar_return_descendant",
+        "producer_forwarded_scalar_return_descendant",
+    ] {
+        assert!(
+            production_defines_exact_function(&scalar_runtime, anchor),
+            "missing scalar-return runtime owner `{anchor}`"
+        );
+    }
+    assert_eq!(
+        rust_code_without_comments_and_literals(&fetch_root)
+            .matches("mod prepared;")
+            .count(),
+        1,
+        "riscv_fetch_ahead.rs must attach prepared.rs exactly once"
+    );
+    let prepared = fs::read_to_string(&prepared_path).unwrap();
+    assert!(include_macro_lines(&prepared).is_empty());
+    assert!(
+        line_count(&prepared_path) <= MAX_RISCV_FETCH_AHEAD_PREPARED_LINES,
+        "riscv_fetch_ahead/prepared.rs exceeds {MAX_RISCV_FETCH_AHEAD_PREPARED_LINES} lines"
+    );
+    let prepared_code = production_rust_source(&prepared);
+    for owner in [
+        "ProducerForwardedScalarContinuation",
+        "PreparedRiscvFetchAheadSpeculation",
+    ] {
+        assert!(
+            production_defines_exact_named_item(&prepared_code, "struct", owner),
+            "prepared.rs is missing authority owner `{owner}`"
+        );
+    }
+    assert!(production_defines_exact_function(
+        &production_rust_source(&fs::read_to_string(&detailed_path).unwrap()),
+        "retained_parent_resolution_preserves_fetch_path",
+    ));
+    let fetch_tests_root_code = rust_code_without_comments_and_literals(&fetch_tests_root);
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_scalar_return;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach producer_forwarded_scalar_return exactly once"
+    );
+    assert!(include_macro_lines(&fs::read_to_string(&scalar_fetch_test_path).unwrap()).is_empty());
+    assert!(
+        line_count(&scalar_fetch_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES,
+        "producer_forwarded_scalar_return.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES} lines"
+    );
+    let scalar_fetch_test = rust_code_without_comments_and_literals(
+        &fs::read_to_string(&scalar_fetch_test_path).unwrap(),
+    );
+    for anchor in [
+        "live_data_head_allows_scalar_sequential_fetch_but_not_return_row",
+        "pending_data_gate_allows_typed_scalar_sequential_fetch",
+        "scalar_continuation_preparation_holds_lineage_while_fetch_is_pending",
+        "committed_scalar_continuation_retains_exact_return_authority",
+        "committed_call_seed_reconstructs_unstaged_scalar_return_authority",
+        "committed_call_seed_reconstructs_already_executed_scalar_return_authority",
+        "full_lookahead_at_call_recording_retains_later_scalar_return_authority",
+        "prepared_scalar_continuation_survives_parent_commit_before_apply",
+        "scalar_stage_retains_authority_before_continuation_decision_is_prepared",
+        "retired_data_head_opens_scalar_sequential_fetch",
+        "retired_data_head_admits_scalar_sequential_return_prediction",
+        "branch_lookahead_one_does_not_stage_scalar_sequential_return",
+        "stale_ras_does_not_stage_scalar_sequential_return",
+        "incorrect_parent_resolution_discards_retained_scalar_authority",
+        "branch_checkpoint_restore_discards_retained_scalar_authority",
+        "scalar_return_issue_waits_for_data_head_retirement_tick",
+        "scalar_return_apply_fails_closed_after_scalar_lineage_changes",
+    ] {
+        assert!(
+            production_defines_exact_function(&scalar_fetch_test, anchor),
+            "missing exact scalar-return fetch test definition `{anchor}`"
+        );
+    }
+    let checkpoint_test = rust_code_without_comments_and_literals(
+        &fs::read_to_string(&checkpoint_test_path).unwrap(),
+    );
+    assert!(production_defines_exact_function(
+        &checkpoint_test,
+        "o3_checkpoint_restore_discards_retained_scalar_authority",
+    ));
 }
 
 #[test]

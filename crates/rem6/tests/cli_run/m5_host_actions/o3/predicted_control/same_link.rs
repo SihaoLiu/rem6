@@ -9,6 +9,8 @@ use super::*;
 
 #[path = "same_link/return_descendant.rs"]
 mod return_descendant;
+#[path = "same_link/scalar_return.rs"]
+mod scalar_return;
 
 const DATA_START: i32 = 0x100;
 const DATA_ADDRESS: &str = "0x80000100";

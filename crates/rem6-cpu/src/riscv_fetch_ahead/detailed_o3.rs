@@ -8,7 +8,10 @@ use rem6_memory::{
 };
 
 use crate::{
-    o3_runtime::{O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant},
+    o3_runtime::{
+        O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
+        O3ProducerForwardedScalarDescendant,
+    },
     riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
@@ -30,6 +33,10 @@ pub(super) enum DetailedFetchAheadCandidate {
     NotApplicable,
     Blocked,
     Ready(Address),
+    ReadyProducerForwardedScalar {
+        pc: Address,
+        descendant: O3ProducerForwardedScalarDescendant,
+    },
     ReadyPredictedControl {
         request: MemoryRequestId,
         pc: Address,
@@ -319,6 +326,16 @@ pub(super) fn additional_fetch_candidate(
     if let Some(candidate) = producer_forwarded_return_fetch_candidate(state, fetch_events) {
         return candidate;
     }
+    if let Some(candidate) =
+        producer_forwarded_scalar_continuation_fetch_candidate(state, fetch_events)
+    {
+        return candidate;
+    }
+    if let Some(candidate) =
+        retained_producer_forwarded_scalar_return_fetch_candidate(state, fetch_events)
+    {
+        return candidate;
+    }
     let architectural = Address::new(state.hart.pc());
     let Some(current) = completed
         .iter()
@@ -450,6 +467,213 @@ fn producer_forwarded_return_fetch_candidate(
             | RecordedPredictedPc::Invalid => DetailedFetchAheadCandidate::Blocked,
         },
     )
+}
+
+fn producer_forwarded_scalar_continuation_fetch_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Option<DetailedFetchAheadCandidate> {
+    let descendant = state
+        .o3_runtime
+        .producer_forwarded_same_link_scalar_descendant()?;
+    let parent = descendant.parent();
+    let target_authority = PredictedControlTargetAuthority::ProducerForwarded(parent);
+    if recorded_predicted_pc(
+        state,
+        parent.fetch_request(),
+        parent.sequential_pc(),
+        target_authority,
+    ) != RecordedPredictedPc::Ready(parent.target())
+        || state.branch_speculations.len() >= state.branch_lookahead
+        || unconsumed_ras_required_target(
+            state,
+            parent.fetch_request().sequence(),
+            parent.sequential_pc(),
+            RequiredRasConsumer::Pop,
+        ) != Some(parent.sequential_pc())
+    {
+        return Some(DetailedFetchAheadCandidate::Blocked);
+    }
+    Some(
+        match completed_window_instruction_or_candidate(
+            state,
+            fetch_events,
+            descendant.last_fetch_request(),
+            descendant.sequential_pc(),
+        ) {
+            Ok(_) => DetailedFetchAheadCandidate::Blocked,
+            Err(DetailedFetchAheadCandidate::Ready(pc)) => {
+                DetailedFetchAheadCandidate::ReadyProducerForwardedScalar { pc, descendant }
+            }
+            Err(candidate) => candidate,
+        },
+    )
+}
+
+fn retained_producer_forwarded_scalar_return_fetch_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Option<DetailedFetchAheadCandidate> {
+    let continuation = state.producer_forwarded_scalar_continuation.as_ref()?;
+    if !continuation.matches_parent_ras(state) {
+        return Some(DetailedFetchAheadCandidate::Blocked);
+    }
+    let parent = continuation.parent();
+    let retained_executed_fetches = std::collections::BTreeSet::new();
+    let scalar = match completed_fetch_instruction_from_events(
+        &retained_executed_fetches,
+        fetch_events,
+        parent.last_fetch_request(),
+        parent.target(),
+    ) {
+        Some(fetched) => parent.fetched_scalar_descendant(
+            fetched.decoded().instruction(),
+            fetched.decoded().bytes(),
+            fetched.consumed_requests(),
+        )?,
+        None => {
+            return Some(
+                match completed_window_instruction_or_candidate(
+                    state,
+                    fetch_events,
+                    parent.last_fetch_request(),
+                    parent.target(),
+                ) {
+                    Ok(_) => DetailedFetchAheadCandidate::Blocked,
+                    Err(candidate) => candidate,
+                },
+            );
+        }
+    };
+    if !continuation.retains_scalar(state, scalar)
+        || state.branch_speculations.len() >= state.branch_lookahead
+    {
+        return Some(DetailedFetchAheadCandidate::Blocked);
+    }
+    let returned = match completed_window_instruction_or_candidate(
+        state,
+        fetch_events,
+        scalar.last_fetch_request(),
+        scalar.sequential_pc(),
+    ) {
+        Ok(returned) => returned,
+        Err(DetailedFetchAheadCandidate::Ready(pc)) => {
+            return Some(DetailedFetchAheadCandidate::ReadyProducerForwardedScalar {
+                pc,
+                descendant: scalar,
+            });
+        }
+        Err(candidate) => return Some(candidate),
+    };
+    let descendant = scalar.retained_return_descendant(
+        returned.decoded().instruction(),
+        returned.decoded().bytes(),
+        returned.consumed_requests(),
+    )?;
+    let target_authority = PredictedControlTargetAuthority::ProducerForwardedReturn(descendant);
+    Some(
+        match recorded_predicted_pc(
+            state,
+            descendant.fetch_request(),
+            descendant.sequential_pc(),
+            target_authority,
+        ) {
+            RecordedPredictedPc::Missing
+                if state.branch_speculations.len() < state.branch_lookahead =>
+            {
+                DetailedFetchAheadCandidate::ReadyPredictedControl {
+                    request: descendant.fetch_request(),
+                    pc: descendant.pc(),
+                    sequential_pc: descendant.sequential_pc(),
+                    instruction: descendant.instruction(),
+                    target_authority,
+                }
+            }
+            RecordedPredictedPc::Ready(target) if target == descendant.target() => {
+                DetailedFetchAheadCandidate::Blocked
+            }
+            RecordedPredictedPc::Ready(_)
+            | RecordedPredictedPc::Missing
+            | RecordedPredictedPc::Invalid => DetailedFetchAheadCandidate::Blocked,
+        },
+    )
+}
+
+pub(crate) fn retained_parent_resolution_preserves_fetch_path(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    request: MemoryRequestId,
+    pc: Address,
+    instruction: RiscvInstruction,
+    target: Address,
+    current_fetch_pc: Address,
+) -> bool {
+    let Some(continuation) = state.producer_forwarded_scalar_continuation.as_ref() else {
+        return false;
+    };
+    let parent = continuation.parent();
+    if request != parent.fetch_request()
+        || pc != parent.pc()
+        || instruction != parent.instruction()
+        || target != parent.target()
+    {
+        return false;
+    }
+    let retained_executed_fetches = std::collections::BTreeSet::new();
+    let Some(fetched) = completed_fetch_instruction_from_events(
+        &retained_executed_fetches,
+        fetch_events,
+        parent.last_fetch_request(),
+        parent.target(),
+    ) else {
+        return false;
+    };
+    let Some(scalar) = parent.fetched_scalar_descendant(
+        fetched.decoded().instruction(),
+        fetched.decoded().bytes(),
+        fetched.consumed_requests(),
+    ) else {
+        return false;
+    };
+    let Some(returned) = completed_fetch_instruction_from_events(
+        &retained_executed_fetches,
+        fetch_events,
+        scalar.last_fetch_request(),
+        scalar.sequential_pc(),
+    ) else {
+        return false;
+    };
+    let Some(descendant) = scalar.retained_return_descendant(
+        returned.decoded().instruction(),
+        returned.decoded().bytes(),
+        returned.consumed_requests(),
+    ) else {
+        return false;
+    };
+    let landing_sequential_pc = completed_fetch_instruction_from_events(
+        &retained_executed_fetches,
+        fetch_events,
+        descendant.last_fetch_request(),
+        descendant.target(),
+    )
+    .map(|landing| {
+        Address::new(
+            landing
+                .pc()
+                .get()
+                .wrapping_add(u64::from(landing.decoded().bytes())),
+        )
+    });
+    continuation.matches_scalar_identity(scalar)
+        && continuation.matches_return_identity(descendant)
+        && (current_fetch_pc == descendant.target()
+            || landing_sequential_pc == Some(current_fetch_pc))
+        && (continuation.matches_parent_ras(state)
+            || continuation.recorded_return_target(
+                state,
+                descendant,
+                descendant.fetch_request().sequence(),
+            ) == Some(descendant.target()))
 }
 
 fn data_access_result_fetch_ahead_shape(
@@ -919,7 +1143,11 @@ pub(crate) fn recorded_predicted_pc(
                 .o3_runtime
                 .producer_forwarded_same_link_control_target_after_head_retire()
                 == Some(forwarded);
-            if (!live_head && !retired_head)
+            let scalar_head = state
+                .o3_runtime
+                .producer_forwarded_same_link_scalar_descendant()
+                .is_some_and(|descendant| descendant.parent() == forwarded);
+            if (!live_head && !retired_head && !scalar_head)
                 || !pending.predicted_taken()
                 || pending.target() != Some(forwarded.target())
             {
@@ -929,21 +1157,34 @@ pub(crate) fn recorded_predicted_pc(
             }
         }
         PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => {
-            if state
+            let live_descendant = state
                 .o3_runtime
                 .producer_forwarded_same_link_return_descendant()
-                != Some(descendant)
-            {
+                == Some(descendant);
+            let retained_descendant = state
+                .producer_forwarded_scalar_continuation
+                .as_ref()
+                .is_some_and(|continuation| continuation.matches_return_identity(descendant));
+            if !live_descendant && !retained_descendant {
                 return RecordedPredictedPc::Invalid;
             }
             let parent = descendant.parent();
-            let Some(target) = recorded_ras_required_target(
+            let target = recorded_ras_required_target(
                 state,
                 parent.fetch_request().sequence(),
                 parent.sequential_pc(),
                 RequiredRasConsumer::Pop,
                 request.sequence(),
-            ) else {
+            )
+            .or_else(|| {
+                state
+                    .producer_forwarded_scalar_continuation
+                    .as_ref()
+                    .and_then(|continuation| {
+                        continuation.recorded_return_target(state, descendant, request.sequence())
+                    })
+            });
+            let Some(target) = target else {
                 return RecordedPredictedPc::Invalid;
             };
             if pending.predicted_taken() && pending.target() == Some(target) {
@@ -1016,7 +1257,7 @@ fn ras_required_producer_matches(
     operation.stack_after() == expected_after
 }
 
-pub(super) fn unconsumed_ras_required_target(
+pub(crate) fn unconsumed_ras_required_target(
     state: &RiscvCoreState,
     push_sequence: u64,
     pushed_address: Address,
@@ -1056,6 +1297,14 @@ pub(super) fn unconsumed_producer_forwarded_return_target(
         parent.sequential_pc(),
         RequiredRasConsumer::Pop,
     )
+    .or_else(|| {
+        state
+            .producer_forwarded_scalar_continuation
+            .as_ref()
+            .and_then(|continuation| {
+                continuation.unconsumed_return_target(state, fetch_pc, instruction, descendant)
+            })
+    })
 }
 
 fn recorded_ras_required_target(

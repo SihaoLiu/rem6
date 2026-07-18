@@ -17,6 +17,8 @@ mod lifecycle;
 mod same_link;
 #[path = "o3_runtime_control_window_tests/same_link_return.rs"]
 mod same_link_return;
+#[path = "o3_runtime_control_window_tests/same_link_scalar_return.rs"]
+mod same_link_scalar_return;
 
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {

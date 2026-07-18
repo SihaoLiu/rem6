@@ -54,6 +54,8 @@ mod o3_runtime_memory_window;
 mod o3_runtime_producer_forwarded_return;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
+#[path = "o3_runtime_scalar_return.rs"]
+mod o3_runtime_scalar_return;
 #[path = "o3_runtime_snapshot_entries.rs"]
 mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
@@ -92,6 +94,7 @@ use o3_runtime_memory::{
     o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
 pub(crate) use o3_runtime_producer_forwarded_return::O3ProducerForwardedReturnDescendant;
+pub(crate) use o3_runtime_scalar_return::O3ProducerForwardedScalarDescendant;
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };
@@ -110,10 +113,6 @@ pub(crate) use o3_store_forwarding::O3StoreLoadForwardingPlan;
 use o3_store_forwarding::{
     o3_load_forwarding_access, o3_store_forwarding_entry, O3StoreForwardingEntry,
 };
-const O3_RUNTIME_U32_MAX: usize = u32::MAX as usize;
-const DEFAULT_O3_SCALAR_MEMORY_DEPTH: usize = 2;
-const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeSnapshot {
     reorder_buffer: Vec<O3ReorderBufferEntry>,
@@ -122,7 +121,6 @@ pub struct O3RuntimeSnapshot {
     committed_rename_map: Option<Vec<O3RenameMapEntry>>,
     pending_state: O3PendingStateSnapshot,
 }
-
 impl O3RuntimeSnapshot {
     pub fn new<R, L, M>(
         reorder_buffer: R,
@@ -208,7 +206,6 @@ impl O3RuntimeSnapshot {
         self
     }
 }
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3RuntimeState {
     snapshot: O3RuntimeSnapshot,
@@ -687,7 +684,7 @@ impl Default for O3RuntimeState {
             deferred_live_data_access_execution: None,
             live_data_accesses: Vec::new(),
             live_data_access_younger_sequences: BTreeSet::new(),
-            scalar_memory_window_limit: DEFAULT_O3_SCALAR_MEMORY_DEPTH,
+            scalar_memory_window_limit: 2,
             scalar_memory_window_limit_explicit: false,
             issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
             last_live_commit_tick: None,

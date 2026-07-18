@@ -2,18 +2,20 @@ use super::*;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct O3ProducerForwardedReturnDescendant {
-    parent: O3ProducerForwardedControlTarget,
-    fetch_request: MemoryRequestId,
-    last_fetch_request: MemoryRequestId,
-    pc: Address,
-    sequential_pc: Address,
-    instruction: RiscvInstruction,
-    sequence: u64,
+    pub(super) parent: O3ProducerForwardedControlTarget,
+    pub(super) scalar_descendant: Option<O3ProducerForwardedScalarDescendant>,
+    pub(super) fetch_request: MemoryRequestId,
+    pub(super) last_fetch_request: MemoryRequestId,
+    pub(super) pc: Address,
+    pub(super) sequential_pc: Address,
+    pub(super) instruction: RiscvInstruction,
+    pub(super) sequence: u64,
 }
 
 impl PartialEq for O3ProducerForwardedReturnDescendant {
     fn eq(&self, other: &Self) -> bool {
         self.parent.same_control_identity(other.parent)
+            && self.scalar_descendant == other.scalar_descendant
             && self.fetch_request == other.fetch_request
             && self.last_fetch_request == other.last_fetch_request
             && self.pc == other.pc
@@ -28,6 +30,10 @@ impl Eq for O3ProducerForwardedReturnDescendant {}
 impl O3ProducerForwardedReturnDescendant {
     pub(crate) const fn parent(self) -> O3ProducerForwardedControlTarget {
         self.parent
+    }
+
+    pub(crate) const fn scalar_descendant(self) -> Option<O3ProducerForwardedScalarDescendant> {
+        self.scalar_descendant
     }
 
     pub(crate) const fn fetch_request(self) -> MemoryRequestId {
@@ -60,7 +66,7 @@ impl O3ProducerForwardedReturnDescendant {
 }
 
 impl O3RuntimeState {
-    fn recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences(
+    pub(super) fn recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences(
         &self,
         producer_sequence: u64,
         consumer_sequence: u64,
@@ -143,6 +149,13 @@ impl O3RuntimeState {
     pub(crate) fn producer_forwarded_same_link_return_descendant(
         &self,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
+        self.direct_producer_forwarded_same_link_return_descendant()
+            .or_else(|| self.producer_forwarded_scalar_return_descendant())
+    }
+
+    fn direct_producer_forwarded_same_link_return_descendant(
+        &self,
+    ) -> Option<O3ProducerForwardedReturnDescendant> {
         if self.live_data_access_younger_sequences.len() != 3 {
             return None;
         }
@@ -206,6 +219,7 @@ impl O3RuntimeState {
         }
         Some(O3ProducerForwardedReturnDescendant {
             parent,
+            scalar_descendant: None,
             fetch_request: *issued.consumed_requests.first()?,
             last_fetch_request: *issued.consumed_requests.last()?,
             pc: entry.pc(),
