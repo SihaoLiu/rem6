@@ -2,18 +2,20 @@ use std::{fs, path::Path};
 
 use super::{line_count, module_has_path_attribute, rust_function_definition_names};
 
-const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 12_200;
+const MAX_DEBUG_FLAGS_ROOT_LINES: usize = 11_300;
 const MAX_DEBUG_FLAGS_HOST_ACTION_LINES: usize = 800;
 const MAX_DEBUG_FLAGS_O3_CHECKPOINT_RESTORE_LINES: usize = 1_100;
 const MAX_DEBUG_FLAGS_O3_FU_LATENCY_LINES: usize = 1_700;
+const MAX_DEBUG_FLAGS_O3_LSQ_OPERATIONS_LINES: usize = 950;
 const MAX_DEBUG_FLAGS_O3_STORE_FORWARDING_LINES: usize = 700;
-const DEBUG_FLAGS_MODULES: [(&str, &str); 4] = [
+const DEBUG_FLAGS_MODULES: [(&str, &str); 5] = [
     ("host_action", "debug_flags/host_action.rs"),
     (
         "o3_checkpoint_restore",
         "debug_flags/o3_checkpoint_restore.rs",
     ),
     ("o3_fu_latency", "debug_flags/o3_fu_latency.rs"),
+    ("o3_lsq_operations", "debug_flags/o3_lsq_operations.rs"),
     ("o3_store_forwarding", "debug_flags/o3_store_forwarding.rs"),
 ];
 const HOST_ACTION_TESTS: [&str; 4] = [
@@ -55,6 +57,25 @@ const O3_FU_LATENCY_DEFINITIONS: [&str; 18] = [
     "detailed_o3_float_misc_fu_latency_debug_binary",
     "assert_o3_event_with_fu",
     "o3_event_fu_latency_class_count",
+];
+const O3_LSQ_OPERATIONS_TESTS: [&str; 5] = [
+    "rem6_run_o3_debug_flag_emits_vector_lsq_byte_events",
+    "rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape",
+    "rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape",
+    "rem6_run_o3_debug_flag_classifies_lsq_memory_ordering",
+    "rem6_run_o3_debug_flag_marks_store_conditional_failures",
+];
+const O3_LSQ_OPERATIONS_DEFINITIONS: [&str; 10] = [
+    "detailed_o3_vector_memory_debug_binary",
+    "detailed_o3_float_memory_debug_binary",
+    "detailed_o3_atomic_lsq_debug_binary",
+    "detailed_o3_ordered_atomic_lsq_debug_binary",
+    "detailed_o3_store_conditional_failure_debug_binary",
+    "rem6_run_o3_debug_flag_emits_vector_lsq_byte_events",
+    "rem6_run_o3_debug_flag_classifies_float_lsq_operation_shape",
+    "rem6_run_o3_debug_flag_classifies_atomic_lsq_operation_shape",
+    "rem6_run_o3_debug_flag_classifies_lsq_memory_ordering",
+    "rem6_run_o3_debug_flag_marks_store_conditional_failures",
 ];
 const O3_STORE_FORWARDING_TESTS: [&str; 2] = [
     "rem6_run_o3_debug_flag_emits_store_forwarding_events",
@@ -260,6 +281,60 @@ fn debug_flags_o3_fu_latency_lives_in_focused_module() {
         duplicates.is_empty(),
         "tests/cli_run/debug_flags.rs duplicates child functions: {duplicates:?}"
     );
+}
+
+#[test]
+fn debug_flags_o3_lsq_operations_live_in_focused_module() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = manifest_dir.join("tests/cli_run/debug_flags.rs");
+    let child_path = manifest_dir.join("tests/cli_run/debug_flags/o3_lsq_operations.rs");
+    let root = fs::read_to_string(root_path).unwrap();
+    let root_functions = rust_function_definition_names(&root);
+
+    assert!(
+        child_path.exists(),
+        "O3 LSQ operation debug evidence belongs in tests/cli_run/debug_flags/o3_lsq_operations.rs"
+    );
+    let child = fs::read_to_string(&child_path).unwrap();
+    let child_lines = line_count(&child_path);
+    assert!(
+        child_lines <= MAX_DEBUG_FLAGS_O3_LSQ_OPERATIONS_LINES,
+        "tests/cli_run/debug_flags/o3_lsq_operations.rs exceeds {MAX_DEBUG_FLAGS_O3_LSQ_OPERATIONS_LINES} lines: {child_lines}"
+    );
+    let syntax = parsed_source("tests/cli_run/debug_flags/o3_lsq_operations.rs", &child);
+    let includes = top_level_include_tokens(&syntax);
+    assert!(
+        includes.is_empty(),
+        "tests/cli_run/debug_flags/o3_lsq_operations.rs must not inline sources with include!: {includes:?}"
+    );
+    assert!(
+        focused_module_has_only_super_glob_use_and_functions(&syntax),
+        "tests/cli_run/debug_flags/o3_lsq_operations.rs must contain only `use super::*;` and its exact helper/test functions"
+    );
+    let expected_definitions = O3_LSQ_OPERATIONS_DEFINITIONS
+        .iter()
+        .map(|function| function.to_string())
+        .collect::<Vec<_>>();
+    let expected_tests = O3_LSQ_OPERATIONS_TESTS
+        .iter()
+        .map(|function| function.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        top_level_function_names(&syntax),
+        expected_definitions,
+        "tests/cli_run/debug_flags/o3_lsq_operations.rs must own exactly the O3 LSQ operation helpers and tests"
+    );
+    assert_eq!(
+        top_level_test_function_names(&syntax),
+        expected_tests,
+        "tests/cli_run/debug_flags/o3_lsq_operations.rs must own exactly the O3 LSQ operation tests"
+    );
+    for function in O3_LSQ_OPERATIONS_DEFINITIONS {
+        assert!(
+            !root_functions.contains(function),
+            "tests/cli_run/debug_flags.rs still owns `fn {function}`"
+        );
+    }
 }
 
 #[test]
