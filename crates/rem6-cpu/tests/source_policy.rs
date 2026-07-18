@@ -10,8 +10,9 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES: usize = 150;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES: usize = 200;
-const MAX_O3_PRODUCER_FORWARDED_RETURN_LINES: usize = 240;
-const MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES: usize = 400;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES: usize = 225;
+const MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES: usize = 850;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 120;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
@@ -1500,6 +1501,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         crate_dir.join("src/o3_runtime_control_window_tests/same_link_return.rs");
     let same_link_scalar_return_path =
         crate_dir.join("src/o3_runtime_control_window_tests/same_link_scalar_return.rs");
+    let same_link_validation_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/same_link_validation.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let root_code = rust_code_without_comments_and_literals(&root);
     let root_include_lines = include_macro_lines(&root);
@@ -1543,6 +1546,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         ),
         1,
         "control-window same-link scalar-return tests must have exactly one attached path-owned child declaration"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/same_link_validation.rs",
+            "same_link_validation",
+        ),
+        1,
+        "control-window same-link validation tests must have exactly one attached path-owned child declaration"
     );
     assert!(
         line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
@@ -1685,14 +1697,45 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
             "root still owns scalar-return runtime test `{anchor}`"
         );
     }
+
+    assert!(
+        same_link_validation_path.exists(),
+        "same-link chain validation tests belong in src/o3_runtime_control_window_tests/same_link_validation.rs"
+    );
+    let same_link_validation = fs::read_to_string(&same_link_validation_path).unwrap();
+    let same_link_validation_code = rust_code_without_comments_and_literals(&same_link_validation);
+    assert!(
+        include_macro_lines(&same_link_validation).is_empty(),
+        "same_link_validation.rs must not inline hidden test fragments"
+    );
+    assert!(
+        line_count(&same_link_validation_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES,
+        "same_link_validation.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES} lines"
+    );
+    for anchor in [
+        "direct_return_requires_dependency_and_window_membership",
+        "direct_return_requires_bound_fetch_identity",
+        "head_retired_direct_return_reconstructs_exact_recorded_parent",
+        "scalar_descendant_requires_dependency_and_window_membership",
+        "scalar_return_requires_dependency_window_and_fetch_identity",
+    ] {
+        assert!(
+            production_defines_exact_function(&same_link_validation_code, anchor),
+            "missing exact same-link validation test definition `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, anchor),
+            "root still owns same-link validation test `{anchor}`"
+        );
+    }
 }
 
 #[test]
-fn producer_forwarded_return_authority_stays_focused() {
+fn producer_forwarded_same_link_chain_authority_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_root_path = crate_dir.join("src/o3_runtime.rs");
-    let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_return.rs");
-    let scalar_runtime_path = crate_dir.join("src/o3_runtime_scalar_return.rs");
+    let runtime_path = crate_dir.join("src/o3_runtime_same_link_chain.rs");
     let fetch_root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
     let prepared_path = crate_dir.join("src/riscv_fetch_ahead/prepared.rs");
     let detailed_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
@@ -1702,6 +1745,8 @@ fn producer_forwarded_return_authority_stays_focused() {
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return.rs");
     let scalar_fetch_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs");
+    let chain_validation_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs");
     let runtime_root = fs::read_to_string(&runtime_root_path).unwrap();
     let fetch_root = fs::read_to_string(&fetch_root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
@@ -1709,55 +1754,210 @@ fn producer_forwarded_return_authority_stays_focused() {
     assert_eq!(
         path_owned_module_declaration_count(
             &runtime_root,
+            "o3_runtime_same_link_chain.rs",
+            "o3_runtime_same_link_chain",
+        ),
+        1,
+        "the O3 root must attach the focused same-link chain owner exactly once"
+    );
+    let legacy_modules = [
+        "o3_runtime_producer_forwarded_return",
+        "o3_runtime_scalar_return",
+    ];
+    for (path, module) in [
+        (
             "o3_runtime_producer_forwarded_return.rs",
             "o3_runtime_producer_forwarded_return",
         ),
-        1,
-        "the O3 root must attach the focused producer-forwarded return owner exactly once"
-    );
-    assert!(runtime_path.exists());
-    assert!(
-        line_count(&runtime_path) <= MAX_O3_PRODUCER_FORWARDED_RETURN_LINES,
-        "o3_runtime_producer_forwarded_return.rs exceeds {MAX_O3_PRODUCER_FORWARDED_RETURN_LINES} lines"
-    );
-    let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
-    assert!(production_defines_exact_named_item(
-        &runtime,
-        "struct",
-        "O3ProducerForwardedReturnDescendant",
-    ));
-    for anchor in [
-        "producer_forwarded_same_link_control_target_after_head_retire",
-        "producer_forwarded_same_link_return_descendant",
+        ("o3_runtime_scalar_return.rs", "o3_runtime_scalar_return"),
     ] {
+        assert_eq!(
+            path_owned_module_declaration_count(&runtime_root, path, module),
+            0,
+            "the O3 root must not retain split same-link owner `{module}`"
+        );
         assert!(
-            production_defines_exact_function(&runtime, anchor),
-            "missing runtime owner `{anchor}`"
+            !crate_dir.join("src").join(path).exists(),
+            "obsolete split same-link owner still exists at src/{path}"
+        );
+        assert!(
+            !production_defines_exact_named_item(
+                &production_rust_source(&runtime_root),
+                "mod",
+                module,
+            ),
+            "the O3 root must not declare legacy same-link module `{module}`"
+        );
+        assert!(
+            !crate_dir.join("src").join(module).exists(),
+            "obsolete split same-link module directory still exists at src/{module}"
         );
     }
+    assert!(runtime_path.exists());
+    assert!(
+        line_count(&runtime_path) <= MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES,
+        "o3_runtime_same_link_chain.rs exceeds {MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES} lines"
+    );
+    let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
+    let runtime_items = [
+        "O3ProducerForwardedControlTarget",
+        "O3ProducerForwardedScalarDescendant",
+        "O3ProducerForwardedReturnDescendant",
+    ];
+    for item in runtime_items {
+        assert!(
+            production_defines_exact_named_item(&runtime, "struct", item),
+            "same-link chain owner is missing `{item}`"
+        );
+        assert!(
+            production_defines_exact_inherent_impl(&runtime, item),
+            "same-link chain owner is missing inherent implementation for `{item}`"
+        );
+    }
+    let runtime_trait_impls = [
+        ("PartialEq", "O3ProducerForwardedScalarDescendant"),
+        ("Eq", "O3ProducerForwardedScalarDescendant"),
+        ("PartialEq", "O3ProducerForwardedReturnDescendant"),
+        ("Eq", "O3ProducerForwardedReturnDescendant"),
+    ];
+    for (trait_name, item) in runtime_trait_impls {
+        assert!(
+            production_defines_exact_trait_impl(&runtime, trait_name, item),
+            "same-link chain owner is missing `{trait_name}` for `{item}`"
+        );
+    }
+    let runtime_functions = [
+        "producer_forwarded_same_link_control_target",
+        "retained_producer_forwarded_same_link_control_target",
+        "producer_forwarded_same_link_control_target_with_completed",
+        "producer_forwarded_same_link_control_target_for_sequences",
+        "producer_forwarded_same_link_control_target_from_rows",
+        "record_producer_forwarded_same_link_control_target",
+        "has_recorded_producer_forwarded_same_link_control_target",
+        "recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences",
+        "producer_forwarded_same_link_control_target_after_head_retire",
+        "producer_forwarded_parent_for_descendant_sequences",
+        "producer_forwarded_descendant_rows",
+        "producer_forwarded_control_descendant_sequence",
+        "producer_forwarded_return_descendant_for_sequence",
+        "producer_forwarded_descendant_issue_context",
+        "record_producer_forwarded_same_link_return_descendant",
+        "has_recorded_producer_forwarded_same_link_return_descendant",
+        "producer_forwarded_same_link_return_descendant",
+        "direct_producer_forwarded_same_link_return_descendant",
+        "producer_forwarded_same_link_scalar_descendant_for_sequences",
+        "producer_forwarded_same_link_scalar_descendant",
+        "producer_forwarded_scalar_return_issue_context",
+        "append_producer_forwarded_scalar_return_descendant",
+        "producer_forwarded_scalar_return_descendant",
+    ];
+    for anchor in runtime_functions {
+        assert!(
+            production_defines_exact_function(&runtime, anchor),
+            "same-link chain owner is missing `{anchor}`"
+        );
+    }
+    for anchor in [
+        "same_control_identity",
+        "producer_forwarded_same_link_control_target_with_completed",
+        "producer_forwarded_same_link_control_target_for_sequences",
+        "producer_forwarded_same_link_control_target_from_rows",
+        "recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences",
+        "producer_forwarded_parent_for_descendant_sequences",
+        "producer_forwarded_descendant_rows",
+        "producer_forwarded_control_descendant_sequence",
+        "producer_forwarded_return_descendant_for_sequence",
+        "direct_producer_forwarded_same_link_return_descendant",
+        "producer_forwarded_same_link_scalar_descendant_for_sequences",
+        "producer_forwarded_scalar_return_descendant",
+    ] {
+        assert!(
+            !production_function_is_visible(&runtime, anchor),
+            "same-link chain internal helper `{anchor}` must remain private"
+        );
+    }
+    for field in [
+        "data_access_fetch_request",
+        "fetch_request",
+        "last_fetch_request",
+        "pc",
+        "sequential_pc",
+        "instruction",
+        "consumer_sequence",
+        "producer_sequence",
+        "ready_tick",
+        "source",
+        "target",
+        "parent",
+        "scalar_descendant",
+        "sequence",
+    ] {
+        assert!(
+            !production_defines_visible_field(&runtime, field),
+            "same-link chain field `{field}` must remain private"
+        );
+    }
+    for test_only in [
+        "retire_producer_forwarded_data_head_for_test",
+        "producer_forwarded_scalar_return_issue_tick_for_test",
+        "replace_same_link_chain_fetch_identity_for_test",
+    ] {
+        assert!(
+            !production_defines_exact_function(&runtime, test_only),
+            "test-only same-link helper `{test_only}` escaped into production"
+        );
+    }
+    assert_eq!(
+        runtime.matches("pub(super)").count(),
+        1,
+        "same-link chain internals must remain private except for the runtime recording hook"
+    );
+    assert!(
+        runtime.contains(
+            "pub(super) fn record_producer_forwarded_same_link_return_descendant(&mut self)"
+        ),
+        "the one sibling-visible same-link item must be the runtime recording hook"
+    );
+    let mut legacy_module_owners = Vec::new();
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        if legacy_modules
+            .iter()
+            .any(|module| production_defines_exact_named_item(&source, "mod", module))
+        {
+            legacy_module_owners.push(relative.display().to_string());
+        }
+    }
+    assert!(
+        legacy_module_owners.is_empty(),
+        "legacy same-link modules remain declared in production source: {}",
+        legacy_module_owners.join(", ")
+    );
     let mut escaped_owners = Vec::new();
     for path in rust_source_files(&crate_dir.join("src")) {
         if path == runtime_path || is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap()) {
             continue;
         }
         let source = production_rust_source(&fs::read_to_string(&path).unwrap());
-        if production_defines_exact_named_item(
-            &source,
-            "struct",
-            "O3ProducerForwardedReturnDescendant",
-        ) || production_defines_exact_function(
-            &source,
-            "producer_forwarded_same_link_control_target_after_head_retire",
-        ) || production_defines_exact_function(
-            &source,
-            "producer_forwarded_same_link_return_descendant",
-        ) {
+        if runtime_items.iter().any(|item| {
+            production_defines_exact_named_item(&source, "struct", item)
+                || production_defines_exact_inherent_impl(&source, item)
+        }) || runtime_trait_impls.iter().any(|(trait_name, item)| {
+            production_defines_exact_trait_impl(&source, trait_name, item)
+        }) || runtime_functions
+            .iter()
+            .any(|function| production_defines_exact_function(&source, function))
+        {
             escaped_owners.push(path.strip_prefix(crate_dir).unwrap().display().to_string());
         }
     }
     assert!(
         escaped_owners.is_empty(),
-        "producer-forwarded return authority escaped its focused owner: {}",
+        "producer-forwarded same-link authority escaped its focused owner: {}",
         escaped_owners.join(", ")
     );
 
@@ -1790,36 +1990,34 @@ fn producer_forwarded_return_authority_stays_focused() {
     }
 
     assert_eq!(
-        path_owned_module_declaration_count(
-            &runtime_root,
-            "o3_runtime_scalar_return.rs",
-            "o3_runtime_scalar_return",
-        ),
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_chain_validation;")
+            .count(),
         1,
-        "the O3 root must attach the focused scalar-return owner exactly once"
+        "fetch-ahead tests must attach producer_forwarded_chain_validation exactly once"
     );
-    assert!(scalar_runtime_path.exists());
+    assert!(chain_validation_test_path.exists());
+    let chain_validation_test = rust_code_without_comments_and_literals(
+        &fs::read_to_string(&chain_validation_test_path).unwrap(),
+    );
     assert!(
-        line_count(&scalar_runtime_path) <= MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES,
-        "o3_runtime_scalar_return.rs exceeds {MAX_O3_PRODUCER_FORWARDED_SCALAR_RETURN_LINES} lines"
+        include_macro_lines(&fs::read_to_string(&chain_validation_test_path).unwrap()).is_empty()
     );
-    let scalar_runtime = production_rust_source(&fs::read_to_string(&scalar_runtime_path).unwrap());
-    assert!(production_defines_exact_named_item(
-        &scalar_runtime,
-        "struct",
-        "O3ProducerForwardedScalarDescendant",
-    ));
+    assert!(
+        line_count(&chain_validation_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES,
+        "producer_forwarded_chain_validation.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES} lines"
+    );
     for anchor in [
-        "producer_forwarded_same_link_scalar_descendant",
-        "producer_forwarded_scalar_return_issue_context",
-        "append_producer_forwarded_scalar_return_descendant",
-        "producer_forwarded_scalar_return_descendant",
+        "direct_return_apply_fails_closed_after_fetch_identity_changes",
+        "scalar_return_apply_fails_closed_after_fetch_identity_changes",
     ] {
         assert!(
-            production_defines_exact_function(&scalar_runtime, anchor),
-            "missing scalar-return runtime owner `{anchor}`"
+            production_defines_exact_function(&chain_validation_test, anchor),
+            "missing exact chain-validation fetch test definition `{anchor}`"
         );
     }
+
     assert_eq!(
         rust_code_without_comments_and_literals(&fetch_root)
             .matches("mod prepared;")
@@ -2006,6 +2204,68 @@ fn production_defines_exact_function(source: &str, name: &str) -> bool {
     false
 }
 
+fn production_function_is_visible(source: &str, name: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "fn" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((function_name, name_end)) = rust_identifier_at(&chars, name_start) {
+                let after_name = skip_rust_whitespace(&chars, name_end);
+                if function_name == name && matches!(chars.get(after_name), Some('(' | '<')) {
+                    let item_start = (0..index)
+                        .rev()
+                        .find(|candidate| matches!(chars[*candidate], '{' | '}' | ';'))
+                        .map_or(0, |boundary| boundary + 1);
+                    let mut visibility_index = item_start;
+                    while visibility_index < index {
+                        let Some((visibility, visibility_end)) =
+                            rust_identifier_at(&chars, visibility_index)
+                        else {
+                            visibility_index += 1;
+                            continue;
+                        };
+                        if visibility == "pub" {
+                            return true;
+                        }
+                        visibility_index = visibility_end;
+                    }
+                    return false;
+                }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn production_defines_visible_field(source: &str, name: &str) -> bool {
+    source.lines().any(|line| {
+        let chars = line.trim().chars().collect::<Vec<_>>();
+        let Some((visibility, visibility_end)) = rust_identifier_at(&chars, 0) else {
+            return false;
+        };
+        if visibility != "pub" {
+            return false;
+        }
+        let mut field_start = skip_rust_whitespace(&chars, visibility_end);
+        if chars.get(field_start) == Some(&'(') {
+            let Some(visibility_close) = matching_delimiter(&chars, field_start, '(', ')') else {
+                return false;
+            };
+            field_start = skip_rust_whitespace(&chars, visibility_close + 1);
+        }
+        let Some((field_name, field_end)) = rust_identifier_at(&chars, field_start) else {
+            return false;
+        };
+        field_name == name && chars.get(skip_rust_whitespace(&chars, field_end)) == Some(&':')
+    })
+}
+
 fn production_defines_exact_named_item(source: &str, keyword: &str, name: &str) -> bool {
     let chars = source.chars().collect::<Vec<_>>();
     let mut index = 0;
@@ -2023,6 +2283,66 @@ fn production_defines_exact_named_item(source: &str, keyword: &str, name: &str) 
                         return true;
                     }
                 }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn production_defines_exact_inherent_impl(source: &str, name: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "impl" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((impl_name, name_end)) = rust_identifier_at(&chars, name_start) {
+                if impl_name == name
+                    && matches!(chars.get(skip_rust_whitespace(&chars, name_end)), Some('{'))
+                {
+                    return true;
+                }
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn production_defines_exact_trait_impl(source: &str, trait_name: &str, name: &str) -> bool {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "impl" {
+            let trait_start = skip_rust_whitespace(&chars, end);
+            let Some((found_trait, trait_end)) = rust_identifier_at(&chars, trait_start) else {
+                index = end;
+                continue;
+            };
+            let for_start = skip_rust_whitespace(&chars, trait_end);
+            let Some((for_keyword, for_end)) = rust_identifier_at(&chars, for_start) else {
+                index = trait_end;
+                continue;
+            };
+            let name_start = skip_rust_whitespace(&chars, for_end);
+            let Some((impl_name, name_end)) = rust_identifier_at(&chars, name_start) else {
+                index = for_end;
+                continue;
+            };
+            if found_trait == trait_name
+                && for_keyword == "for"
+                && impl_name == name
+                && matches!(chars.get(skip_rust_whitespace(&chars, name_end)), Some('{'))
+            {
+                return true;
             }
         }
         index = end;
@@ -2314,6 +2634,97 @@ fn not_obsolete_name() {}
     assert!(
         !production_defines_exact_function(&production, "obsolete_name"),
         "unrelated identifiers, calls, comments, literals, or longer names must not count"
+    );
+}
+
+#[test]
+fn source_policy_helper_detects_function_and_field_visibility() {
+    for source in [
+        "pub fn authority() {}\n",
+        "pub(crate)\nfn authority() {}\n",
+        "pub(in crate::owner) fn authority() {}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_function_is_visible(&production, "authority"),
+            "failed to detect visible function in:\n{source}"
+        );
+    }
+    assert!(!production_function_is_visible(
+        &production_rust_source("fn authority() {}\n"),
+        "authority",
+    ));
+
+    for source in [
+        "struct Authority {\n    pub value: u64,\n}\n",
+        "struct Authority {\n    pub(crate) value: u64,\n}\n",
+        "struct Authority {\n    pub(in crate::owner) value: u64,\n}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_defines_visible_field(&production, "value"),
+            "failed to detect visible field in:\n{source}"
+        );
+    }
+    assert!(!production_defines_visible_field(
+        &production_rust_source("struct Authority { value: u64 }\n"),
+        "value",
+    ));
+}
+
+#[test]
+fn source_policy_helper_detects_exact_inherent_implementations() {
+    for source in [
+        "impl Authority {}\n",
+        "impl\nAuthority\n{}\n",
+        "impl Authority { fn check(&self) {} }\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_defines_exact_inherent_impl(&production, "Authority"),
+            "failed to detect inherent implementation in:\n{source}"
+        );
+    }
+
+    let production = production_rust_source(
+        r#"
+impl PartialEq for Authority {}
+impl AuthorityExtra {}
+// impl Authority {}
+const TEXT: &str = "impl Authority {}";
+"#,
+    );
+    assert!(
+        !production_defines_exact_inherent_impl(&production, "Authority"),
+        "trait impls, longer identifiers, comments, and literals must not count"
+    );
+}
+
+#[test]
+fn source_policy_helper_detects_exact_trait_implementations() {
+    for source in [
+        "impl PartialEq for Authority {}\n",
+        "impl\nPartialEq\nfor\nAuthority\n{}\n",
+    ] {
+        let production = production_rust_source(source);
+        assert!(
+            production_defines_exact_trait_impl(&production, "PartialEq", "Authority"),
+            "failed to detect trait implementation in:\n{source}"
+        );
+    }
+
+    let production = production_rust_source(
+        r#"
+impl Authority {}
+impl Eq for Authority {}
+impl PartialEq for AuthorityExtra {}
+// impl PartialEq for Authority {}
+const TEXT: &str = "impl PartialEq for Authority {}";
+"#,
+    );
+    assert!(
+        !production_defines_exact_trait_impl(&production, "PartialEq", "Authority"),
+        "inherent impls, other traits or types, comments, and literals must not count"
     );
 }
 

@@ -50,12 +50,10 @@ mod o3_runtime_memory_result_tests;
 mod o3_runtime_memory_tests;
 #[path = "o3_runtime_memory_window.rs"]
 mod o3_runtime_memory_window;
-#[path = "o3_runtime_producer_forwarded_return.rs"]
-mod o3_runtime_producer_forwarded_return;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
-#[path = "o3_runtime_scalar_return.rs"]
-mod o3_runtime_scalar_return;
+#[path = "o3_runtime_same_link_chain.rs"]
+mod o3_runtime_same_link_chain;
 #[path = "o3_runtime_snapshot_entries.rs"]
 mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
@@ -71,7 +69,6 @@ mod o3_source_operands;
 mod o3_store_forwarding;
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
-pub(crate) use o3_runtime_control_window::O3ProducerForwardedControlTarget;
 use o3_runtime_control_window::{
     execution_writes_rename_destination, valid_live_speculative_fetch_identity,
     O3LiveSpeculativeExecution, O3LiveSpeculativeIssueCandidate,
@@ -93,8 +90,10 @@ use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
     o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
-pub(crate) use o3_runtime_producer_forwarded_return::O3ProducerForwardedReturnDescendant;
-pub(crate) use o3_runtime_scalar_return::O3ProducerForwardedScalarDescendant;
+pub(crate) use o3_runtime_same_link_chain::{
+    O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
+    O3ProducerForwardedScalarDescendant,
+};
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
 };

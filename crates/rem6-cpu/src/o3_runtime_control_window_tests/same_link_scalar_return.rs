@@ -1,6 +1,6 @@
 use super::*;
 
-fn recorded_same_link_scalar_runtime() -> (
+pub(super) fn recorded_same_link_scalar_runtime() -> (
     O3RuntimeState,
     O3ProducerForwardedControlTarget,
     O3ProducerForwardedScalarDescendant,
@@ -46,7 +46,7 @@ fn recorded_same_link_scalar_runtime() -> (
     (runtime, forwarded, descendant)
 }
 
-fn retire_data_head(runtime: &mut O3RuntimeState) {
+pub(super) fn retire_data_head(runtime: &mut O3RuntimeState) {
     runtime.live_data_accesses.clear();
     runtime.snapshot.reorder_buffer.remove(0);
     runtime.last_live_commit_tick = Some(30);

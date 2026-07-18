@@ -27,6 +27,7 @@ mod btb;
 mod checkpoint;
 mod data_access_result;
 mod detailed_o3_control;
+mod producer_forwarded_chain_validation;
 mod producer_forwarded_return;
 mod producer_forwarded_scalar_return;
 mod selected;

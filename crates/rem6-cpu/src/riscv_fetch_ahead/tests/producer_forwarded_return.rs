@@ -1,6 +1,6 @@
 use super::*;
 
-fn live_same_link_return_core(branch_lookahead: usize) -> RiscvCore {
+pub(super) fn live_same_link_return_core(branch_lookahead: usize) -> RiscvCore {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
     let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
     let call_raw = i_type(0, 1, 0x0, 1, 0x67);

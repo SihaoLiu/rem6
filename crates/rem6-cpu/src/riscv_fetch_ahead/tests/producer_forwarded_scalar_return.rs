@@ -106,7 +106,7 @@ pub(super) fn record_call_and_scalar(core: &RiscvCore) {
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
 }
 
-fn retire_data_head(core: &RiscvCore, retire_tick: u64) {
+pub(super) fn retire_data_head(core: &RiscvCore, retire_tick: u64) {
     let mut state = core.state.lock().expect("riscv core lock");
     assert!(state
         .o3_runtime
