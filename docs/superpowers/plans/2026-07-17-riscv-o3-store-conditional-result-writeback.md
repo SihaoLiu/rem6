@@ -65,7 +65,7 @@ Run:
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run o3_memory_result_writeback --quiet
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership
 ```
 
 Expected: both commands pass before the mechanical refactor.
@@ -95,7 +95,7 @@ rustfmt checks, and line caps.
 Run:
 
 ```bash
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership
 ```
 
 Expected: FAIL because `writeback_port.rs` still uses `include!`.
@@ -143,7 +143,7 @@ Run:
 ```bash
 cargo fmt --all -- --check
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run o3_memory_result_writeback --quiet
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership
 ```
 
 Expected: all pass with unchanged result behavior.
@@ -527,7 +527,7 @@ fn failed_terminal_store_conditional_is_squashed_without_status_publication() {
 Run:
 
 ```bash
-TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu terminal_ownership::fixed_fu_head_can_provision_terminal_store_conditional_status -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu terminal_ownership::fixed_fu_head_can_provision_terminal_store_conditional_status
 ```
 
 Expected: FAIL before SC classification and typed failure publication are fully
@@ -588,7 +588,7 @@ const STORE_CONDITIONAL_RESULT_ANCHORS: [&str; 6] = [
 Run:
 
 ```bash
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy writeback_result_class_cli_evidence_has_focused_ownership
 ```
 
 Expected: FAIL because the module and tests do not exist.
