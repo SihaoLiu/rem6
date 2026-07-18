@@ -55,9 +55,11 @@ pub(super) fn recorded_x1_same_link_runtime(
         )
         .unwrap());
     let forwarded = runtime
-        .producer_forwarded_same_link_control_target()
+        .producer_forwarded_control_target()
         .expect("same-link forwarded target authority");
-    assert!(runtime.record_producer_forwarded_same_link_control_target(forwarded));
+    assert!(
+        runtime.record_producer_forwarded_control_target(forwarded, BranchSpeculationId::new(1),)
+    );
     (runtime, forwarded, consumer_sequence)
 }
 

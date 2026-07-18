@@ -344,11 +344,11 @@ impl RiscvCore {
             .any(|instruction| instruction.execute_wait_total_cycles().is_some());
         let producer_forwarded_control = state
             .o3_runtime
-            .producer_forwarded_same_link_control_target()
+            .producer_forwarded_control_target()
             .is_some()
             || state
                 .o3_runtime
-                .retained_producer_forwarded_same_link_control_target()
+                .retained_producer_forwarded_control_target()
                 .is_some();
         (state.live_retire_gate.detailed_policy_enabled()
             || state.o3_runtime.has_live_control_window())

@@ -1,10 +1,9 @@
 use super::window_support::{
     assert_branch_kind_and_link, assert_drained_control_runtime, assert_final_execution_mode,
     assert_hierarchy_activity, assert_integer_rename_maps_to_row_destination,
-    assert_no_data_address, assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits,
-    assert_pointer_u64_gt, assert_register_absent_or_zero, assert_stopped_by_host,
-    control_window_command, finish_control_window_binary, resident_rob_pcs,
-    run_control_window_json,
+    assert_no_data_address, assert_no_o3_stats, assert_ordered_commits, assert_pointer_u64_gt,
+    assert_register_absent_or_zero, assert_stopped_by_host, control_window_command,
+    finish_control_window_binary, resident_rob_pcs, run_control_window_json,
 };
 use super::*;
 
@@ -272,56 +271,6 @@ fn rem6_run_o3_link_kind_older_branch_discards_linked_call() {
         resident_rob_pcs(&resident),
         ["0x80000014", "0x80000018", "0x8000001c", "0x80000028",]
     );
-}
-
-#[test]
-fn rem6_run_o3_link_kind_live_target_sources_stay_terminal() {
-    let load_target = load_produced_target_binary("o3-link-kind-load-produced-target");
-    let load_completed = run_link_kind_json(&load_target, "direct", 2_500, "detailed", &[]);
-    assert_stopped_by_host(&load_completed);
-    assert_eq!(register_value(&load_completed, "x5"), 0x8000_0018);
-    assert_eq!(register_value(&load_completed, "x13"), 42);
-    assert_eq!(
-        load_completed
-            .pointer("/memory/0/hex")
-            .and_then(Value::as_str),
-        Some("200000802a0000000000000000000000")
-    );
-    assert_no_data_address(&load_completed, FALLTHROUGH_STORE_ADDRESS);
-    let load = event_at_pc(&load_completed, "0x80000010");
-    let call = event_at_pc(&load_completed, "0x80000014");
-    let response_tick = event_u64(load, "lsq_data_response_tick");
-    assert_branch_kind_and_link(call, "call_indirect", true);
-    assert!(event_u64(call, "issue_tick") >= response_tick);
-    let live_tick = live_midpoint(load);
-    let resident = run_link_kind_json(&load_target, "direct", live_tick, "detailed", &[]);
-    assert_eq!(resident_rob_pcs(&resident), ["0x80000010", "0x80000014"]);
-    assert_no_fetch_pc(&resident, "0x80000020");
-
-    let alu_target = live_alu_target_binary("o3-link-kind-live-alu-target");
-    let alu_completed = run_link_kind_json(&alu_target, "direct", 2_500, "detailed", &[]);
-    assert_stopped_by_host(&alu_completed);
-    assert_eq!(register_value(&alu_completed, "x5"), 0x8000_0020);
-    assert_eq!(register_value(&alu_completed, "x13"), 42);
-    assert_eq!(
-        alu_completed
-            .pointer("/memory/0/hex")
-            .and_then(Value::as_str),
-        Some("2a0000002a0000000000000000000000")
-    );
-    assert_no_data_address(&alu_completed, FALLTHROUGH_STORE_ADDRESS);
-    let load = event_at_pc(&alu_completed, "0x80000010");
-    let call = event_at_pc(&alu_completed, "0x8000001c");
-    assert_branch_kind_and_link(call, "call_indirect", true);
-    let live_tick = event_u64(call, "issue_tick") + 1;
-    assert!(live_tick < event_u64(load, "lsq_data_response_tick"));
-    assert!(event_u64(event_at_pc(&alu_completed, "0x80000018"), "issue_tick") < live_tick);
-    let resident = run_link_kind_json(&alu_target, "direct", live_tick, "detailed", &[]);
-    assert_eq!(
-        resident_rob_pcs(&resident),
-        ["0x80000010", "0x80000014", "0x80000018", "0x8000001c",]
-    );
-    assert_no_fetch_pc(&resident, "0x8000002c");
 }
 
 #[test]
@@ -602,50 +551,6 @@ fn older_branch_discards_call_binary(name: &str) -> std::path::PathBuf {
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
-fn load_produced_target_binary(name: &str) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-        i_type(0x55, 0, 0x0, 5, 0x13),
-        i_type(0, 18, 0b110, 11, 0x03),
-        i_type(0, 11, 0x0, 5, 0x67),
-        s_type(8, 7, 18, 0b010),
-        m5op(M5_FAIL),
-        i_type(42, 0, 0x0, 13, 0x13),
-        s_type(4, 13, 18, 0b010),
-        m5op(M5_EXIT),
-        m5op(M5_FAIL),
-    ]);
-    finish_control_window_binary(name, words, DATA_START as usize, [0x8000_0020, 0, 0, 0])
-}
-
-fn live_alu_target_binary(name: &str) -> std::path::PathBuf {
-    let mut words = vec![m5op(M5_SWITCH_CPU)];
-    let data_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 18, 0x17),
-        i_type(DATA_START - data_auipc_pc, 18, 0x0, 18, 0x13),
-        i_type(0x55, 0, 0x0, 5, 0x13),
-        i_type(0, 18, 0b010, 12, 0x03),
-    ]);
-    let target_auipc_pc = (words.len() * 4) as i32;
-    words.extend([
-        u_type(0, 11, 0x17),
-        i_type(0x2c - target_auipc_pc, 11, 0x0, 11, 0x13),
-        i_type(0, 11, 0x0, 5, 0x67),
-        s_type(8, 7, 18, 0b010),
-        m5op(M5_FAIL),
-        i_type(0, 0, 0x0, 0, 0x13),
-        i_type(42, 0, 0x0, 13, 0x13),
-        s_type(4, 13, 18, 0b010),
-        m5op(M5_EXIT),
-        m5op(M5_FAIL),
-    ]);
-    finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
-}
-
 fn run_link_kind_json(
     path: &Path,
     memory_system: &str,
@@ -663,15 +568,4 @@ fn run_link_kind_json(
         16,
         extra_args,
     )
-}
-
-fn live_midpoint(load: &Value) -> u64 {
-    let issue_tick = event_u64(load, "issue_tick");
-    let response_tick = event_u64(load, "lsq_data_response_tick");
-    let midpoint = issue_tick + (response_tick - issue_tick) / 2;
-    assert!(
-        issue_tick < midpoint && midpoint < response_tick,
-        "live midpoint must be strictly between issue and response: issue_tick={issue_tick} midpoint={midpoint} response_tick={response_tick} load={load}"
-    );
-    midpoint
 }

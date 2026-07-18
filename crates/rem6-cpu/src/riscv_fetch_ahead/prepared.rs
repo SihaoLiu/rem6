@@ -17,7 +17,8 @@ impl ProducerForwardedScalarContinuation {
         state: &RiscvCoreState,
         parent: crate::o3_runtime::O3ProducerForwardedControlTarget,
     ) -> Option<Self> {
-        if state.branch_lookahead < 2
+        if !parent.supports_same_link_descendants()
+            || state.branch_lookahead < 2
             || detailed_o3::recorded_predicted_pc(
                 state,
                 parent.fetch_request(),
@@ -287,14 +288,6 @@ impl PreparedRiscvFetchAheadSpeculation {
         {
             return;
         }
-        if let Some(forwarded) = speculation.producer_forwarded_control_target {
-            if !state
-                .o3_runtime
-                .record_producer_forwarded_same_link_control_target(forwarded)
-            {
-                return;
-            }
-        }
         if let Some(descendant) = speculation.producer_forwarded_return_descendant {
             let live_descendant = state
                 .o3_runtime
@@ -317,14 +310,26 @@ impl PreparedRiscvFetchAheadSpeculation {
                 return;
             }
         }
-        if let Some(selected) = selected {
-            selected.apply(state);
-        }
         let prediction = state.branch_predictor.predict_speculative_with_prediction(
             speculation.pc,
             speculation.predicted_taken,
             speculation.target,
         );
+        if let Some(forwarded) = speculation.producer_forwarded_control_target {
+            if !state
+                .o3_runtime
+                .record_producer_forwarded_control_target(forwarded, prediction.id())
+            {
+                state
+                    .branch_predictor
+                    .discard_speculation(prediction.id())
+                    .expect("new producer-forwarded speculation is pending");
+                return;
+            }
+        }
+        if let Some(selected) = selected {
+            selected.apply(state);
+        }
         state
             .branch_speculations
             .insert(speculation.sequence, prediction.id());

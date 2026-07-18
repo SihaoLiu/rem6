@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::{Address, MemoryRequestId};
 
+use crate::o3_runtime::o3_live_control_operands;
 use crate::{
     riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind},
     BiModeBranchPredictor, BranchPredictor, BranchSpeculationId, BranchTargetKind,
@@ -741,6 +742,9 @@ fn discard_branch_speculation_mapping(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(());
     };
+    state
+        .o3_runtime
+        .clear_recorded_producer_forwarded_control_speculation(sequence, speculation);
     state.branch_speculation_kinds.remove(&sequence);
     state.branch_target_predictions.remove(&sequence);
     state.squash_return_address_stack_speculation(sequence)?;
@@ -748,6 +752,20 @@ fn discard_branch_speculation_mapping(
         .branch_predictor
         .discard_speculation(speculation)
         .map_err(RiscvCpuError::BranchPredictor)?;
+    for removed in discard.removed_youngers() {
+        if let Some((&removed_sequence, &removed_speculation)) = state
+            .branch_speculations
+            .iter()
+            .find(|(_, pending)| **pending == removed.id())
+        {
+            state
+                .o3_runtime
+                .clear_recorded_producer_forwarded_control_speculation(
+                    removed_sequence,
+                    removed_speculation,
+                );
+        }
+    }
     state.branch_speculations.retain(|_, pending| {
         !discard
             .removed_youngers()
@@ -1459,16 +1477,16 @@ fn direct_jump_fetch_ahead_target(
             None,
             None,
         ),
-        PredictedControlTargetAuthority::ProducerForwarded(forwarded) => match instruction {
-            RiscvInstruction::Jalr { rd, rs1, .. }
-                if rd == forwarded.source()
-                    && rs1 == forwarded.source()
-                    && kind == BranchTargetKind::CallIndirect =>
+        PredictedControlTargetAuthority::ProducerForwarded(forwarded) => {
+            let target = o3_live_control_operands(instruction)?.indirect_target()?;
+            if fetch_pc != forwarded.pc()
+                || instruction != forwarded.instruction()
+                || target.source() != forwarded.source()
             {
-                (None, Some(forwarded.target()), Some(forwarded), None)
+                return None;
             }
-            _ => return None,
-        },
+            (None, Some(forwarded.target()), Some(forwarded), None)
+        }
         PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => (
             Some(detailed_o3::unconsumed_producer_forwarded_return_target(
                 state,

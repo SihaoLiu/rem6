@@ -13,8 +13,8 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 mod coroutine;
 #[path = "o3_runtime_control_window_tests/lifecycle.rs"]
 mod lifecycle;
-#[path = "o3_runtime_control_window_tests/same_link.rs"]
-mod same_link;
+#[path = "o3_runtime_control_window_tests/producer_forwarded_target.rs"]
+mod producer_forwarded_target;
 #[path = "o3_runtime_control_window_tests/same_link_return.rs"]
 mod same_link_return;
 #[path = "o3_runtime_control_window_tests/same_link_scalar_return.rs"]

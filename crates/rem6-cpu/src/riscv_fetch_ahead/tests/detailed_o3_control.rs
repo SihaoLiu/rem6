@@ -26,7 +26,7 @@ fn detailed_linked_control_core(
     core
 }
 
-fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvCpuExecutionEvent) {
+pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvCpuExecutionEvent) {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
     let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
     let call_raw = i_type(0, 1, 0x0, 1, 0x67);
@@ -154,15 +154,15 @@ fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
     let mut state = core.state.lock().expect("riscv core lock");
     let consumer_sequence = state
         .o3_runtime
-        .producer_forwarded_same_link_control_target()
+        .producer_forwarded_control_target()
         .unwrap()
         .consumer_sequence();
     assert!(state
         .o3_runtime
-        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
+        .has_recorded_producer_forwarded_control_target(consumer_sequence));
     let forwarded = state
         .o3_runtime
-        .producer_forwarded_same_link_control_target()
+        .producer_forwarded_control_target()
         .unwrap();
     let authority = PredictedControlTargetAuthority::ProducerForwarded(forwarded);
     assert_eq!(
@@ -217,11 +217,11 @@ fn recorded_producer_forwarded_target_rejects_unmarked_same_target_speculation()
     let state = core.state.lock().expect("riscv core lock");
     let forwarded = state
         .o3_runtime
-        .producer_forwarded_same_link_control_target()
+        .producer_forwarded_control_target()
         .expect("resident same-link authority");
     assert!(!state
         .o3_runtime
-        .has_recorded_producer_forwarded_same_link_control_target(forwarded.consumer_sequence()));
+        .has_recorded_producer_forwarded_control_target(forwarded.consumer_sequence()));
     assert_eq!(
         recorded_predicted_pc(
             &state,
@@ -255,7 +255,7 @@ fn producer_forwarded_speculation_apply_fails_closed_after_authority_invalidatio
             .unwrap());
         assert!(state
             .o3_runtime
-            .producer_forwarded_same_link_control_target()
+            .producer_forwarded_control_target()
             .is_none());
     }
 
@@ -264,7 +264,7 @@ fn producer_forwarded_speculation_apply_fails_closed_after_authority_invalidatio
     let state = core.state.lock().expect("riscv core lock");
     assert!(!state
         .o3_runtime
-        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
+        .has_recorded_producer_forwarded_control_target(consumer_sequence));
     assert!(state.branch_speculations.is_empty());
     assert!(state.branch_speculation_kinds.is_empty());
     assert!(state.branch_target_predictions.is_empty());
@@ -345,7 +345,7 @@ fn completed_producer_forwarded_authority_closes_when_load_event_is_taken() {
     assert_eq!(
         state
             .o3_runtime
-            .retained_producer_forwarded_same_link_control_target(),
+            .retained_producer_forwarded_control_target(),
         Some(forwarded)
     );
     assert!(state
@@ -354,7 +354,7 @@ fn completed_producer_forwarded_authority_closes_when_load_event_is_taken() {
         .is_some());
     assert!(state
         .o3_runtime
-        .retained_producer_forwarded_same_link_control_target()
+        .retained_producer_forwarded_control_target()
         .is_none());
 }
 
@@ -381,11 +381,11 @@ fn failed_load_response_closes_recorded_producer_forwarded_authority() {
         .unwrap());
     assert!(state
         .o3_runtime
-        .retained_producer_forwarded_same_link_control_target()
+        .retained_producer_forwarded_control_target()
         .is_none());
     assert!(!state
         .o3_runtime
-        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
+        .has_recorded_producer_forwarded_control_target(consumer_sequence));
 }
 
 fn recorded_same_window_coroutine_target_authority() -> PredictedControlTargetAuthority {

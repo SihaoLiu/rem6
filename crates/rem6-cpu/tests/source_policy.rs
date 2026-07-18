@@ -7,12 +7,13 @@ const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
-const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES: usize = 150;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize = 225;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES: usize = 225;
-const MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES: usize = 850;
+const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 850;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 120;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
@@ -1223,15 +1224,15 @@ fn o3_live_control_operands_have_one_typed_owner() {
     let owner = production_rust_source(&fs::read_to_string(&owner_path).unwrap());
 
     for anchor in [
-        "pub(crate) struct O3LiveSameLinkControlTarget",
+        "pub(crate) struct O3LiveIndirectControlTarget",
         "pub(crate) struct O3LiveControlOperands",
         "pub(crate) fn o3_live_control_operands(",
         "kind: BranchTargetKind",
         "sources: Vec<Register>",
         "destination: Option<Register>",
-        "same_link_target: Option<O3LiveSameLinkControlTarget>",
+        "indirect_target: Option<O3LiveIndirectControlTarget>",
         "pub(crate) const fn destination(&self) -> Option<Register>",
-        "pub(crate) const fn same_link_target(&self) -> Option<O3LiveSameLinkControlTarget>",
+        "pub(crate) const fn indirect_target(&self) -> Option<O3LiveIndirectControlTarget>",
     ] {
         assert!(
             owner.contains(anchor),
@@ -1264,9 +1265,9 @@ fn o3_live_control_operands_have_one_typed_owner() {
                 relative.display()
             );
             assert!(
-                !source.contains("struct O3LiveSameLinkControlTarget")
-                    && !source.contains("fn same_link_target(&self)"),
-                "{} duplicates typed same-link control-target ownership",
+                !source.contains("struct O3LiveIndirectControlTarget")
+                    && !source.contains("fn indirect_target(&self)"),
+                "{} duplicates typed indirect control-target ownership",
                 relative.display()
             );
         }
@@ -1496,7 +1497,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("src/o3_runtime_control_window_tests.rs");
     let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
-    let same_link_path = crate_dir.join("src/o3_runtime_control_window_tests/same_link.rs");
+    let producer_forwarded_target_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_target.rs");
     let same_link_return_path =
         crate_dir.join("src/o3_runtime_control_window_tests/same_link_return.rs");
     let same_link_scalar_return_path =
@@ -1523,11 +1525,11 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     assert_eq!(
         path_owned_module_declaration_count(
             &root,
-            "o3_runtime_control_window_tests/same_link.rs",
-            "same_link",
+            "o3_runtime_control_window_tests/producer_forwarded_target.rs",
+            "producer_forwarded_target",
         ),
         1,
-        "control-window same-link tests must have exactly one attached path-owned child declaration"
+        "control-window producer-forwarded target tests must have exactly one attached path-owned child declaration"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -1611,30 +1613,33 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         );
     }
 
+    assert!(producer_forwarded_target_path.exists());
+    let producer_forwarded_target = fs::read_to_string(&producer_forwarded_target_path).unwrap();
+    let producer_forwarded_target_code =
+        rust_code_without_comments_and_literals(&producer_forwarded_target);
+    let producer_forwarded_target_include_lines = include_macro_lines(&producer_forwarded_target);
     assert!(
-        same_link_path.exists(),
-        "control-window same-link tests belong in src/o3_runtime_control_window_tests/same_link.rs"
-    );
-    let same_link = fs::read_to_string(&same_link_path).unwrap();
-    let same_link_code = rust_code_without_comments_and_literals(&same_link);
-    let same_link_include_lines = include_macro_lines(&same_link);
-    assert!(
-        same_link_include_lines.is_empty(),
-        "src/o3_runtime_control_window_tests/same_link.rs must not inline hidden test fragments; found lines {same_link_include_lines:?}"
+        producer_forwarded_target_include_lines.is_empty(),
+        "producer_forwarded_target.rs must not inline hidden test fragments"
     );
     assert!(
-        line_count(&same_link_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES,
-        "src/o3_runtime_control_window_tests/same_link.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES} lines"
+        line_count(&producer_forwarded_target_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES,
+        "producer_forwarded_target.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES} lines"
     );
-    let same_link_anchor = "fn live_same_link_control_exposes_exact_producer_forwarded_target(";
-    assert!(
-        same_link_code.contains(same_link_anchor),
-        "src/o3_runtime_control_window_tests/same_link.rs is missing same-link test `{same_link_anchor}`"
-    );
-    assert!(
-        !root_code.contains(same_link_anchor),
-        "src/o3_runtime_control_window_tests.rs still owns same-link test `{same_link_anchor}`"
-    );
+    for anchor in [
+        "live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets",
+        "live_same_link_control_exposes_exact_producer_forwarded_target",
+    ] {
+        assert!(
+            production_defines_exact_function(&producer_forwarded_target_code, anchor),
+            "producer_forwarded_target.rs is missing `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, anchor),
+            "control-window test root still owns `{anchor}`"
+        );
+    }
 
     assert!(
         same_link_return_path.exists(),
@@ -1732,10 +1737,10 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
 }
 
 #[test]
-fn producer_forwarded_same_link_chain_authority_stays_focused() {
+fn producer_forwarded_chain_authority_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_root_path = crate_dir.join("src/o3_runtime.rs");
-    let runtime_path = crate_dir.join("src/o3_runtime_same_link_chain.rs");
+    let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_chain.rs");
     let fetch_root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
     let prepared_path = crate_dir.join("src/riscv_fetch_ahead/prepared.rs");
     let detailed_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
@@ -1747,6 +1752,8 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs");
     let chain_validation_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs");
+    let control_validation_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_control_validation.rs");
     let runtime_root = fs::read_to_string(&runtime_root_path).unwrap();
     let fetch_root = fs::read_to_string(&fetch_root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
@@ -1754,15 +1761,16 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     assert_eq!(
         path_owned_module_declaration_count(
             &runtime_root,
-            "o3_runtime_same_link_chain.rs",
-            "o3_runtime_same_link_chain",
+            "o3_runtime_producer_forwarded_chain.rs",
+            "o3_runtime_producer_forwarded_chain",
         ),
         1,
-        "the O3 root must attach the focused same-link chain owner exactly once"
+        "the O3 root must attach the focused producer-forwarded chain owner exactly once"
     );
     let legacy_modules = [
         "o3_runtime_producer_forwarded_return",
         "o3_runtime_scalar_return",
+        "o3_runtime_same_link_chain",
     ];
     for (path, module) in [
         (
@@ -1770,6 +1778,10 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
             "o3_runtime_producer_forwarded_return",
         ),
         ("o3_runtime_scalar_return.rs", "o3_runtime_scalar_return"),
+        (
+            "o3_runtime_same_link_chain.rs",
+            "o3_runtime_same_link_chain",
+        ),
     ] {
         assert_eq!(
             path_owned_module_declaration_count(&runtime_root, path, module),
@@ -1795,8 +1807,8 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     }
     assert!(runtime_path.exists());
     assert!(
-        line_count(&runtime_path) <= MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES,
-        "o3_runtime_same_link_chain.rs exceeds {MAX_O3_RUNTIME_SAME_LINK_CHAIN_LINES} lines"
+        line_count(&runtime_path) <= MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES,
+        "o3_runtime_producer_forwarded_chain.rs exceeds {MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES} lines"
     );
     let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
     let runtime_items = [
@@ -1807,11 +1819,11 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     for item in runtime_items {
         assert!(
             production_defines_exact_named_item(&runtime, "struct", item),
-            "same-link chain owner is missing `{item}`"
+            "producer-forwarded chain owner is missing `{item}`"
         );
         assert!(
             production_defines_exact_inherent_impl(&runtime, item),
-            "same-link chain owner is missing inherent implementation for `{item}`"
+            "producer-forwarded chain owner is missing inherent implementation for `{item}`"
         );
     }
     let runtime_trait_impls = [
@@ -1823,19 +1835,20 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     for (trait_name, item) in runtime_trait_impls {
         assert!(
             production_defines_exact_trait_impl(&runtime, trait_name, item),
-            "same-link chain owner is missing `{trait_name}` for `{item}`"
+            "producer-forwarded chain owner is missing `{trait_name}` for `{item}`"
         );
     }
     let runtime_functions = [
-        "producer_forwarded_same_link_control_target",
-        "retained_producer_forwarded_same_link_control_target",
-        "producer_forwarded_same_link_control_target_with_completed",
-        "producer_forwarded_same_link_control_target_for_sequences",
-        "producer_forwarded_same_link_control_target_from_rows",
-        "record_producer_forwarded_same_link_control_target",
-        "has_recorded_producer_forwarded_same_link_control_target",
-        "recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences",
-        "producer_forwarded_same_link_control_target_after_head_retire",
+        "supports_same_link_descendants",
+        "producer_forwarded_control_target",
+        "retained_producer_forwarded_control_target",
+        "producer_forwarded_control_target_with_completed",
+        "producer_forwarded_control_target_for_sequences",
+        "producer_forwarded_control_target_from_rows",
+        "record_producer_forwarded_control_target",
+        "has_recorded_producer_forwarded_control_target",
+        "recorded_producer_forwarded_control_target_after_head_retire_for_sequences",
+        "producer_forwarded_control_target_after_head_retire",
         "producer_forwarded_parent_for_descendant_sequences",
         "producer_forwarded_descendant_rows",
         "producer_forwarded_control_descendant_sequence",
@@ -1854,15 +1867,15 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     for anchor in runtime_functions {
         assert!(
             production_defines_exact_function(&runtime, anchor),
-            "same-link chain owner is missing `{anchor}`"
+            "producer-forwarded chain owner is missing `{anchor}`"
         );
     }
     for anchor in [
         "same_control_identity",
-        "producer_forwarded_same_link_control_target_with_completed",
-        "producer_forwarded_same_link_control_target_for_sequences",
-        "producer_forwarded_same_link_control_target_from_rows",
-        "recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences",
+        "producer_forwarded_control_target_with_completed",
+        "producer_forwarded_control_target_for_sequences",
+        "producer_forwarded_control_target_from_rows",
+        "recorded_producer_forwarded_control_target_after_head_retire_for_sequences",
         "producer_forwarded_parent_for_descendant_sequences",
         "producer_forwarded_descendant_rows",
         "producer_forwarded_control_descendant_sequence",
@@ -1873,7 +1886,7 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     ] {
         assert!(
             !production_function_is_visible(&runtime, anchor),
-            "same-link chain internal helper `{anchor}` must remain private"
+            "producer-forwarded chain internal helper `{anchor}` must remain private"
         );
     }
     for field in [
@@ -1894,7 +1907,7 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     ] {
         assert!(
             !production_defines_visible_field(&runtime, field),
-            "same-link chain field `{field}` must remain private"
+            "producer-forwarded chain field `{field}` must remain private"
         );
     }
     for test_only in [
@@ -1904,19 +1917,19 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     ] {
         assert!(
             !production_defines_exact_function(&runtime, test_only),
-            "test-only same-link helper `{test_only}` escaped into production"
+            "test-only producer-forwarded helper `{test_only}` escaped into production"
         );
     }
     assert_eq!(
         runtime.matches("pub(super)").count(),
         1,
-        "same-link chain internals must remain private except for the runtime recording hook"
+        "producer-forwarded chain internals must remain private except for the runtime recording hook"
     );
     assert!(
         runtime.contains(
             "pub(super) fn record_producer_forwarded_same_link_return_descendant(&mut self)"
         ),
-        "the one sibling-visible same-link item must be the runtime recording hook"
+        "the one sibling-visible chain item must be the runtime recording hook"
     );
     let mut legacy_module_owners = Vec::new();
     for path in rust_source_files(&crate_dir.join("src")) {
@@ -1957,7 +1970,7 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
     }
     assert!(
         escaped_owners.is_empty(),
-        "producer-forwarded same-link authority escaped its focused owner: {}",
+        "producer-forwarded chain authority escaped its focused owner: {}",
         escaped_owners.join(", ")
     );
 
@@ -2015,6 +2028,35 @@ fn producer_forwarded_same_link_chain_authority_stays_focused() {
         assert!(
             production_defines_exact_function(&chain_validation_test, anchor),
             "missing exact chain-validation fetch test definition `{anchor}`"
+        );
+    }
+
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_control_validation;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach producer_forwarded_control_validation exactly once"
+    );
+    assert!(control_validation_test_path.exists());
+    let control_validation_test = rust_code_without_comments_and_literals(
+        &fs::read_to_string(&control_validation_test_path).unwrap(),
+    );
+    assert!(
+        include_macro_lines(&fs::read_to_string(&control_validation_test_path).unwrap()).is_empty()
+    );
+    assert!(
+        line_count(&control_validation_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES,
+        "producer_forwarded_control_validation.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES} lines"
+    );
+    for anchor in [
+        "producer_forwarded_control_requires_exact_speculation_kind_and_ras",
+        "discarded_producer_forwarded_control_clears_only_speculation_binding",
+    ] {
+        assert!(
+            production_defines_exact_function(&control_validation_test, anchor),
+            "missing exact control-validation fetch test definition `{anchor}`"
         );
     }
 

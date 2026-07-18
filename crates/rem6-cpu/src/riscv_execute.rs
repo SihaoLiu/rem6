@@ -258,12 +258,11 @@ impl RiscvCore {
             )
         });
         let live_control_sequence = live_control_sequence.flatten();
-        let producer_forwarded_same_link_control =
-            live_control_sequence.is_some_and(|consumer_sequence| {
-                state
-                    .o3_runtime
-                    .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence)
-            });
+        let producer_forwarded_control = live_control_sequence.is_some_and(|consumer_sequence| {
+            state
+                .o3_runtime
+                .has_recorded_producer_forwarded_control_target(consumer_sequence)
+        });
         let producer_forwarded_return_descendant = live_control_sequence.is_some_and(|sequence| {
             state
                 .o3_runtime
@@ -383,7 +382,7 @@ impl RiscvCore {
                 retained_producer_forwarded_return
                     || live_control_sequence.is_some()
                     && (live_coroutine_control
-                        || producer_forwarded_same_link_control
+                        || producer_forwarded_control
                         || producer_forwarded_return_descendant),
             ),
             pipeline_cycle,
@@ -1440,6 +1439,9 @@ fn resolve_branch_speculation(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(None);
     };
+    state
+        .o3_runtime
+        .clear_recorded_producer_forwarded_control_speculation(sequence, speculation);
     state.branch_speculation_kinds.remove(&sequence);
 
     let pending = state
@@ -1493,6 +1495,9 @@ fn discard_branch_speculation(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(());
     };
+    state
+        .o3_runtime
+        .clear_recorded_producer_forwarded_control_speculation(sequence, speculation);
     state.branch_speculation_kinds.remove(&sequence);
     state.branch_target_predictions.remove(&sequence);
     state.squash_return_address_stack_speculation(sequence)?;
@@ -1514,19 +1519,28 @@ fn remove_branch_speculation_mappings(
         .iter()
         .map(|removed_speculation| removed_speculation.id())
         .collect::<BTreeSet<_>>();
+    let removed_mappings = state
+        .branch_speculations
+        .iter()
+        .filter_map(|(sequence, pending)| {
+            removed_ids
+                .contains(pending)
+                .then_some((*sequence, *pending))
+        })
+        .collect::<Vec<_>>();
     if record_squashes {
-        let squashed_sequences = state
-            .branch_speculations
-            .iter()
-            .filter_map(|(sequence, pending)| removed_ids.contains(pending).then_some(*sequence))
-            .collect::<Vec<_>>();
-        for sequence in squashed_sequences {
-            if let Some(branch_kind) = state.branch_speculation_kinds.remove(&sequence) {
+        for (sequence, _) in &removed_mappings {
+            if let Some(branch_kind) = state.branch_speculation_kinds.remove(sequence) {
                 state
                     .branch_speculation_summary
                     .record_squashed_branch_kind(branch_kind);
             }
         }
+    }
+    for (sequence, speculation) in removed_mappings {
+        state
+            .o3_runtime
+            .clear_recorded_producer_forwarded_control_speculation(sequence, speculation);
     }
     state
         .branch_speculations

@@ -158,7 +158,7 @@ impl RiscvCore {
             .flatten();
         let forwarded_control = state
             .o3_runtime
-            .producer_forwarded_same_link_control_target()
+            .producer_forwarded_control_target()
             .filter(|forwarded| {
                 !state
                     .branch_speculations

@@ -97,6 +97,39 @@ impl O3LiveIssueDependency {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn recorded_producer_forwarded_control_speculation_matches(
+        &self,
+        fetch_sequence: u64,
+        speculation: BranchSpeculationId,
+    ) -> bool {
+        self.live_staged_fetch_identities.values().any(|identity| {
+            identity
+                .producer_forwarded_control_target
+                .is_some_and(|target| target.fetch_request().sequence() == fetch_sequence)
+                && identity.producer_forwarded_control_speculation == Some(speculation)
+        })
+    }
+
+    pub(crate) fn clear_recorded_producer_forwarded_control_speculation(
+        &mut self,
+        fetch_sequence: u64,
+        speculation: BranchSpeculationId,
+    ) {
+        if let Some(identity) = self
+            .live_staged_fetch_identities
+            .values_mut()
+            .find(|identity| {
+                identity
+                    .producer_forwarded_control_target
+                    .is_some_and(|target| target.fetch_request().sequence() == fetch_sequence)
+            })
+        {
+            if identity.producer_forwarded_control_speculation == Some(speculation) {
+                identity.producer_forwarded_control_speculation = None;
+            }
+        }
+    }
+
     pub(crate) fn live_speculative_issue_candidate(
         &self,
         pc: Address,

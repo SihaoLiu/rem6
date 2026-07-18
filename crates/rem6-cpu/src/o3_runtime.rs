@@ -9,7 +9,10 @@ use crate::riscv_defaults::{
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
-use crate::{branch_predictor::BranchTargetKind, RiscvDataAccessEventKind};
+use crate::{
+    branch_predictor::{BranchSpeculationId, BranchTargetKind},
+    RiscvDataAccessEventKind,
+};
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMemoryInstruction,
     RISCV_VECTOR_REGISTER_BYTES,
@@ -50,10 +53,10 @@ mod o3_runtime_memory_result_tests;
 mod o3_runtime_memory_tests;
 #[path = "o3_runtime_memory_window.rs"]
 mod o3_runtime_memory_window;
+#[path = "o3_runtime_producer_forwarded_chain.rs"]
+mod o3_runtime_producer_forwarded_chain;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
-#[path = "o3_runtime_same_link_chain.rs"]
-mod o3_runtime_same_link_chain;
 #[path = "o3_runtime_snapshot_entries.rs"]
 mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
@@ -90,7 +93,7 @@ use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
     o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
-pub(crate) use o3_runtime_same_link_chain::{
+pub(crate) use o3_runtime_producer_forwarded_chain::{
     O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
     O3ProducerForwardedScalarDescendant,
 };

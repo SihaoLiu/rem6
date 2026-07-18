@@ -73,6 +73,13 @@ impl O3ProducerForwardedControlTarget {
         self.target
     }
 
+    pub(crate) fn supports_same_link_descendants(self) -> bool {
+        o3_live_control_operands(self.instruction()).is_some_and(|control| {
+            control.kind() == BranchTargetKind::CallIndirect
+                && control.destination() == Some(self.source())
+        })
+    }
+
     pub(crate) fn fetched_scalar_descendant(
         self,
         instruction: RiscvInstruction,
@@ -252,26 +259,26 @@ impl O3ProducerForwardedReturnDescendant {
 }
 
 impl O3RuntimeState {
-    pub(crate) fn producer_forwarded_same_link_control_target(
+    pub(crate) fn producer_forwarded_control_target(
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
-        self.producer_forwarded_same_link_control_target_with_completed(false)
+        self.producer_forwarded_control_target_with_completed(false)
     }
 
-    pub(crate) fn retained_producer_forwarded_same_link_control_target(
+    pub(crate) fn retained_producer_forwarded_control_target(
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
-        let forwarded = self.producer_forwarded_same_link_control_target_with_completed(true)?;
+        let forwarded = self.producer_forwarded_control_target_with_completed(true)?;
         let recorded = self
             .live_staged_fetch_identities
             .get(&forwarded.consumer_sequence())?
-            .producer_forwarded_same_link_target()?;
+            .forwarded_control_target_identity()?;
         recorded
             .same_control_identity(forwarded)
             .then_some(forwarded)
     }
 
-    fn producer_forwarded_same_link_control_target_with_completed(
+    fn producer_forwarded_control_target_with_completed(
         &self,
         allow_completed: bool,
     ) -> Option<O3ProducerForwardedControlTarget> {
@@ -279,14 +286,14 @@ impl O3RuntimeState {
             return None;
         }
         let mut younger_sequences = self.live_data_access_younger_sequences.iter().copied();
-        self.producer_forwarded_same_link_control_target_for_sequences(
+        self.producer_forwarded_control_target_for_sequences(
             allow_completed,
             younger_sequences.next()?,
             younger_sequences.next()?,
         )
     }
 
-    fn producer_forwarded_same_link_control_target_for_sequences(
+    fn producer_forwarded_control_target_for_sequences(
         &self,
         allow_completed: bool,
         producer_sequence: u64,
@@ -304,14 +311,14 @@ impl O3RuntimeState {
         if live_data_access.event_taken || !valid_outcome {
             return None;
         }
-        self.producer_forwarded_same_link_control_target_from_rows(
+        self.producer_forwarded_control_target_from_rows(
             producer_sequence,
             consumer_sequence,
             live_data_access.fetch_request,
         )
     }
 
-    fn producer_forwarded_same_link_control_target_from_rows(
+    fn producer_forwarded_control_target_from_rows(
         &self,
         producer_sequence: u64,
         consumer_sequence: u64,
@@ -340,15 +347,23 @@ impl O3RuntimeState {
             .live_speculative_executions
             .iter()
             .find(|execution| execution.sequence == consumer_sequence)?;
+        if !self.live_staged_fetch_identity_matches(
+            consumer_sequence,
+            consumer_execution.execution.instruction(),
+            &consumer_execution.consumed_requests,
+        ) {
+            return None;
+        }
         let control = o3_live_control_operands(consumer_execution.execution.instruction())?;
-        let same_link_target = control.same_link_target()?;
-        let rd = control.destination()?;
-        let rs1 = same_link_target.source();
+        let indirect_target = control.indirect_target()?;
+        let rs1 = indirect_target.source();
+        let expected_consumer_destination = control
+            .destination()
+            .map(|destination| (O3RegisterClass::Integer, u32::from(destination.index())));
         if consumer_execution.producer_sequences.as_slice() != [producer_sequence]
             || producer.rename_destination()
                 != Some((O3RegisterClass::Integer, u32::from(rs1.index())))
-            || consumer.rename_destination()
-                != Some((O3RegisterClass::Integer, u32::from(rd.index())))
+            || consumer.rename_destination() != expected_consumer_destination
         {
             return None;
         }
@@ -356,13 +371,21 @@ impl O3RuntimeState {
             .live_speculative_executions
             .iter()
             .find(|execution| execution.sequence == producer_sequence)?;
+        if !self.live_staged_fetch_identity_matches(
+            producer_sequence,
+            producer_execution.execution.instruction(),
+            &producer_execution.consumed_requests,
+        ) || Address::new(producer_execution.execution.pc()) != producer.pc()
+        {
+            return None;
+        }
         let value = producer_execution
             .execution
             .register_writes()
             .iter()
             .find(|write| write.register() == rs1)?
             .value();
-        let target = value.checked_add_signed(same_link_target.offset())? & !1;
+        let target = value.checked_add_signed(indirect_target.offset())? & !1;
         if target != consumer_execution.execution.next_pc()
             || Address::new(consumer_execution.execution.pc()) != consumer.pc()
         {
@@ -390,11 +413,12 @@ impl O3RuntimeState {
         })
     }
 
-    pub(crate) fn record_producer_forwarded_same_link_control_target(
+    pub(crate) fn record_producer_forwarded_control_target(
         &mut self,
         forwarded: O3ProducerForwardedControlTarget,
+        speculation: BranchSpeculationId,
     ) -> bool {
-        let Some(current) = self.producer_forwarded_same_link_control_target() else {
+        let Some(current) = self.producer_forwarded_control_target() else {
             return false;
         };
         if !forwarded.same_control_identity(current) {
@@ -406,21 +430,20 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        identity.record_producer_forwarded_same_link_target(current);
+        identity.producer_forwarded_control_target = Some(current);
+        identity.producer_forwarded_control_speculation = Some(speculation);
         true
     }
-
-    pub(crate) fn has_recorded_producer_forwarded_same_link_control_target(
+    pub(crate) fn has_recorded_producer_forwarded_control_target(
         &self,
         consumer_sequence: u64,
     ) -> bool {
         self.live_staged_fetch_identities
             .get(&consumer_sequence)
-            .and_then(O3LiveStagedFetchIdentity::producer_forwarded_same_link_target)
+            .and_then(O3LiveStagedFetchIdentity::forwarded_control_target_identity)
             .is_some()
     }
-
-    fn recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences(
+    fn recorded_producer_forwarded_control_target_after_head_retire_for_sequences(
         &self,
         producer_sequence: u64,
         consumer_sequence: u64,
@@ -431,8 +454,8 @@ impl O3RuntimeState {
         let recorded = self
             .live_staged_fetch_identities
             .get(&consumer_sequence)?
-            .producer_forwarded_same_link_target()?;
-        let current = self.producer_forwarded_same_link_control_target_from_rows(
+            .forwarded_control_target_identity()?;
+        let current = self.producer_forwarded_control_target_from_rows(
             producer_sequence,
             consumer_sequence,
             recorded.data_access_fetch_request(),
@@ -440,14 +463,14 @@ impl O3RuntimeState {
         recorded.same_control_identity(current).then_some(current)
     }
 
-    pub(crate) fn producer_forwarded_same_link_control_target_after_head_retire(
+    pub(crate) fn producer_forwarded_control_target_after_head_retire(
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
         if self.live_data_access_younger_sequences.len() != 2 {
             return None;
         }
         let mut sequences = self.live_data_access_younger_sequences.iter().copied();
-        self.recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences(
+        self.recorded_producer_forwarded_control_target_after_head_retire_for_sequences(
             sequences.next()?,
             sequences.next()?,
         )
@@ -459,21 +482,24 @@ impl O3RuntimeState {
         consumer_sequence: u64,
     ) -> Option<O3ProducerForwardedControlTarget> {
         let parent = self
-            .producer_forwarded_same_link_control_target_for_sequences(
+            .producer_forwarded_control_target_for_sequences(
                 true,
                 producer_sequence,
                 consumer_sequence,
             )
             .or_else(|| {
-                self.recorded_producer_forwarded_same_link_control_target_after_head_retire_for_sequences(
+                self.recorded_producer_forwarded_control_target_after_head_retire_for_sequences(
                     producer_sequence,
                     consumer_sequence,
                 )
             })?;
+        if !parent.supports_same_link_descendants() {
+            return None;
+        }
         let recorded = self
             .live_staged_fetch_identities
             .get(&consumer_sequence)?
-            .producer_forwarded_same_link_target()?;
+            .forwarded_control_target_identity()?;
         recorded.same_control_identity(parent).then_some(parent)
     }
 
@@ -549,12 +575,12 @@ impl O3RuntimeState {
     pub(crate) fn producer_forwarded_descendant_issue_context(
         &self,
     ) -> Option<(O3ProducerForwardedControlTarget, O3LiveIssueHeadReservation)> {
-        if let Some(authority) = self.retained_producer_forwarded_same_link_control_target() {
+        if let Some(authority) = self.retained_producer_forwarded_control_target() {
             let head =
                 self.live_data_access_head_reservation(authority.data_access_fetch_request())?;
             return Some((authority, head));
         }
-        let authority = self.producer_forwarded_same_link_control_target_after_head_retire()?;
+        let authority = self.producer_forwarded_control_target_after_head_retire()?;
         let producer = self
             .live_speculative_executions
             .iter()

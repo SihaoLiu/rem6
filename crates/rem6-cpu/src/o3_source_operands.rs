@@ -10,11 +10,11 @@ pub(crate) struct O3LiveControlOperands {
     kind: BranchTargetKind,
     sources: Vec<Register>,
     destination: Option<Register>,
-    same_link_target: Option<O3LiveSameLinkControlTarget>,
+    indirect_target: Option<O3LiveIndirectControlTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveSameLinkControlTarget {
+pub(crate) struct O3LiveIndirectControlTarget {
     source: Register,
     offset: i64,
 }
@@ -32,12 +32,12 @@ impl O3LiveControlOperands {
         self.destination
     }
 
-    pub(crate) const fn same_link_target(&self) -> Option<O3LiveSameLinkControlTarget> {
-        self.same_link_target
+    pub(crate) const fn indirect_target(&self) -> Option<O3LiveIndirectControlTarget> {
+        self.indirect_target
     }
 }
 
-impl O3LiveSameLinkControlTarget {
+impl O3LiveIndirectControlTarget {
     pub(crate) const fn source(self) -> Register {
         self.source
     }
@@ -278,33 +278,44 @@ pub(crate) fn o3_speculative_scalar_alu_operands(
 pub(crate) fn o3_live_control_operands(
     instruction: RiscvInstruction,
 ) -> Option<O3LiveControlOperands> {
-    let supported = match instruction {
+    let control_destination = match instruction {
         RiscvInstruction::Beq { .. }
         | RiscvInstruction::Bne { .. }
         | RiscvInstruction::Blt { .. }
         | RiscvInstruction::Bge { .. }
         | RiscvInstruction::Bltu { .. }
-        | RiscvInstruction::Bgeu { .. } => Some((None, None)),
-        RiscvInstruction::Jal { rd, .. } if rd.is_zero() => Some((None, None)),
-        RiscvInstruction::Jal { rd, .. } if is_riscv_link_register(rd) => Some((Some(rd), None)),
-        RiscvInstruction::Jalr { rd, .. } if rd.is_zero() => Some((None, None)),
-        RiscvInstruction::Jalr { rd, rs1, offset } if is_riscv_link_register(rd) => Some((
-            Some(rd),
-            (rd == rs1).then_some(O3LiveSameLinkControlTarget {
+        | RiscvInstruction::Bgeu { .. } => None,
+        RiscvInstruction::Jal { rd, .. } | RiscvInstruction::Jalr { rd, .. } if rd.is_zero() => {
+            None
+        }
+        RiscvInstruction::Jal { rd, .. } | RiscvInstruction::Jalr { rd, .. }
+            if is_riscv_link_register(rd) =>
+        {
+            Some(rd)
+        }
+        _ => return None,
+    };
+    let kind = riscv_branch_target_kind(instruction);
+    let indirect_target = match instruction {
+        RiscvInstruction::Jalr { rs1, offset, .. }
+            if matches!(
+                kind,
+                BranchTargetKind::IndirectUnconditional | BranchTargetKind::CallIndirect
+            ) =>
+        {
+            Some(O3LiveIndirectControlTarget {
                 source: rs1,
                 offset: offset.value(),
-            }),
-        )),
+            })
+        }
         _ => None,
     };
-    supported.map(
-        |(control_destination, same_link_target)| O3LiveControlOperands {
-            kind: riscv_branch_target_kind(instruction),
-            sources: o3_scalar_integer_source_registers(&instruction),
-            destination: control_destination,
-            same_link_target,
-        },
-    )
+    Some(O3LiveControlOperands {
+        kind,
+        sources: o3_scalar_integer_source_registers(&instruction),
+        destination: control_destination,
+        indirect_target,
+    })
 }
 
 pub(crate) fn o3_exact_link_return_source(instruction: RiscvInstruction) -> Option<Register> {
@@ -452,32 +463,43 @@ mod tests {
     }
 
     #[test]
-    fn live_control_descriptor_classifies_same_link_jalr_as_indirect_call() {
-        for link in [1, 5] {
+    fn live_control_descriptor_exposes_nonreturn_jalr_target_operands() {
+        for (destination, source) in [(0, 9), (1, 9), (5, 9), (1, 1), (5, 5)] {
             let instruction = RiscvInstruction::Jalr {
-                rd: register(link),
-                rs1: register(link),
+                rd: register(destination),
+                rs1: register(source),
                 offset: Immediate::new(12),
             };
             assert_live_control(
                 instruction,
-                BranchTargetKind::CallIndirect,
-                &[register(link)],
-                Some(register(link)),
+                if destination == 0 {
+                    BranchTargetKind::IndirectUnconditional
+                } else {
+                    BranchTargetKind::CallIndirect
+                },
+                &[register(source)],
+                (!register(destination).is_zero()).then_some(register(destination)),
             );
-            let same_link = o3_live_control_operands(instruction)
+            let target = o3_live_control_operands(instruction)
                 .unwrap()
-                .same_link_target()
-                .expect("same-link JALR target operands");
-            assert_eq!(same_link.source(), register(link));
-            assert_eq!(same_link.offset(), 12);
+                .indirect_target()
+                .expect("producer-forwardable JALR target operands");
+            assert_eq!(target.source(), register(source));
+            assert_eq!(target.offset(), 12);
         }
-        assert_eq!(
-            o3_live_control_operands(jalr(1, 5))
-                .unwrap()
-                .same_link_target(),
-            None
-        );
+    }
+
+    #[test]
+    fn live_control_descriptor_keeps_return_and_coroutine_targets_outside_scalar_forwarding() {
+        for instruction in [jalr(0, 1), jalr(0, 5), jalr(1, 5), jalr(5, 1)] {
+            assert_eq!(
+                o3_live_control_operands(instruction)
+                    .unwrap()
+                    .indirect_target(),
+                None,
+                "{instruction:?}"
+            );
+        }
     }
 
     #[test]

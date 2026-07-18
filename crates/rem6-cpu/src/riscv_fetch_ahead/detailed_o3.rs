@@ -12,6 +12,7 @@ use crate::{
         O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
         O3ProducerForwardedScalarDescendant,
     },
+    riscv_branch_kind::riscv_branch_target_kind,
     riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
@@ -23,8 +24,8 @@ use crate::{
         RiscvSequencedScalarIntegerYoungerDecision,
     },
     riscv_scalar_memory_window::independent_scalar_load_destination,
-    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, ReturnAddressStackOperation,
-    ReturnAddressStackOperationKind, RiscvCoreState,
+    BranchSpeculationId, BranchTargetKind, CpuFetchEvent, CpuFetchEventKind,
+    ReturnAddressStackOperation, ReturnAddressStackOperationKind, RiscvCoreState,
 };
 
 pub(super) enum DetailedFetchAheadCandidate {
@@ -383,9 +384,7 @@ fn producer_forwarded_control_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> Option<DetailedFetchAheadCandidate> {
-    let forwarded = state
-        .o3_runtime
-        .producer_forwarded_same_link_control_target()?;
+    let forwarded = state.o3_runtime.producer_forwarded_control_target()?;
     let target_authority = PredictedControlTargetAuthority::ProducerForwarded(forwarded);
     Some(
         match recorded_predicted_pc(
@@ -1123,17 +1122,24 @@ pub(crate) fn recorded_predicted_pc(
         PredictedControlTargetAuthority::ProducerForwarded(forwarded) => {
             let live_head = state
                 .o3_runtime
-                .retained_producer_forwarded_same_link_control_target()
+                .retained_producer_forwarded_control_target()
                 == Some(forwarded);
             let retired_head = state
                 .o3_runtime
-                .producer_forwarded_same_link_control_target_after_head_retire()
+                .producer_forwarded_control_target_after_head_retire()
                 == Some(forwarded);
             let scalar_head = state
                 .o3_runtime
                 .producer_forwarded_same_link_scalar_descendant()
                 .is_some_and(|descendant| descendant.parent() == forwarded);
             if (!live_head && !retired_head && !scalar_head)
+                || !producer_forwarded_control_speculation_matches(
+                    state,
+                    request.sequence(),
+                    *speculation,
+                    forwarded,
+                )
+                || pending.pc() != forwarded.pc()
                 || !pending.predicted_taken()
                 || pending.target() != Some(forwarded.target())
             {
@@ -1199,6 +1205,50 @@ pub(crate) fn recorded_predicted_pc(
                 RecordedPredictedPc::Invalid
             }
         }
+    }
+}
+
+fn producer_forwarded_control_speculation_matches(
+    state: &RiscvCoreState,
+    sequence: u64,
+    speculation: BranchSpeculationId,
+    forwarded: O3ProducerForwardedControlTarget,
+) -> bool {
+    let kind = riscv_branch_target_kind(forwarded.instruction());
+    if !state
+        .o3_runtime
+        .recorded_producer_forwarded_control_speculation_matches(sequence, speculation)
+        || state.branch_speculation_kinds.get(&sequence) != Some(&kind)
+    {
+        return false;
+    }
+    match super::return_address_stack_action(forwarded.instruction(), forwarded.sequential_pc()) {
+        None => !state
+            .return_address_stack_operations
+            .contains_key(&sequence),
+        Some(super::ReturnAddressStackAction::Push(pushed_address)) => {
+            let Some(operation_id) = state.return_address_stack_operations.get(&sequence) else {
+                return false;
+            };
+            let Some(operation) = state
+                .return_address_stack
+                .pending_operations()
+                .iter()
+                .find(|operation| operation.id() == *operation_id)
+            else {
+                return false;
+            };
+            ras_required_producer_matches(
+                kind,
+                operation,
+                state.return_address_stack.config().entries(),
+                pushed_address,
+                RequiredRasConsumer::Pop,
+            )
+        }
+        Some(
+            super::ReturnAddressStackAction::Pop | super::ReturnAddressStackAction::PopThenPush(_),
+        ) => false,
     }
 }
 

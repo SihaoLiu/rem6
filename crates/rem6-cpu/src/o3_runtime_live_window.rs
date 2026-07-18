@@ -23,7 +23,8 @@ pub(super) struct O3LiveRetiredInstruction {
 pub(super) struct O3LiveStagedFetchIdentity {
     instruction: RiscvInstruction,
     consumed_requests: Option<Vec<MemoryRequestId>>,
-    producer_forwarded_same_link_target: Option<O3ProducerForwardedControlTarget>,
+    pub(super) producer_forwarded_control_target: Option<O3ProducerForwardedControlTarget>,
+    pub(super) producer_forwarded_control_speculation: Option<BranchSpeculationId>,
     producer_forwarded_return_descendant: Option<O3ProducerForwardedReturnDescendant>,
 }
 
@@ -32,37 +33,27 @@ impl O3LiveStagedFetchIdentity {
         Self {
             instruction,
             consumed_requests: None,
-            producer_forwarded_same_link_target: None,
+            producer_forwarded_control_target: None,
+            producer_forwarded_control_speculation: None,
             producer_forwarded_return_descendant: None,
         }
     }
-
-    pub(super) fn record_producer_forwarded_same_link_target(
-        &mut self,
-        target: O3ProducerForwardedControlTarget,
-    ) {
-        self.producer_forwarded_same_link_target = Some(target);
-    }
-
-    pub(super) const fn producer_forwarded_same_link_target(
+    pub(super) const fn forwarded_control_target_identity(
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
-        self.producer_forwarded_same_link_target
+        self.producer_forwarded_control_target
     }
-
     pub(super) fn record_producer_forwarded_return_descendant(
         &mut self,
         descendant: O3ProducerForwardedReturnDescendant,
     ) {
         self.producer_forwarded_return_descendant = Some(descendant);
     }
-
     pub(super) const fn producer_forwarded_return_descendant(
         &self,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
         self.producer_forwarded_return_descendant
     }
-
     fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
         if !valid_live_speculative_fetch_identity(consumed_requests) {
             return false;
@@ -73,7 +64,6 @@ impl O3LiveStagedFetchIdentity {
         self.consumed_requests = Some(consumed_requests.to_vec());
         true
     }
-
     fn matches(
         &self,
         instruction: RiscvInstruction,
@@ -86,7 +76,6 @@ impl O3LiveStagedFetchIdentity {
                 .as_deref()
                 .is_none_or(|bound| bound == consumed_requests)
     }
-
     fn matches_bound(
         &self,
         instruction: RiscvInstruction,
@@ -96,7 +85,6 @@ impl O3LiveStagedFetchIdentity {
             && valid_live_speculative_fetch_identity(consumed_requests)
             && self.consumed_requests.as_deref() == Some(consumed_requests)
     }
-
     pub(super) fn owns_fetch_request(&self, request: MemoryRequestId) -> bool {
         self.consumed_requests
             .as_ref()
@@ -105,7 +93,6 @@ impl O3LiveStagedFetchIdentity {
             == Some(request)
     }
 }
-
 impl O3RuntimeState {
     pub(crate) fn append_producer_forwarded_control_descendant(
         &mut self,
@@ -114,10 +101,9 @@ impl O3RuntimeState {
         instruction: RiscvInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
-        let live_data_head =
-            self.retained_producer_forwarded_same_link_control_target() == Some(authority);
+        let live_data_head = self.retained_producer_forwarded_control_target() == Some(authority);
         let retired_data_head =
-            self.producer_forwarded_same_link_control_target_after_head_retire() == Some(authority);
+            self.producer_forwarded_control_target_after_head_retire() == Some(authority);
         if (!live_data_head && !retired_data_head)
             || pc != authority.target()
             || self.live_data_accesses.len() + self.live_data_access_younger_sequences.len()

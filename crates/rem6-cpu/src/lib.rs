@@ -1014,6 +1014,10 @@ impl RiscvCoreState {
 
     fn discard_branch_speculations(&mut self) {
         self.producer_forwarded_scalar_continuation = None;
+        for (&sequence, &speculation) in &self.branch_speculations {
+            self.o3_runtime
+                .clear_recorded_producer_forwarded_control_speculation(sequence, speculation);
+        }
         self.rollback_all_selected_branch_speculations()
             .expect("selected branch speculation rollback is internally consistent");
         self.discard_return_address_stack_speculations();
