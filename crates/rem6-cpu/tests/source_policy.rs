@@ -522,6 +522,11 @@ fn generic_o3_live_data_owner_uses_data_access_names() {
         "discard_live_scalar_memory_window_rows",
         "discard_live_scalar_memory_window_rows_at",
         "remove_live_scalar_memory_rows",
+        "o3_scalar_memory_lifecycle_is_quiescent",
+        "has_pending_o3_scalar_memory_retirement",
+        "pending_o3_scalar_memory_retirement_count",
+        "owns_pending_o3_scalar_memory_retirement",
+        "ready_o3_scalar_memory_event_kind",
         "clear_deferred_o3_scalar_memory_execution",
         "deferred_o3_scalar_memory_retirement",
         "completed_live_scalar_memory",
@@ -704,50 +709,6 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
         cluster.matches(mmio_entry).count(),
         2,
         "the two MMIO cluster drive variants must consume the MMIO-aware decision filter"
-    );
-}
-
-#[test]
-fn public_scalar_memory_lifecycle_methods_remain_deprecated_live_data_forwards() {
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let raw_memory = fs::read_to_string(crate_dir.join("src/o3_runtime_memory.rs")).unwrap();
-    let memory = production_rust_source(&raw_memory);
-
-    for (deprecated, forward) in [
-        (
-            "pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool",
-            "self.o3_live_data_access_lifecycle_is_quiescent()",
-        ),
-        (
-            "pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool",
-            "self.has_pending_o3_live_data_access_retirement()",
-        ),
-        (
-            "pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize",
-            "self.pending_o3_live_data_access_retirement_count()",
-        ),
-        (
-            "pub fn owns_pending_o3_scalar_memory_retirement(",
-            "self.owns_pending_o3_live_data_access_retirement(fetch_request)",
-        ),
-        (
-            "pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind>",
-            "self.ready_o3_live_data_access_event_kind()",
-        ),
-    ] {
-        assert!(
-            memory.contains(deprecated),
-            "public scalar-memory compatibility method is missing `{deprecated}`"
-        );
-        assert!(
-            memory.contains(forward),
-            "public scalar-memory compatibility method must forward to `{forward}`"
-        );
-    }
-    assert_eq!(
-        raw_memory.matches("#[deprecated(note = \"use ").count(),
-        5,
-        "each scalar-memory public compatibility method must be explicitly deprecated"
     );
 }
 

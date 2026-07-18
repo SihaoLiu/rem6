@@ -918,31 +918,6 @@ impl crate::RiscvCore {
         self.with_o3_runtime(|runtime| runtime.ready_live_data_access_event_kind())
     }
 
-    #[deprecated(note = "use o3_live_data_access_lifecycle_is_quiescent")]
-    pub fn o3_scalar_memory_lifecycle_is_quiescent(&self) -> bool {
-        self.o3_live_data_access_lifecycle_is_quiescent()
-    }
-
-    #[deprecated(note = "use has_pending_o3_live_data_access_retirement")]
-    pub fn has_pending_o3_scalar_memory_retirement(&self) -> bool {
-        self.has_pending_o3_live_data_access_retirement()
-    }
-
-    #[deprecated(note = "use pending_o3_live_data_access_retirement_count")]
-    pub fn pending_o3_scalar_memory_retirement_count(&self) -> usize {
-        self.pending_o3_live_data_access_retirement_count()
-    }
-
-    #[deprecated(note = "use owns_pending_o3_live_data_access_retirement")]
-    pub fn owns_pending_o3_scalar_memory_retirement(&self, fetch_request: MemoryRequestId) -> bool {
-        self.owns_pending_o3_live_data_access_retirement(fetch_request)
-    }
-
-    #[deprecated(note = "use ready_o3_live_data_access_event_kind")]
-    pub fn ready_o3_scalar_memory_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
-        self.ready_o3_live_data_access_event_kind()
-    }
-
     pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
         let cleared = state.o3_runtime.clear_deferred_live_data_access_execution();
