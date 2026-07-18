@@ -125,7 +125,7 @@ fn riscv_data_completion_lives_in_focused_module() {
     let completion = production_rust_source(&fs::read_to_string(completion_path).unwrap());
     for anchor in [
         "pub(crate) struct RiscvDataCompletion",
-        "pub(crate) fn apply_completed_data_access(",
+        "pub(crate) fn apply_data_completion(",
         "fn scatter_segment_load(",
         "fn scatter_strided_load(",
         "fn scatter_indexed_load(",

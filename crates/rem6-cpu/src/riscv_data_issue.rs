@@ -20,7 +20,7 @@ use crate::{
     riscv_checker,
     riscv_cross_line::supports_cross_line_data_access,
     riscv_data_access,
-    riscv_data_completion::{apply_completed_data_access, RiscvDataCompletion},
+    riscv_data_completion::{apply_data_completion, RiscvDataCompletion},
     riscv_execute,
     riscv_fu_latency::riscv_data_completion_execute_wait_cycles,
     riscv_live_retire_window::{
@@ -752,12 +752,7 @@ impl RiscvCore {
                     }
                 }
                 if !deferred_o3_memory_result_writeback(&state, &access) {
-                    apply_completed_data_access(
-                        &mut state,
-                        self.id(),
-                        &completion,
-                        "load response data",
-                    );
+                    apply_data_completion(&mut state, self.id(), &completion, "load response data");
                     riscv_checker::sync_checker_hart(&mut state);
                 }
                 if matches!(access.access, MemoryAccessKind::Load { .. }) {
@@ -792,7 +787,7 @@ impl RiscvCore {
             }
             ResponseStatus::StoreConditionalFailed => {
                 state.outstanding_data.remove(&request_id);
-                let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
+                if !matches!(&access.access, MemoryAccessKind::StoreConditional { .. }) {
                     debug_assert!(false, "store-conditional failure for non-SC access");
                     state
                         .o3_runtime
@@ -801,21 +796,20 @@ impl RiscvCore {
                         .data_events
                         .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
                     return;
-                };
-                state.hart.write(*rd, 1);
-                state.reservation = None;
-                state.sc_progress.record_failure(
+                }
+                let completion = access.store_conditional_failure_completion(delivery.tick());
+                apply_data_completion(
+                    &mut state,
                     self.id(),
-                    delivery.tick(),
-                    access.physical_address,
-                    access.size,
+                    &completion,
+                    "store-conditional failure has no response data",
                 );
                 riscv_checker::sync_checker_hart(&mut state);
                 let completed_event = record_data_retire_cycle(
                     &mut state,
                     &access,
                     delivery.tick(),
-                    RiscvDataAccessEventKind::ConditionalFailed,
+                    completion.data_event_kind(),
                 );
                 if let Err(error) = record_o3_data_access_outcome(
                     &mut state,
@@ -925,7 +919,7 @@ impl RiscvCore {
                     }
                 }
                 if !deferred_o3_memory_result_writeback(&state, &access) {
-                    apply_completed_data_access(
+                    apply_data_completion(
                         &mut state,
                         self.id(),
                         &data_completion,

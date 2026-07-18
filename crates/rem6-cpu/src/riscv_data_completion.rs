@@ -4,9 +4,16 @@ use rem6_isa_riscv::{
     MemoryAccessKind, MemoryResponseWritebackTarget, RiscvHartState, RiscvVectorConfig,
     VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
+use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
-use crate::{CpuId, RiscvCoreState, RiscvLoadReservation};
+use crate::{CpuId, RiscvCoreState, RiscvDataAccessEventKind, RiscvLoadReservation};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvDataCompletionOutcome {
+    Completed,
+    StoreConditionalFailed { tick: Tick },
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvDataCompletion {
@@ -16,6 +23,7 @@ pub(crate) struct RiscvDataCompletion {
     size: AccessSize,
     request_byte_offset: usize,
     bytes: Option<Vec<u8>>,
+    outcome: RiscvDataCompletionOutcome,
 }
 
 impl RiscvDataCompletion {
@@ -34,6 +42,30 @@ impl RiscvDataCompletion {
             size,
             request_byte_offset,
             bytes,
+            outcome: RiscvDataCompletionOutcome::Completed,
+        }
+    }
+
+    pub(crate) fn store_conditional_failed(
+        fetch_request: MemoryRequestId,
+        access: MemoryAccessKind,
+        physical_address: Address,
+        size: AccessSize,
+        request_byte_offset: usize,
+        tick: Tick,
+    ) -> Self {
+        assert!(
+            matches!(&access, MemoryAccessKind::StoreConditional { .. }),
+            "store-conditional failure completion requires SC access"
+        );
+        Self {
+            fetch_request,
+            access,
+            physical_address,
+            size,
+            request_byte_offset,
+            bytes: None,
+            outcome: RiscvDataCompletionOutcome::StoreConditionalFailed { tick },
         }
     }
 
@@ -61,12 +93,21 @@ impl RiscvDataCompletion {
         self.bytes.as_deref()
     }
 
+    pub(crate) const fn data_event_kind(&self) -> RiscvDataAccessEventKind {
+        match self.outcome {
+            RiscvDataCompletionOutcome::Completed => RiscvDataAccessEventKind::Completed,
+            RiscvDataCompletionOutcome::StoreConditionalFailed { .. } => {
+                RiscvDataAccessEventKind::ConditionalFailed
+            }
+        }
+    }
+
     fn required_bytes(&self, missing_data: &'static str) -> &[u8] {
         self.bytes.as_deref().expect(missing_data)
     }
 }
 
-pub(crate) fn apply_completed_data_access(
+pub(crate) fn apply_data_completion(
     state: &mut RiscvCoreState,
     cpu: CpuId,
     completion: &RiscvDataCompletion,
@@ -104,11 +145,23 @@ pub(crate) fn apply_completed_data_access(
                 completion.size(),
             ));
         }
-        MemoryAccessKind::StoreConditional { rd, .. } => {
-            state.hart.write(*rd, 0);
-            state.reservation = None;
-            state.sc_progress.record_success(cpu);
-        }
+        MemoryAccessKind::StoreConditional { rd, .. } => match completion.outcome {
+            RiscvDataCompletionOutcome::Completed => {
+                state.hart.write(*rd, 0);
+                state.reservation = None;
+                state.sc_progress.record_success(cpu);
+            }
+            RiscvDataCompletionOutcome::StoreConditionalFailed { tick } => {
+                state.hart.write(*rd, 1);
+                state.reservation = None;
+                state.sc_progress.record_failure(
+                    cpu,
+                    tick,
+                    completion.physical_address(),
+                    completion.size(),
+                );
+            }
+        },
         MemoryAccessKind::VectorLoadUnitStride {
             vd,
             width,
@@ -525,6 +578,17 @@ mod tests {
         MemoryRequestId::new(AgentId::new(0), sequence)
     }
 
+    fn store_conditional_access(rd: Register) -> MemoryAccessKind {
+        MemoryAccessKind::StoreConditional {
+            rd,
+            address: 0x8000,
+            width: MemoryWidth::Doubleword,
+            value: 0x1122_3344_5566_7788,
+            acquire: false,
+            release: false,
+        }
+    }
+
     fn lane_mask(active_lanes: &[bool], lane_bytes: usize) -> Vec<bool> {
         active_lanes
             .iter()
@@ -601,7 +665,7 @@ mod tests {
             completion.bytes(),
             Some(&0x1122_3344_5566_7788u64.to_le_bytes()[..])
         );
-        apply_completed_data_access(&mut state, CpuId::new(0), &completion, "LR data");
+        apply_data_completion(&mut state, CpuId::new(0), &completion, "LR data");
 
         assert_eq!(
             state.hart.read(Register::new(5).unwrap()),
@@ -613,6 +677,90 @@ mod tests {
                 completion.physical_address(),
                 completion.size()
             ))
+        );
+    }
+
+    #[test]
+    fn successful_store_conditional_completion_writes_zero_and_records_success() {
+        let cpu = CpuId::new(0);
+        let rd = Register::new(7).unwrap();
+        let physical_address = Address::new(0x9008);
+        let size = AccessSize::new(8).unwrap();
+        let mut state = RiscvCoreState::new(0x1000, 0);
+        state.hart.write(rd, 9);
+        state.reservation = Some(RiscvLoadReservation::new(physical_address, size));
+        state
+            .sc_progress
+            .record_failure(cpu, 31, physical_address, size);
+        let completion = RiscvDataCompletion::from_issued_response(
+            request_id(12),
+            store_conditional_access(rd),
+            physical_address,
+            size,
+            0,
+            None,
+        );
+
+        assert_eq!(
+            completion.data_event_kind(),
+            crate::RiscvDataAccessEventKind::Completed
+        );
+        apply_data_completion(&mut state, cpu, &completion, "SC response data");
+
+        assert_eq!(state.hart.read(rd), 0);
+        assert_eq!(state.reservation, None);
+        assert_eq!(state.sc_progress.streak(cpu), None);
+    }
+
+    #[test]
+    fn failed_store_conditional_completion_writes_one_and_preserves_failure_tick() {
+        let cpu = CpuId::new(0);
+        let rd = Register::new(7).unwrap();
+        let physical_address = Address::new(0x9008);
+        let size = AccessSize::new(8).unwrap();
+        let mut state = RiscvCoreState::new(0x1000, 0);
+        state.hart.write(rd, 9);
+        state.reservation = Some(RiscvLoadReservation::new(physical_address, size));
+        let completion = RiscvDataCompletion::store_conditional_failed(
+            request_id(13),
+            store_conditional_access(rd),
+            physical_address,
+            size,
+            0,
+            37,
+        );
+
+        assert_eq!(
+            completion.data_event_kind(),
+            crate::RiscvDataAccessEventKind::ConditionalFailed
+        );
+        apply_data_completion(&mut state, cpu, &completion, "SC response data");
+
+        assert_eq!(state.hart.read(rd), 1);
+        assert_eq!(state.reservation, None);
+        let streak = state.sc_progress.streak(cpu).copied().unwrap();
+        assert_eq!(streak.address(), physical_address);
+        assert_eq!(streak.size(), size);
+        assert_eq!(streak.first_failure_tick(), 37);
+        assert_eq!(streak.last_failure_tick(), 37);
+        assert_eq!(streak.failure_count(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "store-conditional failure completion requires SC access")]
+    fn failed_store_conditional_completion_rejects_non_sc_access() {
+        RiscvDataCompletion::store_conditional_failed(
+            request_id(14),
+            MemoryAccessKind::Load {
+                rd: Register::new(5).unwrap(),
+                address: 0x8000,
+                width: MemoryWidth::Doubleword,
+                signed: true,
+            },
+            Address::new(0x9008),
+            AccessSize::new(8).unwrap(),
+            0,
+            41,
         );
     }
 }

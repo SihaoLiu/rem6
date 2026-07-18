@@ -10,7 +10,7 @@ use crate::o3_dependency::{O3PhysicalRegisterId, O3RegisterClass};
 use crate::o3_pipeline::O3PendingStateSnapshot;
 use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord};
 use crate::riscv_branch_kind::is_riscv_link_register;
-use crate::riscv_data_completion::apply_completed_data_access;
+use crate::riscv_data_completion::apply_data_completion;
 use crate::riscv_defaults::{
     DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_WRITEBACK_WIDTH,
     MIN_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
@@ -1176,7 +1176,7 @@ impl crate::RiscvCore {
             state
                 .o3_runtime
                 .prepare_ready_live_data_access_forwarding_matcher(&execution);
-            apply_completed_data_access(
+            apply_data_completion(
                 &mut state,
                 self.id(),
                 &completion,
