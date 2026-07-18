@@ -1,5 +1,9 @@
 use super::*;
 
+#[path = "o3/fixtures.rs"]
+mod fixtures;
+use fixtures::*;
+
 #[path = "o3/branch.rs"]
 mod branch;
 #[path = "o3/branch_mismatch.rs"]

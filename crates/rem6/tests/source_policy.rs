@@ -10,6 +10,8 @@ mod data_cache_protocol_authority;
 mod diagnostic_failure_ownership;
 #[path = "source_policy/execution_mode_lanes.rs"]
 mod execution_mode_lanes;
+#[path = "source_policy/m5_host_action_fixture_ownership.rs"]
+mod m5_host_action_fixture_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
 #[path = "source_policy/stats_compat_ownership.rs"]
