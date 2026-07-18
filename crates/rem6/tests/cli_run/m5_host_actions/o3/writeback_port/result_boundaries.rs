@@ -1,3 +1,18 @@
+use super::result_classes::unique_result_temp_binary;
+use super::result_classes::{
+    MemoryResultClass, MemoryResultFixture, RESULT_MAX_TICK, RESULT_TEMP_ID,
+};
+use super::result_support::{
+    assert_register, assert_register_absent, data_trace, event_str, json_u64,
+};
+use super::result_support::{memory_dump_hex, memory_result_event_at_pc};
+use super::*;
+
+#[path = "result_boundaries/support.rs"]
+mod support;
+
+type PmpDeniedAmoGdbControl = support::PmpDeniedAmoGdbControl;
+
 const RESULT_BOUNDARY_MAX_TICK: u64 = 1_200;
 const ALL_INACTIVE_SOURCE: u64 = 0x8000_0080;
 const ALL_INACTIVE_DESTINATION: u64 = 0x8000_0090;
@@ -217,7 +232,7 @@ fn rem6_run_o3_memory_result_writeback_denied_amo_traps_before_transport() {
         ("attached-continue", PmpDeniedAmoGdbControl::Continue),
     ] {
         let artifact = unique_result_boundary_output(&format!("denied-amo-{label}"));
-        let output = pmp_denied_amo_output(
+        let output = support::pmp_denied_amo_output(
             &denied_path,
             RESULT_BOUNDARY_MAX_TICK,
             &[
@@ -231,7 +246,7 @@ fn rem6_run_o3_memory_result_writeback_denied_amo_traps_before_transport() {
         );
         assert_eq!(output.status.code(), Some(2), "{label} status: {output:?}");
         assert!(output.stdout.is_empty(), "{label} stdout: {output:?}");
-        assert_denied_amo_failure_diagnostics(&String::from_utf8(output.stderr).unwrap());
+        support::assert_denied_amo_failure_diagnostics(&String::from_utf8(output.stderr).unwrap());
         assert!(!artifact.exists(), "{label} emitted {}", artifact.display());
     }
 }
@@ -649,5 +664,3 @@ fn vector_unit_stride_fault_only_load_type(vm_unmasked: bool, width: u32, rs1: u
         | (u32::from(vd) << 7)
         | 0x07
 }
-
-include!("result_boundaries/support.rs");

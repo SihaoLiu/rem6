@@ -1236,5 +1236,11 @@ fn scalar_load_admission_binary() -> std::path::PathBuf {
     temp_binary("m5-switch-cpu-o3-writeback-scalar-load-admission", &elf)
 }
 
-include!("writeback_port/result_classes.rs");
-include!("writeback_port/result_boundaries.rs");
+#[path = "writeback_port/result_support.rs"]
+mod result_support;
+
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;

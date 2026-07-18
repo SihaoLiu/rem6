@@ -1,10 +1,12 @@
+use super::*;
+
 #[derive(Clone, Copy)]
-enum PmpDeniedAmoGdbControl {
+pub(super) enum PmpDeniedAmoGdbControl {
     Detach,
     Continue,
 }
 
-fn pmp_denied_amo_output(
+pub(super) fn pmp_denied_amo_output(
     path: &std::path::Path,
     max_tick: u64,
     extra_args: &[&str],
@@ -75,7 +77,7 @@ fn pmp_denied_amo_output(
     crate::gdb_support::wait_with_output_timeout(child, std::time::Duration::from_secs(30))
 }
 
-fn assert_denied_amo_failure_diagnostics(stderr: &str) {
+pub(super) fn assert_denied_amo_failure_diagnostics(stderr: &str) {
     let stderr = stderr
         .strip_suffix('\n')
         .unwrap_or_else(|| panic!("denied AMO stderr must end in one newline: {stderr:?}"));

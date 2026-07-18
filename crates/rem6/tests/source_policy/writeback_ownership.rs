@@ -1,17 +1,16 @@
 use super::*;
 
 const WRITEBACK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port.rs";
+const RESULT_SUPPORT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_support.rs";
 const RESULT_CLASSES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes.rs";
-const RESULT_CLASSES_SUPPORT: &str =
+const RESULT_CLASSES_OLD_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/support.rs";
 const RESULT_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries.rs";
 const RESULT_BOUNDARIES_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries/support.rs";
-const RESULT_CLASSES_INCLUDE: &str = "writeback_port/result_classes.rs";
-const RESULT_BOUNDARIES_INCLUDE: &str = "writeback_port/result_boundaries.rs";
-const RESULT_CLASSES_SUPPORT_INCLUDE: &str = "result_classes/support.rs";
-const RESULT_BOUNDARIES_SUPPORT_INCLUDE: &str = "result_boundaries/support.rs";
+const WRITEBACK_ROOT_MODULES: [&str; 3] = ["result_support", "result_classes", "result_boundaries"];
+const RESULT_BOUNDARIES_MODULES: [&str; 1] = ["support"];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";
 const RESULT_CLASS_ANCHORS: [&str; 4] = [
     "rem6_run_o3_memory_result_writeback_matrix_direct",
@@ -40,8 +39,8 @@ const RESULT_BOUNDARY_SUPPORT_HELPERS: [&str; 2] = [
     "assert_denied_amo_failure_diagnostics",
 ];
 const WRITEBACK_ROOT_MAX_LINES: usize = 1250;
+const RESULT_SUPPORT_MAX_LINES: usize = 160;
 const RESULT_CLASSES_MAX_LINES: usize = 700;
-const RESULT_CLASSES_SUPPORT_MAX_LINES: usize = 160;
 const RESULT_CLASSES_AGGREGATE_MAX_LINES: usize = 800;
 const RESULT_BOUNDARIES_MAX_LINES: usize = 700;
 const RESULT_BOUNDARIES_SUPPORT_MAX_LINES: usize = 140;
@@ -51,8 +50,9 @@ const RESULT_BOUNDARIES_AGGREGATE_MAX_LINES: usize = 800;
 fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join(WRITEBACK_ROOT);
+    let support_path = crate_dir.join(RESULT_SUPPORT);
     let child_path = crate_dir.join(RESULT_CLASSES);
-    let support_path = crate_dir.join(RESULT_CLASSES_SUPPORT);
+    let old_support_path = crate_dir.join(RESULT_CLASSES_OLD_SUPPORT);
     let boundary_path = crate_dir.join(RESULT_BOUNDARIES);
     let boundary_support_path = crate_dir.join(RESULT_BOUNDARIES_SUPPORT);
     let root = fs::read_to_string(&root_path).unwrap();
@@ -62,7 +62,6 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let boundary_support = fs::read_to_string(&boundary_support_path);
 
     let root_functions = top_level_function_names(WRITEBACK_ROOT, &root);
-    let child_includes = top_level_include_paths(RESULT_CLASSES, &child);
     let mut boundary_failures = Vec::new();
     if line_count(&root_path) >= WRITEBACK_ROOT_MAX_LINES {
         boundary_failures.push(format!(
@@ -76,19 +75,57 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             ));
         }
     }
-    if child_includes != [RESULT_CLASSES_SUPPORT_INCLUDE] {
+    if top_level_module_names(WRITEBACK_ROOT, &root) != WRITEBACK_ROOT_MODULES {
         boundary_failures.push(format!(
-            "{RESULT_CLASSES} must contain exactly include!(\"{RESULT_CLASSES_SUPPORT_INCLUDE}\")"
+            "{WRITEBACK_ROOT} must declare exactly the normal modules {WRITEBACK_ROOT_MODULES:?}"
         ));
     }
+    for (relative, source) in [
+        (WRITEBACK_ROOT, root.as_str()),
+        (RESULT_CLASSES, child.as_str()),
+    ] {
+        let includes = top_level_include_paths(relative, source);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{relative} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
+    if old_support_path.exists() {
+        boundary_failures.push(format!("{RESULT_CLASSES_OLD_SUPPORT} must be removed"));
+    }
     if support.is_err() {
-        boundary_failures.push(format!("{RESULT_CLASSES_SUPPORT} must exist"));
+        boundary_failures.push(format!("{RESULT_SUPPORT} must exist"));
     }
     if boundary.is_err() {
         boundary_failures.push(format!("{RESULT_BOUNDARIES} must exist"));
     }
-    if boundary_support.is_err() {
-        boundary_failures.push(format!("{RESULT_BOUNDARIES_SUPPORT} must exist"));
+    match &boundary {
+        Ok(boundary) => {
+            if top_level_module_names(RESULT_BOUNDARIES, boundary) != RESULT_BOUNDARIES_MODULES {
+                boundary_failures.push(format!(
+                    "{RESULT_BOUNDARIES} must declare exactly the normal child modules {RESULT_BOUNDARIES_MODULES:?}"
+                ));
+            }
+            let includes = top_level_include_paths(RESULT_BOUNDARIES, boundary);
+            if !includes.is_empty() {
+                boundary_failures.push(format!(
+                    "{RESULT_BOUNDARIES} must not contain top-level include! fragments: {includes:?}"
+                ));
+            }
+        }
+        Err(_) => boundary_failures.push(format!("{RESULT_BOUNDARIES} must exist")),
+    }
+    match &boundary_support {
+        Ok(boundary_support) => {
+            let includes = top_level_include_paths(RESULT_BOUNDARIES_SUPPORT, boundary_support);
+            if !includes.is_empty() {
+                boundary_failures.push(format!(
+                    "{RESULT_BOUNDARIES_SUPPORT} must not contain top-level include! fragments: {includes:?}"
+                ));
+            }
+        }
+        Err(_) => boundary_failures.push(format!("{RESULT_BOUNDARIES_SUPPORT} must exist")),
     }
     assert!(
         boundary_failures.is_empty(),
@@ -99,24 +136,13 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let boundary = boundary.unwrap();
     let boundary_support = boundary_support.unwrap();
 
-    assert_eq!(
-        top_level_include_paths(WRITEBACK_ROOT, &root),
-        [RESULT_CLASSES_INCLUDE, RESULT_BOUNDARIES_INCLUDE],
-        "{WRITEBACK_ROOT} must contain exactly the result-class and result-boundary includes in order"
-    );
     assert!(
-        root.contains(&format!(
-            "include!(\"{RESULT_CLASSES_INCLUDE}\");\ninclude!(\"{RESULT_BOUNDARIES_INCLUDE}\");"
-        )),
-        "{WRITEBACK_ROOT} must include {RESULT_BOUNDARIES_INCLUDE} immediately after {RESULT_CLASSES_INCLUDE}"
+        line_count(&support_path) <= RESULT_SUPPORT_MAX_LINES,
+        "{RESULT_SUPPORT} must remain at or below {RESULT_SUPPORT_MAX_LINES} lines"
     );
     assert!(
         line_count(&child_path) <= RESULT_CLASSES_MAX_LINES,
         "{RESULT_CLASSES} must remain at or below {RESULT_CLASSES_MAX_LINES} lines"
-    );
-    assert!(
-        line_count(&support_path) <= RESULT_CLASSES_SUPPORT_MAX_LINES,
-        "{RESULT_CLASSES_SUPPORT} must remain at or below {RESULT_CLASSES_SUPPORT_MAX_LINES} lines"
     );
     assert!(
         line_count(&child_path) + line_count(&support_path) <= RESULT_CLASSES_AGGREGATE_MAX_LINES,
@@ -136,21 +162,16 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         "result-boundary implementation must remain at or below {RESULT_BOUNDARIES_AGGREGATE_MAX_LINES} aggregate lines"
     );
     assert!(
-        top_level_include_paths(RESULT_CLASSES_SUPPORT, &support).is_empty(),
-        "{RESULT_CLASSES_SUPPORT} must remain a leaf support fragment"
+        top_level_module_names(RESULT_SUPPORT, &support).is_empty(),
+        "{RESULT_SUPPORT} must remain a leaf support module"
     );
     assert!(
-        top_level_include_paths(RESULT_BOUNDARIES_SUPPORT, &boundary_support).is_empty(),
-        "{RESULT_BOUNDARIES_SUPPORT} must remain a leaf support fragment"
-    );
-    assert_eq!(
-        top_level_include_paths(RESULT_BOUNDARIES, &boundary),
-        [RESULT_BOUNDARIES_SUPPORT_INCLUDE],
-        "{RESULT_BOUNDARIES} must contain exactly include!(\"{RESULT_BOUNDARIES_SUPPORT_INCLUDE}\")"
+        top_level_module_names(RESULT_BOUNDARIES_SUPPORT, &boundary_support).is_empty(),
+        "{RESULT_BOUNDARIES_SUPPORT} must remain a leaf support module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
-    let support_functions = top_level_function_names(RESULT_CLASSES_SUPPORT, &support);
+    let support_functions = top_level_function_names(RESULT_SUPPORT, &support);
     for helper in RESULT_SUPPORT_HELPERS {
         assert_eq!(
             root_functions.iter().filter(|name| *name == helper).count(),
@@ -171,7 +192,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 .filter(|name| *name == helper)
                 .count(),
             1,
-            "{RESULT_CLASSES_SUPPORT} must own exactly one `{helper}`"
+            "{RESULT_SUPPORT} must own exactly one `{helper}`"
         );
     }
     assert_eq!(
@@ -185,10 +206,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         child_tests, RESULT_CLASS_ANCHORS,
         "{RESULT_CLASSES} must own exactly the required result-class test anchors in order"
     );
-    for (relative, source) in [
-        (WRITEBACK_ROOT, root.as_str()),
-        (RESULT_CLASSES_SUPPORT, &support),
-    ] {
+    for (relative, source) in [(WRITEBACK_ROOT, root.as_str()), (RESULT_SUPPORT, &support)] {
         assert!(
             result_class_tests(relative, source).is_empty(),
             "{relative} must not own result-class-prefixed tests"
@@ -209,7 +227,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
             (RESULT_CLASSES, child.as_str()),
-            (RESULT_CLASSES_SUPPORT, support.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
         ] {
             assert_eq!(
@@ -289,6 +307,19 @@ fn top_level_include_paths(relative: &str, source: &str) -> Vec<String> {
                 .then(|| syn::parse2::<syn::LitStr>(item.mac.tokens).ok())
                 .flatten()
                 .map(|literal| literal.value())
+        })
+        .collect()
+}
+
+fn top_level_module_names(relative: &str, source: &str) -> Vec<String> {
+    parsed_source(relative, source)
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            let syn::Item::Mod(module) = item else {
+                return None;
+            };
+            Some(module.ident.to_string())
         })
         .collect()
 }

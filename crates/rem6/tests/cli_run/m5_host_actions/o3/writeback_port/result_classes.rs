@@ -1,12 +1,18 @@
-include!("result_classes/support.rs");
+use super::result_support::{
+    assert_event_order, assert_register, assert_register_absent, assert_resource_counter,
+    assert_rob_sequence_absent, data_trace, event_str, json_u64, memory_dump_hex,
+    memory_result_event_at_pc, rob_entry_at_sequence,
+};
+use super::*;
 
-const RESULT_MAX_TICK: u64 = 2_000;
+pub(super) const RESULT_MAX_TICK: u64 = 2_000;
 const ROUTE_DELAY_CANDIDATES: [u64; 13] = [1, 2, 3, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];
 const ORDINARY_RESOURCES: [&str; 4] = ["cache.data", "transport.data", "fabric", "dram"];
-static RESULT_TEMP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(super) static RESULT_TEMP_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MemoryResultClass {
+pub(super) enum MemoryResultClass {
     FloatLoad,
     LoadReserved,
     Atomic,
@@ -73,14 +79,14 @@ fn run_result_matrix(classes: &[MemoryResultClass], memory_system: &str, writeba
     }
 }
 
-struct MemoryResultFixture {
-    class: MemoryResultClass,
-    binary: std::path::PathBuf,
+pub(super) struct MemoryResultFixture {
+    pub(super) class: MemoryResultClass,
+    pub(super) binary: std::path::PathBuf,
     readfile: Option<std::path::PathBuf>,
 }
 
 impl MemoryResultFixture {
-    fn new(class: MemoryResultClass) -> Self {
+    pub(super) fn new(class: MemoryResultClass) -> Self {
         let binary = memory_result_binary(class);
         let readfile = (class == MemoryResultClass::Mmio).then(|| {
             unique_result_temp_binary(
@@ -95,7 +101,7 @@ impl MemoryResultFixture {
         }
     }
 
-    fn run(
+    pub(super) fn run(
         &self,
         memory_system: &str,
         writeback_width: usize,
@@ -160,7 +166,7 @@ impl MemoryResultClass {
         }
     }
 
-    const fn pcs(self) -> [&'static str; 3] {
+    pub(super) const fn pcs(self) -> [&'static str; 3] {
         match self {
             Self::Vector => ["0x80000034", "0x80000030", "0x80000038"],
             Self::Mmio => ["0x80000014", "0x80000010", "0x80000018"],
@@ -178,7 +184,7 @@ impl MemoryResultClass {
         }
     }
 
-    const fn dump_range(self) -> Option<(u64, u64)> {
+    pub(super) const fn dump_range(self) -> Option<(u64, u64)> {
         match self {
             Self::FloatLoad => Some((0x8000_0088, 8)),
             Self::LoadReserved => Some((0x8000_0080, 8)),
@@ -195,6 +201,25 @@ impl MemoryResultClass {
             _ => panic!("unsupported route-delay lock"),
         }
     }
+}
+
+fn result_data_record(json: &Value, class: MemoryResultClass) -> &Value {
+    let (_, kind, address) = class.request_evidence();
+    let trace = data_trace(json);
+    let mut matches = trace.iter().filter(|record| {
+        event_str(record, "kind") == kind
+            && event_str(record, "address") == address
+            && event_u64(record, "size") == 8
+    });
+    let record = matches
+        .next()
+        .unwrap_or_else(|| panic!("{} result data request missing: {trace:?}", class.label()));
+    assert!(
+        matches.next().is_none(),
+        "{} result request repeated",
+        class.label()
+    );
+    record
 }
 
 fn calibrate_result_collision(fixture: &MemoryResultFixture, memory_system: &str) -> u64 {
@@ -662,7 +687,7 @@ fn result_temp_binary(class: MemoryResultClass, program: &[u8]) -> std::path::Pa
     )
 }
 
-fn unique_result_temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+pub(super) fn unique_result_temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let id = RESULT_TEMP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     temp_binary(&format!("{name}-{id}"), bytes)
 }
