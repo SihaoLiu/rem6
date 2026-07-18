@@ -156,13 +156,21 @@ impl RiscvCore {
             .is_empty()
             .then_some(live_gate_ready_tick)
             .flatten();
-        let desired = match (memory_result, restored_live_gate) {
-            (Some(memory_result), Some(live_gate)) => Some(memory_result.min(live_gate)),
-            (Some(tick), None) | (None, Some(tick)) => Some(tick),
-            (None, None) => None,
-        };
+        let forwarded_control = state
+            .o3_runtime
+            .producer_forwarded_same_link_control_target()
+            .filter(|forwarded| {
+                !state
+                    .branch_speculations
+                    .contains_key(&forwarded.fetch_request().sequence())
+            })
+            .map(|forwarded| forwarded.ready_tick().max(now));
+        let desired = [memory_result, restored_live_gate, forwarded_control]
+            .into_iter()
+            .flatten()
+            .min();
         state.o3_writeback_wake.set_desired_tick(desired, now);
-        if restored_live_gate == Some(now) {
+        if restored_live_gate == Some(now) || forwarded_control == Some(now) {
             state
                 .o3_writeback_wake
                 .requested_tick_with_current(now, true)

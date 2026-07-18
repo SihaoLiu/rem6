@@ -146,6 +146,17 @@ pub(super) fn fetch_count_at_pc(json: &Value, pc: &str) -> usize {
         .count()
 }
 
+pub(super) fn fetch_tick_at_pc(json: &Value, pc: &str) -> u64 {
+    json.pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing predicted-control fetch trace: {json}"))
+        .iter()
+        .find(|record| record.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        .and_then(|record| record.pointer("/tick"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing fetch tick for {pc}: {json}"))
+}
+
 pub(super) fn assert_stopped_by_host(json: &Value) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),

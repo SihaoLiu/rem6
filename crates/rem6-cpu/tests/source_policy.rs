@@ -7,6 +7,7 @@ const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES: usize = 150;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -629,6 +630,65 @@ fn o3_data_access_younger_window_has_focused_owners() {
 }
 
 #[test]
+fn producer_forwarded_pending_data_escape_is_fetch_only() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
+    let pending_data_gate = source_section(
+        &root,
+        "    pub(crate) fn pending_data_access_blocks_new_work(&self) -> bool {",
+        "    pub fn data_access_lifecycle_is_quiescent(&self) -> bool {",
+    );
+    assert!(
+        !pending_data_gate.contains("producer_forwarded"),
+        "the global pending-data gate must not bypass unrelated work for producer-forwarded control"
+    );
+
+    let driver = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/driver.rs")).unwrap(),
+    );
+    let drive =
+        production_rust_source(&fs::read_to_string(crate_dir.join("src/riscv_drive.rs")).unwrap());
+    let cluster = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_cluster.rs")).unwrap(),
+    );
+    let direct_filter = "next_producer_forwarded_fetch_ahead_before_retire";
+    let mmio_filter = "next_mmio_aware_producer_forwarded_fetch_ahead_before_retire";
+    let direct_entry = "next_pending_data_fetch_ahead";
+    let mmio_entry = "next_pending_data_mmio_fetch_ahead";
+    for helper in [direct_filter, mmio_filter, direct_entry, mmio_entry] {
+        assert!(
+            driver.contains(&format!("pub(crate) fn {helper}(")),
+            "src/riscv_fetch_ahead/driver.rs must own `{helper}`"
+        );
+    }
+    assert_eq!(
+        driver.matches("(!self.has_pending_fetch())").count(),
+        2,
+        "both pending-data entry points must reject an already pending fetch before filtering"
+    );
+    assert!(
+        driver.contains(&format!("self.{direct_filter}()"))
+            && driver.contains(&format!("self.{mmio_filter}(bus)")),
+        "pending-data entry points must delegate to the carried-authority filters"
+    );
+    assert_eq!(
+        drive.matches(direct_entry).count(),
+        1,
+        "the serial drive path must consume the focused producer-forwarded decision filter"
+    );
+    assert_eq!(
+        cluster.matches(direct_entry).count(),
+        2,
+        "the two direct cluster drive variants must consume the focused decision filter"
+    );
+    assert_eq!(
+        cluster.matches(mmio_entry).count(),
+        2,
+        "the two MMIO cluster drive variants must consume the MMIO-aware decision filter"
+    );
+}
+
+#[test]
 fn public_scalar_memory_lifecycle_methods_remain_deprecated_live_data_forwards() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let raw_memory = fs::read_to_string(crate_dir.join("src/o3_runtime_memory.rs")).unwrap();
@@ -1130,12 +1190,15 @@ fn o3_live_control_operands_have_one_typed_owner() {
     let owner = production_rust_source(&fs::read_to_string(&owner_path).unwrap());
 
     for anchor in [
+        "pub(crate) struct O3LiveSameLinkControlTarget",
         "pub(crate) struct O3LiveControlOperands",
         "pub(crate) fn o3_live_control_operands(",
         "kind: BranchTargetKind",
         "sources: Vec<Register>",
         "destination: Option<Register>",
+        "same_link_target: Option<O3LiveSameLinkControlTarget>",
         "pub(crate) const fn destination(&self) -> Option<Register>",
+        "pub(crate) const fn same_link_target(&self) -> Option<O3LiveSameLinkControlTarget>",
     ] {
         assert!(
             owner.contains(anchor),
@@ -1165,6 +1228,12 @@ fn o3_live_control_operands_have_one_typed_owner() {
             assert!(
                 !source.contains("struct O3LiveControlOperands"),
                 "{} duplicates typed live-control operand ownership",
+                relative.display()
+            );
+            assert!(
+                !source.contains("struct O3LiveSameLinkControlTarget")
+                    && !source.contains("fn same_link_target(&self)"),
+                "{} duplicates typed same-link control-target ownership",
                 relative.display()
             );
         }
@@ -1394,6 +1463,7 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("src/o3_runtime_control_window_tests.rs");
     let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
+    let same_link_path = crate_dir.join("src/o3_runtime_control_window_tests/same_link.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let root_code = rust_code_without_comments_and_literals(&root);
     let root_include_lines = include_macro_lines(&root);
@@ -1410,6 +1480,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         ),
         1,
         "control-window lifecycle tests must have exactly one attached path-owned child declaration"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/same_link.rs",
+            "same_link",
+        ),
+        1,
+        "control-window same-link tests must have exactly one attached path-owned child declaration"
     );
     assert!(
         line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
@@ -1465,6 +1544,31 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
             "src/o3_runtime_control_window_tests.rs still owns lifecycle test `{anchor}`"
         );
     }
+
+    assert!(
+        same_link_path.exists(),
+        "control-window same-link tests belong in src/o3_runtime_control_window_tests/same_link.rs"
+    );
+    let same_link = fs::read_to_string(&same_link_path).unwrap();
+    let same_link_code = rust_code_without_comments_and_literals(&same_link);
+    let same_link_include_lines = include_macro_lines(&same_link);
+    assert!(
+        same_link_include_lines.is_empty(),
+        "src/o3_runtime_control_window_tests/same_link.rs must not inline hidden test fragments; found lines {same_link_include_lines:?}"
+    );
+    assert!(
+        line_count(&same_link_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES,
+        "src/o3_runtime_control_window_tests/same_link.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_TEST_LINES} lines"
+    );
+    let same_link_anchor = "fn live_same_link_control_exposes_exact_producer_forwarded_target(";
+    assert!(
+        same_link_code.contains(same_link_anchor),
+        "src/o3_runtime_control_window_tests/same_link.rs is missing same-link test `{same_link_anchor}`"
+    );
+    assert!(
+        !root_code.contains(same_link_anchor),
+        "src/o3_runtime_control_window_tests.rs still owns same-link test `{same_link_anchor}`"
+    );
 }
 
 #[test]

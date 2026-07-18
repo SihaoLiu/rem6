@@ -25,31 +25,31 @@ impl RiscvCore {
         if !self.is_hart_started() {
             return Ok(None);
         }
-        if self.pending_data_access_blocks_new_work() {
-            return Ok(None);
-        }
+        let pending_data_blocks = self.pending_data_access_blocks_new_work();
         if self.has_pending_trap() {
             return Ok(None);
         }
-        if let Some(event) =
-            self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
-        {
-            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
-        }
-        self.sync_in_order_fetch_state()?;
-        if self.core.has_pending_fetch() {
-            if !self.can_retire_completed_fetch_while_fetch_pending()? {
+        if !pending_data_blocks {
+            if let Some(event) =
+                self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
+            {
+                return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+            }
+            self.sync_in_order_fetch_state()?;
+            if self.core.has_pending_fetch() {
+                if !self.can_retire_completed_fetch_while_fetch_pending()? {
+                    self.record_in_order_fetch_wait_stall_cycle()?;
+                    return Ok(None);
+                }
+                if let Some(action) = self.drive_next_completed_fetch_serial_action(scheduler)? {
+                    return Ok(Some(action));
+                }
+                if self.live_retire_gate_blocks_new_work() {
+                    return Ok(None);
+                }
                 self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
-            if let Some(action) = self.drive_next_completed_fetch_serial_action(scheduler)? {
-                return Ok(Some(action));
-            }
-            if self.live_retire_gate_blocks_new_work() {
-                return Ok(None);
-            }
-            self.record_in_order_fetch_wait_stall_cycle()?;
-            return Ok(None);
         }
 
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
@@ -68,7 +68,7 @@ impl RiscvCore {
         };
 
         if fetch_admission.allows_fetch() {
-            if let Some(decision) = self.next_fetch_ahead_before_retire() {
+            if let Some(decision) = self.next_pending_data_fetch_ahead(pending_data_blocks) {
                 let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
                 self.set_fetch_ahead_pc(decision.pc());
                 let event = self.issue_next_fetch_with_prepared_fetch_ahead(
@@ -80,6 +80,9 @@ impl RiscvCore {
                 )?;
                 return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
             }
+        }
+        if pending_data_blocks {
+            return Ok(None);
         }
 
         if !detailed_o3_fetch && !inherited_o3_retirement {

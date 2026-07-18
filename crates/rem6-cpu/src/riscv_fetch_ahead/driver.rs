@@ -25,6 +25,25 @@ impl RiscvCore {
         )
     }
 
+    pub(crate) fn next_producer_forwarded_fetch_ahead_before_retire(
+        &self,
+    ) -> Option<RiscvFetchAheadDecision> {
+        producer_forwarded_control_decision(self.next_fetch_ahead_before_retire())
+    }
+
+    pub(crate) fn next_pending_data_fetch_ahead(
+        &self,
+        pending_data_blocks_new_work: bool,
+    ) -> Option<RiscvFetchAheadDecision> {
+        if pending_data_blocks_new_work {
+            (!self.has_pending_fetch())
+                .then(|| self.next_producer_forwarded_fetch_ahead_before_retire())
+                .flatten()
+        } else {
+            self.next_fetch_ahead_before_retire()
+        }
+    }
+
     pub(crate) fn next_cached_translated_memory_fetch_ahead_before_retire(
         &self,
     ) -> Option<RiscvFetchAheadDecision> {
@@ -47,6 +66,27 @@ impl RiscvCore {
         self.next_fetch_ahead_before_retire_with_translation(translated)
     }
 
+    pub(crate) fn next_mmio_aware_producer_forwarded_fetch_ahead_before_retire(
+        &self,
+        bus: &MmioBus,
+    ) -> Option<RiscvFetchAheadDecision> {
+        producer_forwarded_control_decision(self.next_mmio_aware_fetch_ahead_before_retire(bus))
+    }
+
+    pub(crate) fn next_pending_data_mmio_fetch_ahead(
+        &self,
+        bus: &MmioBus,
+        pending_data_blocks_new_work: bool,
+    ) -> Option<RiscvFetchAheadDecision> {
+        if pending_data_blocks_new_work {
+            (!self.has_pending_fetch())
+                .then(|| self.next_mmio_aware_producer_forwarded_fetch_ahead_before_retire(bus))
+                .flatten()
+        } else {
+            self.next_mmio_aware_fetch_ahead_before_retire(bus)
+        }
+    }
+
     fn next_fetch_ahead_before_retire_with_translation(
         &self,
         translated: detailed_o3::TranslatedMemoryFetchAhead,
@@ -54,9 +94,6 @@ impl RiscvCore {
         let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
         if state.pending_trap.is_some() || state.pending_fetch_prefix.is_some() {
-            return None;
-        }
-        if state.o3_runtime.has_ready_live_data_access_event() {
             return None;
         }
         if hart_has_enabled_pending_interrupt(&state.hart) {
@@ -70,10 +107,16 @@ impl RiscvCore {
                     && !state.executed_fetches.contains(&event.request_id())
             })
             .collect::<Vec<_>>();
-        if completed.is_empty() {
+        completed.sort_by_key(|event| event.request_id().sequence());
+        if crate::riscv_live_retire_window::stage_o3_producer_forwarded_control_descendant(
+            &mut state,
+            &fetch_events,
+        ) {
             return None;
         }
-        completed.sort_by_key(|event| event.request_id().sequence());
+        if state.o3_runtime.has_ready_live_data_access_event() {
+            return None;
+        }
 
         let fetch = match detailed_o3::additional_fetch_candidate(
             &state,
@@ -294,4 +337,14 @@ impl RiscvCore {
 
         can_retire_completed_fetch_with_branch_speculations(&mut state, &fetch_events)
     }
+}
+
+fn producer_forwarded_control_decision(
+    decision: Option<RiscvFetchAheadDecision>,
+) -> Option<RiscvFetchAheadDecision> {
+    decision.filter(|decision| {
+        decision
+            .branch_speculation()
+            .is_some_and(|speculation| speculation.producer_forwarded_control_target.is_some())
+    })
 }

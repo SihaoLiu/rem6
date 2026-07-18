@@ -26,6 +26,87 @@ fn detailed_linked_control_core(
     core
 }
 
+fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvCpuExecutionEvent) {
+    let load_raw = i_type(0, 18, 0x6, 12, 0x03);
+    let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
+    let call_raw = i_type(0, 1, 0x0, 1, 0x67);
+    let descendant_raw = i_type(0, 1, 0x0, 13, 0x13);
+    let producer = RiscvInstruction::decode(producer_raw).unwrap();
+    let call = RiscvInstruction::decode(call_raw).unwrap();
+    let mut fetches = vec![
+        (0, 0x8000, load_raw.to_le_bytes().to_vec()),
+        (1, 0x8004, producer_raw.to_le_bytes().to_vec()),
+        (2, 0x8008, call_raw.to_le_bytes().to_vec()),
+    ];
+    if with_target_fetch {
+        fetches.push((3, 0x9000, descendant_raw.to_le_bytes().to_vec()));
+    }
+    let core = detailed_linked_control_core(fetches);
+    core.set_branch_lookahead(1);
+    let load = scalar_load_execution_event(0x8000, 0, 12, 18, 0x100);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert!(state
+            .o3_runtime
+            .stage_live_data_access_issue_for_test(&load, request(20), 31));
+        assert_eq!(
+            state.o3_runtime.stage_live_data_access_younger_window(
+                request(0),
+                [
+                    (Address::new(0x8004), producer),
+                    (Address::new(0x8008), call),
+                ],
+            ),
+            2
+        );
+        let producer_candidate = state
+            .o3_runtime
+            .live_speculative_issue_candidate(Address::new(0x8004), producer)
+            .unwrap();
+        assert!(state
+            .o3_runtime
+            .record_live_speculative_execution(
+                producer_candidate,
+                &[request(1)],
+                20,
+                RiscvExecutionRecord::new(
+                    producer,
+                    0x8004,
+                    0x8008,
+                    vec![rem6_isa_riscv::RegisterWrite::new(
+                        Register::new(1).unwrap(),
+                        0x9000,
+                    )],
+                    None,
+                ),
+            )
+            .unwrap());
+        let call_candidate = state
+            .o3_runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), call)
+            .unwrap();
+        assert!(state
+            .o3_runtime
+            .record_live_speculative_execution(
+                call_candidate,
+                &[request(2)],
+                21,
+                RiscvExecutionRecord::new(
+                    call,
+                    0x8008,
+                    0x9000,
+                    vec![rem6_isa_riscv::RegisterWrite::new(
+                        Register::new(1).unwrap(),
+                        0x800c,
+                    )],
+                    None,
+                ),
+            )
+            .unwrap());
+    }
+    (core, load)
+}
+
 fn recorded_same_window_coroutine_core() -> RiscvCore {
     let load = i_type(0, 2, 0x2, 6, 0x03);
     let call = j_type(8, 1);
@@ -52,6 +133,259 @@ fn recorded_same_window_coroutine_core() -> RiscvCore {
     );
 
     core
+}
+
+#[test]
+fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
+    let (core, _) = live_same_link_core(false);
+
+    assert_eq!(core.requested_o3_writeback_wake_tick(19), Some(20));
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    assert_eq!(decision.pc(), Address::new(0x9000));
+    assert_eq!(
+        decision.branch_speculation().unwrap().target(),
+        Some(Address::new(0x9000))
+    );
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&decision).unwrap(),
+    );
+    let mut state = core.state.lock().expect("riscv core lock");
+    let consumer_sequence = state
+        .o3_runtime
+        .producer_forwarded_same_link_control_target()
+        .unwrap()
+        .consumer_sequence();
+    assert!(state
+        .o3_runtime
+        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
+    let forwarded = state
+        .o3_runtime
+        .producer_forwarded_same_link_control_target()
+        .unwrap();
+    let authority = PredictedControlTargetAuthority::ProducerForwarded(forwarded);
+    assert_eq!(
+        recorded_predicted_pc(&state, request(2), Address::new(0x800c), authority),
+        RecordedPredictedPc::Ready(Address::new(0x9000))
+    );
+    assert_eq!(
+        recorded_predicted_pc(&state, request(99), Address::new(0x800c), authority),
+        RecordedPredictedPc::Invalid
+    );
+    assert_eq!(
+        recorded_predicted_pc(&state, request(2), Address::new(0x8010), authority),
+        RecordedPredictedPc::Invalid
+    );
+    let descendant = RiscvInstruction::Addi {
+        rd: Register::new(13).unwrap(),
+        rs1: Register::new(1).unwrap(),
+        imm: Immediate::new(0),
+    };
+    assert!(state
+        .o3_runtime
+        .append_producer_forwarded_control_descendant(
+            forwarded,
+            Address::new(0x9000),
+            descendant,
+            &[request(3)],
+        )
+        .is_some());
+    assert_eq!(
+        recorded_predicted_pc(&state, request(2), Address::new(0x800c), authority),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn recorded_producer_forwarded_target_rejects_unmarked_same_target_speculation() {
+    let (core, _) = live_same_link_core(false);
+
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    let mut ordinary = decision.clone();
+    ordinary
+        .branch_speculation
+        .as_mut()
+        .expect("same-link decision has speculation")
+        .producer_forwarded_control_target = None;
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&ordinary).unwrap(),
+    );
+
+    let state = core.state.lock().expect("riscv core lock");
+    let forwarded = state
+        .o3_runtime
+        .producer_forwarded_same_link_control_target()
+        .expect("resident same-link authority");
+    assert!(!state
+        .o3_runtime
+        .has_recorded_producer_forwarded_same_link_control_target(forwarded.consumer_sequence()));
+    assert_eq!(
+        recorded_predicted_pc(
+            &state,
+            forwarded.fetch_request(),
+            forwarded.sequential_pc(),
+            PredictedControlTargetAuthority::ProducerForwarded(forwarded),
+        ),
+        RecordedPredictedPc::Invalid
+    );
+}
+
+#[test]
+fn producer_forwarded_speculation_apply_fails_closed_after_authority_invalidation() {
+    let (core, mut load) = live_same_link_core(false);
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    let consumer_sequence = decision
+        .branch_speculation()
+        .and_then(|speculation| speculation.producer_forwarded_control_target)
+        .expect("producer-forwarded authority")
+        .consumer_sequence();
+    let prepared = core.prepare_fetch_ahead_speculation(&decision).unwrap();
+
+    load.set_data_access_event_kind(crate::RiscvDataAccessEventKind::Completed);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert!(state
+            .o3_runtime
+            .complete_live_data_access_response(&load, request(20), 40, 9, Some(&[1, 0, 0, 0]))
+            .unwrap());
+        assert!(state
+            .o3_runtime
+            .producer_forwarded_same_link_control_target()
+            .is_none());
+    }
+
+    core.record_prepared_fetch_ahead_speculation(prepared);
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(!state
+        .o3_runtime
+        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
+    assert!(state.branch_speculations.is_empty());
+    assert!(state.branch_speculation_kinds.is_empty());
+    assert!(state.branch_target_predictions.is_empty());
+    assert!(state.return_address_stack_operations.is_empty());
+    assert!(state.selected_branch_speculations.is_empty());
+}
+
+#[test]
+fn completed_target_appends_before_ready_live_load_retirement() {
+    let (core, mut load) = live_same_link_core(true);
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&decision).unwrap(),
+    );
+
+    load.set_data_access_event_kind(crate::RiscvDataAccessEventKind::Completed);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert!(state
+            .o3_runtime
+            .complete_live_data_access_response(&load, request(20), 40, 9, Some(&[1, 0, 0, 0]))
+            .unwrap());
+        assert!(state.o3_runtime.has_ready_live_data_access_event());
+        assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
+    }
+    let config = RiscvCore::default_in_order_pipeline_snapshot()
+        .config()
+        .clone();
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        config,
+        0,
+        [
+            InOrderPipelineInstruction::new(99, InOrderPipelineStage::Execute)
+                .with_execute_wait(2, 1),
+        ],
+    ))
+    .unwrap();
+    assert!(
+        core.detailed_o3_window_prefers_fetch_ahead(),
+        "recorded completed authority must override an unrelated draining execute-wait"
+    );
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.o3_runtime.has_ready_live_data_access_event());
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
+    assert!(state
+        .o3_runtime
+        .snapshot()
+        .reorder_buffer()
+        .iter()
+        .any(|entry| entry.pc() == Address::new(0x9000)));
+}
+
+#[test]
+fn completed_producer_forwarded_authority_closes_when_load_event_is_taken() {
+    let (core, mut load) = live_same_link_core(false);
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    let forwarded = decision
+        .branch_speculation()
+        .and_then(|speculation| speculation.producer_forwarded_control_target)
+        .expect("producer-forwarded authority");
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&decision).unwrap(),
+    );
+
+    load.set_data_access_event_kind(crate::RiscvDataAccessEventKind::Completed);
+    let mut state = core.state.lock().expect("riscv core lock");
+    assert!(state
+        .o3_runtime
+        .complete_live_data_access_response(&load, request(20), 40, 9, Some(&[1, 0, 0, 0]))
+        .unwrap());
+    assert_eq!(
+        state
+            .o3_runtime
+            .retained_producer_forwarded_same_link_control_target(),
+        Some(forwarded)
+    );
+    assert!(state
+        .o3_runtime
+        .take_ready_live_data_access_event(u64::MAX)
+        .is_some());
+    assert!(state
+        .o3_runtime
+        .retained_producer_forwarded_same_link_control_target()
+        .is_none());
+}
+
+#[test]
+fn failed_load_response_closes_recorded_producer_forwarded_authority() {
+    let (core, mut load) = live_same_link_core(false);
+    let decision = core
+        .next_fetch_ahead_before_retire()
+        .expect("runtime-forwarded same-link decision");
+    let consumer_sequence = decision
+        .branch_speculation()
+        .and_then(|speculation| speculation.producer_forwarded_control_target)
+        .expect("producer-forwarded authority")
+        .consumer_sequence();
+    core.record_prepared_fetch_ahead_speculation(
+        core.prepare_fetch_ahead_speculation(&decision).unwrap(),
+    );
+
+    load.set_data_access_event_kind(crate::RiscvDataAccessEventKind::Failed);
+    let mut state = core.state.lock().expect("riscv core lock");
+    assert!(state
+        .o3_runtime
+        .complete_live_data_access_response(&load, request(20), 40, 9, None)
+        .unwrap());
+    assert!(state
+        .o3_runtime
+        .retained_producer_forwarded_same_link_control_target()
+        .is_none());
+    assert!(!state
+        .o3_runtime
+        .has_recorded_producer_forwarded_same_link_control_target(consumer_sequence));
 }
 
 fn recorded_same_window_coroutine_target_authority() -> PredictedControlTargetAuthority {

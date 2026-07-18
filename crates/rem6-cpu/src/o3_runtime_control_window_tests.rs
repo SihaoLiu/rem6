@@ -13,6 +13,8 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 mod coroutine;
 #[path = "o3_runtime_control_window_tests/lifecycle.rs"]
 mod lifecycle;
+#[path = "o3_runtime_control_window_tests/same_link.rs"]
+mod same_link;
 
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {

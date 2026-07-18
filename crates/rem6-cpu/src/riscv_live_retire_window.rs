@@ -762,6 +762,58 @@ pub(crate) fn stage_o3_data_access_younger_window(
     .expect("live data-access younger writeback reservation");
 }
 
+pub(crate) fn stage_o3_producer_forwarded_control_descendant(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> bool {
+    let Some(authority) = state
+        .o3_runtime
+        .retained_producer_forwarded_same_link_control_target()
+    else {
+        return false;
+    };
+    let crate::riscv_fetch_ahead::RecordedPredictedPc::Ready(target) =
+        crate::riscv_fetch_ahead::recorded_predicted_pc(
+            state,
+            authority.fetch_request(),
+            authority.sequential_pc(),
+            crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(authority),
+        )
+    else {
+        return false;
+    };
+    let Some(descendant) =
+        completed_fetch_instruction_at(state, fetch_events, authority.last_fetch_request(), target)
+    else {
+        return false;
+    };
+    if state
+        .o3_runtime
+        .append_producer_forwarded_control_descendant(
+            authority,
+            descendant.pc(),
+            descendant.decoded().instruction(),
+            descendant.consumed_requests(),
+        )
+        .is_none()
+    {
+        return false;
+    }
+    let head = state
+        .o3_runtime
+        .live_data_access_head_reservation(authority.data_access_fetch_request())
+        .expect("producer-forwarded control retains its live data-access head");
+    let issue_tick = descendant.fetch().tick();
+    schedule_o3_live_speculative_younger_executions(
+        state,
+        head,
+        std::slice::from_ref(&descendant),
+        issue_tick,
+    )
+    .expect("producer-forwarded control descendant writeback reservation");
+    true
+}
+
 pub(crate) fn wake_o3_data_access_younger_window(
     state: &mut RiscvCoreState,
     issue_tick: u64,

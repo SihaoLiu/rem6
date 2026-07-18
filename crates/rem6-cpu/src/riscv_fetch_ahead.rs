@@ -44,6 +44,14 @@ impl PreparedRiscvFetchAheadSpeculation {
         {
             return;
         }
+        if let Some(forwarded) = speculation.producer_forwarded_control_target {
+            if !state
+                .o3_runtime
+                .record_producer_forwarded_same_link_control_target(forwarded)
+            {
+                return;
+            }
+        }
         if let Some(selected) = selected {
             selected.apply(state);
         }
@@ -518,8 +526,20 @@ impl RiscvFetchAheadDecision {
                 branch_target_prediction,
                 return_address_stack_action,
                 target_provider,
+                producer_forwarded_control_target: None,
             }),
         }
+    }
+
+    fn with_producer_forwarded_control_target(
+        mut self,
+        forwarded: crate::o3_runtime::O3ProducerForwardedControlTarget,
+    ) -> Self {
+        self.branch_speculation
+            .as_mut()
+            .expect("producer-forwarded target requires branch speculation")
+            .producer_forwarded_control_target = Some(forwarded);
+        self
     }
 
     pub(crate) const fn pc(&self) -> Address {
@@ -542,6 +562,7 @@ pub(crate) struct RiscvFetchAheadSpeculation {
     branch_target_prediction: Option<BranchTargetPrediction>,
     return_address_stack_action: Option<ReturnAddressStackAction>,
     target_provider: BranchTargetProvider,
+    producer_forwarded_control_target: Option<crate::o3_runtime::O3ProducerForwardedControlTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -836,8 +857,13 @@ fn fetch_ahead_decision(
         }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
-    if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
-        direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
+    if let Some((
+        target,
+        branch_kind,
+        branch_target_prediction,
+        target_provider,
+        producer_forwarded_control_target,
+    )) = direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
     {
         let selected_speculation = selected_direct_branch_speculation(
             state,
@@ -846,7 +872,7 @@ fn fetch_ahead_decision(
             branch_kind,
             target,
         )?;
-        return Some(RiscvFetchAheadDecision::branch(
+        let decision = RiscvFetchAheadDecision::branch(
             target,
             request.sequence(),
             fetch_pc,
@@ -857,7 +883,11 @@ fn fetch_ahead_decision(
             Some(branch_target_prediction),
             return_address_stack_action(instruction, sequential_pc),
             target_provider,
-        ));
+        );
+        return Some(match producer_forwarded_control_target {
+            Some(forwarded) => decision.with_producer_forwarded_control_target(forwarded),
+            None => decision,
+        });
     }
     if !instruction_is_conditional_branch(instruction) {
         return None;
@@ -1441,6 +1471,7 @@ fn direct_jump_fetch_ahead_target(
     BranchTargetKind,
     BranchTargetPrediction,
     BranchTargetProvider,
+    Option<crate::o3_runtime::O3ProducerForwardedControlTarget>,
 )> {
     let kind = match instruction {
         RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
@@ -1448,10 +1479,24 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => return None,
     };
-    let ras_target = match target_authority {
-        PredictedControlTargetAuthority::Normal => (kind == BranchTargetKind::Return)
-            .then(|| state.return_address_stack.top())
-            .flatten(),
+    let (ras_target, forwarded_target, producer_forwarded_control_target) = match target_authority {
+        PredictedControlTargetAuthority::Normal => (
+            (kind == BranchTargetKind::Return)
+                .then(|| state.return_address_stack.top())
+                .flatten(),
+            None,
+            None,
+        ),
+        PredictedControlTargetAuthority::ProducerForwarded(forwarded) => match instruction {
+            RiscvInstruction::Jalr { rd, rs1, .. }
+                if rd == forwarded.source()
+                    && rs1 == forwarded.source()
+                    && kind == BranchTargetKind::CallIndirect =>
+            {
+                (None, Some(forwarded.target()), Some(forwarded))
+            }
+            _ => return None,
+        },
         PredictedControlTargetAuthority::RasRequired {
             push_sequence,
             pushed_address,
@@ -1460,12 +1505,16 @@ fn direct_jump_fetch_ahead_target(
             if kind != BranchTargetKind::Return {
                 return None;
             }
-            Some(detailed_o3::unconsumed_ras_required_target(
-                state,
-                push_sequence,
-                pushed_address,
-                consumer,
-            )?)
+            (
+                Some(detailed_o3::unconsumed_ras_required_target(
+                    state,
+                    push_sequence,
+                    pushed_address,
+                    consumer,
+                )?),
+                None,
+                None,
+            )
         }
     };
     let target_lookup = state.branch_target_buffer.lookup(fetch_pc, kind);
@@ -1475,10 +1524,12 @@ fn direct_jump_fetch_ahead_target(
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
         }
-        RiscvInstruction::Jalr { rs1, offset, .. } => ras_target.or_else(|| {
-            checked_add_signed(state.hart.read(rs1), offset.value())
-                .map(|target| Address::new(target & !1))
-        }),
+        RiscvInstruction::Jalr { rs1, offset, .. } => {
+            forwarded_target.or(ras_target).or_else(|| {
+                checked_add_signed(state.hart.read(rs1), offset.value())
+                    .map(|target| Address::new(target & !1))
+            })
+        }
         _ => None,
     }?;
     let target_provider = match (instruction, ras_target.is_some()) {
@@ -1486,7 +1537,13 @@ fn direct_jump_fetch_ahead_target(
         (RiscvInstruction::Jalr { .. }, false) => BranchTargetProvider::Indirect,
         _ => BranchTargetProvider::NoTarget,
     };
-    Some((target, kind, branch_target_prediction, target_provider))
+    Some((
+        target,
+        kind,
+        branch_target_prediction,
+        target_provider,
+        producer_forwarded_control_target,
+    ))
 }
 
 fn return_address_stack_action(

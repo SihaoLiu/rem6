@@ -23,6 +23,7 @@ pub(super) struct O3LiveRetiredInstruction {
 pub(super) struct O3LiveStagedFetchIdentity {
     instruction: RiscvInstruction,
     consumed_requests: Option<Vec<MemoryRequestId>>,
+    producer_forwarded_same_link_target: Option<O3ProducerForwardedControlTarget>,
 }
 
 impl O3LiveStagedFetchIdentity {
@@ -30,7 +31,21 @@ impl O3LiveStagedFetchIdentity {
         Self {
             instruction,
             consumed_requests: None,
+            producer_forwarded_same_link_target: None,
         }
+    }
+
+    pub(super) fn record_producer_forwarded_same_link_target(
+        &mut self,
+        target: O3ProducerForwardedControlTarget,
+    ) {
+        self.producer_forwarded_same_link_target = Some(target);
+    }
+
+    pub(super) const fn producer_forwarded_same_link_target(
+        &self,
+    ) -> Option<O3ProducerForwardedControlTarget> {
+        self.producer_forwarded_same_link_target
     }
 
     fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
@@ -77,6 +92,48 @@ impl O3LiveStagedFetchIdentity {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn append_producer_forwarded_control_descendant(
+        &mut self,
+        authority: O3ProducerForwardedControlTarget,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> Option<u64> {
+        if self.retained_producer_forwarded_same_link_control_target()? != authority
+            || pc != authority.target()
+            || self.live_data_accesses.len() + self.live_data_access_younger_sequences.len()
+                >= self.scalar_memory_window_limit
+        {
+            return None;
+        }
+        let unresolved = match self.live_data_accesses.first()?.execution.instruction() {
+            RiscvInstruction::Load { rd, .. } if !rd.is_zero() => rd,
+            _ => return None,
+        };
+        let (destination, sources) = o3_predicted_scalar_descendant_operands(instruction)?;
+        if destination.is_zero() || sources.contains(&unresolved) {
+            return None;
+        }
+        let sequence = self.stage_live_instruction(pc, instruction, 0)?;
+        if !self.bind_live_staged_fetch_identity_at_sequence(
+            sequence,
+            instruction,
+            consumed_requests,
+        ) {
+            self.discard_live_staged_window_from(sequence);
+            return None;
+        }
+        self.live_control_dependencies
+            .insert(sequence, authority.consumer_sequence());
+        self.live_control_window_sequences.insert(sequence);
+        self.live_data_access_younger_sequences.insert(sequence);
+        self.stats
+            .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
+        self.stats
+            .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
+        Some(sequence)
+    }
+
     pub(crate) fn stage_live_retire_window(
         &mut self,
         current_pc: Address,

@@ -332,7 +332,6 @@ impl RiscvCluster {
                 record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
-
             let fetch_admitted = fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
@@ -427,10 +426,11 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
+            let pending_data_blocks = core.pending_data_access_blocks_new_work();
+            if core.has_pending_trap() {
                 continue;
             }
-            if core.has_unissued_data_access() {
+            if !pending_data_blocks && core.has_unissued_data_access() {
                 let prepared = core
                     .prepare_data_parallel_access(
                         scheduler.now(),
@@ -449,7 +449,7 @@ impl RiscvCluster {
                 );
                 continue;
             }
-            if core.has_pending_fetch() {
+            if !pending_data_blocks && core.has_pending_fetch() {
                 if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_prepared_completed_fetch_drive_event(
                         *cpu,
@@ -466,7 +466,7 @@ impl RiscvCluster {
 
             let fetch_admitted = fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                if let Some(decision) = core.next_pending_data_fetch_ahead(pending_data_blocks) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
@@ -484,7 +484,9 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
+            if pending_data_blocks {
+                continue;
+            }
             if push_prepared_pipeline_cycle_drive_event(
                 *cpu,
                 core,
@@ -493,7 +495,6 @@ impl RiscvCluster {
             )? {
                 continue;
             }
-
             if push_prepared_completed_fetch_drive_event(
                 *cpu,
                 core,
@@ -502,11 +503,9 @@ impl RiscvCluster {
             )? {
                 continue;
             }
-
             if !fetch_admitted {
                 continue;
             }
-
             push_prepared_parallel_fetch_action(
                 *cpu,
                 core,
@@ -561,10 +560,11 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
+            let pending_data_blocks = core.pending_data_access_blocks_new_work();
+            if core.has_pending_trap() {
                 continue;
             }
-            if core.has_unissued_data_access() {
+            if !pending_data_blocks && core.has_unissued_data_access() {
                 let prepared = core
                     .prepare_data_parallel_access(
                         scheduler.now(),
@@ -584,7 +584,7 @@ impl RiscvCluster {
                 continue;
             }
             let instruction_budget_exhausted = committed_instructions >= instruction_budget;
-            if core.has_pending_fetch() {
+            if !pending_data_blocks && core.has_pending_fetch() {
                 if !instruction_budget_exhausted {
                     if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
                         if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
@@ -603,11 +603,10 @@ impl RiscvCluster {
                 }
                 continue;
             }
-
             let fetch_admitted =
                 !instruction_budget_exhausted && fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                if let Some(decision) = core.next_pending_data_fetch_ahead(pending_data_blocks) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
@@ -625,7 +624,9 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
+            if pending_data_blocks {
+                continue;
+            }
             if !instruction_budget_exhausted
                 && push_prepared_pipeline_cycle_drive_event(
                     *cpu,
@@ -636,7 +637,6 @@ impl RiscvCluster {
             {
                 continue;
             }
-
             if !instruction_budget_exhausted {
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     committed_instructions += u64::from(matches!(
@@ -650,11 +650,9 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
             if instruction_budget_exhausted {
                 continue;
             }
-
             if !fetch_admitted {
                 continue;
             }
@@ -1049,10 +1047,11 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
+            let pending_data_blocks = core.pending_data_access_blocks_new_work();
+            if core.has_pending_trap() {
                 continue;
             }
-            if core.has_unissued_data_access() {
+            if !pending_data_blocks && core.has_unissued_data_access() {
                 if core
                     .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
@@ -1084,7 +1083,7 @@ impl RiscvCluster {
                 }
                 continue;
             }
-            if core.has_pending_fetch() {
+            if !pending_data_blocks && core.has_pending_fetch() {
                 if can_retire_mmio_fetch_pending(*cpu, core, bus)?
                     && push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)?
                 {
@@ -1093,10 +1092,11 @@ impl RiscvCluster {
                 record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
-
             let fetch_admitted = fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
+                if let Some(decision) =
+                    core.next_pending_data_mmio_fetch_ahead(bus, pending_data_blocks)
+                {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     let event = core
@@ -1115,19 +1115,18 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
+            if pending_data_blocks {
+                continue;
+            }
             if push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
-
             if push_completed_fetch_drive_event(*cpu, core, scheduler, &mut actions)? {
                 continue;
             }
-
             if !fetch_admitted {
                 continue;
             }
-
             let event = core
                 .issue_next_fetch_parallel(
                     scheduler,
@@ -1175,10 +1174,11 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.pending_data_access_blocks_new_work() || core.has_pending_trap() {
+            let pending_data_blocks = core.pending_data_access_blocks_new_work();
+            if core.has_pending_trap() {
                 continue;
             }
-            if core.has_unissued_data_access() {
+            if !pending_data_blocks && core.has_unissued_data_access() {
                 if core
                     .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
@@ -1211,7 +1211,7 @@ impl RiscvCluster {
                 continue;
             }
             let instruction_budget_exhausted = committed_instructions >= instruction_budget;
-            if core.has_pending_fetch() {
+            if !pending_data_blocks && core.has_pending_fetch() {
                 if !instruction_budget_exhausted {
                     if can_retire_mmio_fetch_pending(*cpu, core, bus)? {
                         if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
@@ -1230,11 +1230,12 @@ impl RiscvCluster {
                 }
                 continue;
             }
-
             let fetch_admitted =
                 !instruction_budget_exhausted && fetch_before_pipeline_is_admitted(core);
             if fetch_admitted {
-                if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
+                if let Some(decision) =
+                    core.next_pending_data_mmio_fetch_ahead(bus, pending_data_blocks)
+                {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     let event = core
@@ -1253,13 +1254,14 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
+            if pending_data_blocks {
+                continue;
+            }
             if !instruction_budget_exhausted
                 && push_pipeline_cycle_drive_event(*cpu, core, scheduler, &mut actions)?
             {
                 continue;
             }
-
             if !instruction_budget_exhausted {
                 if let Some(event) = completed_fetch_drive_event(*cpu, core, scheduler)? {
                     committed_instructions += u64::from(matches!(
@@ -1273,11 +1275,9 @@ impl RiscvCluster {
                     continue;
                 }
             }
-
             if instruction_budget_exhausted {
                 continue;
             }
-
             if !fetch_admitted {
                 continue;
             }

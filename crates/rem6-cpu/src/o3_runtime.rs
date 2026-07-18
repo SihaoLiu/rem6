@@ -68,9 +68,9 @@ mod o3_runtime_writeback_tests;
 mod o3_source_operands;
 #[path = "o3_store_forwarding.rs"]
 mod o3_store_forwarding;
-
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
+pub(crate) use o3_runtime_control_window::O3ProducerForwardedControlTarget;
 use o3_runtime_control_window::{
     execution_writes_rename_destination, valid_live_speculative_fetch_identity,
     O3LiveSpeculativeExecution, O3LiveSpeculativeIssueCandidate,
