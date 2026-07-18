@@ -679,6 +679,29 @@ fn detailed_same_range_store_prefix_prefetches_a_younger_load_before_data_issue(
 }
 
 #[test]
+fn detailed_disjoint_store_prefix_prefetches_a_younger_load_before_data_issue() {
+    let older_store = s_type(0, 11, 10, 0x2);
+    let disjoint_store = s_type(24, 12, 10, 0x2);
+    let overlapping_store = s_type(2, 13, 10, 0x1);
+    let core = core_with_completed_fetches([
+        (0, 0x8000, older_store.to_le_bytes().to_vec()),
+        (1, 0x8004, disjoint_store.to_le_bytes().to_vec()),
+        (2, 0x8008, overlapping_store.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .hart
+        .write(Register::new(10).unwrap(), 0x9000);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+}
+
+#[test]
 fn detailed_store_led_window_prefetches_a_second_younger_load() {
     let store = s_type(0, 11, 10, 0x2);
     let first_load = i_type(64, 10, 0x2, 13, 0x03);
@@ -1018,6 +1041,32 @@ fn detailed_resident_store_accepts_a_same_range_store_and_fetches_the_load() {
     let decision = core.next_fetch_ahead_before_retire().unwrap();
 
     assert_eq!(decision.pc(), Address::new(0x8008));
+}
+
+#[test]
+fn detailed_resident_store_accepts_a_disjoint_store_prefix_and_fetches_the_load() {
+    let disjoint_store = s_type(24, 12, 10, 0x2);
+    let overlapping_store = s_type(2, 13, 10, 0x1);
+    let core = core_with_completed_fetches([
+        (1, 0x8004, disjoint_store.to_le_bytes().to_vec()),
+        (2, 0x8008, overlapping_store.to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_branch_lookahead(2);
+    core.set_o3_scalar_memory_depth(4);
+    let store = scalar_store_execution_event(0x8000, 0, 10, 11, 0x9000);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.hart.set_pc(0x8004);
+        state.hart.write(Register::new(10).unwrap(), 0x9000);
+        assert!(state
+            .o3_runtime
+            .stage_live_data_access_issue_for_test(&store, request(20), 31));
+    }
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
 }
 
 #[test]

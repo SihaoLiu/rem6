@@ -185,12 +185,12 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_ticks",
             "Tick",
-            14,
+            16,
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_max_ticks",
             "Tick",
-            2,
+            4,
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_data_latency_min_ticks",
@@ -220,7 +220,7 @@ fn rem6_run_m5_dump_reset_stats_scopes_o3_lsq_matrix_snapshot() {
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.store_latency_ticks",
             "Tick",
-            6,
+            8,
         ),
         (
             "sim.host_actions.stats_dump.cpu0.o3.lsq_operation.load_reserved_latency_samples",

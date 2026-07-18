@@ -196,7 +196,7 @@ fn assert_completed_mixed_scalar_load_overlap(json: &Value) {
         json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        2,
         "monotonic",
     );
 

@@ -127,7 +127,7 @@ fn rem6_run_o3_scalar_load_head_stops_at_load_dependent_boundary() {
         &completed,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        3,
         "monotonic",
     );
     let load = event_at_pc(&completed, LOAD_PC);
@@ -255,7 +255,7 @@ fn assert_completed_scalar_load_fu_window(json: &Value) {
         json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        3,
         "monotonic",
     );
     assert_json_stat(json, "system.cpu.rob.maxOccupancy", "Count", 4, "monotonic");

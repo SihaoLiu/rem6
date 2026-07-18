@@ -40,6 +40,8 @@ mod lsq_store_load;
 mod lsq_store_load_load;
 #[path = "o3/lsq_store_load_partial.rs"]
 mod lsq_store_load_partial;
+#[path = "o3/lsq_store_prefix.rs"]
+mod lsq_store_prefix;
 #[path = "o3/lsq_store_store_load.rs"]
 mod lsq_store_store_load;
 #[path = "o3/predicted_control.rs"]

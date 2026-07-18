@@ -478,6 +478,40 @@ fn failed_middle_partial_store_cancels_the_younger_composed_suffix() {
     assert!(!state.issued_data_for_fetches.contains(&requests[3].0));
 }
 
+#[test]
+fn detailed_disjoint_store_prefix_stages_ordered_rows_and_ignores_disjoint_bytes() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = detailed_disjoint_store_prefix_core(fetch_route, data_route);
+
+    issue_data_accesses_without_response(&core, &mut scheduler, &transport, 4);
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.outstanding_data.len(), 4);
+    assert_eq!(state.buffered_o3_stores.len(), 2);
+    assert_eq!(
+        state
+            .o3_runtime
+            .snapshot()
+            .load_store_queue()
+            .iter()
+            .map(|entry| (entry.kind(), entry.address()))
+            .collect::<Vec<_>>(),
+        vec![
+            (O3LoadStoreQueueKind::Store, Some(Address::new(0x9000))),
+            (O3LoadStoreQueueKind::Store, Some(Address::new(0x9040))),
+            (O3LoadStoreQueueKind::Store, Some(Address::new(0x9002))),
+            (O3LoadStoreQueueKind::Load, Some(Address::new(0x9000))),
+        ]
+    );
+    let mut accesses = state.outstanding_data.values().collect::<Vec<_>>();
+    accesses.sort_unstable_by_key(|access| access.fetch_request.sequence());
+    let plan = accesses[3]
+        .store_load_forwarding_plan
+        .expect("the load should retain an overlapping-store composition plan");
+    assert_eq!(plan.forwarded_bytes(), 4);
+    assert!(plan.is_partial());
+}
+
 fn detailed_store_store_load_core(
     fetch_route: MemoryRouteId,
     data_route: MemoryRouteId,
@@ -515,6 +549,28 @@ fn detailed_multi_store_byte_composition_core(
         scalar_store_event_with_width_and_value(0x8000, 1, 0x9000, MemoryWidth::Word, 0xaa),
         scalar_store_event_with_width_and_value(0x8004, 2, 0x9002, MemoryWidth::Halfword, 0xccbb),
         scalar_store_event_with_width_and_value(0x8008, 3, 0x9002, MemoryWidth::Byte, 0xdd),
+        scalar_load_event_with_base_width(0x800c, 4, 6, 2, 0x9000, MemoryWidth::Doubleword, false),
+    ]);
+    drop(state);
+    core
+}
+
+fn detailed_disjoint_store_prefix_core(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+) -> RiscvCore {
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    let mut state = core.state.lock().expect("riscv core lock");
+    state.hart.write(reg(2), 0x9000);
+    state.events.extend([
+        scalar_store_event_with_width_and_value(0x8000, 1, 0x9000, MemoryWidth::Word, 0xaa),
+        scalar_store_event_with_width_and_value(0x8004, 2, 0x9040, MemoryWidth::Word, 0x5a),
+        scalar_store_event_with_width_and_value(0x8008, 3, 0x9002, MemoryWidth::Halfword, 0x06bb),
         scalar_load_event_with_base_width(0x800c, 4, 6, 2, 0x9000, MemoryWidth::Doubleword, false),
     ]);
     drop(state);

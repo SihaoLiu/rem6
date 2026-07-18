@@ -713,6 +713,58 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
 }
 
 #[test]
+fn disjoint_store_prefix_uses_ordered_store_ownership_not_overlap_connectivity() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let memory_window = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_memory_window.rs")).unwrap(),
+    );
+    let fetch_ahead = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs")).unwrap(),
+    );
+    let scalar_window = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_scalar_memory_window.rs")).unwrap(),
+    );
+
+    for (owner, source) in [
+        ("runtime memory window", &memory_window),
+        ("detailed fetch-ahead", &fetch_ahead),
+        ("scalar-memory helper", &scalar_window),
+    ] {
+        assert!(
+            !source.contains("store_range_extends_overlap_prefix"),
+            "{owner} must not restore the obsolete overlap-connectivity gate"
+        );
+    }
+    for (owner, source) in [
+        ("runtime memory window", &memory_window),
+        ("detailed fetch-ahead", &fetch_ahead),
+    ] {
+        assert!(
+            source.contains("RiscvInstruction::Store { .. } if destinations.is_empty()")
+                || source
+                    .contains("MemoryAccessKind::Store { .. } if load_destinations.is_empty()"),
+            "{owner} must admit cacheable stores through the store-only prefix boundary"
+        );
+    }
+    assert!(
+        memory_window.contains("o3_store_load_composition("),
+        "runtime load admission must keep byte composition in the focused forwarding owner"
+    );
+    let predecessor = rust_function_definition(&memory_window, "scalar_store_predecessor")
+        .expect("missing scalar_store_predecessor definition");
+    for anchor in [
+        "self.live_data_accesses",
+        ".last()",
+        ".map(|store| store.data_request)",
+    ] {
+        assert!(
+            predecessor.contains(anchor),
+            "buffered store ordering must remain predecessor-based: missing `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn o3_runtime_issue_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();

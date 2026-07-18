@@ -456,7 +456,7 @@ fn rem6_run_host_switch_preserves_o3_scoped_issue_ticks() {
         1_500,
         &["--host-switch-cpu-mode", &switch_arg],
     );
-    assert_completed_scoped_issue(
+    assert_completed_scoped_issue_with_max_lsq(
         &switched,
         CROSS_RESOURCE_RESULTS,
         [
@@ -465,6 +465,7 @@ fn rem6_run_host_switch_preserves_o3_scoped_issue_ticks() {
             ("x14", "0x4d"),
             ("x15", "0x12"),
         ],
+        1,
     );
 
     for pc in [LOAD_PC, BRANCH_PC, SECOND_ROW_PC, THIRD_ROW_PC] {
@@ -669,6 +670,15 @@ fn assert_completed_scoped_issue(
     expected_memory: &str,
     expected_registers: [(&str, &str); 4],
 ) {
+    assert_completed_scoped_issue_with_max_lsq(json, expected_memory, expected_registers, 3);
+}
+
+fn assert_completed_scoped_issue_with_max_lsq(
+    json: &Value,
+    expected_memory: &str,
+    expected_registers: [(&str, &str); 4],
+    expected_max_lsq: u64,
+) {
     assert_final_witness(json, expected_memory, expected_registers);
     assert_json_stat(
         json,
@@ -681,7 +691,7 @@ fn assert_completed_scoped_issue(
         json,
         "sim.cpu0.o3.max_lsq_occupancy",
         "Count",
-        1,
+        expected_max_lsq,
         "monotonic",
     );
 }

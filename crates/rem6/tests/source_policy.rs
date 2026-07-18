@@ -12,6 +12,8 @@ mod debug_flags_ownership;
 mod diagnostic_failure_ownership;
 #[path = "source_policy/execution_mode_lanes.rs"]
 mod execution_mode_lanes;
+#[path = "source_policy/lsq_store_prefix_ownership.rs"]
+mod lsq_store_prefix_ownership;
 #[path = "source_policy/m5_host_action_fixture_ownership.rs"]
 mod m5_host_action_fixture_ownership;
 #[path = "source_policy/m5_host_action_o3_runtime_ownership.rs"]

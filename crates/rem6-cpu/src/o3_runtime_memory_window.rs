@@ -9,9 +9,7 @@ use super::*;
 const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
 use crate::{
     riscv_o3_window_policy::RiscvScalarIntegerLiveWindow,
-    riscv_scalar_memory_window::{
-        independent_scalar_load_destination, store_range_extends_overlap_prefix,
-    },
+    riscv_scalar_memory_window::independent_scalar_load_destination,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,14 +34,6 @@ impl O3ScalarMemoryWindowState {
 
     pub(crate) fn load_destinations(&self) -> &[Register] {
         &self.load_destinations
-    }
-
-    pub(crate) fn store_ranges(&self) -> Vec<AddressRange> {
-        self.stores
-            .iter()
-            .filter_map(o3_store_forwarding_entry)
-            .map(O3StoreForwardingEntry::range)
-            .collect()
     }
 }
 
@@ -74,19 +64,11 @@ impl O3RuntimeState {
         }
 
         let mut stores = Vec::new();
-        let mut store_ranges = Vec::new();
         let mut load_destinations = Vec::new();
         for live in &self.live_data_accesses {
             let access = live.execution.execution().memory_access()?;
             match access {
                 MemoryAccessKind::Store { .. } if load_destinations.is_empty() => {
-                    let range = o3_store_forwarding_entry(access)?.range();
-                    if !store_ranges.is_empty()
-                        && !store_range_extends_overlap_prefix(store_ranges.iter().copied(), range)
-                    {
-                        return None;
-                    }
-                    store_ranges.push(range);
                     stores.push(access.clone());
                 }
                 MemoryAccessKind::Load { .. }
@@ -169,9 +151,6 @@ impl O3RuntimeState {
         let window = self.scalar_memory_window_state()?;
         if matches!(instruction, RiscvInstruction::Store { .. }) {
             if !window.load_destinations.is_empty() {
-                return None;
-            }
-            if !store_range_extends_overlap_prefix(window.store_ranges(), younger_range) {
                 return None;
             }
             return Some(O3ScalarMemoryWindowAdmission::StorePrefix);
@@ -887,16 +866,51 @@ mod tests {
     }
 
     #[test]
-    fn store_prefix_rejects_a_disjoint_younger_store() {
+    fn disjoint_store_prefix_composes_only_overlapping_store_bytes() {
         let mut runtime = O3RuntimeState::default();
-        runtime.set_scalar_memory_window_limit(3);
-        let older = scalar_store_event(0x8000, 10, 0x9000);
-        let younger = scalar_store_event(0x8004, 11, 0x9004);
+        runtime.set_scalar_memory_window_limit(4);
+        let older =
+            scalar_store_event_with_width_and_value(0x8000, 10, 0x9000, MemoryWidth::Word, 0xaa);
+        let disjoint =
+            scalar_store_event_with_width_and_value(0x8004, 11, 0x9040, MemoryWidth::Word, 0x5a);
+        let overlapping = scalar_store_event_with_width_and_value(
+            0x8008,
+            12,
+            0x9002,
+            MemoryWidth::Halfword,
+            0x06bb,
+        );
+        let load =
+            scalar_load_event_with_width(0x800c, 13, 14, 10, 0x9000, MemoryWidth::Doubleword);
 
         assert!(runtime.stage_live_data_access_issue_for_test(&older, memory_request(20), 31));
-        assert_eq!(runtime.scalar_store_predecessor(&younger), None);
-        assert!(!runtime.stage_live_data_access_issue_for_test(&younger, memory_request(21), 32));
-        assert_eq!(runtime.live_data_accesses.len(), 1);
+        assert_eq!(
+            runtime.scalar_store_predecessor(&disjoint),
+            Some(memory_request(20))
+        );
+        assert!(runtime.stage_live_data_access_issue_for_test(&disjoint, memory_request(21), 32,));
+        assert_eq!(
+            runtime.scalar_store_predecessor(&overlapping),
+            Some(memory_request(21))
+        );
+        assert!(runtime.stage_live_data_access_issue_for_test(
+            &overlapping,
+            memory_request(22),
+            33,
+        ));
+
+        let plan = runtime
+            .scalar_load_forwarding_plan(
+                load.instruction(),
+                load.execution().memory_access().unwrap(),
+            )
+            .expect("the load should compose only overlapping store bytes");
+        assert_eq!(plan.forwarded_bytes(), 4);
+        let mut data = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        assert!(plan.overlay_response_data(&mut data));
+        assert_eq!(data, vec![0xaa, 0x00, 0xbb, 0x06, 0x55, 0x66, 0x77, 0x88]);
+        assert!(runtime.stage_live_data_access_issue_for_test(&load, memory_request(23), 34));
+        assert_eq!(runtime.live_data_accesses.len(), 4);
     }
 
     #[test]

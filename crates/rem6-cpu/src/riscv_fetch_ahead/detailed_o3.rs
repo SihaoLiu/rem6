@@ -22,9 +22,7 @@ use crate::{
         RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision,
         RiscvSequencedScalarIntegerYoungerDecision,
     },
-    riscv_scalar_memory_window::{
-        independent_scalar_load_destination, store_range_extends_overlap_prefix,
-    },
+    riscv_scalar_memory_window::independent_scalar_load_destination,
     BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, ReturnAddressStackOperation,
     ReturnAddressStackOperationKind, RiscvCoreState,
 };
@@ -929,12 +927,10 @@ fn scalar_memory_window_candidate(
     let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let mut store_ranges = window.store_ranges();
     let mut destinations = window.load_destinations().to_vec();
     if !admit_scalar_memory_prefix_instruction(
         state,
         current.decoded().instruction(),
-        &mut store_ranges,
         &mut destinations,
     ) {
         return DetailedFetchAheadCandidate::Blocked;
@@ -966,12 +962,7 @@ fn scalar_memory_window_candidate(
             instruction,
             RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
         ) {
-            if !admit_scalar_memory_prefix_instruction(
-                state,
-                instruction,
-                &mut store_ranges,
-                &mut destinations,
-            ) {
+            if !admit_scalar_memory_prefix_instruction(state, instruction, &mut destinations) {
                 return DetailedFetchAheadCandidate::Blocked;
             }
             window_rows += 1;
@@ -1069,12 +1060,14 @@ fn scalar_memory_window_candidate(
 fn admit_scalar_memory_prefix_instruction(
     state: &RiscvCoreState,
     instruction: RiscvInstruction,
-    store_ranges: &mut Vec<AddressRange>,
     destinations: &mut Vec<Register>,
 ) -> bool {
-    let Some(range) = state.cacheable_scalar_memory_instruction_range(instruction) else {
+    if state
+        .cacheable_scalar_memory_instruction_range(instruction)
+        .is_none()
+    {
         return false;
-    };
+    }
     match instruction {
         instruction @ RiscvInstruction::Load { .. } => {
             let Some(destination) =
@@ -1085,14 +1078,7 @@ fn admit_scalar_memory_prefix_instruction(
             destinations.push(destination);
             true
         }
-        RiscvInstruction::Store { .. }
-            if destinations.is_empty()
-                && (store_ranges.is_empty()
-                    || store_range_extends_overlap_prefix(store_ranges.iter().copied(), range)) =>
-        {
-            store_ranges.push(range);
-            true
-        }
+        RiscvInstruction::Store { .. } if destinations.is_empty() => true,
         _ => false,
     }
 }
