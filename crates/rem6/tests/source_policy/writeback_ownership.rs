@@ -23,7 +23,11 @@ const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 3] = [
         path: "writeback_port/result_boundaries.rs",
     },
 ];
-const RESULT_BOUNDARIES_MODULES: [&str; 1] = ["support"];
+const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
+    [ExpectedModuleDeclaration {
+        name: "support",
+        path: "result_boundaries/support.rs",
+    }];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";
 const RESULT_CLASS_ANCHORS: [&str; 4] = [
     "rem6_run_o3_memory_result_writeback_matrix_direct",
@@ -128,11 +132,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     }
     match &boundary {
         Ok(boundary) => {
-            if top_level_module_names(RESULT_BOUNDARIES, boundary) != RESULT_BOUNDARIES_MODULES {
-                boundary_failures.push(format!(
-                    "{RESULT_BOUNDARIES} must declare exactly the normal child modules {RESULT_BOUNDARIES_MODULES:?}"
-                ));
-            }
+            boundary_failures.extend(boundary_support_module_failures(
+                RESULT_BOUNDARIES,
+                boundary,
+            ));
             let includes = top_level_include_paths(RESULT_BOUNDARIES, boundary);
             if !includes.is_empty() {
                 boundary_failures.push(format!(
@@ -341,6 +344,51 @@ mod result_boundaries;
 }
 
 #[test]
+fn writeback_result_boundary_support_module_policy_rejects_non_external_or_wrong_path_modules() {
+    let valid = r#"
+#[path = "result_boundaries/support.rs"]
+mod support;
+"#;
+    assert!(boundary_support_module_failures("synthetic.rs", valid).is_empty());
+
+    for (label, source) in [
+        (
+            "inline module",
+            r#"
+#[path = "result_boundaries/support.rs"]
+mod support {}
+"#,
+        ),
+        (
+            "missing path",
+            r#"
+mod support;
+"#,
+        ),
+        (
+            "duplicate path",
+            r#"
+#[path = "wrong.rs"]
+#[path = "result_boundaries/support.rs"]
+mod support;
+"#,
+        ),
+        (
+            "wrong path",
+            r#"
+#[path = "result_boundaries/wrong.rs"]
+mod support;
+"#,
+        ),
+    ] {
+        assert!(
+            !boundary_support_module_failures("synthetic.rs", source).is_empty(),
+            "{label} must be rejected"
+        );
+    }
+}
+
+#[test]
 fn writeback_result_support_leaf_policy_rejects_includes_and_child_modules() {
     assert!(support_leaf_failures("synthetic.rs", "use super::*;\nfn helper() {}\n").is_empty());
     assert!(!support_leaf_failures("synthetic.rs", "mod nested;\n").is_empty());
@@ -514,6 +562,10 @@ fn module_declaration_failures(
         }
     }
     failures
+}
+
+fn boundary_support_module_failures(relative: &str, source: &str) -> Vec<String> {
+    module_declaration_failures(relative, source, &RESULT_BOUNDARY_SUPPORT_MODULES)
 }
 
 fn support_leaf_failures(relative: &str, source: &str) -> Vec<String> {
