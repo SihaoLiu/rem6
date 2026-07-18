@@ -2,17 +2,22 @@ use std::{fs, path::Path};
 
 use super::{line_count, module_has_path_attribute};
 
-const MAX_STATS_COMPAT_ROOT_LINES: usize = 15_800;
+const MAX_STATS_COMPAT_ROOT_LINES: usize = 14_500;
 const MAX_STATS_COMPAT_MODULE_LINES: usize = 1800;
 const MAX_STATS_COMPAT_IN_ORDER_BRANCH_PREDICTION_MATRIX_LINES: usize = 1100;
+const MAX_STATS_COMPAT_INDEXED_VECTOR_MEMORY_LINES: usize = 1500;
 const MAX_STATS_COMPAT_SELECTED_BRANCH_PREDICTION_MATRIX_LINES: usize = 1000;
 const MAX_STATS_COMPAT_MASKED_UNIT_STRIDE_VECTOR_MEMORY_LINES: usize = 1000;
-const STATS_COMPAT_MODULES: [(&str, &str); 5] = [
+const STATS_COMPAT_MODULES: [(&str, &str); 6] = [
     ("cache", "stats_compat/cache.rs"),
     ("dram", "stats_compat/dram.rs"),
     (
         "in_order_branch_prediction_matrix",
         "stats_compat/in_order_branch_prediction_matrix.rs",
+    ),
+    (
+        "indexed_vector_memory",
+        "stats_compat/indexed_vector_memory.rs",
     ),
     (
         "masked_unit_stride_vector_memory",
@@ -22,6 +27,61 @@ const STATS_COMPAT_MODULES: [(&str, &str); 5] = [
         "selected_branch_predictor_matrix",
         "stats_compat/selected_branch_predictor_matrix.rs",
     ),
+];
+const STATS_COMPAT_INDEXED_VECTOR_MEMORY_TESTS: [&str; 53] = [
+    "rem6_run_in_order_pipeline_models_vector_indexed_e8_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_vector_indexed_e8_m1_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e8_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e8_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e8_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e8_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e8_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e8_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_vector_indexed_e16_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_vector_indexed_e16_m1_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e16_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e16_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e16_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e16_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e16_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e16_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e32_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e32_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e32_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e32_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e32_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e32_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e32_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e32_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e32_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_sparse_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_leading_gap_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_reversed_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e64_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e64_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e64_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e64_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_mixed_width_vector_indexed_e64_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_mixed_width_vector_indexed_e64_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_vector_indexed_e64_m1_memory",
+    "rem6_run_in_order_pipeline_models_sparse_vector_indexed_e64_m1_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e64_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e64_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_sparse_mixed_width_vector_indexed_e64_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_vector_indexed_e64_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_vector_indexed_e64_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e64_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e64_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e64_m1_data_e32_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e32_m1_data_e64_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e32_m1_data_e16_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_mixed_width_vector_indexed_e32_m1_data_e8_indices_memory",
+    "rem6_run_in_order_pipeline_models_masked_sparse_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_leading_gap_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_trailing_active_vector_indexed_e32_m1_memory",
+    "rem6_run_in_order_pipeline_models_masked_reversed_vector_indexed_e32_m1_memory",
 ];
 
 #[test]
@@ -64,6 +124,75 @@ fn stats_compat_root_keeps_current_ratchet() {
             "tests/cli_run/stats_compat.rs must declare `{module}` from `{module_path}`"
         );
     }
+}
+
+#[test]
+fn stats_compat_indexed_vector_memory_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/cli_run/stats_compat.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let root_syntax = parsed_source("tests/cli_run/stats_compat.rs", &root);
+
+    let module_path = crate_dir.join("tests/cli_run/stats_compat/indexed_vector_memory.rs");
+    assert!(
+        module_path.exists(),
+        "indexed vector memory tests belong in tests/cli_run/stats_compat/indexed_vector_memory.rs"
+    );
+    let module = fs::read_to_string(module_path).unwrap();
+    let module_lines = module.lines().count();
+    assert!(
+        module_lines <= MAX_STATS_COMPAT_INDEXED_VECTOR_MEMORY_LINES,
+        "tests/cli_run/stats_compat/indexed_vector_memory.rs exceeds {MAX_STATS_COMPAT_INDEXED_VECTOR_MEMORY_LINES} lines: {module_lines}"
+    );
+    let module_syntax = parsed_source(
+        "tests/cli_run/stats_compat/indexed_vector_memory.rs",
+        &module,
+    );
+    let includes = top_level_include_tokens(&module_syntax);
+    assert!(
+        includes.is_empty(),
+        "tests/cli_run/stats_compat/indexed_vector_memory.rs must not inline sources with include!: {includes:?}"
+    );
+
+    let test_functions = module_syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Fn(function) = item else {
+                return None;
+            };
+            function
+                .attrs
+                .iter()
+                .any(|attribute| attribute.path().is_ident("test"))
+                .then(|| function.sig.ident.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        test_functions,
+        STATS_COMPAT_INDEXED_VECTOR_MEMORY_TESTS
+            .iter()
+            .map(|function| function.to_string())
+            .collect::<Vec<_>>(),
+        "tests/cli_run/stats_compat/indexed_vector_memory.rs must own exactly the ordered indexed vector memory compatibility matrix"
+    );
+
+    let root_test_functions = root_syntax.items.iter().filter_map(|item| {
+        let syn::Item::Fn(function) = item else {
+            return None;
+        };
+        function
+            .attrs
+            .iter()
+            .any(|attribute| attribute.path().is_ident("test"))
+            .then(|| function.sig.ident.to_string())
+    });
+    assert!(
+        root_test_functions
+            .into_iter()
+            .all(|function| !function.contains("vector_indexed")),
+        "tests/cli_run/stats_compat.rs must not retain indexed vector memory tests"
+    );
 }
 
 #[test]
