@@ -6,6 +6,8 @@ const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
+const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
+const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
 const MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES: usize = 600;
 const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
@@ -1302,6 +1304,7 @@ fn o3_runtime_live_window_tests_live_in_sibling_test_module() {
     let owner_path = crate_dir.join("src/o3_runtime_live_window.rs");
     let owner = fs::read_to_string(&owner_path).unwrap();
     let tests_path = crate_dir.join("src/o3_runtime_live_window_tests.rs");
+    let identity_path = crate_dir.join("src/o3_runtime_live_window_identity_tests.rs");
 
     assert!(
         owner.contains("#[cfg(test)]\n#[path = \"o3_runtime_live_window_tests.rs\"]\nmod tests;"),
@@ -1321,6 +1324,25 @@ fn o3_runtime_live_window_tests_live_in_sibling_test_module() {
     );
 
     let tests = fs::read_to_string(tests_path).unwrap();
+    let tests_code = rust_code_without_comments_and_literals(&tests);
+    let include_lines = include_macro_lines(&tests);
+    assert!(
+        include_lines.is_empty(),
+        "src/o3_runtime_live_window_tests.rs must use path-owned child modules instead of include! fragments; found lines {include_lines:?}"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &tests,
+            "o3_runtime_live_window_identity_tests.rs",
+            "identity",
+        ),
+        1,
+        "live-window identity tests must have exactly one attached path-owned child declaration"
+    );
+    assert!(
+        tests.lines().count() <= MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES,
+        "src/o3_runtime_live_window_tests.rs exceeds {MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES} lines"
+    );
     for anchor in [
         "fn scalar_memory_stops_live_retire_window_before_memory_and_younger_rows(",
         "fn completed_live_load_forwards_into_dependent_alu_candidate(",
@@ -1328,10 +1350,66 @@ fn o3_runtime_live_window_tests_live_in_sibling_test_module() {
         "fn live_rename_overlay_preserves_canonical_register_order(",
     ] {
         assert!(
-            tests.contains(anchor),
+            tests_code.contains(anchor),
             "src/o3_runtime_live_window_tests.rs is missing `{anchor}`"
         );
     }
+
+    assert!(
+        identity_path.exists(),
+        "live-window identity tests belong in src/o3_runtime_live_window_identity_tests.rs"
+    );
+    let identity = fs::read_to_string(identity_path).unwrap();
+    let identity_code = rust_code_without_comments_and_literals(&identity);
+    let identity_include_lines = include_macro_lines(&identity);
+    assert!(
+        identity_include_lines.is_empty(),
+        "src/o3_runtime_live_window_identity_tests.rs must not inline hidden test fragments; found lines {identity_include_lines:?}"
+    );
+    assert!(
+        identity.lines().count() <= MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES,
+        "src/o3_runtime_live_window_identity_tests.rs exceeds {MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES} lines"
+    );
+    for anchor in [
+        "fn mismatched_live_speculative_record_does_not_claim_early_issue(",
+        "fn malformed_live_speculative_fetch_identity_does_not_occupy_candidate(",
+        "fn restored_live_staged_row_without_transient_identity_fails_closed(",
+        "fn invalidated_descendant_fetch_identity_keeps_retirement_authority(",
+    ] {
+        assert!(
+            identity_code.contains(anchor),
+            "src/o3_runtime_live_window_identity_tests.rs is missing `{anchor}`"
+        );
+        assert!(
+            !tests_code.contains(anchor),
+            "src/o3_runtime_live_window_tests.rs still owns identity test `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn live_window_module_policy_ignores_comments_and_detects_nonliteral_includes() {
+    let live = "#[path = \"identity.rs\"]\nmod identity;\n";
+    let commented = "/* #[path = \"identity.rs\"]\nmod identity; */\n";
+    let detached = "#[path = \"identity.rs\"]\nconst MARKER: () = ();\nmod identity;\n";
+
+    assert_eq!(
+        path_owned_module_declaration_count(live, "identity.rs", "identity"),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(commented, "identity.rs", "identity"),
+        0
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(detached, "identity.rs", "identity"),
+        0
+    );
+    assert_eq!(
+        include_macro_lines("include ! (concat!(\"identity\", \".rs\"));\n"),
+        [1]
+    );
+    assert!(include_macro_lines("// include!(\"identity.rs\");\n").is_empty());
 }
 
 #[test]
@@ -1757,6 +1835,42 @@ fn matching_delimiter(chars: &[char], open: usize, left: char, right: char) -> O
         }
     }
     None
+}
+
+fn include_macro_lines(source: &str) -> Vec<usize> {
+    rust_code_without_comments_and_literals(source)
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            line.trim_start()
+                .strip_prefix("include")
+                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+                .then_some(index + 1)
+        })
+        .collect()
+}
+
+fn path_owned_module_declaration_count(source: &str, path: &str, module: &str) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let source_lines = source.lines().collect::<Vec<_>>();
+    let code_lines = code.lines().collect::<Vec<_>>();
+    let attribute = format!("#[path = \"{path}\"]");
+    let declaration = format!("mod {module};");
+
+    source_lines
+        .iter()
+        .zip(&code_lines)
+        .enumerate()
+        .filter(|(index, (source_line, code_line))| {
+            source_line.trim() == attribute
+                && code_line.trim_start().starts_with("#[path")
+                && code_lines
+                    .iter()
+                    .skip(index + 1)
+                    .find(|line| !line.trim().is_empty())
+                    .is_some_and(|line| line.trim() == declaration)
+        })
+        .count()
 }
 
 fn production_rust_source(source: &str) -> String {

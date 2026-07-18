@@ -9,6 +9,9 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord};
 
+#[path = "o3_runtime_live_window_identity_tests.rs"]
+mod identity;
+
 fn div_x3() -> RiscvInstruction {
     RiscvInstruction::Div {
         rd: Register::new(3).unwrap(),
@@ -866,8 +869,6 @@ fn invalidated_speculative_producer_revokes_dependent_issue_timing() {
     assert_eq!(trace.issue_tick(), 31);
     assert_eq!(trace.commit_tick(), 31);
 }
-
-include!("o3_runtime_live_window_identity_tests.rs");
 
 #[test]
 fn public_snapshot_checkpoint_preserves_committed_rename_rollback() {
