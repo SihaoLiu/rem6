@@ -5,6 +5,8 @@ const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -1388,6 +1390,84 @@ fn o3_runtime_live_window_tests_live_in_sibling_test_module() {
 }
 
 #[test]
+fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/o3_runtime_control_window_tests.rs");
+    let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let root_code = rust_code_without_comments_and_literals(&root);
+    let root_include_lines = include_macro_lines(&root);
+
+    assert!(
+        root_include_lines.is_empty(),
+        "src/o3_runtime_control_window_tests.rs must use path-owned child modules instead of include! fragments; found lines {root_include_lines:?}"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/lifecycle.rs",
+            "lifecycle",
+        ),
+        1,
+        "control-window lifecycle tests must have exactly one attached path-owned child declaration"
+    );
+    assert!(
+        line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
+        "src/o3_runtime_control_window_tests.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES} lines"
+    );
+    for anchor in [
+        "fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick(",
+        "fn predicted_mul_wakes_dependent_add_candidate(",
+        "fn staged_window_truncation_prunes_control_dependencies(",
+    ] {
+        assert!(
+            root_code.contains(anchor),
+            "src/o3_runtime_control_window_tests.rs is missing retained test `{anchor}`"
+        );
+    }
+
+    assert!(
+        child_path.exists(),
+        "control-window lifecycle tests belong in src/o3_runtime_control_window_tests/lifecycle.rs"
+    );
+    let child = fs::read_to_string(&child_path).unwrap();
+    let child_code = rust_code_without_comments_and_literals(&child);
+    let child_include_lines = include_macro_lines(&child);
+    assert!(
+        child_include_lines.is_empty(),
+        "src/o3_runtime_control_window_tests/lifecycle.rs must not inline hidden test fragments; found lines {child_include_lines:?}"
+    );
+    assert!(
+        line_count(&child_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES,
+        "src/o3_runtime_control_window_tests/lifecycle.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES} lines"
+    );
+    for anchor in [
+        "fn inner_control_uses_staged_outer_ownership_before_execution_record(",
+        "fn outer_control_validation_preserves_inner_control_chain(",
+        "fn validated_outer_control_keeps_terminal_inner_timing_window_live(",
+        "fn outer_control_discard_removes_inner_branch_and_descendant(",
+        "fn branch_descendant_cleanup_discards_only_future_writeback_reservations(",
+        "fn branch_descendant_cleanup_discards_unpublished_past_writeback_reservation(",
+        "fn inner_control_discard_preserves_outer_branch(",
+        "fn middle_control_discard_removes_only_inner_control(",
+        "fn mixed_middle_control_discard_removes_only_indirect_jump(",
+        "fn split_inner_branch_suffix_replacement_prunes_nested_chain(",
+        "fn outer_control_redirect_discards_invalidated_descendant_fetch_identity(",
+        "fn mismatched_control_redirect_preserves_current_fallback_until_runtime_recording(",
+        "fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it(",
+    ] {
+        assert!(
+            child_code.contains(anchor),
+            "src/o3_runtime_control_window_tests/lifecycle.rs is missing lifecycle test `{anchor}`"
+        );
+        assert!(
+            !root_code.contains(anchor),
+            "src/o3_runtime_control_window_tests.rs still owns lifecycle test `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn live_window_module_policy_ignores_comments_and_detects_nonliteral_includes() {
     let live = "#[path = \"identity.rs\"]\nmod identity;\n";
     let commented = "/* #[path = \"identity.rs\"]\nmod identity; */\n";
@@ -1409,7 +1489,13 @@ fn live_window_module_policy_ignores_comments_and_detects_nonliteral_includes() 
         include_macro_lines("include ! (concat!(\"identity\", \".rs\"));\n"),
         [1]
     );
+    assert_eq!(
+        include_macro_lines("mod hidden { include!(\"identity.rs\"); }\n"),
+        [1]
+    );
+    assert_eq!(include_macro_lines("include\n!(\"identity.rs\");\n"), [1]);
     assert!(include_macro_lines("// include!(\"identity.rs\");\n").is_empty());
+    assert!(include_macro_lines("include_str!(\"identity.rs\");\n").is_empty());
 }
 
 #[test]
@@ -1838,16 +1924,32 @@ fn matching_delimiter(chars: &[char], open: usize, left: char, right: char) -> O
 }
 
 fn include_macro_lines(source: &str) -> Vec<usize> {
-    rust_code_without_comments_and_literals(source)
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            line.trim_start()
-                .strip_prefix("include")
-                .is_some_and(|rest| rest.trim_start().starts_with('!'))
-                .then_some(index + 1)
-        })
-        .collect()
+    let code = rust_code_without_comments_and_literals(source);
+    let bytes = code.as_bytes();
+    let mut lines = Vec::new();
+    let mut index = 0;
+    while index + "include".len() <= bytes.len() {
+        let Some(relative) = code[index..].find("include") else {
+            break;
+        };
+        let start = index + relative;
+        let end = start + "include".len();
+        let identifier_byte = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+        let bounded_left = start == 0 || !identifier_byte(bytes[start - 1]);
+        let bounded_right = end == bytes.len() || !identifier_byte(bytes[end]);
+        let mut next = end;
+        while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+            next += 1;
+        }
+        if bounded_left && bounded_right && bytes.get(next) == Some(&b'!') {
+            let line = bytes[..start].iter().filter(|byte| **byte == b'\n').count() + 1;
+            if lines.last() != Some(&line) {
+                lines.push(line);
+            }
+        }
+        index = end;
+    }
+    lines
 }
 
 fn path_owned_module_declaration_count(source: &str, path: &str, module: &str) -> usize {
