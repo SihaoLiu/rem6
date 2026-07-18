@@ -43,13 +43,32 @@ const RESULT_BOUNDARY_ANCHORS: [&str; 6] = [
     "rem6_run_o3_memory_result_writeback_live_mode_switch_rejects",
     "rem6_run_timing_suppresses_o3_memory_result_writeback_surface",
 ];
-const RESULT_SUPPORT_HELPERS: [&str; 6] = [
+const RESULT_SUPPORT_HELPERS: [&str; 11] = [
     "data_trace",
     "event_str",
     "json_u64",
     "assert_event_order",
     "assert_resource_counter",
     "memory_dump_hex",
+    "assert_register",
+    "assert_register_absent",
+    "rob_entry_at_sequence",
+    "assert_rob_sequence_absent",
+    "memory_result_event_at_pc",
+];
+const RESULT_SUPPORT_FUNCTIONS: [&str; 12] = [
+    "data_trace",
+    "event_str",
+    "json_u64",
+    "assert_event_order",
+    "assert_resource_counter",
+    "memory_dump_hex",
+    "assert_register",
+    "assert_register_absent",
+    "rob_entries",
+    "rob_entry_at_sequence",
+    "assert_rob_sequence_absent",
+    "memory_result_event_at_pc",
 ];
 const RESULT_BOUNDARY_SUPPORT_HELPERS: [&str; 2] = [
     "pmp_denied_amo_output",
@@ -195,6 +214,13 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         support_leaf_failures.is_empty(),
         "{RESULT_SUPPORT} must remain a leaf support module:\n{}",
         support_leaf_failures.join("\n")
+    );
+    let support_function_failures =
+        result_support_function_inventory_failures(RESULT_SUPPORT, &support);
+    assert!(
+        support_function_failures.is_empty(),
+        "{RESULT_SUPPORT} must own exactly the result support helper inventory:\n{}",
+        support_function_failures.join("\n")
     );
     assert!(
         top_level_module_names(RESULT_BOUNDARIES_SUPPORT, &boundary_support).is_empty(),
@@ -393,6 +419,25 @@ fn writeback_result_support_leaf_policy_rejects_includes_and_child_modules() {
     assert!(support_leaf_failures("synthetic.rs", "use super::*;\nfn helper() {}\n").is_empty());
     assert!(!support_leaf_failures("synthetic.rs", "mod nested;\n").is_empty());
     assert!(!support_leaf_failures("synthetic.rs", "include!(\"nested.rs\");\n").is_empty());
+    assert!(
+        !support_leaf_failures("synthetic.rs", "include!(concat!(\"nested\", \".rs\"));\n")
+            .is_empty()
+    );
+}
+
+#[test]
+fn writeback_result_support_helper_policy_rejects_extra_exported_functions() {
+    let mut valid = String::new();
+    for helper in RESULT_SUPPORT_FUNCTIONS {
+        valid.push_str(&format!("pub(super) fn {helper}() {{}}\n"));
+    }
+    assert!(result_support_function_inventory_failures("synthetic.rs", &valid).is_empty());
+
+    let extra = format!("{valid}pub(super) fn pmp_denied_amo_output() {{}}\n");
+    assert!(
+        !result_support_function_inventory_failures("synthetic.rs", &extra).is_empty(),
+        "extra exported support helper must be rejected"
+    );
 }
 
 fn top_level_test_names(relative: &str, source: &str) -> Vec<String> {
@@ -455,11 +500,15 @@ fn top_level_include_paths(relative: &str, source: &str) -> Vec<String> {
             item.mac
                 .path
                 .is_ident("include")
-                .then(|| syn::parse2::<syn::LitStr>(item.mac.tokens).ok())
-                .flatten()
-                .map(|literal| literal.value())
+                .then(|| top_level_include_argument(item.mac.tokens))
         })
         .collect()
+}
+
+fn top_level_include_argument(tokens: proc_macro2::TokenStream) -> String {
+    syn::parse2::<syn::LitStr>(tokens.clone())
+        .map(|literal| literal.value())
+        .unwrap_or_else(|_| tokens.to_string())
 }
 
 fn top_level_module_names(relative: &str, source: &str) -> Vec<String> {
@@ -566,6 +615,23 @@ fn module_declaration_failures(
 
 fn boundary_support_module_failures(relative: &str, source: &str) -> Vec<String> {
     module_declaration_failures(relative, source, &RESULT_BOUNDARY_SUPPORT_MODULES)
+}
+
+fn result_support_function_inventory_failures(relative: &str, source: &str) -> Vec<String> {
+    let support_functions = top_level_function_names(relative, source);
+    let expected_functions = RESULT_SUPPORT_FUNCTIONS.to_vec();
+    if support_functions
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        == expected_functions
+    {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{relative} must own exactly top-level functions {expected_functions:?}, got {support_functions:?}"
+        )]
+    }
 }
 
 fn support_leaf_failures(relative: &str, source: &str) -> Vec<String> {
