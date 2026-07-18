@@ -13,7 +13,6 @@ const WRONG_PATH_TARGET_PC: &str = "0x80000034";
 const WRONG_PATH_PRE_SQUASH_TICK: u64 = 197;
 const WRONG_PATH_POST_SQUASH_TICK: u64 = 230;
 const DUMP_STATS_PC: &str = "0x80000028";
-
 const WRITEBACK_PORT_STATS: [(&str, &str); 6] = [
     ("cycles", "Cycle"),
     ("admitted_rows", "Count"),
@@ -28,7 +27,6 @@ fn rem6_run_o3_writeback_width_one_serializes_direct_fu_dependent_collision() {
     let json = writeback_json(1);
     let multiply = event_at_pc(&json, MUL_PC);
     let dependent = event_at_pc(&json, DEPENDENT_PC);
-
     assert_eq!(
         event_u64(dependent, "issue_tick"),
         event_u64(multiply, "writeback_tick"),
@@ -57,7 +55,6 @@ fn rem6_run_o3_writeback_width_two_exact_fit_direct_fu_dependent_collision() {
     let json = writeback_json(2);
     let multiply = event_at_pc(&json, MUL_PC);
     let dependent = event_at_pc(&json, DEPENDENT_PC);
-
     assert_eq!(
         event_u64(dependent, "issue_tick"),
         event_u64(multiply, "writeback_tick"),
@@ -83,7 +80,6 @@ fn rem6_run_o3_writeback_width_two_exact_fit_direct_fu_dependent_collision() {
 #[test]
 fn rem6_run_o3_writeback_port_json_exposes_counters() {
     let json = writeback_json(1);
-
     assert_width_one_writeback_port_evidence(&json);
 }
 
@@ -1244,3 +1240,6 @@ mod result_classes;
 
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;

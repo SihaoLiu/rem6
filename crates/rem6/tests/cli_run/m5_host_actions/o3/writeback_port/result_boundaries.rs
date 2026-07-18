@@ -2,9 +2,7 @@ use super::result_classes::unique_result_temp_binary;
 use super::result_classes::{
     MemoryResultClass, MemoryResultFixture, RESULT_MAX_TICK, RESULT_TEMP_ID,
 };
-use super::result_support::{
-    assert_register, assert_register_absent, data_trace, event_str, json_u64,
-};
+use super::result_support::{data_trace, event_str, json_u64};
 use super::result_support::{memory_dump_hex, memory_result_event_at_pc};
 use super::*;
 
@@ -26,14 +24,7 @@ struct ResultBoundaryCase {
     dump_address: u64,
     dump_bytes: u64,
     expected_hex: &'static str,
-    expected_register: Option<BoundaryRegisterExpectation>,
     trace: BoundaryTraceExpectation,
-}
-
-#[derive(Clone, Copy)]
-enum BoundaryRegisterExpectation {
-    Value(&'static str, &'static str),
-    Absent(&'static str),
 }
 
 #[derive(Clone, Copy)]
@@ -50,7 +41,6 @@ const RESULT_BOUNDARY_CASES: [ResultBoundaryCase; 6] = [
         dump_address: 0x8000_0080,
         dump_bytes: 8,
         expected_hex: "8877665544332211",
-        expected_register: None,
         trace: BoundaryTraceExpectation::Completed("load"),
     },
     ResultBoundaryCase {
@@ -60,7 +50,6 @@ const RESULT_BOUNDARY_CASES: [ResultBoundaryCase; 6] = [
         dump_address: 0x8000_0080,
         dump_bytes: 8,
         expected_hex: "2a00000000000000",
-        expected_register: Some(BoundaryRegisterExpectation::Absent("x7")),
         trace: BoundaryTraceExpectation::Completed("load_reserved"),
     },
     ResultBoundaryCase {
@@ -70,17 +59,15 @@ const RESULT_BOUNDARY_CASES: [ResultBoundaryCase; 6] = [
         dump_address: 0x8000_0080,
         dump_bytes: 8,
         expected_hex: "0e00000000000000",
-        expected_register: None,
         trace: BoundaryTraceExpectation::Completed("atomic"),
     },
     ResultBoundaryCase {
-        label: "store-conditional",
+        label: "store-conditional-x0",
         target_pc: "0x80000010",
-        program: store_conditional_program,
+        program: store_conditional_x0_program,
         dump_address: 0x8000_0080,
         dump_bytes: 8,
         expected_hex: "0900000000000000",
-        expected_register: Some(BoundaryRegisterExpectation::Value("x7", "0x1")),
         trace: BoundaryTraceExpectation::Completed("store_conditional"),
     },
     ResultBoundaryCase {
@@ -90,7 +77,6 @@ const RESULT_BOUNDARY_CASES: [ResultBoundaryCase; 6] = [
         dump_address: 0x8000_00d0,
         dump_bytes: 16,
         expected_hex: "08070605040302011817161514131211",
-        expected_register: None,
         trace: BoundaryTraceExpectation::Absent,
     },
     ResultBoundaryCase {
@@ -100,7 +86,6 @@ const RESULT_BOUNDARY_CASES: [ResultBoundaryCase; 6] = [
         dump_address: 0x8000_00d0,
         dump_bytes: 16,
         expected_hex: "887766554433221100ffeeddccbbaa99",
-        expected_register: None,
         trace: BoundaryTraceExpectation::Absent,
     },
 ];
@@ -123,16 +108,6 @@ fn rem6_run_o3_memory_result_writeback_rejects_resultless_and_unsupported_shapes
             "{} architectural memory behavior changed: {json}",
             case.label
         );
-        if let Some(expectation) = case.expected_register {
-            match expectation {
-                BoundaryRegisterExpectation::Value(register, expected) => {
-                    assert_register(&json, register, expected)
-                }
-                BoundaryRegisterExpectation::Absent(register) => {
-                    assert_register_absent(&json, register)
-                }
-            }
-        }
         assert_eq!(
             json.pointer("/cores/0/registers/x0"),
             None,
@@ -516,7 +491,7 @@ fn load_reserved_x0_program() -> Vec<u8> {
         i_type(42, 0, 0x0, 6, 0x13),
         m5op(M5_SWITCH_CPU),
         atomic_type(0x02, false, false, 0, 5, 0x3, 0),
-        atomic_type(0x03, false, false, 6, 5, 0x3, 7),
+        atomic_type(0x03, false, false, 6, 5, 0x3, 0),
     ];
     append_host_stop(&mut words);
     finish_result_boundary_program(words, data_start, &[9])
@@ -535,14 +510,14 @@ fn atomic_x0_program() -> Vec<u8> {
     finish_result_boundary_program(words, data_start, &[9])
 }
 
-fn store_conditional_program() -> Vec<u8> {
+fn store_conditional_x0_program() -> Vec<u8> {
     let data_start = 128_i32;
     let mut words = vec![
         u_type(0, 5, 0x17),
         i_type(data_start, 5, 0x0, 5, 0x13),
         i_type(42, 0, 0x0, 6, 0x13),
         m5op(M5_SWITCH_CPU),
-        atomic_type(0x03, false, false, 6, 5, 0x3, 7),
+        atomic_type(0x03, false, false, 6, 5, 0x3, 0),
     ];
     append_host_stop(&mut words);
     finish_result_boundary_program(words, data_start, &[9])

@@ -9,7 +9,9 @@ const RESULT_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries.rs";
 const RESULT_BOUNDARIES_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries/support.rs";
-const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 3] = [
+const STORE_CONDITIONAL_RESULT: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/store_conditional_result.rs";
+const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 4] = [
     ExpectedModuleDeclaration {
         name: "result_support",
         path: "writeback_port/result_support.rs",
@@ -21,6 +23,10 @@ const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 3] = [
     ExpectedModuleDeclaration {
         name: "result_boundaries",
         path: "writeback_port/result_boundaries.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "store_conditional_result",
+        path: "writeback_port/store_conditional_result.rs",
     },
 ];
 const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
@@ -42,6 +48,14 @@ const RESULT_BOUNDARY_ANCHORS: [&str; 6] = [
     "rem6_run_o3_memory_result_writeback_live_checkpoint_rejects",
     "rem6_run_o3_memory_result_writeback_live_mode_switch_rejects",
     "rem6_run_timing_suppresses_o3_memory_result_writeback_surface",
+];
+const STORE_CONDITIONAL_RESULT_ANCHORS: [&str; 6] = [
+    "rem6_run_o3_store_conditional_result_width_one_serializes_direct",
+    "rem6_run_o3_store_conditional_result_width_two_exact_fit_direct",
+    "rem6_run_o3_store_conditional_result_cache_fabric_dram",
+    "rem6_run_o3_store_conditional_failure_is_local_and_deferred",
+    "rem6_run_o3_store_conditional_result_live_actions_reject",
+    "rem6_run_timing_suppresses_o3_store_conditional_result_surface",
 ];
 const RESULT_SUPPORT_HELPERS: [&str; 11] = [
     "data_trace",
@@ -81,6 +95,7 @@ const RESULT_CLASSES_AGGREGATE_MAX_LINES: usize = 800;
 const RESULT_BOUNDARIES_MAX_LINES: usize = 700;
 const RESULT_BOUNDARIES_SUPPORT_MAX_LINES: usize = 140;
 const RESULT_BOUNDARIES_AGGREGATE_MAX_LINES: usize = 800;
+const STORE_CONDITIONAL_RESULT_MAX_LINES: usize = 650;
 
 #[derive(Clone, Copy)]
 struct ExpectedModuleDeclaration {
@@ -104,11 +119,13 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let old_support_path = crate_dir.join(RESULT_CLASSES_OLD_SUPPORT);
     let boundary_path = crate_dir.join(RESULT_BOUNDARIES);
     let boundary_support_path = crate_dir.join(RESULT_BOUNDARIES_SUPPORT);
+    let store_conditional_path = crate_dir.join(STORE_CONDITIONAL_RESULT);
     let root = fs::read_to_string(&root_path).unwrap();
     let child = fs::read_to_string(&child_path).unwrap();
     let support = fs::read_to_string(&support_path);
     let boundary = fs::read_to_string(&boundary_path);
     let boundary_support = fs::read_to_string(&boundary_support_path);
+    let store_conditional = fs::read_to_string(&store_conditional_path);
 
     let root_functions = top_level_function_names(WRITEBACK_ROOT, &root);
     let mut boundary_failures = Vec::new();
@@ -149,6 +166,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     if boundary.is_err() {
         boundary_failures.push(format!("{RESULT_BOUNDARIES} must exist"));
     }
+    if store_conditional.is_err() {
+        boundary_failures.push(format!("{STORE_CONDITIONAL_RESULT} must exist"));
+    }
     match &boundary {
         Ok(boundary) => {
             boundary_failures.extend(boundary_support_module_failures(
@@ -175,6 +195,14 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         }
         Err(_) => boundary_failures.push(format!("{RESULT_BOUNDARIES_SUPPORT} must exist")),
     }
+    if let Ok(store_conditional) = &store_conditional {
+        let includes = top_level_include_paths(STORE_CONDITIONAL_RESULT, store_conditional);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{STORE_CONDITIONAL_RESULT} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
     assert!(
         boundary_failures.is_empty(),
         "writeback result ownership boundary is incomplete:\n{}",
@@ -183,6 +211,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let support = support.unwrap();
     let boundary = boundary.unwrap();
     let boundary_support = boundary_support.unwrap();
+    let store_conditional = store_conditional.unwrap();
 
     assert!(
         line_count(&support_path) <= RESULT_SUPPORT_MAX_LINES,
@@ -209,6 +238,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             <= RESULT_BOUNDARIES_AGGREGATE_MAX_LINES,
         "result-boundary implementation must remain at or below {RESULT_BOUNDARIES_AGGREGATE_MAX_LINES} aggregate lines"
     );
+    assert!(
+        line_count(&store_conditional_path) <= STORE_CONDITIONAL_RESULT_MAX_LINES,
+        "{STORE_CONDITIONAL_RESULT} must remain at or below {STORE_CONDITIONAL_RESULT_MAX_LINES} lines"
+    );
     let support_leaf_failures = support_leaf_failures(RESULT_SUPPORT, &support);
     assert!(
         support_leaf_failures.is_empty(),
@@ -225,6 +258,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         top_level_module_names(RESULT_BOUNDARIES_SUPPORT, &boundary_support).is_empty(),
         "{RESULT_BOUNDARIES_SUPPORT} must remain a leaf support module"
+    );
+    assert!(
+        top_level_module_names(STORE_CONDITIONAL_RESULT, &store_conditional).is_empty(),
+        "{STORE_CONDITIONAL_RESULT} must remain a leaf module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
@@ -295,10 +332,38 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         }
     }
 
+    let store_conditional_tests =
+        top_level_test_names(STORE_CONDITIONAL_RESULT, &store_conditional);
+    assert_eq!(
+        store_conditional_tests, STORE_CONDITIONAL_RESULT_ANCHORS,
+        "{STORE_CONDITIONAL_RESULT} must own exactly the required SC result test anchors in order"
+    );
+    for anchor in STORE_CONDITIONAL_RESULT_ANCHORS {
+        assert_eq!(
+            store_conditional.matches(anchor).count(),
+            1,
+            "{STORE_CONDITIONAL_RESULT} must contain SC result anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain SC result anchor `{anchor}`"
+            );
+        }
+    }
+
     assert_rustfmt_clean(&child_path);
     assert_rustfmt_clean(&support_path);
     assert_rustfmt_clean(&boundary_path);
     assert_rustfmt_clean(&boundary_support_path);
+    assert_rustfmt_clean(&store_conditional_path);
 }
 
 #[test]
@@ -312,6 +377,8 @@ mod result_classes;
 
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
 "#;
     assert!(module_declaration_failures("synthetic.rs", valid, &WRITEBACK_ROOT_MODULES).is_empty());
 
@@ -325,6 +392,8 @@ mod result_support {}
 mod result_classes;
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
 "#,
         ),
         (
@@ -335,6 +404,8 @@ mod result_support;
 mod result_classes;
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
 "#,
         ),
         (
@@ -347,6 +418,8 @@ mod result_support;
 mod result_classes;
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
 "#,
         ),
         (
@@ -358,6 +431,21 @@ mod result_support;
 mod result_classes;
 #[path = "writeback_port/result_boundaries.rs"]
 mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
+"#,
+        ),
+        (
+            "wrong SC path",
+            r#"
+#[path = "writeback_port/result_support.rs"]
+mod result_support;
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+#[path = "writeback_port/wrong.rs"]
+mod store_conditional_result;
 "#,
         ),
     ] {
