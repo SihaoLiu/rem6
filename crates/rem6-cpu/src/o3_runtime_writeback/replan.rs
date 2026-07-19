@@ -7,6 +7,10 @@ use crate::o3_pipeline::{
 
 use super::*;
 
+#[cfg(test)]
+#[path = "replan_tests.rs"]
+mod tests;
+
 pub(super) struct O3WritebackReplanTransaction {
     pending_state: O3PendingStateSnapshot,
     reorder_buffer: Vec<O3ReorderBufferEntry>,

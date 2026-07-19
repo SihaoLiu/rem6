@@ -137,11 +137,6 @@ impl O3WritebackReservation {
     pub(crate) const fn decision_counted(self) -> bool {
         self.decision_counted
     }
-
-    #[cfg(test)]
-    pub(crate) const fn source_name(self) -> &'static str {
-        self.source.name()
-    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -444,37 +439,6 @@ impl O3RuntimeState {
         self.writeback_calendar.reservations()
     }
 
-    #[cfg(test)]
-    pub(crate) fn force_test_writeback_reservation_to_memory_result(&mut self, sequence: u64) {
-        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
-            if reservation.sequence == sequence {
-                reservation.source = O3LiveWritebackReadySource::MemoryResult;
-            }
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn force_test_writeback_reservation_to_fixed_fu(&mut self, sequence: u64) {
-        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
-            if reservation.sequence == sequence {
-                reservation.source = O3LiveWritebackReadySource::FixedFu;
-            }
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn force_test_writeback_reservation_raw_ready_tick(
-        &mut self,
-        sequence: u64,
-        raw_ready_tick: u64,
-    ) {
-        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
-            if reservation.sequence == sequence {
-                reservation.raw_ready_tick = raw_ready_tick;
-            }
-        }
-    }
-
     pub(crate) fn reserve_writeback_completions<I>(
         &mut self,
         ready: I,
@@ -739,24 +703,6 @@ impl O3RuntimeState {
 impl crate::RiscvCore {
     pub fn o3_runtime_writeback_reservations(&self) -> Vec<O3RuntimeWritebackReservation> {
         self.with_o3_runtime(|runtime| runtime.writeback_calendar.snapshot())
-    }
-}
-
-#[cfg(test)]
-impl crate::RiscvCore {
-    pub(crate) fn reserve_test_fixed_fu_writeback(
-        &self,
-        sequence: u64,
-        raw_ready_tick: u64,
-    ) -> Result<(), O3RuntimeError> {
-        let mut state = self.state.lock().expect("riscv core lock");
-        state
-            .o3_runtime
-            .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
-                sequence,
-                raw_ready_tick,
-            )])
-            .map(|_| ())
     }
 }
 
