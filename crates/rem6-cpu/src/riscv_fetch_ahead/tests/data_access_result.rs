@@ -386,7 +386,7 @@ fn generic_straight_line_result_decision_records_issue_authority() {
         .map(|decision| decision.pc()),
         Some(Address::new(0x8004))
     );
-    assert!(!state.memory_result_scalar_suffix_authorizations.is_empty());
+    assert!(!state.memory_result_window_authorizations.is_empty());
     drop(state);
     assert!(!core.data_access_lifecycle_is_quiescent());
 }
@@ -412,7 +412,7 @@ fn fetch_stream_reset_clears_result_suffix_authority() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
 
     core.reset_instruction_fetch_stream(0);
@@ -421,7 +421,7 @@ fn fetch_stream_reset_clears_result_suffix_authority() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
     assert!(core.data_access_lifecycle_is_quiescent());
 }
@@ -449,7 +449,7 @@ fn disabling_detailed_mode_clears_result_suffix_authority() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
     assert!(core.data_access_lifecycle_is_quiescent());
 }
@@ -479,7 +479,7 @@ fn checkpoint_restore_clears_result_suffix_authority() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
     assert!(core.data_access_lifecycle_is_quiescent());
 }
@@ -506,7 +506,7 @@ fn vector_result_authority_drains_when_vector_state_makes_the_access_empty() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .contains_key(&request(0)));
     core.set_vector_config(rem6_isa_riscv::RiscvVectorConfig::new(0, 0xd8));
     let vector = core
@@ -519,7 +519,7 @@ fn vector_result_authority_drains_when_vector_state_makes_the_access_empty() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
     assert!(core.data_access_lifecycle_is_quiescent());
 }
@@ -559,7 +559,7 @@ fn vector_result_authority_drains_when_execution_shape_is_no_longer_supported() 
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
 }
 

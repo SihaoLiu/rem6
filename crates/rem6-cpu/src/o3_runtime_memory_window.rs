@@ -1,6 +1,9 @@
 use rem6_memory::AddressRange;
 
-use super::o3_runtime_memory::o3_memory_result_scalar_suffix_destination;
+use super::o3_runtime_memory::{
+    o3_memory_result_range, o3_memory_result_window_destination,
+    o3_memory_result_younger_read_destination,
+};
 use super::o3_store_forwarding::{
     o3_load_forwarding_access, o3_store_forwarding_entry, o3_store_load_composition,
     O3StoreLoadForwardingPlan, O3StoreLoadRelation,
@@ -26,6 +29,11 @@ pub(crate) struct O3ScalarMemoryWindowState {
     rows: usize,
     stores: Vec<MemoryAccessKind>,
     load_destinations: Vec<Register>,
+}
+
+struct O3MemoryResultWindowState {
+    rows: usize,
+    integer_destinations: Vec<Register>,
 }
 
 impl O3ScalarMemoryWindowState {
@@ -119,21 +127,87 @@ impl O3RuntimeState {
                     self.scalar_memory_window_limit,
                 )
             }
-            O3DataAccessWindowPolicy::MemoryResultScalarSuffix => {
-                if self.live_data_accesses.len() != 1
-                    || !self.live_data_access_younger_sequences.is_empty()
-                {
-                    return None;
-                }
-                let destination = o3_memory_result_scalar_suffix_destination(
-                    tail.execution.execution().memory_access()?,
-                )?;
-                Some(RiscvScalarIntegerLiveWindow::from_memory_result(
-                    destination,
+            O3DataAccessWindowPolicy::MemoryResultWindow => {
+                let window = self.memory_result_window_state()?;
+                RiscvScalarIntegerLiveWindow::from_memory_results(
+                    window.integer_destinations,
+                    window.rows,
                     self.scalar_memory_window_limit,
-                ))
+                )
             }
         }
+    }
+
+    fn memory_result_window_state(&self) -> Option<O3MemoryResultWindowState> {
+        if self.live_data_accesses.is_empty()
+            || self.live_data_accesses.len() > 2
+            || !self.live_data_access_younger_sequences.is_empty()
+        {
+            return None;
+        }
+        let mut integer_destinations = Vec::new();
+        for live in &self.live_data_accesses {
+            if live.outcome != O3LiveDataAccessOutcome::Resident
+                || live.younger_window_policy != O3DataAccessWindowPolicy::MemoryResultWindow
+            {
+                return None;
+            }
+            if let Some(destination) =
+                o3_memory_result_window_destination(live.execution.execution().memory_access()?)?
+            {
+                integer_destinations.push(destination);
+            }
+        }
+        Some(O3MemoryResultWindowState {
+            rows: self.live_data_accesses.len(),
+            integer_destinations,
+        })
+    }
+
+    pub(crate) fn can_stage_memory_result_window(
+        &self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> bool {
+        execution
+            .execution()
+            .memory_access()
+            .is_some_and(|access| self.can_stage_memory_result_window_access(access))
+    }
+
+    pub(crate) fn can_stage_memory_result_window_access(&self, access: &MemoryAccessKind) -> bool {
+        let Some(window) = self.memory_result_window_state() else {
+            return false;
+        };
+        if window.rows != 1 || window.rows >= self.scalar_memory_window_limit {
+            return false;
+        }
+        if o3_memory_result_younger_read_destination(access).is_none() {
+            return false;
+        }
+        let Some(older_access) = self.live_data_accesses[0]
+            .execution
+            .execution()
+            .memory_access()
+        else {
+            return false;
+        };
+        match older_access {
+            MemoryAccessKind::AtomicMemory {
+                acquire, release, ..
+            } => {
+                !acquire
+                    && !release
+                    && o3_memory_result_range(older_access)
+                        .zip(o3_memory_result_range(access))
+                        .is_some_and(|(older, younger)| !older.overlaps(younger))
+            }
+            _ => true,
+        }
+    }
+
+    pub(crate) fn can_consider_memory_result_younger(&self) -> bool {
+        self.memory_result_window_state()
+            .is_some_and(|window| window.rows == 1 && window.rows < self.scalar_memory_window_limit)
     }
 
     pub(super) fn has_scalar_memory_window_capacity(&self) -> bool {

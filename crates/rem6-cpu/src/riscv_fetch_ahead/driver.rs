@@ -105,7 +105,7 @@ impl RiscvCore {
             detailed_o3::DetailedFetchAheadCandidate::ReadyCachedTranslatedLoad { pc, .. } => {
                 Some(RiscvFetchAheadDecision::straight_line(pc))
             }
-            detailed_o3::DetailedFetchAheadCandidate::ReadyDataAccessResult { .. } => None,
+            detailed_o3::DetailedFetchAheadCandidate::DataAccessResultWindow { .. } => None,
             detailed_o3::DetailedFetchAheadCandidate::NotApplicable
             | detailed_o3::DetailedFetchAheadCandidate::Blocked => None,
         }
@@ -249,15 +249,14 @@ impl RiscvCore {
                     .insert(fetch_request);
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
             }
-            detailed_o3::DetailedFetchAheadCandidate::ReadyDataAccessResult {
-                pc,
-                fetch_request,
-                authorization,
+            detailed_o3::DetailedFetchAheadCandidate::DataAccessResultWindow {
+                next_pc,
+                authorizations,
             } => {
                 state
-                    .memory_result_scalar_suffix_authorizations
-                    .insert(fetch_request, authorization);
-                return Some(RiscvFetchAheadDecision::straight_line(pc));
+                    .memory_result_window_authorizations
+                    .extend(authorizations);
+                return next_pc.map(RiscvFetchAheadDecision::straight_line);
             }
             detailed_o3::DetailedFetchAheadCandidate::Blocked => return None,
             detailed_o3::DetailedFetchAheadCandidate::NotApplicable => {

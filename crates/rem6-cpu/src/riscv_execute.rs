@@ -5,7 +5,7 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    o3_runtime::{o3_live_control_operands, o3_memory_result_scalar_suffix_destination},
+    o3_runtime::{o3_live_control_operands, o3_memory_result_window_destination},
     riscv_branch_kind::riscv_branch_target_kind,
     riscv_execution_event::RiscvRetiredBranchUpdates,
     riscv_fu_latency::riscv_execute_wait_cycles,
@@ -454,9 +454,9 @@ impl RiscvCore {
             || event
                 .execution()
                 .memory_access()
-                .is_none_or(|access| o3_memory_result_scalar_suffix_destination(access).is_none());
+                .is_none_or(|access| o3_memory_result_window_destination(access).is_none());
         state
-            .memory_result_scalar_suffix_authorizations
+            .memory_result_window_authorizations
             .retain(|request, _| {
                 !discarded_requests.contains(request)
                     && !(consumed_without_result_authority && consumed_requests.contains(request))

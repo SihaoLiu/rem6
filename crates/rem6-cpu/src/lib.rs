@@ -77,6 +77,7 @@ mod riscv_in_order_config;
 mod riscv_in_order_drive;
 mod riscv_live_retire_gate;
 mod riscv_live_retire_window;
+mod riscv_memory_result_window;
 mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_o3_window_policy;
 mod riscv_o3_writeback_wake;
@@ -424,6 +425,7 @@ impl RiscvCore {
         has_pending
             && !state.has_ready_buffered_o3_store()
             && !state.can_extend_detailed_scalar_memory_window()
+            && !state.can_extend_detailed_memory_result_window()
     }
 
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
@@ -436,7 +438,7 @@ impl RiscvCore {
             && state.buffered_o3_stores.is_empty()
             && state.pending_data_translations.is_empty()
             && state.ready_translated_data.is_empty()
-            && state.memory_result_scalar_suffix_authorizations.is_empty()
+            && state.memory_result_window_authorizations.is_empty()
             && state
                 .data_translation
                 .as_ref()
@@ -866,8 +868,8 @@ struct RiscvCoreState {
     next_terminal_memory_result_issue_wake_generation: u64,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
     translated_scalar_load_window_fetches: BTreeSet<MemoryRequestId>,
-    memory_result_scalar_suffix_authorizations:
-        BTreeMap<MemoryRequestId, riscv_fetch_ahead::O3MemoryResultScalarSuffixAuthorization>,
+    memory_result_window_authorizations:
+        BTreeMap<MemoryRequestId, riscv_fetch_ahead::O3MemoryResultWindowAuthorization>,
     pending_data_translations:
         BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
@@ -931,7 +933,7 @@ impl RiscvCoreState {
             next_terminal_memory_result_issue_wake_generation: 0,
             issued_data_for_fetches: BTreeSet::new(),
             translated_scalar_load_window_fetches: BTreeSet::new(),
-            memory_result_scalar_suffix_authorizations: BTreeMap::new(),
+            memory_result_window_authorizations: BTreeMap::new(),
             pending_data_translations: BTreeMap::new(),
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
@@ -1082,7 +1084,7 @@ impl RiscvCoreState {
         }
         self.issued_data_for_fetches.extend(stale_data_fetches);
         self.translated_scalar_load_window_fetches.clear();
-        self.memory_result_scalar_suffix_authorizations.clear();
+        self.memory_result_window_authorizations.clear();
         if let Some(frontend) = self.data_translation.as_mut() {
             frontend.clear_pending();
         }

@@ -628,8 +628,9 @@ impl RiscvCoreState {
         if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_data_access() {
             return Some((fetch_request, access));
         }
-        (self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
+        ((self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
             && self.o3_runtime.can_stage_scalar_memory(event))
+            || self.can_overlap_detailed_memory_result_event(event))
         .then_some((fetch_request, access))
     }
 }
@@ -1524,7 +1525,7 @@ impl RiscvCore {
                     .translated_scalar_load_window_fetches
                     .remove(&fetch_request);
                 state
-                    .memory_result_scalar_suffix_authorizations
+                    .memory_result_window_authorizations
                     .remove(&fetch_request);
                 state
                     .pending_data_translations

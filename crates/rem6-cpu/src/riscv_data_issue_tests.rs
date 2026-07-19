@@ -29,6 +29,8 @@ mod forwarding;
 mod lifecycle;
 #[path = "riscv_data_issue_tests/multi_load.rs"]
 mod multi_load;
+#[path = "riscv_data_issue_tests/result_pair_window.rs"]
+mod result_pair_window;
 #[path = "riscv_data_issue_tests/result_younger_window.rs"]
 mod result_younger_window;
 #[path = "riscv_data_issue_tests/store_conditional_result.rs"]

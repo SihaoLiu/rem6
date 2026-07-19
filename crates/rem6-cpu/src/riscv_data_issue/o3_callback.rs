@@ -5,23 +5,46 @@ impl RiscvCoreState {
         &mut self,
         fetch_request: MemoryRequestId,
     ) -> bool {
-        self.memory_result_scalar_suffix_authorizations
-            .remove(&fetch_request);
-        let aborted = self
-            .o3_runtime
-            .abort_deferred_live_data_access_execution(fetch_request);
-        if self
-            .pending_terminal_memory_result
-            .as_ref()
-            .is_some_and(|pending| pending.owns_fetch(fetch_request))
-        {
-            assert!(
-                aborted,
-                "pending terminal result owns deferred O3 data execution"
-            );
-            self.pending_terminal_memory_result = None;
+        let abort_pair = self
+            .memory_result_window_authorizations
+            .get(&fetch_request)
+            .is_some_and(|authorization| authorization.role() == O3MemoryResultWindowRole::Head);
+        let mut requests = vec![fetch_request];
+        if abort_pair {
+            requests.extend(self.memory_result_window_authorizations.iter().filter_map(
+                |(request, authorization)| {
+                    (authorization.role() == O3MemoryResultWindowRole::YoungerRead)
+                        .then_some(*request)
+                },
+            ));
         }
-        aborted
+        let mut requested_aborted = false;
+        for request in requests {
+            self.memory_result_window_authorizations.remove(&request);
+            let aborted = self
+                .o3_runtime
+                .abort_deferred_live_data_access_execution(request);
+            if self
+                .pending_terminal_memory_result
+                .as_ref()
+                .is_some_and(|pending| pending.owns_fetch(request))
+            {
+                assert!(
+                    aborted,
+                    "pending terminal result owns deferred O3 data execution"
+                );
+                self.pending_terminal_memory_result = None;
+            }
+            if aborted {
+                if let Some(event) = self.data_access_execution_mut(request) {
+                    event.clear_data_access_retirement();
+                }
+            }
+            if request == fetch_request {
+                requested_aborted = aborted;
+            }
+        }
+        requested_aborted
     }
 }
 
@@ -77,6 +100,20 @@ pub(super) fn record_o3_data_access_outcome(
             .younger_live_scalar_memory_requests(access.fetch_request, access.request)
     })
     .unwrap_or_default();
+    let abort_unissued_younger = matches!(
+        execution.data_access_event_kind(),
+        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
+    )
+    .then(|| {
+        state
+            .memory_result_window_authorizations
+            .iter()
+            .filter_map(|(request, authorization)| {
+                (authorization.role() == O3MemoryResultWindowRole::YoungerRead).then_some(*request)
+            })
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     let completed_live_data_access = if let Some(forwarding_plan) = forwarding_plan {
         match completion {
             Some(completion) => state
@@ -113,6 +150,9 @@ pub(super) fn record_o3_data_access_outcome(
     state.refresh_o3_writeback_wake(response_tick);
     if completed_live_data_access {
         state.buffered_o3_stores.remove(&access.request);
+        for fetch_request in abort_unissued_younger {
+            state.abort_deferred_o3_live_data_access_execution(fetch_request);
+        }
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);
             state.buffered_o3_stores.remove(&request);

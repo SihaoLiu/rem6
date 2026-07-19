@@ -89,7 +89,7 @@ fn result_scalar_suffix_admits_independent_rows_without_an_integer_result() {
             &event,
             request(20),
             31,
-            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+            O3DataAccessWindowPolicy::MemoryResultWindow,
         ));
         assert_eq!(
             runtime.stage_live_data_access_younger_window(
@@ -126,7 +126,7 @@ fn integer_result_scalar_suffix_stops_at_the_exact_result_consumer() {
             &event,
             request(20),
             31,
-            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+            O3DataAccessWindowPolicy::MemoryResultWindow,
         ));
         assert_eq!(
             runtime.stage_live_data_access_younger_window(
@@ -186,7 +186,7 @@ fn result_window_rejects_second_data_access_and_unsupported_shapes() {
             &event,
             request(20),
             31,
-            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+            O3DataAccessWindowPolicy::MemoryResultWindow,
         ));
         assert!(
             !runtime.stage_live_data_access_issue_for_test(

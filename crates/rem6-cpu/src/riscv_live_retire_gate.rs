@@ -322,10 +322,22 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
+            let younger_result_fetches = state
+                .memory_result_window_authorizations
+                .iter()
+                .filter_map(|(request, authorization)| {
+                    (authorization.role()
+                        == crate::riscv_fetch_ahead::O3MemoryResultWindowRole::YoungerRead)
+                        .then_some(*request)
+                })
+                .collect::<Vec<_>>();
+            for fetch_request in younger_result_fetches {
+                state.abort_deferred_o3_live_data_access_execution(fetch_request);
+            }
             if state.o3_runtime.has_live_retirement_authority() {
                 return;
             }
-            state.memory_result_scalar_suffix_authorizations.clear();
+            state.memory_result_window_authorizations.clear();
             if state.o3_runtime.has_live_data_access_window() {
                 state.o3_runtime.discard_live_retire_window();
             } else {
@@ -413,7 +425,7 @@ impl RiscvCore {
         state.o3_writeback_wake.clear();
         state.pending_callback_error = None;
         state.producer_forwarded_scalar_continuation = None;
-        state.memory_result_scalar_suffix_authorizations.clear();
+        state.memory_result_window_authorizations.clear();
         Ok(())
     }
 }

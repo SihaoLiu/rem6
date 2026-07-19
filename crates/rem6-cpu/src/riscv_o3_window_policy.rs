@@ -104,15 +104,34 @@ impl RiscvScalarIntegerLiveWindow {
         integer_destination: Option<Register>,
         row_limit: usize,
     ) -> Self {
-        Self::new(
-            integer_destination
-                .filter(|destination| !destination.is_zero())
-                .into_iter()
-                .collect(),
-            1,
+        Self::from_memory_results(integer_destination, 1, row_limit)
+            .expect("one memory result fits a nonzero row limit")
+    }
+
+    pub(crate) fn from_memory_results(
+        integer_destinations: impl IntoIterator<Item = Register>,
+        occupied_rows: usize,
+        row_limit: usize,
+    ) -> Option<Self> {
+        let row_limit = row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
+        if occupied_rows == 0 || occupied_rows > row_limit {
+            return None;
+        }
+        let mut unresolved_destinations = Vec::new();
+        for destination in integer_destinations
+            .into_iter()
+            .filter(|destination| !destination.is_zero())
+        {
+            if !unresolved_destinations.contains(&destination) {
+                unresolved_destinations.push(destination);
+            }
+        }
+        Some(Self::new(
+            unresolved_destinations,
+            occupied_rows,
             row_limit,
             false,
-        )
+        ))
     }
 
     fn new(

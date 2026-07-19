@@ -90,8 +90,8 @@ use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
 pub(crate) use o3_runtime_memory::{
-    is_deferred_o3_data_access, o3_memory_result_destination,
-    o3_memory_result_scalar_suffix_destination, O3DataAccessWindowPolicy,
+    is_deferred_o3_data_access, o3_memory_result_destination, o3_memory_result_window_destination,
+    O3DataAccessWindowPolicy,
 };
 use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,

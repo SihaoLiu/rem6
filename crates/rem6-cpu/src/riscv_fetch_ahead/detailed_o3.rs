@@ -1,11 +1,5 @@
-use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvVectorMaskMode,
-    RiscvVectorMemoryInstruction, VectorRegister,
-};
-use rem6_memory::{
-    Address, AddressRange, MemoryRequestId, TranslationAccessKind, TranslationAddressSpaceId,
-    TranslationRequest, TranslationRequestId,
-};
+use rem6_isa_riscv::{MemoryAccessKind, Register, RiscvInstruction};
+use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
     o3_runtime::{
@@ -13,7 +7,6 @@ use crate::{
         O3ProducerForwardedScalarChain,
     },
     riscv_branch_kind::riscv_branch_target_kind,
-    riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_execute::oldest_completed_fetch_at,
     riscv_live_retire_window::{
         completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
@@ -27,6 +20,19 @@ use crate::{
     BranchSpeculationId, BranchTargetKind, CpuFetchEvent, CpuFetchEventKind,
     ReturnAddressStackOperation, ReturnAddressStackOperationKind, RiscvCoreState,
 };
+
+#[path = "detailed_o3/data_access_result.rs"]
+mod data_access_result;
+#[path = "detailed_o3/data_access_result_pair_policy.rs"]
+mod data_access_result_pair_policy;
+#[path = "detailed_o3/retained_data_access_result.rs"]
+mod retained_data_access_result;
+
+pub(super) use data_access_result::{
+    data_access_result_fetch_ahead_authorization, data_access_result_head_physical_probe,
+    data_access_result_window_candidate, DataAccessResultHeadPhysicalProbe,
+};
+pub(super) use retained_data_access_result::retained_data_access_result_window_candidate;
 
 pub(super) enum DetailedFetchAheadCandidate {
     NotApplicable,
@@ -47,10 +53,9 @@ pub(super) enum DetailedFetchAheadCandidate {
         pc: Address,
         fetch_request: MemoryRequestId,
     },
-    ReadyDataAccessResult {
-        pc: Address,
-        fetch_request: MemoryRequestId,
-        authorization: super::O3MemoryResultScalarSuffixAuthorization,
+    DataAccessResultWindow {
+        next_pc: Option<Address>,
+        authorizations: Vec<(MemoryRequestId, super::O3MemoryResultWindowAuthorization)>,
     },
 }
 
@@ -254,70 +259,6 @@ pub(super) fn data_access_waits_for_younger_fetch(
     )
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum DataAccessResultHeadPhysicalProbe {
-    Memory,
-    Ready {
-        fetch_request: MemoryRequestId,
-        access: MemoryAccessKind,
-        range: AddressRange,
-        request_byte_offset: usize,
-    },
-    Blocked,
-}
-
-pub(super) fn data_access_result_head_physical_probe(
-    state: &RiscvCoreState,
-    fetch_events: &[CpuFetchEvent],
-) -> DataAccessResultHeadPhysicalProbe {
-    let architectural = Address::new(state.hart.pc());
-    let Some(memory) = fetch_events
-        .iter()
-        .filter(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && event.pc() == architectural
-                && !state.executed_fetches.contains(&event.request_id())
-        })
-        .min_by_key(|event| event.request_id().sequence())
-    else {
-        return DataAccessResultHeadPhysicalProbe::Memory;
-    };
-    let Some(current) =
-        completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, memory)
-    else {
-        return DataAccessResultHeadPhysicalProbe::Memory;
-    };
-    let fetch_request = current.first_consumed_request();
-    let instruction = current.decoded().instruction();
-    if data_access_result_fetch_ahead_shape(state, instruction).is_none() {
-        return DataAccessResultHeadPhysicalProbe::Memory;
-    }
-    let Some(probe) = data_access_result_head_probe(state, fetch_request, instruction) else {
-        return DataAccessResultHeadPhysicalProbe::Blocked;
-    };
-    let range = match data_access_result_translation_probe(state, &probe) {
-        DataAccessResultTranslationProbe::Direct => probe.virtual_range,
-        DataAccessResultTranslationProbe::Unknown => {
-            return DataAccessResultHeadPhysicalProbe::Memory;
-        }
-        DataAccessResultTranslationProbe::Ready(physical_address) => {
-            let Ok(range) = AddressRange::new(physical_address, probe.virtual_range.size()) else {
-                return DataAccessResultHeadPhysicalProbe::Blocked;
-            };
-            range
-        }
-        DataAccessResultTranslationProbe::Blocked => {
-            return DataAccessResultHeadPhysicalProbe::Blocked;
-        }
-    };
-    DataAccessResultHeadPhysicalProbe::Ready {
-        fetch_request,
-        access: probe.access,
-        range,
-        request_byte_offset: probe.request_byte_offset,
-    }
-}
-
 pub(super) fn additional_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -346,6 +287,11 @@ pub(super) fn additional_fetch_candidate(
     {
         return candidate;
     }
+    if let Some(candidate) =
+        retained_data_access_result_window_candidate(state, fetch_events, translated)
+    {
+        return candidate;
+    }
     let architectural = Address::new(state.hart.pc());
     let Some(current) = completed
         .iter()
@@ -359,6 +305,15 @@ pub(super) fn additional_fetch_candidate(
     else {
         return DetailedFetchAheadCandidate::Blocked;
     };
+    if state
+        .memory_result_window_authorizations
+        .get(&current.first_consumed_request())
+        .is_some_and(|authorization| {
+            authorization.role() == super::O3MemoryResultWindowRole::YoungerRead
+        })
+    {
+        return DetailedFetchAheadCandidate::Blocked;
+    }
     let scalar_memory_head = scalar_memory_fetch_ahead_head(
         state,
         current.last_consumed_request(),
@@ -391,25 +346,13 @@ pub(super) fn additional_fetch_candidate(
         current.decoded().bytes(),
         translated,
     ) {
-        let candidate = scalar_integer_fu_window_candidate(
+        return data_access_result_window_candidate(
             state,
             fetch_events,
             &current,
-            RiscvScalarIntegerLiveWindow::from_memory_result(
-                authorization.integer_destination(),
-                state.o3_runtime.scalar_memory_window_limit(),
-            ),
+            authorization,
+            translated,
         );
-        return match candidate {
-            DetailedFetchAheadCandidate::Ready(pc) => {
-                DetailedFetchAheadCandidate::ReadyDataAccessResult {
-                    pc,
-                    fetch_request: current.first_consumed_request(),
-                    authorization,
-                }
-            }
-            candidate => candidate,
-        };
     }
     let Some(window) = RiscvScalarIntegerLiveWindow::from_fu_head(current.decoded().instruction())
     else {
@@ -712,187 +655,6 @@ pub(crate) fn retained_parent_resolution_preserves_fetch_path(
                 &descendant,
                 descendant.fetch_request().sequence(),
             ) == Some(descendant.target()))
-}
-
-fn data_access_result_fetch_ahead_shape(
-    state: &RiscvCoreState,
-    instruction: RiscvInstruction,
-) -> Option<Option<Register>> {
-    let integer_destination = match instruction {
-        RiscvInstruction::Load { rd, .. } if !rd.is_zero() => Some(rd),
-        RiscvInstruction::FloatLoad { .. } => None,
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
-            vd,
-            width: MemoryWidth::Doubleword,
-            mask,
-            ..
-        }) => {
-            let config = state.hart.vector_config();
-            if config.vill()
-                || config.vl() == 0
-                || config.vtype() & 0x7 != 0
-                || config.element_width_bytes() != Some(MemoryWidth::Doubleword.bytes())
-                || config.register_group_registers() != Some(1)
-                || (mask == RiscvVectorMaskMode::Masked && vd.index() == 0)
-            {
-                return None;
-            }
-            if mask == RiscvVectorMaskMode::Masked {
-                let mask_register = state
-                    .hart
-                    .read_vector(VectorRegister::new(0).expect("v0 is a valid vector register"));
-                let any_active = (0..config.vl() as usize)
-                    .any(|lane| mask_register[lane / 8] & (1_u8 << (lane % 8)) != 0);
-                if !any_active {
-                    return None;
-                }
-            }
-            None
-        }
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
-            ..
-        }) => return None,
-        RiscvInstruction::LoadReserved { rd, .. } | RiscvInstruction::AtomicMemory { rd, .. }
-            if !rd.is_zero() =>
-        {
-            Some(rd)
-        }
-        _ => return None,
-    };
-    Some(integer_destination)
-}
-
-pub(super) fn data_access_result_fetch_ahead_authorization(
-    state: &RiscvCoreState,
-    fetch_request: MemoryRequestId,
-    instruction: RiscvInstruction,
-    instruction_bytes: u8,
-    translated: TranslatedMemoryFetchAhead,
-) -> Option<super::O3MemoryResultScalarSuffixAuthorization> {
-    if !state.live_retire_gate.detailed_policy_enabled()
-        || instruction_bytes != 4
-        || state.o3_runtime.scalar_memory_window_limit() <= 1
-        || translated == TranslatedMemoryFetchAhead::Blocked
-        || (translated == TranslatedMemoryFetchAhead::Mmio && state.data_translation.is_some())
-    {
-        return None;
-    }
-    let integer_destination = data_access_result_fetch_ahead_shape(state, instruction)?;
-    let probe = data_access_result_head_probe(state, fetch_request, instruction)?;
-    if translated == TranslatedMemoryFetchAhead::Mmio
-        && !matches!(&probe.access, MemoryAccessKind::Load { rd, .. } if !rd.is_zero())
-    {
-        return None;
-    }
-    let physical_range = if state.data_translation.is_none() {
-        probe.virtual_range
-    } else {
-        if !matches!(
-            translated,
-            TranslatedMemoryFetchAhead::CachedMemory | TranslatedMemoryFetchAhead::Mmio
-        ) {
-            return None;
-        }
-        let DataAccessResultTranslationProbe::Ready(physical_address) =
-            data_access_result_translation_probe(state, &probe)
-        else {
-            return None;
-        };
-        AddressRange::new(physical_address, probe.virtual_range.size()).ok()?
-    };
-    if translated != TranslatedMemoryFetchAhead::Mmio
-        && state
-            .pma
-            .is_uncacheable(physical_range.start().get(), physical_range.size().bytes())
-            .ok()?
-    {
-        return None;
-    }
-    let route = if translated == TranslatedMemoryFetchAhead::Mmio {
-        super::O3MemoryResultScalarSuffixRoute::Mmio
-    } else {
-        super::O3MemoryResultScalarSuffixRoute::Memory
-    };
-    Some(super::O3MemoryResultScalarSuffixAuthorization::new(
-        integer_destination,
-        route,
-        physical_range,
-    ))
-}
-
-struct DataAccessResultHeadProbe {
-    access: MemoryAccessKind,
-    request: TranslationRequest,
-    virtual_range: AddressRange,
-    request_byte_offset: usize,
-}
-
-fn data_access_result_head_probe(
-    state: &RiscvCoreState,
-    fetch_request: MemoryRequestId,
-    instruction: RiscvInstruction,
-) -> Option<DataAccessResultHeadProbe> {
-    let mut hart = state.hart.clone();
-    let execution = hart.execute(instruction).ok()?;
-    let access = execution.memory_access()?.clone();
-    let translation_access = match &access {
-        MemoryAccessKind::Load { .. }
-        | MemoryAccessKind::FloatLoad { .. }
-        | MemoryAccessKind::VectorLoadUnitStride {
-            fault_only_first: false,
-            ..
-        }
-        | MemoryAccessKind::LoadReserved { .. } => TranslationAccessKind::Load,
-        MemoryAccessKind::AtomicMemory { .. } => TranslationAccessKind::Atomic,
-        _ => return None,
-    };
-    let base_size = access_size(&access).ok()?;
-    let base_address = Address::new(access_address(&access));
-    let request_span = masked_vector_memory_request_span(&access, base_address, base_size).ok()?;
-    let virtual_range = AddressRange::new(request_span.address, request_span.size).ok()?;
-    let request = TranslationRequest::new(
-        TranslationRequestId::new(fetch_request.agent(), fetch_request.sequence()),
-        request_span.address,
-        request_span.size,
-        translation_access,
-    )
-    .ok()?;
-    Some(DataAccessResultHeadProbe {
-        access,
-        request,
-        virtual_range,
-        request_byte_offset: request_span.byte_offset,
-    })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DataAccessResultTranslationProbe {
-    Direct,
-    Unknown,
-    Ready(Address),
-    Blocked,
-}
-
-fn data_access_result_translation_probe(
-    state: &RiscvCoreState,
-    probe: &DataAccessResultHeadProbe,
-) -> DataAccessResultTranslationProbe {
-    let Some(frontend) = state.data_translation.as_ref() else {
-        return DataAccessResultTranslationProbe::Direct;
-    };
-    let Some(tlb) = frontend.tlb() else {
-        return DataAccessResultTranslationProbe::Unknown;
-    };
-    let address_space = TranslationAddressSpaceId::new(state.hart.translation_address_space());
-    match tlb.peek_cached_in_address_space(address_space, &probe.request) {
-        Ok(Some(lookup)) if lookup.fault().is_some() => DataAccessResultTranslationProbe::Blocked,
-        Ok(Some(lookup)) => lookup
-            .physical_address()
-            .map(DataAccessResultTranslationProbe::Ready)
-            .unwrap_or(DataAccessResultTranslationProbe::Blocked),
-        Ok(None) => DataAccessResultTranslationProbe::Unknown,
-        Err(_) => DataAccessResultTranslationProbe::Blocked,
-    }
 }
 
 fn translated_scalar_load_window_candidate(

@@ -34,28 +34,37 @@ pub(crate) use producer_forwarded_continuation::ProducerForwardedScalarContinuat
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum O3MemoryResultScalarSuffixRoute {
+pub(crate) enum O3MemoryResultWindowRoute {
     Memory,
     Mmio,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct O3MemoryResultScalarSuffixAuthorization {
-    integer_destination: Option<rem6_isa_riscv::Register>,
-    route: O3MemoryResultScalarSuffixRoute,
-    physical_range: AddressRange,
+pub(crate) enum O3MemoryResultWindowRole {
+    Head,
+    YoungerRead,
 }
 
-impl O3MemoryResultScalarSuffixAuthorization {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct O3MemoryResultWindowAuthorization {
+    integer_destination: Option<rem6_isa_riscv::Register>,
+    route: O3MemoryResultWindowRoute,
+    physical_range: AddressRange,
+    role: O3MemoryResultWindowRole,
+}
+
+impl O3MemoryResultWindowAuthorization {
     const fn new(
         integer_destination: Option<rem6_isa_riscv::Register>,
-        route: O3MemoryResultScalarSuffixRoute,
+        route: O3MemoryResultWindowRoute,
         physical_range: AddressRange,
+        role: O3MemoryResultWindowRole,
     ) -> Self {
         Self {
             integer_destination,
             route,
             physical_range,
+            role,
         }
     }
 
@@ -63,9 +72,17 @@ impl O3MemoryResultScalarSuffixAuthorization {
         self.integer_destination
     }
 
+    pub(crate) const fn role(self) -> O3MemoryResultWindowRole {
+        self.role
+    }
+
+    pub(crate) const fn physical_range(self) -> AddressRange {
+        self.physical_range
+    }
+
     pub(crate) fn matches(
         self,
-        route: O3MemoryResultScalarSuffixRoute,
+        route: O3MemoryResultWindowRoute,
         physical_address: Address,
         size: AccessSize,
     ) -> bool {
@@ -875,7 +892,7 @@ fn fetch_ahead_decision(
         }
         if let Some(authorization) = result_authorization {
             state
-                .memory_result_scalar_suffix_authorizations
+                .memory_result_window_authorizations
                 .insert(request, authorization);
         }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));

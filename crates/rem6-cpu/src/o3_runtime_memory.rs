@@ -1,7 +1,7 @@
 use super::o3_runtime_writeback::O3LiveWritebackReady;
 use super::*;
 use crate::riscv_data_completion::RiscvDataCompletion;
-use rem6_memory::{AccessSize, Address};
+use rem6_memory::{AccessSize, Address, AddressRange};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveDataAccess {
@@ -28,7 +28,7 @@ pub(super) struct O3LiveDataAccess {
 pub(crate) enum O3DataAccessWindowPolicy {
     None,
     ScalarMemoryPrefix,
-    MemoryResultScalarSuffix,
+    MemoryResultWindow,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,7 +90,7 @@ pub(crate) fn o3_memory_result_destination(
     }
 }
 
-pub(crate) fn o3_memory_result_scalar_suffix_destination(
+pub(crate) fn o3_memory_result_window_destination(
     access: &MemoryAccessKind,
 ) -> Option<Option<Register>> {
     match access {
@@ -108,6 +108,24 @@ pub(crate) fn o3_memory_result_scalar_suffix_destination(
         }
         _ => None,
     }
+}
+
+pub(crate) fn o3_memory_result_younger_read_destination(
+    access: &MemoryAccessKind,
+) -> Option<Option<Register>> {
+    match access {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. } => {
+            o3_memory_result_window_destination(access)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn o3_memory_result_range(access: &MemoryAccessKind) -> Option<AddressRange> {
+    let (address, size) = memory_result_address_size(access)?;
+    AddressRange::new(address, size).ok()
 }
 
 pub(crate) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
@@ -128,8 +146,8 @@ fn live_data_access_younger_window_policy_matches(
             access,
             MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
         ),
-        O3DataAccessWindowPolicy::MemoryResultScalarSuffix => {
-            o3_memory_result_scalar_suffix_destination(access).is_some()
+        O3DataAccessWindowPolicy::MemoryResultWindow => {
+            o3_memory_result_window_destination(access).is_some()
         }
     }
 }
@@ -141,7 +159,7 @@ fn test_memory_result_completion(
 ) -> Option<RiscvDataCompletion> {
     let access = execution.execution().memory_access()?.clone();
     o3_memory_result_destination(&access)?;
-    let (physical_address, size) = memory_result_test_address_size(&access)?;
+    let (physical_address, size) = memory_result_address_size(&access)?;
     Some(RiscvDataCompletion::from_issued_response(
         execution.fetch().request_id(),
         access,
@@ -152,8 +170,7 @@ fn test_memory_result_completion(
     ))
 }
 
-#[cfg(test)]
-fn memory_result_test_address_size(access: &MemoryAccessKind) -> Option<(Address, AccessSize)> {
+fn memory_result_address_size(access: &MemoryAccessKind) -> Option<(Address, AccessSize)> {
     match access {
         MemoryAccessKind::Load { address, width, .. }
         | MemoryAccessKind::LoadReserved { address, width, .. }
@@ -215,6 +232,14 @@ impl O3RuntimeState {
         self.live_data_accesses
             .first()
             .map(|live| live.younger_window_policy)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_data_access_younger_window_policies(&self) -> Vec<O3DataAccessWindowPolicy> {
+        self.live_data_accesses
+            .iter()
+            .map(|live| live.younger_window_policy)
+            .collect()
     }
 
     #[cfg(test)]
@@ -350,8 +375,9 @@ impl O3RuntimeState {
             Some(pending) => pending == fetch_request,
             None => {
                 if !self.live_data_accesses.is_empty()
-                    && (!is_scalar_window_access(access)
-                        || !self.can_stage_scalar_memory(execution))
+                    && !((is_scalar_window_access(access)
+                        && self.can_stage_scalar_memory(execution))
+                        || self.can_stage_memory_result_window(execution))
                 {
                     return false;
                 }
@@ -383,8 +409,8 @@ impl O3RuntimeState {
         }
     }
 
-    pub(crate) fn clear_deferred_live_data_access_execution(&mut self) -> Option<MemoryRequestId> {
-        self.deferred_live_data_access_execution.take()
+    pub(crate) const fn deferred_live_data_access_execution(&self) -> Option<MemoryRequestId> {
+        self.deferred_live_data_access_execution
     }
 
     pub(crate) fn stage_live_data_access_issue(
@@ -404,11 +430,13 @@ impl O3RuntimeState {
         }
         let scalar_window = matches!(access, MemoryAccessKind::Store { .. })
             || younger_window_policy == O3DataAccessWindowPolicy::ScalarMemoryPrefix;
+        let result_window = younger_window_policy == O3DataAccessWindowPolicy::MemoryResultWindow;
         if scalar_window && !self.has_scalar_memory_window_capacity() {
             return false;
         }
         if !self.live_data_accesses.is_empty()
-            && (!scalar_window || !self.can_stage_scalar_memory(execution))
+            && !((scalar_window && self.can_stage_scalar_memory(execution))
+                || (result_window && self.can_stage_memory_result_window(execution)))
         {
             return false;
         }
@@ -758,7 +786,7 @@ impl O3RuntimeState {
                 self.pending_data_accesses.remove(&stale.fetch_request);
             }
             self.live_data_accesses.truncate(index + 1);
-            self.discard_live_data_access_window_rows_at(sequence, response_tick);
+            self.discard_live_data_access_window_rows(sequence);
         }
         Ok(true)
     }
@@ -957,13 +985,9 @@ impl crate::RiscvCore {
 
     pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
-        let cleared = state.o3_runtime.clear_deferred_live_data_access_execution();
-        if let Some(fetch_request) = cleared {
-            state
-                .memory_result_scalar_suffix_authorizations
-                .remove(&fetch_request);
-        }
-        state.pending_terminal_memory_result = None;
-        cleared.is_some()
+        let Some(fetch_request) = state.o3_runtime.deferred_live_data_access_execution() else {
+            return false;
+        };
+        state.abort_deferred_o3_live_data_access_execution(fetch_request)
     }
 }

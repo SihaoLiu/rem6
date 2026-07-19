@@ -624,7 +624,10 @@ fn detailed_scalar_memory_blocks_execution(
     {
         return Ok(false);
     }
-    Ok(!state.can_overlap_detailed_scalar_memory_instruction(instruction))
+    if state.can_overlap_detailed_scalar_memory_instruction(instruction) {
+        return Ok(false);
+    }
+    Ok(!state.can_overlap_detailed_memory_result_instruction(window.request, instruction))
 }
 
 fn stage_o3_live_retire_window(

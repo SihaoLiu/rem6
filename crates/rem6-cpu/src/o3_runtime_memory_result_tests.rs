@@ -22,6 +22,8 @@ use crate::{
     CpuTranslationFrontend, RiscvCore, RiscvLoadReservation,
 };
 
+#[path = "o3_runtime_memory_result_tests/pair_window.rs"]
+mod pair_window;
 #[path = "o3_runtime_memory_result_tests/replan.rs"]
 mod replan;
 #[path = "o3_runtime_memory_result_tests/store_conditional.rs"]

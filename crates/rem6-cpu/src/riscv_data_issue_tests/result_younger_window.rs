@@ -991,7 +991,7 @@ fn detailed_mmio_result_consumes_fetch_authority_for_a_younger_div() {
     core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
         .unwrap()
         .expect("MMIO result head issues");
-    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultWindow);
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
     assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
@@ -1038,7 +1038,7 @@ fn split_mmio_result_consumes_authority_for_its_execution_request() {
     core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
         .unwrap()
         .expect("split MMIO result head issues");
-    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultWindow);
 }
 
 #[test]
@@ -1139,9 +1139,9 @@ fn aborting_deferred_result_issue_clears_fetch_authority() {
     );
     let fetch_request = MemoryRequestId::new(AgentId::new(7), 0);
     let mut state = core.state.lock().expect("riscv core lock");
-    assert!(!state.memory_result_scalar_suffix_authorizations.is_empty());
+    assert!(!state.memory_result_window_authorizations.is_empty());
     assert!(state.abort_deferred_o3_live_data_access_execution(fetch_request));
-    assert!(state.memory_result_scalar_suffix_authorizations.is_empty());
+    assert!(state.memory_result_window_authorizations.is_empty());
 }
 
 #[test]
@@ -1188,7 +1188,7 @@ fn failed_result_issue_clears_fetch_authority_before_retry() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
 
     core.issue_next_data_access(
@@ -1238,7 +1238,7 @@ fn disabling_detailed_mode_preserves_executed_result_suffix_authority() {
         .state
         .lock()
         .expect("riscv core lock")
-        .memory_result_scalar_suffix_authorizations
+        .memory_result_window_authorizations
         .is_empty());
     core.issue_next_data_access(
         &mut scheduler,
@@ -1248,7 +1248,7 @@ fn disabling_detailed_mode_preserves_executed_result_suffix_authority() {
     )
     .unwrap()
     .expect("preserved result head issues after detailed disable");
-    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultWindow);
 }
 
 #[test]

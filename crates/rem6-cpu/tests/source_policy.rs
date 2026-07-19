@@ -26,6 +26,9 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LI
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 175;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
+const MAX_RISCV_DATA_ACCESS_RESULT_LINES: usize = 450;
+const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
+const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_FETCH_RESPONSE_TEST_LINES: usize = 200;
@@ -765,6 +768,10 @@ fn o3_data_access_younger_window_has_focused_owners() {
     let data_issue = fs::read_to_string(crate_dir.join("src/riscv_data_issue.rs")).unwrap();
     let fetch_ahead =
         fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs")).unwrap();
+    let data_access_result = fs::read_to_string(
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs"),
+    )
+    .unwrap();
     let fetch_driver =
         fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/driver.rs")).unwrap();
     let cluster_translation =
@@ -778,13 +785,16 @@ fn o3_data_access_younger_window_has_focused_owners() {
         ),
         (&issue, "pub(crate) fn live_data_access_head_reservation("),
         (&data_issue, "O3DataAccessWindowPolicy::ScalarMemoryPrefix"),
-        (&fetch_ahead, "fn data_access_result_fetch_ahead_shape("),
-        (&fetch_ahead, "fn data_access_result_head_probe("),
-        (&fetch_ahead, "masked_vector_memory_request_span("),
-        (&fetch_ahead, "fault_only_first: false"),
         (
-            &fetch_ahead,
-            "pub(super) fn data_access_result_head_physical_probe(",
+            &data_access_result,
+            "fn data_access_result_fetch_ahead_shape(",
+        ),
+        (&data_access_result, "fn data_access_result_head_probe("),
+        (&data_access_result, "masked_vector_memory_request_span("),
+        (&data_access_result, "fault_only_first: false"),
+        (
+            &data_access_result,
+            "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
         ),
         (
             &fetch_ahead,
@@ -803,6 +813,103 @@ fn o3_data_access_younger_window_has_focused_owners() {
         assert!(
             owner.contains(anchor),
             "missing data-access window owner `{anchor}`"
+        );
+    }
+}
+
+#[test]
+fn riscv_data_access_result_fetch_authority_is_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
+    let child_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs");
+    let pair_policy_path =
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_pair_policy.rs");
+    let retained_path =
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/retained_data_access_result.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert!(
+        root.contains("#[path = \"detailed_o3/data_access_result.rs\"]\nmod data_access_result;"),
+        "detailed_o3.rs must delegate result admission to the focused child"
+    );
+    assert!(
+        root.contains(
+            "#[path = \"detailed_o3/data_access_result_pair_policy.rs\"]\nmod data_access_result_pair_policy;"
+        ),
+        "detailed_o3.rs must delegate pair policy to the focused child"
+    );
+    assert!(
+        root.contains(
+            "#[path = \"detailed_o3/retained_data_access_result.rs\"]\nmod retained_data_access_result;"
+        ),
+        "detailed_o3.rs must delegate retained result authority to the focused child"
+    );
+    assert!(
+        child_path.is_file(),
+        "data-access result fetch authority belongs in {}",
+        child_path.display()
+    );
+    let child = fs::read_to_string(&child_path).unwrap();
+    let pair_policy = fs::read_to_string(&pair_policy_path).unwrap();
+    let retained = fs::read_to_string(&retained_path).unwrap();
+    assert!(
+        child.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_LINES,
+        "data_access_result.rs exceeds {MAX_RISCV_DATA_ACCESS_RESULT_LINES} lines"
+    );
+    assert!(
+        pair_policy.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES,
+        "data_access_result_pair_policy.rs exceeds {MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES} lines"
+    );
+    assert!(
+        pair_policy.contains("fn result_head_allows_younger_read("),
+        "pair policy is missing its focused owner"
+    );
+    assert!(
+        !child.contains("fn result_head_allows_younger_read("),
+        "data_access_result.rs must not own pair dependency policy"
+    );
+    assert!(
+        retained.lines().count() <= MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES,
+        "retained_data_access_result.rs exceeds {MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES} lines"
+    );
+    assert!(
+        retained.contains("fn retained_data_access_result_window_candidate("),
+        "retained result authority is missing its focused owner"
+    );
+    assert!(
+        !child.contains("fn retained_data_access_result_window_candidate("),
+        "data_access_result.rs must not own retained result lifecycle"
+    );
+    for anchor in [
+        "fn data_access_result_fetch_ahead_shape(",
+        "pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization(",
+        "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
+        "fn data_access_result_head_probe(",
+    ] {
+        assert!(
+            child.contains(anchor),
+            "focused data-access result owner is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "detailed_o3.rs still owns `{anchor}`"
+        );
+    }
+
+    let production = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .map(|path| fs::read_to_string(path).unwrap())
+        .map(|source| production_rust_source(&source))
+        .collect::<String>();
+    for stale in [
+        "O3MemoryResultScalarSuffixAuthorization",
+        "O3MemoryResultScalarSuffixRoute",
+        "memory_result_scalar_suffix_authorizations",
+        "MemoryResultScalarSuffix",
+    ] {
+        assert!(
+            !production.contains(stale),
+            "stale result-window production name `{stale}`"
         );
     }
 }

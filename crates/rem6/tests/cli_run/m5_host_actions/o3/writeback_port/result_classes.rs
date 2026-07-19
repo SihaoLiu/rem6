@@ -5,6 +5,8 @@ use super::result_support::{
 };
 use super::*;
 
+#[path = "result_classes/pairs.rs"]
+mod pairs;
 #[path = "result_classes/scalar_suffix.rs"]
 mod scalar_suffix;
 
