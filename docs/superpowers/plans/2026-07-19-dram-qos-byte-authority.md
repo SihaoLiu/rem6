@@ -316,7 +316,7 @@ access/priority/requestor accounting remains exact, no serialized or CLI schema
 changed, the public API removal has no in-tree callers, and the source policy
 rejects renamed duplicate byte fields.
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 Run:
 
