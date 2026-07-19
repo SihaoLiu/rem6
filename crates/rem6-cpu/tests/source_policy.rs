@@ -25,6 +25,8 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LI
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 175;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
+const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
+const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -388,6 +390,90 @@ fn cpu_source_files_stay_within_size_limit() {
         oversized.is_empty(),
         "source files exceed {MAX_SOURCE_LINES} lines: {}",
         oversized.join(", ")
+    );
+}
+
+#[test]
+fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/riscv_fetch_ahead/tests/detailed_o3_control.rs");
+    let linked_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "detailed_o3_control/linked_control.rs",
+            "linked_control"
+        ),
+        1,
+        "the detailed O3 control test root must declare its linked-control child"
+    );
+    assert!(
+        linked_path.exists(),
+        "linked-control tests belong in {}",
+        linked_path.display()
+    );
+
+    let linked = fs::read_to_string(&linked_path).unwrap();
+    for (path, source) in [(&root_path, &root), (&linked_path, &linked)] {
+        let include_lines = include_macro_lines(source);
+        assert!(
+            include_lines.is_empty(),
+            "{} must use path-owned modules instead of include! fragments; found lines {include_lines:?}",
+            path.display(),
+        );
+    }
+
+    let root_code = rust_code_without_comments_and_literals(&root);
+    let linked_code = rust_code_without_comments_and_literals(&linked);
+    for function in [
+        "recorded_same_window_coroutine_core",
+        "detailed_live_same_link_control_uses_runtime_forwarded_target",
+        "detailed_scalar_window_direct_call_follows_target_and_pushes_ras",
+        "detailed_recorded_coroutine_accepts_exact_pop_then_push",
+        "detailed_invalid_recorded_return_does_not_retry_as_fresh_prediction",
+    ] {
+        assert!(
+            production_defines_exact_function(&linked_code, function),
+            "linked-control owner is missing `{function}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, function),
+            "detailed O3 control root still owns `{function}`"
+        );
+    }
+
+    for function in [
+        "live_same_link_core",
+        "detailed_scalar_window_returns_existing_branch_prediction_decision",
+        "detailed_control_target_authority_rejects_non_predicted_decision",
+        "detailed_split_control_keys_prediction_to_prefix_request",
+    ] {
+        assert!(
+            production_defines_exact_function(&root_code, function),
+            "detailed O3 control root is missing `{function}`"
+        );
+        assert!(
+            !production_defines_exact_function(&linked_code, function),
+            "linked-control child must not own `{function}`"
+        );
+    }
+    assert!(
+        production_function_is_visible(&root_code, "live_same_link_core"),
+        "live_same_link_core must remain visible to its sibling test caller"
+    );
+
+    let root_lines = line_count(&root_path);
+    assert!(
+        root_lines <= MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES,
+        "detailed_o3_control.rs exceeds its focused root budget: {root_lines}"
+    );
+    let linked_lines = line_count(&linked_path);
+    assert!(
+        linked_lines <= MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES,
+        "linked_control.rs exceeds its focused child budget: {linked_lines}"
     );
 }
 
