@@ -1027,12 +1027,16 @@ impl RiscvCoreState {
         self.branch_target_predictions.clear();
     }
 
-    fn discard_data_accesses_for_control_boundary(&mut self) {
+    fn discard_in_order_fetch_stream(&mut self) {
         self.detach_pending_in_order_pipeline_advance();
         self.in_order_pipeline
             .replace_in_flight([])
             .expect("empty in-order pipeline state is valid");
         self.rebound_in_order_execute_waits.clear();
+    }
+
+    fn discard_data_accesses_for_control_boundary(&mut self) {
+        self.discard_in_order_fetch_stream();
         let mut pending_retirement_fetches = self
             .events
             .iter()

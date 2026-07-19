@@ -291,38 +291,44 @@ impl CpuCore {
     }
 
     pub(crate) fn record_response(&self, delivery: ResponseDelivery) {
+        self.record_response_event(delivery);
+    }
+
+    pub(crate) fn record_response_event(
+        &self,
+        delivery: ResponseDelivery,
+    ) -> Option<CpuFetchEvent> {
         let mut state = self.state.lock().expect("cpu core lock");
         let Some(fetch) = state.outstanding.remove(&delivery.response().request_id()) else {
-            return;
+            return None;
         };
 
-        match delivery.response().status() {
+        let event = match delivery.response().status() {
             ResponseStatus::Completed => {
                 let data = delivery.response().data().unwrap_or_default().to_vec();
                 if let Some(next_pc) = fetch.pc.get().checked_add(data.len() as u64) {
                     state.pc = Address::new(next_pc);
                 }
-                let event = CpuFetchEvent::completed(
+                CpuFetchEvent::completed(
                     fetch.record(
                         delivery.tick(),
                         delivery.route(),
                         delivery.endpoint().clone(),
                     ),
                     data,
-                );
-                state.events.push(event.clone());
-                state.history.push(event);
+                )
             }
             ResponseStatus::Retry | ResponseStatus::StoreConditionalFailed => {
-                let event = CpuFetchEvent::retry(fetch.record(
+                CpuFetchEvent::retry(fetch.record(
                     delivery.tick(),
                     delivery.route(),
                     delivery.endpoint().clone(),
-                ));
-                state.events.push(event.clone());
-                state.history.push(event);
+                ))
             }
-        }
+        };
+        state.events.push(event.clone());
+        state.history.push(event.clone());
+        Some(event)
     }
 
     pub(crate) fn discard_outstanding_fetches<I>(&self, request_ids: I)

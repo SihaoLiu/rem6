@@ -89,15 +89,15 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
     assert!(stdout.contains("\"data_loads\":1"));
     assert!(stdout.contains("\"data_stores\":1"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":52,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":76,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
     assert!(stdout.contains("\"retired\":6"));
-    assert!(stdout.contains("\"resource_blocked\":31"));
-    assert!(stdout.contains("\"stall_cycles\":31"));
-    assert!(stdout.contains("\"fetch_wait_cycles\":24"));
-    assert!(stdout.contains("\"data_wait_cycles\":8"));
+    assert!(stdout.contains("\"resource_blocked\":55"));
+    assert!(stdout.contains("\"stall_cycles\":55"));
+    assert!(stdout.contains("\"fetch_wait_cycles\":40"));
+    assert!(stdout.contains("\"data_wait_cycles\":24"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
     assert!(stdout.contains("\"bytes\":8"));
     assert!(stdout.contains("\"hex\":\"8977665544332211\""));
@@ -120,7 +120,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        52,
+        76,
         "monotonic",
     );
     assert_stat(
@@ -134,28 +134,28 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.stall_cycles",
         "Cycle",
-        31,
+        55,
         "monotonic",
     );
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.fetch_wait_cycles",
         "Cycle",
-        24,
+        40,
         "monotonic",
     );
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.resource_blocked",
         "Count",
-        31,
+        55,
         "monotonic",
     );
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.data_wait_cycles",
         "Cycle",
-        8,
+        24,
         "monotonic",
     );
     assert_stat_greater_than(
@@ -228,8 +228,8 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         dram_write_bytes,
         "monotonic",
     );
-    assert_transport_stats(&stdout, "sim.memory.fetch", 6, 24, 4);
-    assert_transport_stats(&stdout, "sim.memory.data", 2, 8, 4);
+    assert_transport_stats(&stdout, "sim.memory.fetch", 6, 40, 12);
+    assert_transport_stats(&stdout, "sim.memory.data", 2, 24, 12);
 }
 
 fn sum_dram_bank_field(json: &Value, field: &str) -> u64 {
@@ -3870,7 +3870,7 @@ fn rem6_run_emits_riscv_data_access_probe_stack_distance_histogram_stats() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "80",
+            "120",
             "--stats-format",
             "json",
             "--execute",
@@ -4465,8 +4465,8 @@ fn rem6_run_executes_riscv_atomic_memory_op_and_emits_atomic_byte_stats() {
         8,
         "monotonic",
     );
-    assert_transport_stats(&stdout, "sim.memory.fetch", 5, 20, 4);
-    assert_transport_stats(&stdout, "sim.memory.data", 1, 4, 4);
+    assert_transport_stats(&stdout, "sim.memory.fetch", 5, 44, 20);
+    assert_transport_stats(&stdout, "sim.memory.data", 1, 12, 12);
 }
 
 #[test]
@@ -4524,8 +4524,14 @@ fn rem6_run_exposes_distinct_riscv_hart_ids_to_parallel_cores() {
     assert!(stdout.contains("\"hex\":\"00000000000000000100000000000000\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert!(stdout.contains("\"path\":\"sim.cpu1.data.stores\""));
-    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 4, 4);
-    assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 1, 4, 4);
+    assert_transport_stats(
+        &stdout,
+        "sim.memory.data.route1.source.cpu0.dmem",
+        1,
+        13,
+        13,
+    );
+    assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 1, 8, 8);
 }
 
 #[test]

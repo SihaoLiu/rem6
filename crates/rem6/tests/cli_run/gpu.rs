@@ -540,7 +540,7 @@ fn rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram() {
     assert!(stdout.contains("\"data_cache_bank_coalesced_misses\":0"));
     assert!(stdout.contains("\"accesses\":1"));
     assert!(stdout.contains("\"reads\":1"));
-    assert_transport_stats(&stdout, "sim.gpu_run.transport", 2, 4, 2);
+    assert_transport_stats(&stdout, "sim.gpu_run.transport", 2, 20, 10);
     assert_stat(
         &stdout,
         "sim.gpu_run.workgroup_completions",
@@ -1587,7 +1587,7 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq/status", "0x00000600"),
         ("/pio/cycle_counter/lo_offset", "0x090"),
         ("/pio/cycle_counter/hi_offset", "0x094"),
-        ("/pio/cycle_counter/lo", "0x00000006"),
+        ("/pio/cycle_counter/lo", "0x0000000e"),
         ("/pio/cycle_counter/hi", "0x00000000"),
         ("/pio/register_reads/0/name", "gpu_id"),
         ("/pio/register_reads/0/offset", "0x000"),
@@ -1719,8 +1719,8 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/job_slot_snapshots/3/slot", 1),
         ("/pio/checkpoint/word_count", 4096),
         ("/pio/cycle_counter/start_tick", 0),
-        ("/pio/cycle_counter/stop_tick", 6),
-        ("/pio/cycle_counter/elapsed_ticks", 6),
+        ("/pio/cycle_counter/stop_tick", 14),
+        ("/pio/cycle_counter/elapsed_ticks", 14),
         ("/interface/interrupts/job/nomali_int", 1),
         ("/execution/workgroup_completions", 2),
         ("/execution/global_memory_reads", 2),
@@ -3082,7 +3082,7 @@ global_loads = ["0x1000:4:4:4"]
     assert!(stdout.contains("\"data_cache_protocol\":\"msi\""));
     assert!(stdout.contains("\"data_cache_msi_runs\":2"));
     assert!(stdout.contains("\"accesses\":1"));
-    assert_transport_stats(&stdout, "sim.gpu_run.transport", 2, 4, 2);
+    assert_transport_stats(&stdout, "sim.gpu_run.transport", 2, 20, 10);
     assert_stat(
         &stdout,
         "sim.gpu_run.workgroup_completions",

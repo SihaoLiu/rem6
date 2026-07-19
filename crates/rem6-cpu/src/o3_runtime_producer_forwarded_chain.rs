@@ -42,18 +42,37 @@ impl O3RuntimeState {
             .then_some(forwarded)
     }
 
+    fn youngest_producer_forwarded_control_pair(&self) -> Option<(u64, u64)> {
+        let consumer_sequence = self
+            .live_data_access_younger_sequences
+            .iter()
+            .next_back()
+            .copied()?;
+        let consumer = self
+            .live_speculative_executions
+            .iter()
+            .find(|execution| execution.sequence == consumer_sequence)?;
+        let [producer_sequence] = consumer.producer_sequences.as_slice() else {
+            return None;
+        };
+        let producer_sequence = *producer_sequence;
+        (producer_sequence < consumer_sequence
+            && self
+                .live_data_access_younger_sequences
+                .contains(&producer_sequence))
+        .then_some((producer_sequence, consumer_sequence))
+    }
+
     fn producer_forwarded_control_target_with_completed(
         &self,
         allow_completed: bool,
     ) -> Option<O3ProducerForwardedControlTarget> {
-        if self.live_data_access_younger_sequences.len() != 2 {
-            return None;
-        }
-        let mut younger_sequences = self.live_data_access_younger_sequences.iter().copied();
+        let (producer_sequence, consumer_sequence) =
+            self.youngest_producer_forwarded_control_pair()?;
         self.producer_forwarded_control_target_for_sequences(
             allow_completed,
-            younger_sequences.next()?,
-            younger_sequences.next()?,
+            producer_sequence,
+            consumer_sequence,
         )
     }
 
@@ -230,13 +249,11 @@ impl O3RuntimeState {
     pub(crate) fn producer_forwarded_control_target_after_head_retire(
         &self,
     ) -> Option<O3ProducerForwardedControlTarget> {
-        if self.live_data_access_younger_sequences.len() != 2 {
-            return None;
-        }
-        let mut sequences = self.live_data_access_younger_sequences.iter().copied();
+        let (producer_sequence, consumer_sequence) =
+            self.youngest_producer_forwarded_control_pair()?;
         self.recorded_producer_forwarded_control_target_after_head_retire_for_sequences(
-            sequences.next()?,
-            sequences.next()?,
+            producer_sequence,
+            consumer_sequence,
         )
     }
 

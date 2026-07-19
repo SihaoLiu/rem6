@@ -4,6 +4,31 @@ use super::collect_rust_source_files;
 use syn::{parse::Parser, visit::Visit};
 
 const PROTOCOL_SPELLINGS: [&str; 4] = ["msi", "mesi", "moesi", "chi"];
+const MAX_DATA_CACHE_READINESS_LINES: usize = 80;
+
+#[test]
+fn data_cache_readiness_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/data_cache_runtime.rs");
+    let readiness_path = crate_dir.join("src/data_cache_runtime/readiness.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let readiness = fs::read_to_string(&readiness_path).unwrap();
+
+    assert!(root.lines().any(|line| line.trim() == "mod readiness;"));
+    assert!(readiness_path.is_file());
+    assert!(
+        readiness.lines().count() <= MAX_DATA_CACHE_READINESS_LINES,
+        "data_cache_runtime/readiness.rs exceeds {MAX_DATA_CACHE_READINESS_LINES} lines"
+    );
+    for owner in [
+        "struct CliDataCacheBacking",
+        "struct CliDataCacheLineFill",
+        "fn delay_target_outcome_until(",
+    ] {
+        assert!(readiness.contains(owner));
+        assert!(!root.contains(owner));
+    }
+}
 
 #[test]
 fn protocol_source_scan_uses_rust_items_and_literals() {

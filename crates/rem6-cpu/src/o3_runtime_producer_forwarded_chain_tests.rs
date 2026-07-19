@@ -30,6 +30,14 @@ impl O3RuntimeState {
             .map(|issued| issued.issue_tick)
     }
 
+    pub(crate) fn producer_forwarded_scalar_issue_tick_for_test(&self) -> Option<u64> {
+        let sequence = self.producer_forwarded_scalar_chain()?.last()?.sequence();
+        self.live_speculative_executions
+            .iter()
+            .find(|issued| issued.sequence == sequence)
+            .map(|issued| issued.issue_tick)
+    }
+
     pub(crate) fn replace_producer_forwarded_chain_fetch_identity_for_test(
         &mut self,
         sequence: u64,

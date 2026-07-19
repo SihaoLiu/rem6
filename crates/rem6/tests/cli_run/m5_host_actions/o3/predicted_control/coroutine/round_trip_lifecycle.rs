@@ -206,9 +206,9 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
             "{}: live switch must not replay the architectural load or success store",
             case.label
         );
-        let (first_request, response_latency) = match case.memory_system {
-            "direct" => (9, 32),
-            "cache-fabric-dram" => (11, 34),
+        let (first_request, response_latencies) = match case.memory_system {
+            "direct" => (9, vec![32, 32]),
+            "cache-fabric-dram" => (11, vec![42, 34]),
             other => panic!("{}: unsupported memory system {other}", case.label),
         };
         let expected_memory = CoroutineMemoryTraceSnapshot {
@@ -217,7 +217,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
             first_request_kind_counts: [1, 1, 0, 1],
             request_agents: vec![0],
             routes: vec![1],
-            response_latencies: vec![response_latency; 2],
+            response_latencies,
         };
         let baseline_memory = coroutine_memory_trace_snapshot(&baseline, case.label);
         assert_eq!(
@@ -233,7 +233,7 @@ fn rem6_run_host_switch_transfers_o3_same_window_coroutine_round_trip() {
         );
         let counts = match case.memory_system {
             "direct" => [2, 2, 2, 2, 64, 32],
-            "cache-fabric-dram" => [2, 2, 2, 2, 68, 34],
+            "cache-fabric-dram" => [2, 2, 2, 2, 76, 42],
             other => panic!("{}: unsupported memory system {other}", case.label),
         };
         let expected_transport = CoroutineTransportSnapshot {

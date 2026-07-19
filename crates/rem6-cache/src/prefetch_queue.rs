@@ -1198,7 +1198,10 @@ impl QueuedPrefetcher {
             }
             self.stats.record_identified(1);
             insertion_attempts += 1;
-            if self.is_redundant(address, candidate.secure(), redundant_lines) {
+            if let Some(residency) =
+                self.redundant_residency(address, candidate.secure(), redundant_lines)
+            {
+                self.record_redundant_hit(residency);
                 self.stats.record_in_cache_drop(1);
                 self.stats.record_prefetch_queue_dropped(1);
                 dropped_redundant += 1;
@@ -1321,7 +1324,8 @@ impl QueuedPrefetcher {
         };
         self.stats.record_translation_queue_translated(1);
         let address = self.normalized_address(physical_address);
-        if self.is_redundant(address, entry.secure, redundant_lines) {
+        if let Some(residency) = self.redundant_residency(address, entry.secure, redundant_lines) {
+            self.record_redundant_hit(residency);
             self.stats.record_in_cache_drop(1);
             self.stats.record_prefetch_queue_dropped(1);
             return Ok(QueuedPrefetchTranslationOutcome::Redundant);
@@ -1483,15 +1487,23 @@ impl QueuedPrefetcher {
         page_address(target, page_size) != page_address(source, page_size)
     }
 
-    fn is_redundant(
+    fn redundant_residency(
         &self,
         address: Address,
         secure: bool,
         redundant_lines: &[QueuedPrefetchRedundantLine],
-    ) -> bool {
-        redundant_lines.iter().any(|line| {
-            self.normalized_address(line.address()) == address && line.secure() == secure
+    ) -> Option<QueuedPrefetchResidency> {
+        redundant_lines.iter().find_map(|line| {
+            (self.normalized_address(line.address()) == address && line.secure() == secure)
+                .then_some(line.residency())
         })
+    }
+
+    fn record_redundant_hit(&mut self, residency: QueuedPrefetchResidency) {
+        match residency {
+            QueuedPrefetchResidency::Cache => self.stats.record_hit_in_cache(),
+            QueuedPrefetchResidency::MissQueue => self.stats.record_hit_in_mshr(),
+        }
     }
 
     fn enqueue_missing_translation<C: PrefetchCandidate>(

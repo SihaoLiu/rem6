@@ -168,7 +168,7 @@ impl MemoryResultClass {
 
     pub(super) const fn pcs(self) -> [&'static str; 3] {
         match self {
-            Self::Vector => ["0x80000034", "0x80000030", "0x80000038"],
+            Self::Vector => ["0x8000003c", "0x80000038", "0x80000040"],
             Self::Mmio => ["0x80000014", "0x80000010", "0x80000018"],
             _ => ["0x8000001c", "0x80000018", "0x80000020"],
         }
@@ -197,7 +197,7 @@ impl MemoryResultClass {
     fn expected_route_delay(self, memory_system: &str) -> u64 {
         match memory_system {
             "direct" => 4,
-            "cache-fabric-dram" if self != Self::LoadReserved && self != Self::Mmio => 3,
+            "cache-fabric-dram" if self != Self::LoadReserved && self != Self::Mmio => 1,
             _ => panic!("unsupported route-delay lock"),
         }
     }
@@ -211,14 +211,10 @@ fn result_data_record(json: &Value, class: MemoryResultClass) -> &Value {
             && event_str(record, "address") == address
             && event_u64(record, "size") == 8
     });
-    let record = matches
-        .next()
-        .unwrap_or_else(|| panic!("{} result data request missing: {trace:?}", class.label()));
-    assert!(
-        matches.next().is_none(),
-        "{} result request repeated",
-        class.label()
-    );
+    let record = matches.next().expect("result data request");
+    if matches.next().is_some() {
+        panic!("{} result repeated", class.label());
+    }
     record
 }
 
@@ -230,14 +226,10 @@ fn calibrate_result_collision(fixture: &MemoryResultFixture, memory_system: &str
         let pcs = fixture.class.pcs();
         let result = memory_result_event_at_pc(&json, pcs[0]);
         let div = event_at_pc(&json, pcs[1]);
+        let result_issue = event_u64(result, "issue_tick");
         let result_raw_ready = event_u64(result, "lsq_data_response_tick") + 1;
         let div_raw_ready = event_u64(div, "issue_tick") + 19;
-        observations.push((
-            route_delay,
-            event_u64(result, "issue_tick"),
-            result_raw_ready,
-            div_raw_ready,
-        ));
+        observations.push((route_delay, result_issue, result_raw_ready, div_raw_ready));
         if result_raw_ready == div_raw_ready {
             collisions.push(route_delay);
         }
@@ -285,16 +277,21 @@ fn assert_result_collision(fixture: &MemoryResultFixture, json: &Value, writebac
     }
     assert!(event_u64(div, "issue_tick") < event_u64(result, "issue_tick"));
     assert!(event_u64(witness, "issue_tick") >= event_u64(result, "writeback_tick"));
-    assert_writeback_port_totals(json, writeback_width);
+    assert_writeback_port_totals(json, class, writeback_width);
     assert_final_witness(fixture, json);
 }
 
-fn assert_writeback_port_totals(json: &Value, writeback_width: usize) {
+fn assert_writeback_port_totals(json: &Value, class: MemoryResultClass, writeback_width: usize) {
     let writeback = writeback_port_artifact(json);
     let deferred = u64::from(writeback_width == 1);
+    let (cycles, admitted_rows) = if class == MemoryResultClass::Vector {
+        (3 + deferred, 4)
+    } else {
+        (1 + deferred, 2)
+    };
     for (field, value) in [
-        ("cycles", 1 + deferred),
-        ("admitted_rows", 2),
+        ("cycles", cycles),
+        ("admitted_rows", admitted_rows),
         ("deferred_rows", deferred),
         ("deferred_row_cycles", deferred),
         ("max_ready_rows_per_cycle", 2),
@@ -650,6 +647,8 @@ fn vector_memory_result_binary() -> std::path::PathBuf {
         vector_arith_type(0b010111, 0b100, 0, 6, 0),
         vector_arith_type(0b010111, 0b100, 0, 7, 1),
         m5op(M5_SWITCH_CPU),
+        r_type(0x01, 2, 1, 0b000, 1, 0x33),
+        r_type(0x01, 2, 1, 0b000, 1, 0x33),
         r_type(0x01, 2, 1, 0b100, 3, 0x33),
         vector_unit_stride_load_type(false, 0b111, 5, 1),
         vector_unit_stride_store_type(true, 0b111, 16, 1),

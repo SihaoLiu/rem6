@@ -46,6 +46,11 @@ pub(super) enum CliMemoryCheckpointSource {
     Dram(Arc<Mutex<DramMemoryController>>),
 }
 
+pub(super) struct CliMemoryLineFill {
+    pub(super) data: Vec<u8>,
+    pub(super) ready_tick: u64,
+}
+
 impl CliMemoryRuntime {
     pub(super) fn new_mapped_zeroed(
         address: Address,
@@ -278,7 +283,7 @@ impl CliMemoryRuntime {
         line: Address,
         line_layout: CacheLineLayout,
         tick: u64,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<CliMemoryLineFill> {
         let full_line_backing = match self {
             Self::Store {
                 full_line_backing, ..
@@ -291,9 +296,12 @@ impl CliMemoryRuntime {
             return None;
         }
         match self {
-            Self::Store { .. } => {
-                self.read_guest_memory(line.get(), line_layout.bytes() as usize, line_layout)
-            }
+            Self::Store { .. } => self
+                .read_guest_memory(line.get(), line_layout.bytes() as usize, line_layout)
+                .map(|data| CliMemoryLineFill {
+                    data,
+                    ready_tick: tick,
+                }),
             Self::Dram { memory, .. } => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 read_guest_cache_line_from_dram_for_fill(&mut memory, line, line_layout, tick)
@@ -596,14 +604,17 @@ fn read_guest_cache_line_from_dram_for_fill(
     line: Address,
     line_layout: CacheLineLayout,
     tick: u64,
-) -> Option<Vec<u8>> {
+) -> Option<CliMemoryLineFill> {
     let request = guest_memory_read_request(line.get(), line_layout.bytes() as usize, line_layout)?;
     let outcome = memory.accept(tick, &request).ok()?;
     let response_data = outcome.response()?.data()?;
     if response_data.len() != line_layout.bytes() as usize {
         return None;
     }
-    Some(response_data.to_vec())
+    Some(CliMemoryLineFill {
+        data: response_data.to_vec(),
+        ready_tick: outcome.ready_cycle(),
+    })
 }
 
 fn write_guest_memory_to_store(

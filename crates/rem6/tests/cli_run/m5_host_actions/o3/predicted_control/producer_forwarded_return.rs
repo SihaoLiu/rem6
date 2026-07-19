@@ -114,7 +114,7 @@ fn assert_producer_forwarded_return(case: ProducerForwardedLinkedCase) {
     assert!(event_u64(call, "issue_tick") < response_tick);
     let expected_return_issue_tick = match case.memory_system {
         "direct" => response_tick,
-        "cache-fabric-dram" => response_tick + 1,
+        "cache-fabric-dram" => response_tick + 10,
         other => panic!("unsupported producer-forwarded return memory system {other}"),
     };
     assert_eq!(

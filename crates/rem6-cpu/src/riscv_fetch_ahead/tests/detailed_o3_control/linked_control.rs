@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "linked_control/fetch_response.rs"]
+mod fetch_response;
+
 fn producer_forwarded_target(
     decision: &RiscvFetchAheadDecision,
 ) -> crate::o3_runtime::O3ProducerForwardedControlTarget {

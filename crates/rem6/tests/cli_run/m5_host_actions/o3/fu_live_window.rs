@@ -1,9 +1,9 @@
 use super::*;
 
-const DIV_PC: &str = "0x8000000c";
-const FIRST_PC: &str = "0x80000010";
-const SECOND_PC: &str = "0x80000014";
-const THIRD_PC: &str = "0x80000018";
+const DIV_PC: &str = "0x80000010";
+const FIRST_PC: &str = "0x80000014";
+const SECOND_PC: &str = "0x80000018";
+const THIRD_PC: &str = "0x8000001c";
 const FAN_IN_RESULTS: &str = "0c000000050000001000000015000000";
 const HEAD_DEPENDENT_RESULTS: &str = "0c000000050000000100000002000000";
 
@@ -423,6 +423,7 @@ fn fu_live_window_binary(name: &str, program: FuWindowProgram) -> std::path::Pat
         m5op(M5_SWITCH_CPU),
         i_type(84, 0, 0x0, 1, 0x13),
         i_type(7, 0, 0x0, 2, 0x13),
+        i_type(0, 0, 0x0, 0, 0x13),
         r_type(1, 2, 1, 0x4, 3, 0x33),
         i_type(5, 0, 0x0, 4, 0x13),
     ];

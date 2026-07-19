@@ -42,7 +42,7 @@ fn rem6_run_m5_reset_between_o3_lsq_request_and_response_keeps_latency() {
             memory_system: "direct",
             operation: CrossResetOperation::LoadReserved,
             request_tick: 190,
-            reset_tick: 199,
+            reset_tick: 201,
             response_tick: 216,
             response_latency_ticks: 26,
             dump_tick: 246,
@@ -51,11 +51,11 @@ fn rem6_run_m5_reset_between_o3_lsq_request_and_response_keeps_latency() {
             name: "cache-fabric-dram",
             memory_system: "cache-fabric-dram",
             operation: CrossResetOperation::AtomicSwap,
-            request_tick: 204,
-            reset_tick: 207,
-            response_tick: 232,
-            response_latency_ticks: 28,
-            dump_tick: 264,
+            request_tick: 220,
+            reset_tick: 229,
+            response_tick: 256,
+            response_latency_ticks: 36,
+            dump_tick: 288,
         },
     ] {
         assert_cross_reset_atomic_response(case);
@@ -284,16 +284,14 @@ fn cross_reset_atomic_response_binary(
     operation: CrossResetOperation,
 ) -> std::path::PathBuf {
     let data_start = 96_i32;
-    let mut words = vec![
-        m5op(M5_SWITCH_CPU),
-        i_type(85, 0, 0x0, 10, 0x13),
-        i_type(0, 0, 0x0, 11, 0x13),
-        m5op(M5_RESET_STATS),
-    ];
+    let mut words = vec![m5op(M5_SWITCH_CPU)];
     let auipc_pc = (words.len() * 4) as i32;
     words.extend([
         u_type(0, 5, 0x17),
         i_type(data_start - auipc_pc, 5, 0x0, 5, 0x13),
+        i_type(35, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_RESET_STATS),
     ]);
     match operation {
         CrossResetOperation::LoadReserved => {

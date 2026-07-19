@@ -50,14 +50,252 @@ fn failed_store_conditional_does_not_emit_dram_write() {
         .respond_for_request(&memory, &[], 12, &store_conditional)
         .expect("matching layout should be handled by the data cache runtime");
 
-    let TargetOutcome::Respond(response) = outcome else {
-        panic!("store conditional should produce a response");
+    let TargetOutcome::RespondAfter { delay, response } = outcome else {
+        panic!("cold store conditional should wait for its DRAM backing read");
     };
+    assert_eq!(delay, 8);
     assert_eq!(response.status(), ResponseStatus::StoreConditionalFailed);
     let summary = memory.dram_summary_until(128);
     assert_eq!(summary.accesses, 1);
     assert_eq!(summary.reads, 1);
     assert_eq!(summary.writes, 0);
+}
+
+#[test]
+fn cold_dram_backed_cache_fill_waits_for_dram_ready_cycle() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_line(layout);
+    let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+    let read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 2),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = runtime
+        .respond_for_request(&memory, &[], 12, &read)
+        .expect("matching layout should be handled by the data cache runtime");
+
+    let TargetOutcome::RespondAfter { delay, response } = outcome else {
+        panic!("cold DRAM-backed cache fill should wait for the DRAM response");
+    };
+    assert_eq!(delay, 8);
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&[0xa5; 8][..]));
+}
+
+#[test]
+fn cold_multilevel_cache_fill_preserves_dram_ready_cycle() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_line(layout);
+    let l1 = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+    let l2 = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+    let read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 5),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = l1
+        .respond_for_request(&memory, std::slice::from_ref(&l2), 12, &read)
+        .expect("matching hierarchy should handle the cache read");
+
+    let TargetOutcome::RespondAfter { delay, response } = outcome else {
+        panic!("cold multilevel fill should preserve the DRAM response tick");
+    };
+    assert_eq!(delay, 8);
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert!(l1.contains_line(Address::new(0x1000)));
+    assert!(l2.contains_line(Address::new(0x1000)));
+    assert_eq!(memory.dram_summary_until(128).accesses, 1);
+}
+
+#[test]
+fn pending_dram_backed_cache_fill_delays_same_line_demand_without_second_access() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_line(layout);
+    let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+    let cold_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 7),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.respond_for_request(&memory, &[], 12, &cold_read),
+        Some(TargetOutcome::RespondAfter { delay: 8, .. })
+    ));
+    let pending_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 8),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = runtime
+        .respond_for_request(&memory, &[], 15, &pending_read)
+        .expect("pending cache fill should retain same-line ownership");
+
+    let TargetOutcome::RespondAfter { delay, response } = outcome else {
+        panic!("same-line demand before fill readiness should remain delayed");
+    };
+    assert_eq!(delay, 5);
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(memory.dram_summary_until(128).accesses, 1);
+}
+
+#[test]
+fn pending_dram_prefetch_delays_demand_and_records_useful_miss() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_two_lines(layout);
+    let runtime = CliDataCacheRuntime::new_msi_bank(
+        layout,
+        [AgentId::new(0)],
+        Some(CliCachePrefetcher::TaggedNextLine),
+    )
+    .unwrap();
+    let first = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 9),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.respond_for_request(&memory, &[], 12, &first),
+        Some(TargetOutcome::RespondAfter { .. })
+    ));
+    assert_eq!(memory.dram_summary_until(128).accesses, 2);
+    let prefetched = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 10),
+        Address::new(0x1020),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = runtime
+        .respond_for_request(&memory, &[], 13, &prefetched)
+        .expect("pending prefetched line should retain cache ownership");
+
+    let TargetOutcome::RespondAfter { response, .. } = outcome else {
+        panic!("demand must wait for the pending DRAM prefetch");
+    };
+    assert_eq!(response.data(), Some(&[0x5a; 8][..]));
+    assert_eq!(memory.dram_summary_until(128).accesses, 2);
+    let summary = runtime.prefetch_summary();
+    assert_eq!(summary.useful, 1);
+    assert_eq!(summary.useful_but_miss, 1);
+    assert_eq!(summary.demand_mshr_misses, 2);
+}
+
+#[test]
+fn pending_prefetch_is_classified_as_mshr_resident_until_ready() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_two_lines(layout);
+    let runtime = CliDataCacheRuntime::new_msi_bank(
+        layout,
+        [AgentId::new(0)],
+        Some(CliCachePrefetcher::TaggedNextLine),
+    )
+    .unwrap();
+    let first = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 11),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.respond_for_request(&memory, &[], 12, &first),
+        Some(TargetOutcome::RespondAfter { .. })
+    ));
+    let repeated = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 12),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        runtime.respond_for_request(&memory, &[], 13, &repeated),
+        Some(TargetOutcome::RespondAfter { .. })
+    ));
+
+    let summary = runtime.prefetch_summary();
+    assert_eq!(summary.hit_in_mshr, 1);
+    assert_eq!(summary.hit_in_cache, 0);
+    assert_eq!(memory.dram_summary_until(128).accesses, 2);
+}
+
+#[test]
+fn resident_dram_backed_cache_hit_responds_without_dram_delay() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let memory = dram_memory_with_line(layout);
+    let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+    let cold_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 3),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.respond_for_request(&memory, &[], 12, &cold_read),
+        Some(TargetOutcome::RespondAfter { delay: 8, .. })
+    ));
+    let hit_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 4),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = runtime
+        .respond_for_request(&memory, &[], 21, &hit_read)
+        .expect("resident cache line should be handled by the data cache runtime");
+
+    let TargetOutcome::Respond(response) = outcome else {
+        panic!("resident cache hit should respond without a DRAM delay");
+    };
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&[0xa5; 8][..]));
+    assert_eq!(memory.dram_summary_until(128).accesses, 1);
+}
+
+#[test]
+fn cache_backing_delay_is_a_floor_not_a_replacement() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 6),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        layout,
+    )
+    .unwrap();
+    let response = MemoryResponse::completed(&read, Some(vec![0xa5; 8])).unwrap();
+
+    let adjusted = delay_target_outcome_until(
+        TargetOutcome::RespondAfter {
+            delay: 12,
+            response,
+        },
+        10,
+        18,
+    );
+
+    let TargetOutcome::RespondAfter { delay, .. } = adjusted else {
+        panic!("delayed cache response should remain delayed");
+    };
+    assert_eq!(delay, 12);
 }
 
 #[test]
@@ -398,6 +636,42 @@ fn dram_memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
         full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
             Address::new(0x1000),
             AccessSize::new(layout.bytes()).unwrap(),
+        )
+        .unwrap()])),
+    }
+}
+
+fn dram_memory_with_two_lines(layout: CacheLineLayout) -> CliMemoryRuntime {
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            TARGET,
+            layout,
+            DramGeometry::new(4, 64, layout.bytes()).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            TARGET,
+            Address::new(0x1000),
+            AccessSize::new(layout.bytes() * 2).unwrap(),
+        )
+        .unwrap();
+    for (line, byte) in [(0x1000, 0xa5), (0x1020, 0x5a)] {
+        memory
+            .insert_line(
+                TARGET,
+                Address::new(line),
+                vec![byte; layout.bytes() as usize],
+            )
+            .unwrap();
+    }
+    CliMemoryRuntime::Dram {
+        memory: Arc::new(Mutex::new(memory)),
+        full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
+            Address::new(0x1000),
+            AccessSize::new(layout.bytes() * 2).unwrap(),
         )
         .unwrap()])),
     }

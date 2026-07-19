@@ -137,6 +137,8 @@ fn queued_prefetcher_records_resource_stats_in_snapshots() {
     assert_eq!(stats.identified_prefetches(), 7);
     assert_eq!(stats.buffer_hits(), 2);
     assert_eq!(stats.in_cache_drops(), 2);
+    assert_eq!(stats.prefetch_hits_in_cache(), 1);
+    assert_eq!(stats.prefetch_hits_in_mshr(), 1);
     assert_eq!(stats.removed_by_full_queue(), 1);
     assert_eq!(stats.removed_by_demand(), 1);
     assert_eq!(stats.span_page_prefetches(), 0);

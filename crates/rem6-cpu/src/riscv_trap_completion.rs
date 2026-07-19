@@ -23,6 +23,7 @@ impl RiscvCore {
         state.pending_trap_event = None;
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.discard_in_order_fetch_stream();
         state.hart.set_privilege_mode(RiscvPrivilegeMode::User);
         state.hart.write(
             Register::new(10).expect("valid RISC-V integer register"),
@@ -74,6 +75,7 @@ impl RiscvCore {
         state.pending_trap_event = None;
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.discard_in_order_fetch_stream();
         state
             .hart
             .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
@@ -107,6 +109,7 @@ impl RiscvCore {
         state.pending_trap_event = None;
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.discard_in_order_fetch_stream();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(next_pc);
@@ -134,6 +137,7 @@ impl RiscvCore {
         state.pending_trap_event = None;
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        state.discard_in_order_fetch_stream();
         riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(next_pc);
@@ -144,7 +148,10 @@ impl RiscvCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState};
+    use crate::{
+        CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, InOrderPipelineInstruction,
+        InOrderPipelineStage,
+    };
     use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
@@ -203,6 +210,39 @@ mod tests {
             instruction,
             RiscvExecutionRecord::with_trap(instruction, trap.pc(), 0x9000, trap),
         )
+    }
+
+    #[test]
+    fn user_environment_call_completion_discards_stale_pipeline_wait() {
+        let (core, trap) =
+            core_with_pending_trap(RiscvPrivilegeMode::User, RiscvTrapKind::EnvironmentCall);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .in_order_pipeline
+                .replace_in_flight([InOrderPipelineInstruction::new(
+                    17,
+                    InOrderPipelineStage::Execute,
+                )
+                .with_execute_wait(8, 4)])
+                .unwrap();
+            let record = state
+                .in_order_pipeline
+                .try_record_resource_stall_cycle()
+                .unwrap();
+            state.in_order_pipeline_cycle_records.push(record);
+        }
+
+        assert_eq!(
+            core.complete_pending_user_environment_call(0x55),
+            Some(trap)
+        );
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.in_order_pipeline.cycle(), 1);
+        assert!(state.in_order_pipeline.in_flight().is_empty());
+        assert_eq!(state.in_order_pipeline_cycle_records.len(), 1);
+        assert_eq!(state.hart.pc(), trap.pc() + 4);
     }
 
     #[test]

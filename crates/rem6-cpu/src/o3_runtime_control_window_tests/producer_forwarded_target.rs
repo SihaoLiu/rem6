@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "producer_forwarded_target/nonadjacent.rs"]
+mod nonadjacent;
+
 #[test]
 fn live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets() {
     for destination in [0, 5] {
@@ -180,6 +183,15 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         .expect("scheduling-only replan must retain same-link target authority");
     assert_eq!(forwarded.ready_tick(), original_ready_tick + 2);
 
+    assert_eq!(
+        runtime.append_producer_forwarded_control_descendant(
+            forwarded,
+            Address::new(0x9000),
+            addi(13, 4, 0),
+            &[request(98)],
+        ),
+        None
+    );
     let descendant = addi(13, 1, 0);
     let descendant_sequence = runtime
         .append_producer_forwarded_control_descendant(

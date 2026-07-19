@@ -9,6 +9,7 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LINEAGE_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize = 225;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_NONADJACENT_TARGET_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 240;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 180;
@@ -27,6 +28,7 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
+const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_FETCH_RESPONSE_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -37,6 +39,7 @@ const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
+const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -63,6 +66,32 @@ fn riscv_failure_diagnostics_use_a_focused_snapshot_owner() {
     assert!(
         fs::read_to_string(owner).unwrap().lines().count() <= MAX_RISCV_FAILURE_DIAGNOSTIC_LINES
     );
+}
+
+#[test]
+fn riscv_producer_forwarded_descendant_staging_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/riscv_live_retire_window.rs");
+    let child_path =
+        crate_dir.join("src/riscv_live_retire_window/producer_forwarded_descendant.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+    let child = fs::read_to_string(&child_path).unwrap();
+
+    assert!(root
+        .lines()
+        .any(|line| line.trim() == "mod producer_forwarded_descendant;"));
+    assert!(child_path.is_file());
+    assert!(
+        child.lines().count() <= MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES,
+        "producer_forwarded_descendant.rs exceeds {MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES} lines"
+    );
+    for function in [
+        "stage_o3_producer_forwarded_control_descendant",
+        "stage_o3_producer_forwarded_control_descendant_for_response",
+    ] {
+        assert!(production_defines_exact_function(&child, function));
+        assert!(!production_defines_exact_function(&root, function));
+    }
 }
 
 #[test]
@@ -399,6 +428,8 @@ fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
     let root_path = crate_dir.join("src/riscv_fetch_ahead/tests/detailed_o3_control.rs");
     let linked_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control.rs");
+    let response_path = crate_dir
+        .join("src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control/fetch_response.rs");
     let root = fs::read_to_string(&root_path).unwrap();
 
     assert_eq!(
@@ -417,7 +448,26 @@ fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
     );
 
     let linked = fs::read_to_string(&linked_path).unwrap();
-    for (path, source) in [(&root_path, &root), (&linked_path, &linked)] {
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &linked,
+            "linked_control/fetch_response.rs",
+            "fetch_response",
+        ),
+        1,
+        "the linked-control owner must declare its fetch-response child"
+    );
+    assert!(
+        response_path.exists(),
+        "fetch-response tests belong in {}",
+        response_path.display()
+    );
+    let response = fs::read_to_string(&response_path).unwrap();
+    for (path, source) in [
+        (&root_path, &root),
+        (&linked_path, &linked),
+        (&response_path, &response),
+    ] {
         let include_lines = include_macro_lines(source);
         assert!(
             include_lines.is_empty(),
@@ -428,6 +478,21 @@ fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
 
     let root_code = rust_code_without_comments_and_literals(&root);
     let linked_code = rust_code_without_comments_and_literals(&linked);
+    let response_code = rust_code_without_comments_and_literals(&response);
+    for function in [
+        "producer_forwarded_target_response_stages_descendant_without_later_drive_turn",
+        "producer_forwarded_target_response_respects_frontend_gates_and_exact_completion",
+    ] {
+        assert!(
+            production_defines_exact_function(&response_code, function),
+            "fetch-response owner is missing `{function}`"
+        );
+        assert!(
+            !production_defines_exact_function(&root_code, function)
+                && !production_defines_exact_function(&linked_code, function),
+            "fetch-response anchor `{function}` escaped its focused child"
+        );
+    }
     for function in [
         "recorded_same_window_coroutine_core",
         "detailed_live_same_link_control_uses_runtime_forwarded_target",
@@ -474,6 +539,11 @@ fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
     assert!(
         linked_lines <= MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES,
         "linked_control.rs exceeds its focused child budget: {linked_lines}"
+    );
+    let response_lines = line_count(&response_path);
+    assert!(
+        response_lines <= MAX_RISCV_DETAILED_O3_LINKED_CONTROL_FETCH_RESPONSE_TEST_LINES,
+        "fetch_response.rs exceeds its focused child budget: {response_lines}"
     );
 }
 
@@ -1791,6 +1861,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let lineage_path = crate_dir.join("src/o3_runtime_control_window_tests/lineage.rs");
     let producer_forwarded_target_path =
         crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_target.rs");
+    let nonadjacent_target_path = crate_dir
+        .join("src/o3_runtime_control_window_tests/producer_forwarded_target/nonadjacent.rs");
     let producer_forwarded_return_path =
         crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_return.rs");
     let producer_forwarded_scalar_return_path =
@@ -1963,6 +2035,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
             <= MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES,
         "producer_forwarded_target.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES} lines"
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &producer_forwarded_target,
+            "producer_forwarded_target/nonadjacent.rs",
+            "nonadjacent",
+        ),
+        1,
+        "non-adjacent producer-forwarded target tests need one focused child"
+    );
     for anchor in [
         "live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets",
         "live_same_link_control_exposes_exact_producer_forwarded_target",
@@ -1974,6 +2055,30 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         assert!(
             !production_defines_exact_function(&root_code, anchor),
             "control-window test root still owns `{anchor}`"
+        );
+    }
+
+    assert!(nonadjacent_target_path.exists());
+    let nonadjacent_target = fs::read_to_string(&nonadjacent_target_path).unwrap();
+    let nonadjacent_target_code = rust_code_without_comments_and_literals(&nonadjacent_target);
+    assert!(include_macro_lines(&nonadjacent_target).is_empty());
+    assert!(
+        line_count(&nonadjacent_target_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_NONADJACENT_TARGET_TEST_LINES,
+        "producer_forwarded_target/nonadjacent.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_NONADJACENT_TARGET_TEST_LINES} lines"
+    );
+    for anchor in [
+        "nonadjacent_no_link_and_split_link_controls_use_exact_dependency_producer",
+        "nonadjacent_control_rejects_missing_or_ambiguous_dependency",
+        "recorded_nonadjacent_target_revalidates_after_data_head_retire",
+    ] {
+        assert!(
+            production_defines_exact_function(&nonadjacent_target_code, anchor),
+            "nonadjacent.rs is missing `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&producer_forwarded_target_code, anchor),
+            "producer_forwarded_target.rs still owns `{anchor}`"
         );
     }
 

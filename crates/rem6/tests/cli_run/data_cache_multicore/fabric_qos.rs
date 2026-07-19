@@ -36,7 +36,7 @@ fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
 
     for (policy, expected_grants, expected_selected, core1_x7, core2_x7) in [
         (Some("fifo"), &[0, 1, 2][..], &[0, 0, 0][..], "0x7", "0x3"),
-        (Some("lifo"), &[2, 1, 0][..], &[2, 1, 0][..], "0x3", "0x7"),
+        (Some("lifo"), &[2, 1, 0][..], &[2, 1, 0][..], "0x7", "0x3"),
         (
             Some("least-recently-granted"),
             &[0, 1, 2][..],
@@ -291,10 +291,6 @@ fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
             }
 
             assert!(!response_qos_activities.is_empty());
-            assert!(response_qos_activities.iter().all(|activity| {
-                activity["candidates"].as_array().unwrap().len() == 1
-                    && activity["selected_queue_index"].as_u64() == Some(0)
-            }));
             for activity in &response_qos_activities {
                 let candidates = activity["candidates"].as_array().unwrap();
                 let selected = activity["selected_queue_index"].as_u64().unwrap() as usize;
@@ -302,7 +298,7 @@ fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
                 assert!(selected < candidates.len());
                 match policy {
                     "fifo" => assert_eq!(selected, 0),
-                    "lifo" => assert_eq!(selected, 0),
+                    "lifo" => assert_eq!(selected, candidates.len() - 1),
                     "least-recently-granted" => assert!(!activity["lrg_requestors_after"]
                         .as_array()
                         .unwrap()

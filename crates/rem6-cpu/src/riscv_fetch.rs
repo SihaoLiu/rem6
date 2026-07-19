@@ -188,9 +188,28 @@ impl RiscvCore {
     }
 
     fn record_fetch_response(&self, delivery: ResponseDelivery) {
-        self.inner().record_response(delivery);
+        let recorded = self.inner().record_response_event(delivery);
         self.sync_in_order_fetch_state()
             .expect("fetch response sync preserves canonical pipeline state");
+        let Some(recorded) = recorded else {
+            return;
+        };
+        if recorded.kind() != crate::CpuFetchEventKind::Completed {
+            return;
+        }
+        let fetch_events = self.core.fetch_events();
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some()
+            || state.pending_fetch_prefix.is_some()
+            || crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&state.hart)
+        {
+            return;
+        }
+        crate::riscv_live_retire_window::stage_o3_producer_forwarded_control_descendant_for_response(
+            &mut state,
+            &fetch_events,
+            recorded.request_id(),
+        );
     }
 
     fn prepare_fetch(

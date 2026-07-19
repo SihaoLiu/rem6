@@ -13,6 +13,8 @@ mod mixed_kind;
 mod nested;
 #[path = "predicted_control/producer_forwarded_jalr.rs"]
 mod producer_forwarded_jalr;
+#[path = "predicted_control/producer_forwarded_lineage.rs"]
+mod producer_forwarded_lineage;
 #[path = "predicted_control/producer_forwarded_return.rs"]
 mod producer_forwarded_return;
 #[path = "predicted_control/producer_forwarded_scalar_return.rs"]

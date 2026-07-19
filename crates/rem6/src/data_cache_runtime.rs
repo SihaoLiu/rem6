@@ -30,6 +30,10 @@ use crate::runtime_memory::{
 };
 use crate::{execute_error, Rem6CliError};
 
+mod readiness;
+
+use readiness::{delay_target_outcome_until, CliDataCacheBacking, CliDataCacheLineFill};
+
 const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
 const LOWER_FILL_REQUEST_SEQUENCE_BASE: u64 = 1 << 62;
 const CLI_PREFETCH_TRANSLATION_PAGE_BYTES: u64 = 4096;
@@ -40,6 +44,7 @@ pub(super) struct CliDataCacheRuntime {
     harness: Arc<Mutex<CliDataCacheHarness>>,
     prefetch: Option<Arc<Mutex<CliDataCachePrefetchRuntime>>>,
     prefetch_fills: Arc<Mutex<u64>>,
+    line_ready_ticks: Arc<Mutex<BTreeMap<Address, u64>>>,
     records: Arc<Mutex<Vec<RiscvDataCacheRunRecord>>>,
     error: Arc<Mutex<Option<String>>>,
 }
@@ -491,6 +496,7 @@ impl CliDataCacheRuntime {
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             prefetch_fills: Arc::new(Mutex::new(0)),
+            line_ready_ticks: Arc::new(Mutex::new(BTreeMap::new())),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -520,6 +526,7 @@ impl CliDataCacheRuntime {
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             prefetch_fills: Arc::new(Mutex::new(0)),
+            line_ready_ticks: Arc::new(Mutex::new(BTreeMap::new())),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -549,6 +556,7 @@ impl CliDataCacheRuntime {
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             prefetch_fills: Arc::new(Mutex::new(0)),
+            line_ready_ticks: Arc::new(Mutex::new(BTreeMap::new())),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -576,6 +584,7 @@ impl CliDataCacheRuntime {
             }))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             prefetch_fills: Arc::new(Mutex::new(0)),
+            line_ready_ticks: Arc::new(Mutex::new(BTreeMap::new())),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -600,11 +609,12 @@ impl CliDataCacheRuntime {
         if request.line_layout() != self.layout {
             return None;
         }
-        let line_was_resident =
-            self.contains_line(self.layout.line_address(request.line_address()));
+        let line = self.layout.line_address(request.line_address());
+        let line_was_present = self.contains_line(line);
+        let line_was_ready = line_was_present && self.line_is_ready_at(line, tick);
         let should_record_demand_mshr_miss =
-            self.prefetch.is_some() && is_cache_prefetch_source(request) && !line_was_resident;
-        let backing_dram_access_count = self.ensure_backing(memory, lower_caches, tick, request)?;
+            self.prefetch.is_some() && is_cache_prefetch_source(request) && !line_was_ready;
+        let backing = self.ensure_backing(memory, lower_caches, tick, request)?;
         if should_record_demand_mshr_miss {
             if let Some(prefetch) = self.prefetch.as_ref() {
                 prefetch
@@ -620,7 +630,7 @@ impl CliDataCacheRuntime {
                 lower_caches,
                 start_tick: tick,
                 request,
-                backing_dram_access_count,
+                backing_dram_access_count: backing.dram_access_count,
                 response_mode: CliDataCacheResponseMode::External,
             })
             .unwrap_or_else(|error| {
@@ -630,7 +640,7 @@ impl CliDataCacheRuntime {
                     false,
                 )
             });
-        let missed_usable_state = line_was_resident && response.scheduled_miss;
+        let missed_usable_state = line_was_present && (!line_was_ready || response.scheduled_miss);
         let source_was_prefetched = match self.record_prefetch_use_from_response(
             request,
             &response.outcome,
@@ -651,7 +661,11 @@ impl CliDataCacheRuntime {
         ) {
             self.record_error(error);
         }
-        Some(response.outcome)
+        Some(delay_target_outcome_until(
+            response.outcome,
+            tick,
+            backing.ready_tick,
+        ))
     }
 
     pub(super) fn records(&self) -> Vec<RiscvDataCacheRunRecord> {
@@ -716,6 +730,11 @@ impl CliDataCacheRuntime {
                 harnesses.lines.clear();
             }
         }
+        drop(harness);
+        self.line_ready_ticks
+            .lock()
+            .expect("CLI data cache ready-tick lock")
+            .clear();
         if let Some(prefetch) = self.prefetch.as_ref() {
             prefetch
                 .lock()
@@ -731,26 +750,31 @@ impl CliDataCacheRuntime {
         lower_caches: &[CliDataCacheRuntime],
         tick: u64,
         request: &MemoryRequest,
-    ) -> Option<usize> {
+    ) -> Option<CliDataCacheBacking> {
         let line = self.layout.line_address(request.line_address());
         if self.contains_line(line) {
-            return Some(0);
+            return Some(CliDataCacheBacking {
+                dram_access_count: 0,
+                ready_tick: self
+                    .line_ready_tick(line)
+                    .map_or(tick, |ready_tick| ready_tick.max(tick)),
+            });
         }
 
-        let (data, dram_access_count) = match lower_caches.split_first() {
-            Some((lower_cache, remaining_lower_caches)) => (
-                lower_cache.read_line_for_upper_fill(
+        let (data, dram_access_count, ready_tick) = match lower_caches.split_first() {
+            Some((lower_cache, remaining_lower_caches)) => {
+                let fill = lower_cache.read_line_for_upper_fill(
                     memory,
                     remaining_lower_caches,
                     tick,
                     request,
-                )?,
-                0,
-            ),
-            None => (
-                memory.read_guest_cache_line_for_fill(line, self.layout, tick)?,
-                if memory.uses_dram() { 1 } else { 0 },
-            ),
+                )?;
+                (fill.data, 0, fill.ready_tick)
+            }
+            None => {
+                let fill = memory.read_guest_cache_line_for_fill(line, self.layout, tick)?;
+                (fill.data, usize::from(memory.uses_dram()), fill.ready_tick)
+            }
         };
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
@@ -802,7 +826,18 @@ impl CliDataCacheRuntime {
                 true
             }
         };
-        inserted.then_some(dram_access_count)
+        drop(harness);
+        if !inserted {
+            return None;
+        }
+        self.line_ready_ticks
+            .lock()
+            .expect("CLI data cache ready-tick lock")
+            .insert(line, ready_tick);
+        Some(CliDataCacheBacking {
+            dram_access_count,
+            ready_tick,
+        })
     }
 
     fn read_line_for_upper_fill(
@@ -811,7 +846,7 @@ impl CliDataCacheRuntime {
         lower_caches: &[CliDataCacheRuntime],
         tick: u64,
         upper_request: &MemoryRequest,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<CliDataCacheLineFill> {
         let line = self.layout.line_address(upper_request.line_address());
         let is_prefetch_fill = upper_request.operation() == MemoryOperation::PrefetchRead;
         let request = match lower_fill_request(upper_request, line, self.layout) {
@@ -824,14 +859,13 @@ impl CliDataCacheRuntime {
         if request.line_layout() != self.layout {
             return None;
         }
-        let backing_dram_access_count =
-            self.ensure_backing(memory, lower_caches, tick, &request)?;
+        let backing = self.ensure_backing(memory, lower_caches, tick, &request)?;
         if let Err(error) = self.respond_inner(CliDataCacheResponseContext {
             memory,
             lower_caches,
             start_tick: tick,
             request: &request,
-            backing_dram_access_count,
+            backing_dram_access_count: backing.dram_access_count,
             response_mode: CliDataCacheResponseMode::Internal,
         }) {
             self.record_error(error);
@@ -841,6 +875,10 @@ impl CliDataCacheRuntime {
             self.record_prefetch_fill();
         }
         self.cached_line_data(line, request.id().agent())
+            .map(|data| CliDataCacheLineFill {
+                data,
+                ready_tick: backing.ready_tick,
+            })
     }
 
     fn cached_line_data(&self, line: Address, agent: AgentId) -> Option<Vec<u8>> {
@@ -882,13 +920,27 @@ impl CliDataCacheRuntime {
         }
     }
 
+    fn line_ready_tick(&self, line: Address) -> Option<u64> {
+        self.line_ready_ticks
+            .lock()
+            .expect("CLI data cache ready-tick lock")
+            .get(&line)
+            .copied()
+    }
+
+    fn line_is_ready_at(&self, line: Address, tick: u64) -> bool {
+        self.line_ready_tick(line)
+            .is_none_or(|ready_tick| ready_tick <= tick)
+    }
+
     fn is_prefetch_candidate_backed(&self, memory: &CliMemoryRuntime, address: Address) -> bool {
         let line = self.layout.line_address(address);
         memory.read_guest_cache_line(line, self.layout).is_some()
     }
 
-    fn is_prefetch_candidate_resident(&self, address: Address) -> bool {
-        self.contains_line(self.layout.line_address(address))
+    fn is_prefetch_candidate_resident(&self, address: Address, tick: u64) -> bool {
+        let line = self.layout.line_address(address);
+        self.contains_line(line) && self.line_is_ready_at(line, tick)
     }
 
     fn respond_inner(
@@ -1227,13 +1279,13 @@ impl CliDataCacheRuntime {
                 self.layout,
                 source_was_prefetched,
                 |address| self.is_prefetch_candidate_backed(memory, address),
-                |address| self.is_prefetch_candidate_resident(address),
+                |address| self.is_prefetch_candidate_resident(address, tick),
             )?
         };
         for (issue, sequence) in issues {
             let issue_address = issue.address();
             let prefetch_request = prefetch_issue_request(issue, sequence, self.layout)?;
-            if let Some(backing_dram_access_count) =
+            if let Some(backing) =
                 self.ensure_backing(memory, lower_caches, tick, &prefetch_request)
             {
                 let _ = self.respond_inner(CliDataCacheResponseContext {
@@ -1241,7 +1293,7 @@ impl CliDataCacheRuntime {
                     lower_caches,
                     start_tick: tick,
                     request: &prefetch_request,
-                    backing_dram_access_count,
+                    backing_dram_access_count: backing.dram_access_count,
                     response_mode: CliDataCacheResponseMode::Internal,
                 })?;
                 self.record_prefetch_fill();
@@ -1341,8 +1393,13 @@ impl CliDataCachePrefetchRuntime {
                 continue;
             }
             let line = layout.line_address(address);
-            if candidate_is_resident(address) || self.issued_lines.contains(&line) {
+            if candidate_is_resident(address) {
                 redundant_lines.push(QueuedPrefetchRedundantLine::in_cache(
+                    line,
+                    candidate.secure(),
+                ));
+            } else if self.issued_lines.contains(&line) {
+                redundant_lines.push(QueuedPrefetchRedundantLine::in_miss_queue(
                     line,
                     candidate.secure(),
                 ));

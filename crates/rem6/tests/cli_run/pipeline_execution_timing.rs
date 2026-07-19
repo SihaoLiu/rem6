@@ -119,8 +119,8 @@ fn rem6_run_keeps_cache_fabric_dram_mul_invisible_through_execute_wait() {
         cores: 1,
         completed_tick_limit: 700,
         expected_execute_wait_cycles: 2,
-        expected_last_execute_wait_cycle: 25,
-        expected_last_execute_wait_tick: 17,
+        expected_last_execute_wait_cycle: 33,
+        expected_last_execute_wait_tick: 25,
     });
 }
 
