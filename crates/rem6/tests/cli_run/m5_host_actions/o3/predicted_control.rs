@@ -13,6 +13,8 @@ mod mixed_kind;
 mod nested;
 #[path = "predicted_control/producer_forwarded_jalr.rs"]
 mod producer_forwarded_jalr;
+#[path = "predicted_control/producer_forwarded_scalar_return.rs"]
+mod producer_forwarded_scalar_return;
 #[path = "predicted_control/same_link.rs"]
 mod same_link;
 #[path = "predicted_control/three_deep.rs"]

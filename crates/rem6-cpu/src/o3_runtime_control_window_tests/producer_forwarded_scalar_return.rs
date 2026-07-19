@@ -1,13 +1,16 @@
 use super::*;
 
-pub(super) fn recorded_same_link_scalar_runtime() -> (
+pub(super) fn recorded_linked_scalar_runtime(
+    target_source: u8,
+    link: u8,
+) -> (
     O3RuntimeState,
     O3ProducerForwardedControlTarget,
     O3ProducerForwardedScalarDescendant,
 ) {
     let (mut runtime, forwarded, consumer_sequence) =
-        super::same_link_return::recorded_x1_same_link_runtime();
-    let scalar = addi(13, 1, 0);
+        super::producer_forwarded_return::recorded_linked_runtime(target_source, link);
+    let scalar = addi(13, link, 0);
     let scalar_sequence = runtime
         .append_producer_forwarded_control_descendant(
             forwarded,
@@ -15,10 +18,10 @@ pub(super) fn recorded_same_link_scalar_runtime() -> (
             scalar,
             &[request(13)],
         )
-        .expect("same-link scalar descendant append");
+        .expect("linked-call scalar descendant append");
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x9000), scalar)
-        .expect("same-link scalar descendant candidate");
+        .expect("linked-call scalar descendant candidate");
     assert_eq!(candidate.sequence(), scalar_sequence);
     assert_eq!(candidate.producer_sequences(), &[consumer_sequence]);
     assert!(runtime
@@ -36,7 +39,7 @@ pub(super) fn recorded_same_link_scalar_runtime() -> (
         )
         .unwrap());
     let descendant = runtime
-        .producer_forwarded_same_link_scalar_descendant()
+        .producer_forwarded_scalar_descendant()
         .expect("typed producer-forwarded scalar lineage");
     assert_eq!(descendant.parent(), forwarded);
     assert_eq!(descendant.fetch_request(), request(13));
@@ -44,6 +47,14 @@ pub(super) fn recorded_same_link_scalar_runtime() -> (
     assert_eq!(descendant.sequential_pc(), Address::new(0x9004));
     assert_eq!(descendant.sequence(), scalar_sequence);
     (runtime, forwarded, descendant)
+}
+
+pub(super) fn recorded_x1_scalar_runtime() -> (
+    O3RuntimeState,
+    O3ProducerForwardedControlTarget,
+    O3ProducerForwardedScalarDescendant,
+) {
+    recorded_linked_scalar_runtime(1, 1)
 }
 
 pub(super) fn retire_data_head(runtime: &mut O3RuntimeState) {
@@ -54,19 +65,19 @@ pub(super) fn retire_data_head(runtime: &mut O3RuntimeState) {
 
 #[test]
 fn producer_forwarded_scalar_lineage_survives_successful_data_head_retirement() {
-    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+    let (mut runtime, _, descendant) = recorded_x1_scalar_runtime();
 
     retire_data_head(&mut runtime);
 
     assert_eq!(
-        runtime.producer_forwarded_same_link_scalar_descendant(),
+        runtime.producer_forwarded_scalar_descendant(),
         Some(descendant)
     );
 }
 
 #[test]
 fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
-    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+    let (mut runtime, _, descendant) = recorded_x1_scalar_runtime();
     let return_jump = jalr_return(1);
 
     assert_eq!(
@@ -112,12 +123,41 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
         )
         .unwrap());
     let returned = runtime
-        .producer_forwarded_same_link_return_descendant()
+        .producer_forwarded_return_descendant()
         .expect("scalar-sequential return lineage");
     assert_eq!(returned.parent(), descendant.parent());
     assert_eq!(returned.scalar_descendant(), Some(descendant));
     assert_eq!(returned.pc(), Address::new(0x9004));
     assert_eq!(returned.target(), Address::new(0x800c));
+}
+
+#[test]
+fn producer_forwarded_split_link_scalar_return_uses_link_destination() {
+    let (mut runtime, _, descendant) = recorded_linked_scalar_runtime(11, 5);
+    retire_data_head(&mut runtime);
+
+    let return_jump = jalr_return(5);
+    assert!(runtime
+        .append_producer_forwarded_scalar_return_descendant(
+            descendant,
+            Address::new(0x9004),
+            return_jump,
+            &[request(14)],
+        )
+        .is_some());
+}
+
+#[test]
+fn producer_forwarded_split_link_scalar_requires_link_dependency() {
+    let (_, forwarded, _) = super::producer_forwarded_return::recorded_linked_runtime(11, 5);
+
+    for scalar in [addi(13, 11, 0), addi(5, 5, 0)] {
+        assert_eq!(
+            forwarded.fetched_scalar_descendant(scalar, 4, &[request(13)]),
+            None,
+            "unexpected split-link scalar lineage for {scalar:?}"
+        );
+    }
 }
 
 #[test]
@@ -135,7 +175,7 @@ fn producer_forwarded_scalar_return_rejects_nonordinary_shapes() {
         (Address::new(0x9004), jalr_return(5)),
         (Address::new(0x9004), jalr_link(1, 1)),
     ] {
-        let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+        let (mut runtime, _, descendant) = recorded_x1_scalar_runtime();
         retire_data_head(&mut runtime);
         assert_eq!(
             runtime.append_producer_forwarded_scalar_return_descendant(
@@ -152,7 +192,7 @@ fn producer_forwarded_scalar_return_rejects_nonordinary_shapes() {
 
 #[test]
 fn producer_forwarded_scalar_lineage_fails_closed_after_identity_change() {
-    let (mut runtime, _, descendant) = recorded_same_link_scalar_runtime();
+    let (mut runtime, _, descendant) = recorded_x1_scalar_runtime();
     retire_data_head(&mut runtime);
     runtime
         .live_speculative_executions
@@ -161,10 +201,7 @@ fn producer_forwarded_scalar_lineage_fails_closed_after_identity_change() {
         .expect("scalar execution")
         .consumed_requests = vec![request(99)];
 
-    assert_eq!(
-        runtime.producer_forwarded_same_link_scalar_descendant(),
-        None
-    );
+    assert_eq!(runtime.producer_forwarded_scalar_descendant(), None);
     assert_eq!(
         runtime.append_producer_forwarded_scalar_return_descendant(
             descendant,

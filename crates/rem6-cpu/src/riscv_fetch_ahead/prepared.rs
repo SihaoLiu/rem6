@@ -17,7 +17,7 @@ impl ProducerForwardedScalarContinuation {
         state: &RiscvCoreState,
         parent: crate::o3_runtime::O3ProducerForwardedControlTarget,
     ) -> Option<Self> {
-        if !parent.supports_same_link_descendants()
+        if parent.link_destination().is_none()
             || state.branch_lookahead < 2
             || detailed_o3::recorded_predicted_pc(
                 state,
@@ -59,11 +59,7 @@ impl ProducerForwardedScalarContinuation {
                 return Some(retained);
             }
         }
-        if state
-            .o3_runtime
-            .producer_forwarded_same_link_scalar_descendant()
-            != Some(descendant)
-        {
+        if state.o3_runtime.producer_forwarded_scalar_descendant() != Some(descendant) {
             return None;
         }
         let parent = descendant.parent();
@@ -74,10 +70,7 @@ impl ProducerForwardedScalarContinuation {
 
     fn matches_live(&self, state: &RiscvCoreState) -> bool {
         self.descendant.is_some_and(|descendant| {
-            state
-                .o3_runtime
-                .producer_forwarded_same_link_scalar_descendant()
-                == Some(descendant)
+            state.o3_runtime.producer_forwarded_scalar_descendant() == Some(descendant)
         }) && self.matches_parent_ras(state)
     }
 
@@ -289,10 +282,8 @@ impl PreparedRiscvFetchAheadSpeculation {
             return;
         }
         if let Some(descendant) = speculation.producer_forwarded_return_descendant {
-            let live_descendant = state
-                .o3_runtime
-                .producer_forwarded_same_link_return_descendant()
-                == Some(descendant);
+            let live_descendant =
+                state.o3_runtime.producer_forwarded_return_descendant() == Some(descendant);
             let retained_descendant = state
                 .producer_forwarded_scalar_continuation
                 .as_ref()

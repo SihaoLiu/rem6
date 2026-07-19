@@ -13,14 +13,14 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 mod coroutine;
 #[path = "o3_runtime_control_window_tests/lifecycle.rs"]
 mod lifecycle;
+#[path = "o3_runtime_control_window_tests/producer_forwarded_chain_validation.rs"]
+mod producer_forwarded_chain_validation;
+#[path = "o3_runtime_control_window_tests/producer_forwarded_return.rs"]
+mod producer_forwarded_return;
+#[path = "o3_runtime_control_window_tests/producer_forwarded_scalar_return.rs"]
+mod producer_forwarded_scalar_return;
 #[path = "o3_runtime_control_window_tests/producer_forwarded_target.rs"]
 mod producer_forwarded_target;
-#[path = "o3_runtime_control_window_tests/same_link_return.rs"]
-mod same_link_return;
-#[path = "o3_runtime_control_window_tests/same_link_scalar_return.rs"]
-mod same_link_scalar_return;
-#[path = "o3_runtime_control_window_tests/same_link_validation.rs"]
-mod same_link_validation;
 
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {

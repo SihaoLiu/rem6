@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn o3_checkpoint_restore_discards_retained_scalar_authority() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     record_call_and_scalar(&core);
     assert!(core
         .state

@@ -31,6 +31,7 @@ mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
 mod producer_forwarded_return;
 mod producer_forwarded_scalar_return;
+mod producer_forwarded_scalar_return_link_shapes;
 mod selected;
 mod speculative_history;
 

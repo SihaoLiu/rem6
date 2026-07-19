@@ -813,10 +813,7 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
         issue_tick,
     )
     .expect("producer-forwarded control descendant writeback reservation");
-    if let Some(descendant) = state
-        .o3_runtime
-        .producer_forwarded_same_link_scalar_descendant()
-    {
+    if let Some(descendant) = state.o3_runtime.producer_forwarded_scalar_descendant() {
         let continuation = crate::riscv_fetch_ahead::ProducerForwardedScalarContinuation::capture(
             state, descendant,
         );
@@ -861,7 +858,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
         return false;
     };
     let instruction = returned.decoded().instruction();
-    if crate::o3_runtime::o3_exact_link_return_source(instruction) != Some(parent.source())
+    if crate::o3_runtime::o3_exact_link_return_source(instruction) != parent.link_destination()
         || state
             .o3_runtime
             .append_producer_forwarded_scalar_return_descendant(

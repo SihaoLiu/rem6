@@ -266,7 +266,7 @@ impl RiscvCore {
         let producer_forwarded_return_descendant = live_control_sequence.is_some_and(|sequence| {
             state
                 .o3_runtime
-                .has_recorded_producer_forwarded_same_link_return_descendant(sequence)
+                .has_recorded_producer_forwarded_return_descendant(sequence)
         });
         let retained_producer_forwarded_return = state
             .producer_forwarded_scalar_continuation

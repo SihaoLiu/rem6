@@ -137,6 +137,45 @@ pub(super) fn assert_no_fetch_pc(json: &Value, pc: &str) {
     );
 }
 
+pub(super) fn assert_control_prediction(event: &Value, target: &str) {
+    assert_eq!(
+        event
+            .pointer("/branch_predicted_target")
+            .and_then(Value::as_str),
+        Some(target),
+        "missing predicted target {target}: {event}"
+    );
+    assert_eq!(
+        event
+            .pointer("/branch_resolved_target")
+            .and_then(Value::as_str),
+        Some(target),
+        "wrong resolved target {target}: {event}"
+    );
+    assert_eq!(
+        event.pointer("/branch_repair").and_then(Value::as_str),
+        Some("none")
+    );
+    for field in ["branch_predicted_taken", "branch_resolved_taken"] {
+        assert_eq!(
+            event.pointer(&format!("/{field}")).and_then(Value::as_bool),
+            Some(true),
+            "expected taken control field {field}: {event}"
+        );
+    }
+    for field in [
+        "branch_wrong_target",
+        "branch_mispredicted",
+        "branch_squash",
+    ] {
+        assert_eq!(
+            event.pointer(&format!("/{field}")).and_then(Value::as_bool),
+            Some(false),
+            "unexpected control repair field {field}: {event}"
+        );
+    }
+}
+
 pub(super) fn fetch_count_at_pc(json: &Value, pc: &str) -> usize {
     json.pointer("/debug/fetch_trace")
         .and_then(Value::as_array)

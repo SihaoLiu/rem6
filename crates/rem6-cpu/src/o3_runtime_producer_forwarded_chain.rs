@@ -11,7 +11,7 @@ pub(crate) struct O3ProducerForwardedControlTarget {
     consumer_sequence: u64,
     producer_sequence: u64,
     ready_tick: u64,
-    source: rem6_isa_riscv::Register,
+    target_source: rem6_isa_riscv::Register,
     target: Address,
 }
 
@@ -25,7 +25,7 @@ impl O3ProducerForwardedControlTarget {
             && self.instruction == other.instruction
             && self.consumer_sequence == other.consumer_sequence
             && self.producer_sequence == other.producer_sequence
-            && self.source == other.source
+            && self.target_source == other.target_source
             && self.target == other.target
     }
 
@@ -65,19 +65,17 @@ impl O3ProducerForwardedControlTarget {
         self.ready_tick
     }
 
-    pub(crate) const fn source(self) -> rem6_isa_riscv::Register {
-        self.source
+    pub(crate) const fn target_source(self) -> rem6_isa_riscv::Register {
+        self.target_source
     }
 
     pub(crate) const fn target(self) -> Address {
         self.target
     }
 
-    pub(crate) fn supports_same_link_descendants(self) -> bool {
-        o3_live_control_operands(self.instruction()).is_some_and(|control| {
-            control.kind() == BranchTargetKind::CallIndirect
-                && control.destination() == Some(self.source())
-        })
+    pub(crate) fn link_destination(self) -> Option<rem6_isa_riscv::Register> {
+        let control = o3_live_control_operands(self.instruction())?;
+        (control.kind() == BranchTargetKind::CallIndirect).then_some(control.destination())?
     }
 
     pub(crate) fn fetched_scalar_descendant(
@@ -86,10 +84,11 @@ impl O3ProducerForwardedControlTarget {
         instruction_bytes: u8,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<O3ProducerForwardedScalarDescendant> {
+        let link = self.link_destination()?;
         let (destination, sources) = o3_predicted_scalar_descendant_operands(instruction)?;
         if destination.is_zero()
-            || destination == self.source()
-            || !sources.contains(&self.source())
+            || destination == link
+            || !sources.contains(&link)
             || !valid_live_speculative_fetch_identity(consumed_requests)
         {
             return None;
@@ -170,7 +169,7 @@ impl O3ProducerForwardedScalarDescendant {
         instruction_bytes: u8,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<O3ProducerForwardedReturnDescendant> {
-        if o3_exact_link_return_source(instruction) != Some(self.parent().source())
+        if o3_exact_link_return_source(instruction) != self.parent().link_destination()
             || !valid_live_speculative_fetch_identity(consumed_requests)
         {
             return None;
@@ -408,7 +407,7 @@ impl O3RuntimeState {
             consumer_sequence,
             producer_sequence,
             ready_tick: producer_execution.admitted_writeback_tick,
-            source: rs1,
+            target_source: rs1,
             target: Address::new(target),
         })
     }
@@ -493,9 +492,7 @@ impl O3RuntimeState {
                     consumer_sequence,
                 )
             })?;
-        if !parent.supports_same_link_descendants() {
-            return None;
-        }
+        parent.link_destination()?;
         let recorded = self
             .live_staged_fetch_identities
             .get(&consumer_sequence)?
@@ -544,11 +541,12 @@ impl O3RuntimeState {
             return None;
         }
         let (entry, issued) = self.producer_forwarded_descendant_rows(return_sequence)?;
+        let link = parent.link_destination()?;
         if entry.pc() != expected_pc
             || entry.destination().is_some()
             || entry.rename_destination().is_some()
             || issued.producer_sequences.as_slice() != [parent.consumer_sequence()]
-            || o3_exact_link_return_source(issued.execution.instruction()) != Some(parent.source())
+            || o3_exact_link_return_source(issued.execution.instruction()) != Some(link)
             || Address::new(issued.execution.pc()) != expected_pc
             || Address::new(issued.execution.next_pc()) != parent.sequential_pc()
             || !issued.execution.register_writes().is_empty()
@@ -595,8 +593,8 @@ impl O3RuntimeState {
         ))
     }
 
-    pub(super) fn record_producer_forwarded_same_link_return_descendant(&mut self) -> bool {
-        let Some(descendant) = self.producer_forwarded_same_link_return_descendant() else {
+    pub(super) fn record_producer_forwarded_return_descendant(&mut self) -> bool {
+        let Some(descendant) = self.producer_forwarded_return_descendant() else {
             return false;
         };
         let Some(identity) = self
@@ -605,28 +603,25 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        identity.record_producer_forwarded_return_descendant(descendant);
+        identity.record_forwarded_return_identity(descendant);
         true
     }
 
-    pub(crate) fn has_recorded_producer_forwarded_same_link_return_descendant(
-        &self,
-        sequence: u64,
-    ) -> bool {
+    pub(crate) fn has_recorded_producer_forwarded_return_descendant(&self, sequence: u64) -> bool {
         self.live_staged_fetch_identities
             .get(&sequence)
-            .and_then(O3LiveStagedFetchIdentity::producer_forwarded_return_descendant)
+            .and_then(O3LiveStagedFetchIdentity::forwarded_return_identity)
             .is_some()
     }
 
-    pub(crate) fn producer_forwarded_same_link_return_descendant(
+    pub(crate) fn producer_forwarded_return_descendant(
         &self,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
-        self.direct_producer_forwarded_same_link_return_descendant()
+        self.direct_producer_forwarded_return_descendant()
             .or_else(|| self.producer_forwarded_scalar_return_descendant())
     }
 
-    fn direct_producer_forwarded_same_link_return_descendant(
+    fn direct_producer_forwarded_return_descendant(
         &self,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
         if self.live_data_access_younger_sequences.len() != 3 {
@@ -645,7 +640,7 @@ impl O3RuntimeState {
         )
     }
 
-    fn producer_forwarded_same_link_scalar_descendant_for_sequences(
+    fn producer_forwarded_scalar_descendant_for_sequences(
         &self,
         producer_sequence: u64,
         consumer_sequence: u64,
@@ -658,13 +653,14 @@ impl O3RuntimeState {
         if !self.producer_forwarded_control_descendant_sequence(parent, scalar_sequence) {
             return None;
         }
+        let link = parent.link_destination()?;
         let (entry, issued) = self.producer_forwarded_descendant_rows(scalar_sequence)?;
         let (destination, sources) =
             o3_predicted_scalar_descendant_operands(issued.execution.instruction())?;
         if entry.pc() != parent.target()
             || destination.is_zero()
-            || destination == parent.source()
-            || !sources.contains(&parent.source())
+            || destination == link
+            || !sources.contains(&link)
             || entry.rename_destination()
                 != Some((O3RegisterClass::Integer, u32::from(destination.index())))
             || issued.producer_sequences.as_slice() != [consumer_sequence]
@@ -695,14 +691,14 @@ impl O3RuntimeState {
         })
     }
 
-    pub(crate) fn producer_forwarded_same_link_scalar_descendant(
+    pub(crate) fn producer_forwarded_scalar_descendant(
         &self,
     ) -> Option<O3ProducerForwardedScalarDescendant> {
         if self.live_data_access_younger_sequences.len() != 3 {
             return None;
         }
         let mut sequences = self.live_data_access_younger_sequences.iter().copied();
-        self.producer_forwarded_same_link_scalar_descendant_for_sequences(
+        self.producer_forwarded_scalar_descendant_for_sequences(
             sequences.next()?,
             sequences.next()?,
             sequences.next()?,
@@ -719,7 +715,7 @@ impl O3RuntimeState {
         if !self.live_data_accesses.is_empty() {
             return None;
         }
-        let descendant = self.producer_forwarded_same_link_scalar_descendant()?;
+        let descendant = self.producer_forwarded_scalar_descendant()?;
         let retirement_tick = self.last_live_commit_tick?;
         let producer = self
             .live_speculative_executions
@@ -745,7 +741,7 @@ impl O3RuntimeState {
     ) -> Option<u64> {
         if self.producer_forwarded_scalar_return_issue_context()?.0 != descendant
             || pc != descendant.sequential_pc()
-            || o3_exact_link_return_source(instruction) != Some(descendant.parent().source())
+            || o3_exact_link_return_source(instruction) != descendant.parent().link_destination()
             || self.live_data_accesses.len() + self.live_data_access_younger_sequences.len()
                 >= self.scalar_memory_window_limit
         {
@@ -780,7 +776,7 @@ impl O3RuntimeState {
             return None;
         }
         let mut sequences = self.live_data_access_younger_sequences.iter().copied();
-        let scalar_descendant = self.producer_forwarded_same_link_scalar_descendant_for_sequences(
+        let scalar_descendant = self.producer_forwarded_scalar_descendant_for_sequences(
             sequences.next()?,
             sequences.next()?,
             sequences.next()?,
@@ -799,9 +795,7 @@ impl O3RuntimeState {
         retire_tick: u64,
     ) -> bool {
         if self.live_data_accesses.len() != 1
-            || self
-                .producer_forwarded_same_link_scalar_descendant()
-                .is_none()
+            || self.producer_forwarded_scalar_descendant().is_none()
             || self
                 .snapshot
                 .reorder_buffer
@@ -819,9 +813,7 @@ impl O3RuntimeState {
 
     #[cfg(test)]
     pub(crate) fn producer_forwarded_scalar_return_issue_tick_for_test(&self) -> Option<u64> {
-        let sequence = self
-            .producer_forwarded_same_link_return_descendant()?
-            .sequence();
+        let sequence = self.producer_forwarded_return_descendant()?.sequence();
         self.live_speculative_executions
             .iter()
             .find(|issued| issued.sequence == sequence)
@@ -829,7 +821,7 @@ impl O3RuntimeState {
     }
 
     #[cfg(test)]
-    pub(crate) fn replace_same_link_chain_fetch_identity_for_test(
+    pub(crate) fn replace_producer_forwarded_chain_fetch_identity_for_test(
         &mut self,
         sequence: u64,
         consumed_requests: &[MemoryRequestId],

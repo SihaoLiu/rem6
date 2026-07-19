@@ -40,45 +40,6 @@ fn live_same_link_return_binary(name: &str, link: u8) -> std::path::PathBuf {
     finish_control_window_binary(name, words, DATA_START as usize, [42, 0, 0, 0])
 }
 
-pub(super) fn assert_control_prediction(event: &Value, target: &str) {
-    assert_eq!(
-        event
-            .pointer("/branch_predicted_target")
-            .and_then(Value::as_str),
-        Some(target),
-        "missing predicted target {target}: {event}"
-    );
-    assert_eq!(
-        event
-            .pointer("/branch_resolved_target")
-            .and_then(Value::as_str),
-        Some(target),
-        "wrong resolved target {target}: {event}"
-    );
-    assert_eq!(
-        event.pointer("/branch_repair").and_then(Value::as_str),
-        Some("none")
-    );
-    for field in ["branch_predicted_taken", "branch_resolved_taken"] {
-        assert_eq!(
-            event.pointer(&format!("/{field}")).and_then(Value::as_bool),
-            Some(true),
-            "expected taken control field {field}: {event}"
-        );
-    }
-    for field in [
-        "branch_wrong_target",
-        "branch_mispredicted",
-        "branch_squash",
-    ] {
-        assert_eq!(
-            event.pointer(&format!("/{field}")).and_then(Value::as_bool),
-            Some(false),
-            "unexpected control repair field {field}: {event}"
-        );
-    }
-}
-
 fn assert_live_same_link_return(case: SameLinkCase) {
     let path = live_same_link_return_binary(
         &format!("o3-live-same-link-return-{}", case.label),

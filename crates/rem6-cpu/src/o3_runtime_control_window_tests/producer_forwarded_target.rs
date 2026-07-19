@@ -64,9 +64,12 @@ fn live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets(
         let forwarded = runtime
             .producer_forwarded_control_target()
             .unwrap_or_else(|| panic!("missing destination x{destination} target authority"));
-        assert_eq!(forwarded.source(), reg(11));
+        assert_eq!(forwarded.target_source(), reg(11));
         assert_eq!(forwarded.target(), Address::new(0x9000));
-        assert!(!forwarded.supports_same_link_descendants());
+        assert_eq!(
+            forwarded.link_destination(),
+            (destination != 0).then(|| reg(destination))
+        );
 
         runtime
             .live_speculative_executions
@@ -157,9 +160,9 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
     assert_eq!(forwarded.sequential_pc(), Address::new(0x800c));
     assert_eq!(forwarded.consumer_sequence(), consumer_sequence);
     assert_eq!(forwarded.producer_sequence(), producer_sequence);
-    assert_eq!(forwarded.source(), reg(1));
+    assert_eq!(forwarded.target_source(), reg(1));
     assert_eq!(forwarded.target(), Address::new(0x9000));
-    assert!(forwarded.supports_same_link_descendants());
+    assert_eq!(forwarded.link_destination(), Some(reg(1)));
     assert!(
         runtime.record_producer_forwarded_control_target(forwarded, BranchSpeculationId::new(1),)
     );

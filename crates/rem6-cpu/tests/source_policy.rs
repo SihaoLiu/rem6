@@ -8,14 +8,15 @@ const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize = 225;
-const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES: usize = 180;
-const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES: usize = 200;
-const MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES: usize = 225;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 240;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 850;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 120;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
@@ -1499,12 +1500,12 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
     let producer_forwarded_target_path =
         crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_target.rs");
-    let same_link_return_path =
-        crate_dir.join("src/o3_runtime_control_window_tests/same_link_return.rs");
-    let same_link_scalar_return_path =
-        crate_dir.join("src/o3_runtime_control_window_tests/same_link_scalar_return.rs");
-    let same_link_validation_path =
-        crate_dir.join("src/o3_runtime_control_window_tests/same_link_validation.rs");
+    let producer_forwarded_return_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_return.rs");
+    let producer_forwarded_scalar_return_path =
+        crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_scalar_return.rs");
+    let producer_forwarded_chain_validation_path = crate_dir
+        .join("src/o3_runtime_control_window_tests/producer_forwarded_chain_validation.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let root_code = rust_code_without_comments_and_literals(&root);
     let root_include_lines = include_macro_lines(&root);
@@ -1534,30 +1535,43 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     assert_eq!(
         path_owned_module_declaration_count(
             &root,
-            "o3_runtime_control_window_tests/same_link_return.rs",
-            "same_link_return",
+            "o3_runtime_control_window_tests/producer_forwarded_return.rs",
+            "producer_forwarded_return",
         ),
         1,
-        "control-window same-link return tests must have exactly one attached path-owned child declaration"
+        "control-window producer-forwarded return tests must have exactly one attached path-owned child declaration"
     );
     assert_eq!(
         path_owned_module_declaration_count(
             &root,
-            "o3_runtime_control_window_tests/same_link_scalar_return.rs",
-            "same_link_scalar_return",
+            "o3_runtime_control_window_tests/producer_forwarded_scalar_return.rs",
+            "producer_forwarded_scalar_return",
         ),
         1,
-        "control-window same-link scalar-return tests must have exactly one attached path-owned child declaration"
+        "control-window producer-forwarded scalar-return tests must have exactly one attached path-owned child declaration"
     );
     assert_eq!(
         path_owned_module_declaration_count(
             &root,
-            "o3_runtime_control_window_tests/same_link_validation.rs",
-            "same_link_validation",
+            "o3_runtime_control_window_tests/producer_forwarded_chain_validation.rs",
+            "producer_forwarded_chain_validation",
         ),
         1,
-        "control-window same-link validation tests must have exactly one attached path-owned child declaration"
+        "control-window producer-forwarded chain validation tests must have exactly one attached path-owned child declaration"
     );
+    for legacy in [
+        "same_link_return.rs",
+        "same_link_scalar_return.rs",
+        "same_link_validation.rs",
+    ] {
+        assert!(
+            !crate_dir
+                .join("src/o3_runtime_control_window_tests")
+                .join(legacy)
+                .exists(),
+            "obsolete same-link test owner still exists: {legacy}"
+        );
+    }
     assert!(
         line_count(&root_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES,
         "src/o3_runtime_control_window_tests.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES} lines"
@@ -1642,27 +1656,28 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     }
 
     assert!(
-        same_link_return_path.exists(),
-        "producer-forwarded return tests belong in src/o3_runtime_control_window_tests/same_link_return.rs"
+        producer_forwarded_return_path.exists(),
+        "producer-forwarded return tests belong in their focused owner"
     );
-    let same_link_return = fs::read_to_string(&same_link_return_path).unwrap();
-    let same_link_return_code = rust_code_without_comments_and_literals(&same_link_return);
+    let producer_forwarded_return = fs::read_to_string(&producer_forwarded_return_path).unwrap();
+    let producer_forwarded_return_code =
+        rust_code_without_comments_and_literals(&producer_forwarded_return);
     assert!(
-        include_macro_lines(&same_link_return).is_empty(),
-        "same_link_return.rs must not inline hidden test fragments"
+        include_macro_lines(&producer_forwarded_return).is_empty(),
+        "producer_forwarded_return.rs must not inline hidden test fragments"
     );
     assert!(
-        line_count(&same_link_return_path)
-            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES,
-        "same_link_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_RETURN_TEST_LINES} lines"
+        line_count(&producer_forwarded_return_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES,
+        "producer_forwarded_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES} lines"
     );
     for anchor in [
-        "producer_forwarded_same_link_call_appends_target_return",
-        "producer_forwarded_same_link_call_rejects_nonordinary_target_controls",
-        "producer_forwarded_same_link_call_appends_return_after_data_head_retires",
+        "producer_forwarded_linked_calls_append_target_returns",
+        "producer_forwarded_linked_call_rejects_nonordinary_target_controls",
+        "producer_forwarded_split_link_call_appends_return_after_data_head_retires",
     ] {
         assert!(
-            production_defines_exact_function(&same_link_return_code, anchor),
+            production_defines_exact_function(&producer_forwarded_return_code, anchor),
             "missing exact test definition `{anchor}`"
         );
         assert!(
@@ -1672,29 +1687,32 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     }
 
     assert!(
-        same_link_scalar_return_path.exists(),
-        "producer-forwarded scalar-return tests belong in src/o3_runtime_control_window_tests/same_link_scalar_return.rs"
+        producer_forwarded_scalar_return_path.exists(),
+        "producer-forwarded scalar-return tests belong in their focused owner"
     );
-    let same_link_scalar_return = fs::read_to_string(&same_link_scalar_return_path).unwrap();
-    let same_link_scalar_return_code =
-        rust_code_without_comments_and_literals(&same_link_scalar_return);
+    let producer_forwarded_scalar_return =
+        fs::read_to_string(&producer_forwarded_scalar_return_path).unwrap();
+    let producer_forwarded_scalar_return_code =
+        rust_code_without_comments_and_literals(&producer_forwarded_scalar_return);
     assert!(
-        include_macro_lines(&same_link_scalar_return).is_empty(),
-        "same_link_scalar_return.rs must not inline hidden test fragments"
+        include_macro_lines(&producer_forwarded_scalar_return).is_empty(),
+        "producer_forwarded_scalar_return.rs must not inline hidden test fragments"
     );
     assert!(
-        line_count(&same_link_scalar_return_path)
-            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES,
-        "same_link_scalar_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_SCALAR_RETURN_TEST_LINES} lines"
+        line_count(&producer_forwarded_scalar_return_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES,
+        "producer_forwarded_scalar_return.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES} lines"
     );
     for anchor in [
         "producer_forwarded_scalar_lineage_survives_successful_data_head_retirement",
         "producer_forwarded_scalar_return_waits_for_data_head_retirement",
+        "producer_forwarded_split_link_scalar_return_uses_link_destination",
+        "producer_forwarded_split_link_scalar_requires_link_dependency",
         "producer_forwarded_scalar_return_rejects_nonordinary_shapes",
         "producer_forwarded_scalar_lineage_fails_closed_after_identity_change",
     ] {
         assert!(
-            production_defines_exact_function(&same_link_scalar_return_code, anchor),
+            production_defines_exact_function(&producer_forwarded_scalar_return_code, anchor),
             "missing exact scalar-return runtime test definition `{anchor}`"
         );
         assert!(
@@ -1704,19 +1722,21 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     }
 
     assert!(
-        same_link_validation_path.exists(),
-        "same-link chain validation tests belong in src/o3_runtime_control_window_tests/same_link_validation.rs"
+        producer_forwarded_chain_validation_path.exists(),
+        "producer-forwarded chain validation tests belong in their focused owner"
     );
-    let same_link_validation = fs::read_to_string(&same_link_validation_path).unwrap();
-    let same_link_validation_code = rust_code_without_comments_and_literals(&same_link_validation);
+    let producer_forwarded_chain_validation =
+        fs::read_to_string(&producer_forwarded_chain_validation_path).unwrap();
+    let producer_forwarded_chain_validation_code =
+        rust_code_without_comments_and_literals(&producer_forwarded_chain_validation);
     assert!(
-        include_macro_lines(&same_link_validation).is_empty(),
-        "same_link_validation.rs must not inline hidden test fragments"
+        include_macro_lines(&producer_forwarded_chain_validation).is_empty(),
+        "producer_forwarded_chain_validation.rs must not inline hidden test fragments"
     );
     assert!(
-        line_count(&same_link_validation_path)
-            <= MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES,
-        "same_link_validation.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_SAME_LINK_VALIDATION_TEST_LINES} lines"
+        line_count(&producer_forwarded_chain_validation_path)
+            <= MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES,
+        "producer_forwarded_chain_validation.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES} lines"
     );
     for anchor in [
         "direct_return_requires_dependency_and_window_membership",
@@ -1726,8 +1746,8 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         "scalar_return_requires_dependency_window_and_fetch_identity",
     ] {
         assert!(
-            production_defines_exact_function(&same_link_validation_code, anchor),
-            "missing exact same-link validation test definition `{anchor}`"
+            production_defines_exact_function(&producer_forwarded_chain_validation_code, anchor),
+            "missing exact producer-forwarded validation test definition `{anchor}`"
         );
         assert!(
             !production_defines_exact_function(&root_code, anchor),
@@ -1750,6 +1770,8 @@ fn producer_forwarded_chain_authority_stays_focused() {
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return.rs");
     let scalar_fetch_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs");
+    let scalar_fetch_link_shapes_test_path = crate_dir
+        .join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return_link_shapes.rs");
     let chain_validation_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs");
     let control_validation_test_path =
@@ -1839,7 +1861,8 @@ fn producer_forwarded_chain_authority_stays_focused() {
         );
     }
     let runtime_functions = [
-        "supports_same_link_descendants",
+        "target_source",
+        "link_destination",
         "producer_forwarded_control_target",
         "retained_producer_forwarded_control_target",
         "producer_forwarded_control_target_with_completed",
@@ -1854,12 +1877,12 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "producer_forwarded_control_descendant_sequence",
         "producer_forwarded_return_descendant_for_sequence",
         "producer_forwarded_descendant_issue_context",
-        "record_producer_forwarded_same_link_return_descendant",
-        "has_recorded_producer_forwarded_same_link_return_descendant",
-        "producer_forwarded_same_link_return_descendant",
-        "direct_producer_forwarded_same_link_return_descendant",
-        "producer_forwarded_same_link_scalar_descendant_for_sequences",
-        "producer_forwarded_same_link_scalar_descendant",
+        "record_producer_forwarded_return_descendant",
+        "has_recorded_producer_forwarded_return_descendant",
+        "producer_forwarded_return_descendant",
+        "direct_producer_forwarded_return_descendant",
+        "producer_forwarded_scalar_descendant_for_sequences",
+        "producer_forwarded_scalar_descendant",
         "producer_forwarded_scalar_return_issue_context",
         "append_producer_forwarded_scalar_return_descendant",
         "producer_forwarded_scalar_return_descendant",
@@ -1880,8 +1903,8 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "producer_forwarded_descendant_rows",
         "producer_forwarded_control_descendant_sequence",
         "producer_forwarded_return_descendant_for_sequence",
-        "direct_producer_forwarded_same_link_return_descendant",
-        "producer_forwarded_same_link_scalar_descendant_for_sequences",
+        "direct_producer_forwarded_return_descendant",
+        "producer_forwarded_scalar_descendant_for_sequences",
         "producer_forwarded_scalar_return_descendant",
     ] {
         assert!(
@@ -1899,7 +1922,7 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "consumer_sequence",
         "producer_sequence",
         "ready_tick",
-        "source",
+        "target_source",
         "target",
         "parent",
         "scalar_descendant",
@@ -1913,7 +1936,7 @@ fn producer_forwarded_chain_authority_stays_focused() {
     for test_only in [
         "retire_producer_forwarded_data_head_for_test",
         "producer_forwarded_scalar_return_issue_tick_for_test",
-        "replace_same_link_chain_fetch_identity_for_test",
+        "replace_producer_forwarded_chain_fetch_identity_for_test",
     ] {
         assert!(
             !production_defines_exact_function(&runtime, test_only),
@@ -1926,11 +1949,24 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "producer-forwarded chain internals must remain private except for the runtime recording hook"
     );
     assert!(
-        runtime.contains(
-            "pub(super) fn record_producer_forwarded_same_link_return_descendant(&mut self)"
-        ),
+        runtime.contains("pub(super) fn record_producer_forwarded_return_descendant(&mut self)"),
         "the one sibling-visible chain item must be the runtime recording hook"
     );
+    for legacy in [
+        "supports_same_link_descendants",
+        "record_producer_forwarded_same_link_return_descendant",
+        "has_recorded_producer_forwarded_same_link_return_descendant",
+        "producer_forwarded_same_link_return_descendant",
+        "direct_producer_forwarded_same_link_return_descendant",
+        "producer_forwarded_same_link_scalar_descendant",
+        "producer_forwarded_same_link_scalar_descendant_for_sequences",
+        "replace_same_link_chain_fetch_identity_for_test",
+    ] {
+        assert!(
+            !production_defines_exact_function(&runtime, legacy),
+            "obsolete same-link chain API remains: `{legacy}`"
+        );
+    }
     let mut legacy_module_owners = Vec::new();
     for path in rust_source_files(&crate_dir.join("src")) {
         let relative = path.strip_prefix(crate_dir).unwrap();
@@ -2095,6 +2131,13 @@ fn producer_forwarded_chain_authority_stays_focused() {
         1,
         "fetch-ahead tests must attach producer_forwarded_scalar_return exactly once"
     );
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_scalar_return_link_shapes;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach producer_forwarded_scalar_return_link_shapes exactly once"
+    );
     assert!(include_macro_lines(&fs::read_to_string(&scalar_fetch_test_path).unwrap()).is_empty());
     assert!(
         line_count(&scalar_fetch_test_path)
@@ -2115,7 +2158,6 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "prepared_scalar_continuation_survives_parent_commit_before_apply",
         "scalar_stage_retains_authority_before_continuation_decision_is_prepared",
         "retired_data_head_opens_scalar_sequential_fetch",
-        "retired_data_head_admits_scalar_sequential_return_prediction",
         "branch_lookahead_one_does_not_stage_scalar_sequential_return",
         "stale_ras_does_not_stage_scalar_sequential_return",
         "incorrect_parent_resolution_discards_retained_scalar_authority",
@@ -2128,6 +2170,24 @@ fn producer_forwarded_chain_authority_stays_focused() {
             "missing exact scalar-return fetch test definition `{anchor}`"
         );
     }
+    assert!(scalar_fetch_link_shapes_test_path.exists());
+    let scalar_fetch_link_shapes_source =
+        fs::read_to_string(&scalar_fetch_link_shapes_test_path).unwrap();
+    assert!(include_macro_lines(&scalar_fetch_link_shapes_source).is_empty());
+    assert!(
+        line_count(&scalar_fetch_link_shapes_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES,
+        "producer_forwarded_scalar_return_link_shapes.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES} lines"
+    );
+    let scalar_fetch_link_shapes_test =
+        rust_code_without_comments_and_literals(&scalar_fetch_link_shapes_source);
+    assert!(
+        production_defines_exact_function(
+            &scalar_fetch_link_shapes_test,
+            "retired_data_head_admits_same_and_split_link_scalar_return_predictions",
+        ),
+        "missing exact scalar-return link-shape fetch test definition"
+    );
     let checkpoint_test = rust_code_without_comments_and_literals(
         &fs::read_to_string(&checkpoint_test_path).unwrap(),
     );

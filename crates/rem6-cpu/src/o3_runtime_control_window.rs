@@ -308,7 +308,7 @@ impl O3RuntimeState {
                 writeback_slot,
                 execution,
             });
-        self.record_producer_forwarded_same_link_return_descendant();
+        self.record_producer_forwarded_return_descendant();
         Ok(true)
     }
 

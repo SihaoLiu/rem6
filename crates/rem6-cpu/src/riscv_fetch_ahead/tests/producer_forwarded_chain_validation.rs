@@ -10,7 +10,7 @@ fn assert_prepared_return_was_rejected(core: &RiscvCore) {
 
 #[test]
 fn direct_return_apply_fails_closed_after_fetch_identity_changes() {
-    let core = super::producer_forwarded_return::live_same_link_return_core(2);
+    let core = super::producer_forwarded_return::live_x1_return_core(2);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     let call_prepared = core
         .prepare_fetch_ahead_speculation(&call_decision)
@@ -27,16 +27,14 @@ fn direct_return_apply_fails_closed_after_fetch_identity_changes() {
         let mut state = core.state.lock().expect("riscv core lock");
         let sequence = state
             .o3_runtime
-            .producer_forwarded_same_link_return_descendant()
+            .producer_forwarded_return_descendant()
             .unwrap()
             .sequence();
         assert!(state
             .o3_runtime
-            .replace_same_link_chain_fetch_identity_for_test(sequence, &[request(99)]));
+            .replace_producer_forwarded_chain_fetch_identity_for_test(sequence, &[request(99)]));
         assert_eq!(
-            state
-                .o3_runtime
-                .producer_forwarded_same_link_return_descendant(),
+            state.o3_runtime.producer_forwarded_return_descendant(),
             None
         );
     }
@@ -47,29 +45,27 @@ fn direct_return_apply_fails_closed_after_fetch_identity_changes() {
 
 #[test]
 fn scalar_return_apply_fails_closed_after_fetch_identity_changes() {
-    let core = super::producer_forwarded_scalar_return::scalar_return_core(2, true);
+    let core = super::producer_forwarded_scalar_return::scalar_return_core(2, true, 1, 1);
     super::producer_forwarded_scalar_return::record_call_and_scalar(&core);
     super::producer_forwarded_scalar_return::retire_data_head(&core, 30);
     let return_decision = core.next_pending_data_fetch_ahead(false).unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&return_decision)
         .unwrap()
-        .expect("same-link scalar return preparation");
+        .expect("linked-call scalar return preparation");
 
     {
         let mut state = core.state.lock().expect("riscv core lock");
         let sequence = state
             .o3_runtime
-            .producer_forwarded_same_link_return_descendant()
+            .producer_forwarded_return_descendant()
             .unwrap()
             .sequence();
         assert!(state
             .o3_runtime
-            .replace_same_link_chain_fetch_identity_for_test(sequence, &[request(99)]));
+            .replace_producer_forwarded_chain_fetch_identity_for_test(sequence, &[request(99)]));
         assert_eq!(
-            state
-                .o3_runtime
-                .producer_forwarded_same_link_return_descendant(),
+            state.o3_runtime.producer_forwarded_return_descendant(),
             None
         );
     }

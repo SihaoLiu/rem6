@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn live_same_link_return_core(branch_lookahead: usize) -> RiscvCore {
+pub(super) fn live_x1_return_core(branch_lookahead: usize) -> RiscvCore {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
     let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
     let call_raw = i_type(0, 1, 0x0, 1, 0x67);
@@ -82,7 +82,7 @@ pub(super) fn live_same_link_return_core(branch_lookahead: usize) -> RiscvCore {
 
 #[test]
 fn pending_data_gate_admits_producer_forwarded_call_target_return() {
-    let core = live_same_link_return_core(2);
+    let core = live_x1_return_core(2);
     let call_decision = core
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link call decision");
@@ -105,7 +105,7 @@ fn pending_data_gate_admits_producer_forwarded_call_target_return() {
 
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() {
-    let core = live_same_link_return_core(2);
+    let core = live_x1_return_core(2);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -120,7 +120,7 @@ fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() 
         let mut state = core.state.lock().expect("riscv core lock");
         let parent_sequence = state
             .o3_runtime
-            .producer_forwarded_same_link_return_descendant()
+            .producer_forwarded_return_descendant()
             .unwrap()
             .parent()
             .consumer_sequence();
@@ -139,7 +139,7 @@ fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() 
 
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
-    let core = live_same_link_return_core(2);
+    let core = live_x1_return_core(2);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -166,7 +166,7 @@ fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
 
 #[test]
 fn branch_lookahead_one_does_not_stage_producer_forwarded_return() {
-    let core = live_same_link_return_core(1);
+    let core = live_x1_return_core(1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -178,9 +178,7 @@ fn branch_lookahead_one_does_not_stage_producer_forwarded_return() {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
     assert_eq!(
-        state
-            .o3_runtime
-            .producer_forwarded_same_link_return_descendant(),
+        state.o3_runtime.producer_forwarded_return_descendant(),
         None
     );
 }

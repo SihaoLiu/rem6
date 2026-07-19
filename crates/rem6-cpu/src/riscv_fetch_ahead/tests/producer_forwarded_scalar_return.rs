@@ -1,11 +1,16 @@
 use super::*;
 
-pub(super) fn scalar_return_core(branch_lookahead: usize, with_return_fetch: bool) -> RiscvCore {
+pub(super) fn scalar_return_core(
+    branch_lookahead: usize,
+    with_return_fetch: bool,
+    target_source: u8,
+    link_destination: u8,
+) -> RiscvCore {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
-    let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
-    let call_raw = i_type(0, 1, 0x0, 1, 0x67);
-    let scalar_raw = i_type(0, 1, 0x0, 13, 0x13);
-    let return_raw = i_type(0, 1, 0x0, 0, 0x67);
+    let producer_raw = i_type(0, 11, 0x0, target_source, 0x13);
+    let call_raw = i_type(0, target_source, 0x0, link_destination, 0x67);
+    let scalar_raw = i_type(0, link_destination, 0x0, 13, 0x13);
+    let return_raw = i_type(0, link_destination, 0x0, 0, 0x67);
     let producer = RiscvInstruction::decode(producer_raw).unwrap();
     let call = RiscvInstruction::decode(call_raw).unwrap();
     let mut fetches = vec![
@@ -52,7 +57,7 @@ pub(super) fn scalar_return_core(branch_lookahead: usize, with_return_fetch: boo
                     0x8004,
                     0x8008,
                     vec![rem6_isa_riscv::RegisterWrite::new(
-                        Register::new(1).unwrap(),
+                        Register::new(target_source).unwrap(),
                         0x9000,
                     )],
                     None,
@@ -74,7 +79,7 @@ pub(super) fn scalar_return_core(branch_lookahead: usize, with_return_fetch: boo
                     0x8008,
                     0x9000,
                     vec![rem6_isa_riscv::RegisterWrite::new(
-                        Register::new(1).unwrap(),
+                        Register::new(link_destination).unwrap(),
                         0x800c,
                     )],
                     None,
@@ -101,7 +106,7 @@ pub(super) fn record_call_and_scalar(core: &RiscvCore) {
     let state = core.state.lock().expect("riscv core lock");
     assert!(state
         .o3_runtime
-        .producer_forwarded_same_link_scalar_descendant()
+        .producer_forwarded_scalar_descendant()
         .is_some());
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
 }
@@ -115,7 +120,7 @@ pub(super) fn retire_data_head(core: &RiscvCore, retire_tick: u64) {
 
 #[test]
 fn live_data_head_allows_scalar_sequential_fetch_but_not_return_row() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -130,16 +135,14 @@ fn live_data_head_allows_scalar_sequential_fetch_but_not_return_row() {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
     assert_eq!(
-        state
-            .o3_runtime
-            .producer_forwarded_same_link_return_descendant(),
+        state.o3_runtime.producer_forwarded_return_descendant(),
         None
     );
 }
 
 #[test]
 fn pending_data_gate_allows_typed_scalar_sequential_fetch() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -155,7 +158,7 @@ fn pending_data_gate_allows_typed_scalar_sequential_fetch() {
 
 #[test]
 fn scalar_continuation_preparation_holds_lineage_while_fetch_is_pending() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -195,7 +198,7 @@ fn scalar_continuation_preparation_holds_lineage_while_fetch_is_pending() {
 
 #[test]
 fn committed_scalar_continuation_retains_exact_return_authority() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -250,7 +253,7 @@ fn committed_scalar_continuation_retains_exact_return_authority() {
 
 #[test]
 fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -282,7 +285,7 @@ fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
 
 #[test]
 fn committed_call_seed_reconstructs_already_executed_scalar_return_authority() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -310,7 +313,7 @@ fn committed_call_seed_reconstructs_already_executed_scalar_return_authority() {
 
 #[test]
 fn full_lookahead_at_call_recording_retains_later_scalar_return_authority() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&call_decision)
@@ -347,7 +350,7 @@ fn full_lookahead_at_call_recording_retains_later_scalar_return_authority() {
 
 #[test]
 fn prepared_scalar_continuation_survives_parent_commit_before_apply() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -394,7 +397,7 @@ fn prepared_scalar_continuation_survives_parent_commit_before_apply() {
 
 #[test]
 fn scalar_stage_retains_authority_before_continuation_decision_is_prepared() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -440,7 +443,7 @@ fn scalar_stage_retains_authority_before_continuation_decision_is_prepared() {
 
 #[test]
 fn retired_data_head_opens_scalar_sequential_fetch() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
 
@@ -454,32 +457,8 @@ fn retired_data_head_opens_scalar_sequential_fetch() {
 }
 
 #[test]
-fn retired_data_head_admits_scalar_sequential_return_prediction() {
-    let core = scalar_return_core(2, true);
-    record_call_and_scalar(&core);
-    retire_data_head(&core, 30);
-
-    let decision = core
-        .next_pending_data_fetch_ahead(false)
-        .expect("scalar-sequential return decision");
-    assert_eq!(decision.pc(), Address::new(0x800c));
-    let speculation = decision.branch_speculation().unwrap();
-    assert_eq!(speculation.pc(), Address::new(0x9004));
-    assert_eq!(speculation.target(), Some(Address::new(0x800c)));
-    assert!(speculation.producer_forwarded_return_descendant.is_some());
-    let state = core.state.lock().expect("riscv core lock");
-    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
-    assert!(state
-        .o3_runtime
-        .producer_forwarded_same_link_return_descendant()
-        .unwrap()
-        .scalar_descendant()
-        .is_some());
-}
-
-#[test]
 fn scalar_return_issue_waits_for_data_head_retirement_tick() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 90);
     assert!(core.next_pending_data_fetch_ahead(false).is_some());
@@ -494,7 +473,7 @@ fn scalar_return_issue_waits_for_data_head_retirement_tick() {
 
 #[test]
 fn branch_lookahead_one_does_not_stage_scalar_sequential_return() {
-    let core = scalar_return_core(1, true);
+    let core = scalar_return_core(1, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
 
@@ -503,16 +482,14 @@ fn branch_lookahead_one_does_not_stage_scalar_sequential_return() {
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
     assert_eq!(
-        state
-            .o3_runtime
-            .producer_forwarded_same_link_return_descendant(),
+        state.o3_runtime.producer_forwarded_return_descendant(),
         None
     );
 }
 
 #[test]
 fn stale_ras_does_not_stage_scalar_sequential_return() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
     {
@@ -532,7 +509,7 @@ fn stale_ras_does_not_stage_scalar_sequential_return() {
 
 #[test]
 fn incorrect_parent_resolution_discards_retained_scalar_authority() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     record_call_and_scalar(&core);
     let mut state = core.state.lock().expect("riscv core lock");
     assert!(state.producer_forwarded_scalar_continuation.is_some());
@@ -546,7 +523,7 @@ fn incorrect_parent_resolution_discards_retained_scalar_authority() {
 
 #[test]
 fn branch_checkpoint_restore_discards_retained_scalar_authority() {
-    let core = scalar_return_core(2, false);
+    let core = scalar_return_core(2, false, 1, 1);
     record_call_and_scalar(&core);
     assert!(core
         .state
@@ -570,7 +547,7 @@ fn branch_checkpoint_restore_discards_retained_scalar_authority() {
 
 #[test]
 fn scalar_return_apply_fails_closed_after_scalar_lineage_changes() {
-    let core = scalar_return_core(2, true);
+    let core = scalar_return_core(2, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
     let return_decision = core.next_pending_data_fetch_ahead(false).unwrap();
@@ -581,7 +558,7 @@ fn scalar_return_apply_fails_closed_after_scalar_lineage_changes() {
         let mut state = core.state.lock().expect("riscv core lock");
         let scalar_sequence = state
             .o3_runtime
-            .producer_forwarded_same_link_return_descendant()
+            .producer_forwarded_return_descendant()
             .unwrap()
             .scalar_descendant()
             .unwrap()

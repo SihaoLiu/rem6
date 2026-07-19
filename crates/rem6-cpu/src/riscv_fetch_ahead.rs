@@ -1481,7 +1481,7 @@ fn direct_jump_fetch_ahead_target(
             let target = o3_live_control_operands(instruction)?.indirect_target()?;
             if fetch_pc != forwarded.pc()
                 || instruction != forwarded.instruction()
-                || target.source() != forwarded.source()
+                || target.source() != forwarded.target_source()
             {
                 return None;
             }

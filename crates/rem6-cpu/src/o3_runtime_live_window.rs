@@ -43,13 +43,13 @@ impl O3LiveStagedFetchIdentity {
     ) -> Option<O3ProducerForwardedControlTarget> {
         self.producer_forwarded_control_target
     }
-    pub(super) fn record_producer_forwarded_return_descendant(
+    pub(super) fn record_forwarded_return_identity(
         &mut self,
         descendant: O3ProducerForwardedReturnDescendant,
     ) {
         self.producer_forwarded_return_descendant = Some(descendant);
     }
-    pub(super) const fn producer_forwarded_return_descendant(
+    pub(super) const fn forwarded_return_identity(
         &self,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
         self.producer_forwarded_return_descendant
@@ -122,8 +122,8 @@ impl O3RuntimeState {
         let sources = match scalar {
             Some((destination, sources)) if live_data_head && !destination.is_zero() => sources,
             Some(_) => return None,
-            None if o3_exact_link_return_source(instruction) == Some(authority.source()) => {
-                vec![authority.source()]
+            None if o3_exact_link_return_source(instruction) == authority.link_destination() => {
+                vec![authority.link_destination()?]
             }
             None => return None,
         };

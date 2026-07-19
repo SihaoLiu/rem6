@@ -426,9 +426,7 @@ fn producer_forwarded_return_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> Option<DetailedFetchAheadCandidate> {
-    let descendant = state
-        .o3_runtime
-        .producer_forwarded_same_link_return_descendant()?;
+    let descendant = state.o3_runtime.producer_forwarded_return_descendant()?;
     let target_authority = PredictedControlTargetAuthority::ProducerForwardedReturn(descendant);
     Some(
         match recorded_predicted_pc(
@@ -470,9 +468,7 @@ fn producer_forwarded_scalar_continuation_fetch_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> Option<DetailedFetchAheadCandidate> {
-    let descendant = state
-        .o3_runtime
-        .producer_forwarded_same_link_scalar_descendant()?;
+    let descendant = state.o3_runtime.producer_forwarded_scalar_descendant()?;
     let parent = descendant.parent();
     let target_authority = PredictedControlTargetAuthority::ProducerForwarded(parent);
     if recorded_predicted_pc(
@@ -1130,7 +1126,7 @@ pub(crate) fn recorded_predicted_pc(
                 == Some(forwarded);
             let scalar_head = state
                 .o3_runtime
-                .producer_forwarded_same_link_scalar_descendant()
+                .producer_forwarded_scalar_descendant()
                 .is_some_and(|descendant| descendant.parent() == forwarded);
             if (!live_head && !retired_head && !scalar_head)
                 || !producer_forwarded_control_speculation_matches(
@@ -1149,10 +1145,8 @@ pub(crate) fn recorded_predicted_pc(
             }
         }
         PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => {
-            let live_descendant = state
-                .o3_runtime
-                .producer_forwarded_same_link_return_descendant()
-                == Some(descendant);
+            let live_descendant =
+                state.o3_runtime.producer_forwarded_return_descendant() == Some(descendant);
             let retained_descendant = state
                 .producer_forwarded_scalar_continuation
                 .as_ref()

@@ -119,11 +119,11 @@ impl RiscvCore {
         );
         let has_producer_forwarded_return = state
             .o3_runtime
-            .producer_forwarded_same_link_return_descendant()
+            .producer_forwarded_return_descendant()
             .is_some();
         let has_producer_forwarded_scalar = state
             .o3_runtime
-            .producer_forwarded_same_link_scalar_descendant()
+            .producer_forwarded_scalar_descendant()
             .is_some();
         if staged_producer_forwarded_descendant
             && !has_producer_forwarded_return

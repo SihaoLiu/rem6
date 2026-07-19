@@ -1,28 +1,35 @@
 use super::*;
 
+const PREDICTED_CONTROL_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control.rs";
 const SAME_LINK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/predicted_control/same_link.rs";
 const RETURN_CHILD: &str =
     "tests/cli_run/m5_host_actions/o3/predicted_control/same_link/return_descendant.rs";
 const SCALAR_RETURN_CHILD: &str =
-    "tests/cli_run/m5_host_actions/o3/predicted_control/same_link/scalar_return.rs";
+    "tests/cli_run/m5_host_actions/o3/predicted_control/producer_forwarded_scalar_return.rs";
 
 #[test]
 fn producer_forwarded_return_cli_evidence_has_one_focused_owner() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join(SAME_LINK_ROOT);
+    let predicted_root_path = crate_dir.join(PREDICTED_CONTROL_ROOT);
     let child_path = crate_dir.join(RETURN_CHILD);
     let scalar_child_path = crate_dir.join(SCALAR_RETURN_CHILD);
     let root = fs::read_to_string(&root_path).unwrap();
+    let predicted_root = fs::read_to_string(&predicted_root_path).unwrap();
     let child = fs::read_to_string(&child_path).unwrap();
     let scalar_child = fs::read_to_string(&scalar_child_path).unwrap();
     let root_syntax = syn::parse_file(&root).unwrap();
+    let predicted_root_syntax = syn::parse_file(&predicted_root).unwrap();
     let child_syntax = syn::parse_file(&child).unwrap();
     let scalar_child_syntax = syn::parse_file(&scalar_child).unwrap();
     let root_functions = top_level_function_names(SAME_LINK_ROOT, &root);
+    let predicted_root_functions =
+        top_level_function_names(PREDICTED_CONTROL_ROOT, &predicted_root);
     let child_functions = top_level_function_names(RETURN_CHILD, &child);
     let scalar_child_functions = top_level_function_names(SCALAR_RETURN_CHILD, &scalar_child);
 
     for (relative, syntax) in [
+        (PREDICTED_CONTROL_ROOT, &predicted_root_syntax),
         (SAME_LINK_ROOT, &root_syntax),
         (RETURN_CHILD, &child_syntax),
         (SCALAR_RETURN_CHILD, &scalar_child_syntax),
@@ -44,14 +51,24 @@ fn producer_forwarded_return_cli_evidence_has_one_focused_owner() {
         "{SAME_LINK_ROOT} must attach return_descendant exactly once"
     );
     assert!(
-        module_has_path_attribute(&root, "scalar_return", "same_link/scalar_return.rs"),
-        "{SAME_LINK_ROOT} must attach the scalar-return child"
+        module_has_path_attribute(
+            &predicted_root,
+            "producer_forwarded_scalar_return",
+            "predicted_control/producer_forwarded_scalar_return.rs",
+        ),
+        "{PREDICTED_CONTROL_ROOT} must attach the scalar-return child"
     );
     assert_eq!(
-        root.matches("mod scalar_return;").count(),
+        predicted_root
+            .matches("mod producer_forwarded_scalar_return;")
+            .count(),
         1,
-        "{SAME_LINK_ROOT} must attach scalar_return exactly once"
+        "{PREDICTED_CONTROL_ROOT} must attach producer_forwarded_scalar_return exactly once"
     );
+    assert!(!root.contains("mod scalar_return;"));
+    assert!(!crate_dir
+        .join("tests/cli_run/m5_host_actions/o3/predicted_control/same_link/scalar_return.rs")
+        .exists());
     assert!(
         line_count(&root_path) <= 600,
         "{SAME_LINK_ROOT} is oversized"
@@ -63,7 +80,7 @@ fn producer_forwarded_return_cli_evidence_has_one_focused_owner() {
         "{RETURN_CHILD} is oversized"
     );
     assert!(
-        line_count(&scalar_child_path) <= 240,
+        line_count(&scalar_child_path) <= 380,
         "{SCALAR_RETURN_CHILD} is oversized"
     );
     for anchor in [
@@ -88,8 +105,10 @@ fn producer_forwarded_return_cli_evidence_has_one_focused_owner() {
         );
     }
     for anchor in [
-        "rem6_run_o3_live_same_link_scalar_returns_cover_link_and_route_diagonal",
-        "rem6_run_o3_live_same_link_scalar_return_lookahead_one_keeps_return_unfetched",
+        "rem6_run_o3_producer_forwarded_scalar_returns_cover_link_shape_route_matrix",
+        "rem6_run_o3_producer_forwarded_scalar_return_lookahead_one_keeps_return_unfetched",
+        "rem6_run_o3_producer_forwarded_scalar_return_rejects_non_link_scalar",
+        "rem6_run_timing_suppresses_o3_producer_forwarded_scalar_returns",
     ] {
         assert_eq!(
             scalar_child_functions
@@ -99,14 +118,19 @@ fn producer_forwarded_return_cli_evidence_has_one_focused_owner() {
             1,
             "{SCALAR_RETURN_CHILD} must own exactly one `fn {anchor}` definition"
         );
-        assert_eq!(
-            root_functions
-                .iter()
-                .filter(|function| function.as_str() == anchor)
-                .count(),
-            0,
-            "{SAME_LINK_ROOT} must not own `fn {anchor}`"
-        );
+        for (relative, functions) in [
+            (SAME_LINK_ROOT, &root_functions),
+            (PREDICTED_CONTROL_ROOT, &predicted_root_functions),
+        ] {
+            assert_eq!(
+                functions
+                    .iter()
+                    .filter(|function| function.as_str() == anchor)
+                    .count(),
+                0,
+                "{relative} must not own `fn {anchor}`"
+            );
+        }
     }
 }
 
