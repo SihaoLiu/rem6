@@ -274,39 +274,63 @@ impl PreparedRiscvFetchAheadSpeculation {
         let Some(speculation) = speculation else {
             return;
         };
-        let producer_forwarded_parent = speculation.producer_forwarded_control_target;
+        let target_authority = speculation.target_authority();
+        let producer_forwarded_parent = match target_authority {
+            detailed_o3::PredictedControlTargetAuthority::ProducerForwarded(parent) => Some(parent),
+            detailed_o3::PredictedControlTargetAuthority::Normal
+            | detailed_o3::PredictedControlTargetAuthority::ProducerForwardedReturn(_)
+            | detailed_o3::PredictedControlTargetAuthority::RasRequired { .. } => None,
+        };
         if state
             .branch_speculations
             .contains_key(&speculation.sequence)
         {
             return;
         }
-        if let Some(descendant) = speculation.producer_forwarded_return_descendant {
-            let live_descendant =
-                state.o3_runtime.producer_forwarded_return_descendant() == Some(descendant);
-            let retained_descendant = state
-                .producer_forwarded_scalar_continuation
-                .as_ref()
-                .is_some_and(|continuation| continuation.matches_return_identity(descendant));
-            if (!live_descendant && !retained_descendant)
-                || speculation.sequence != descendant.fetch_request().sequence()
-                || speculation.pc != descendant.pc()
-                || detailed_o3::unconsumed_producer_forwarded_return_target(
-                    state,
-                    descendant.pc(),
-                    descendant.instruction(),
-                    descendant,
-                ) != speculation.target
-            {
-                return;
+        match target_authority {
+            detailed_o3::PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => {
+                let live_descendant =
+                    state.o3_runtime.producer_forwarded_return_descendant() == Some(descendant);
+                let retained_descendant = state
+                    .producer_forwarded_scalar_continuation
+                    .as_ref()
+                    .is_some_and(|continuation| continuation.matches_return_identity(descendant));
+                if (!live_descendant && !retained_descendant)
+                    || speculation.sequence != descendant.fetch_request().sequence()
+                    || speculation.pc != descendant.pc()
+                    || detailed_o3::unconsumed_producer_forwarded_return_target(
+                        state,
+                        descendant.pc(),
+                        descendant.instruction(),
+                        descendant,
+                    ) != speculation.target
+                {
+                    return;
+                }
             }
+            detailed_o3::PredictedControlTargetAuthority::RasRequired {
+                push_sequence,
+                pushed_address,
+                consumer,
+            } if detailed_o3::unconsumed_ras_required_target(
+                state,
+                push_sequence,
+                pushed_address,
+                consumer,
+            ) != speculation.target =>
+            {
+                return
+            }
+            detailed_o3::PredictedControlTargetAuthority::Normal
+            | detailed_o3::PredictedControlTargetAuthority::ProducerForwarded(_)
+            | detailed_o3::PredictedControlTargetAuthority::RasRequired { .. } => {}
         }
         let prediction = state.branch_predictor.predict_speculative_with_prediction(
             speculation.pc,
             speculation.predicted_taken,
             speculation.target,
         );
-        if let Some(forwarded) = speculation.producer_forwarded_control_target {
+        if let Some(forwarded) = producer_forwarded_parent {
             if !state
                 .o3_runtime
                 .record_producer_forwarded_control_target(forwarded, prediction.id())

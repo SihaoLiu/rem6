@@ -244,11 +244,12 @@ fn committed_scalar_continuation_retains_exact_return_authority() {
     let speculation = decision.branch_speculation().unwrap();
     assert_eq!(speculation.pc(), Address::new(0x9004));
     assert_eq!(speculation.target(), Some(Address::new(0x800c)));
-    assert!(speculation
-        .producer_forwarded_return_descendant
-        .unwrap()
-        .scalar_descendant()
-        .is_some());
+    let PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) =
+        speculation.target_authority()
+    else {
+        panic!("expected producer-forwarded scalar-return authority");
+    };
+    assert!(descendant.scalar_descendant().is_some());
 }
 
 #[test]
@@ -276,11 +277,12 @@ fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
     let speculation = decision.branch_speculation().unwrap();
     assert_eq!(speculation.pc(), Address::new(0x9004));
     assert_eq!(speculation.target(), Some(Address::new(0x800c)));
-    assert!(speculation
-        .producer_forwarded_return_descendant
-        .unwrap()
-        .scalar_descendant()
-        .is_some());
+    let PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) =
+        speculation.target_authority()
+    else {
+        panic!("expected retained producer-forwarded scalar-return authority");
+    };
+    assert!(descendant.scalar_descendant().is_some());
 }
 
 #[test]

@@ -26,6 +26,19 @@ fn detailed_linked_control_core(
     core
 }
 
+fn producer_forwarded_target(
+    decision: &RiscvFetchAheadDecision,
+) -> crate::o3_runtime::O3ProducerForwardedControlTarget {
+    let authority = decision
+        .branch_speculation()
+        .expect("producer-forwarded branch speculation")
+        .target_authority();
+    let PredictedControlTargetAuthority::ProducerForwarded(forwarded) = authority else {
+        panic!("expected producer-forwarded target authority");
+    };
+    forwarded
+}
+
 pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvCpuExecutionEvent) {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
     let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
@@ -209,7 +222,7 @@ fn recorded_producer_forwarded_target_rejects_unmarked_same_target_speculation()
         .branch_speculation
         .as_mut()
         .expect("same-link decision has speculation")
-        .producer_forwarded_control_target = None;
+        .target_authority = PredictedControlTargetAuthority::Normal;
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&ordinary).unwrap(),
     );
@@ -239,11 +252,7 @@ fn producer_forwarded_speculation_apply_fails_closed_after_authority_invalidatio
     let decision = core
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link decision");
-    let consumer_sequence = decision
-        .branch_speculation()
-        .and_then(|speculation| speculation.producer_forwarded_control_target)
-        .expect("producer-forwarded authority")
-        .consumer_sequence();
+    let consumer_sequence = producer_forwarded_target(&decision).consumer_sequence();
     let prepared = core.prepare_fetch_ahead_speculation(&decision).unwrap();
 
     load.set_data_access_event_kind(crate::RiscvDataAccessEventKind::Completed);
@@ -328,10 +337,7 @@ fn completed_producer_forwarded_authority_closes_when_load_event_is_taken() {
     let decision = core
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link decision");
-    let forwarded = decision
-        .branch_speculation()
-        .and_then(|speculation| speculation.producer_forwarded_control_target)
-        .expect("producer-forwarded authority");
+    let forwarded = producer_forwarded_target(&decision);
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&decision).unwrap(),
     );
@@ -364,11 +370,7 @@ fn failed_load_response_closes_recorded_producer_forwarded_authority() {
     let decision = core
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link decision");
-    let consumer_sequence = decision
-        .branch_speculation()
-        .and_then(|speculation| speculation.producer_forwarded_control_target)
-        .expect("producer-forwarded authority")
-        .consumer_sequence();
+    let consumer_sequence = producer_forwarded_target(&decision).consumer_sequence();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&decision).unwrap(),
     );

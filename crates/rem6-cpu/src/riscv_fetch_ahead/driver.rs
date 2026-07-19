@@ -7,8 +7,9 @@ use crate::{riscv_data_issue::mmio_request, CpuFetchEventKind, RiscvCore, RiscvC
 use super::{
     can_retire_completed_fetch_with_branch_speculations, completed_fetch_window, detailed_o3,
     fetch_ahead_decision, hart_has_enabled_pending_interrupt, next_fetch_ahead_candidate,
-    preview_selected_branch_speculation, PreparedRiscvFetchAheadSpeculation,
-    ProducerForwardedScalarContinuation, RiscvFetchAheadDecision,
+    preview_selected_branch_speculation, PredictedControlTargetAuthority,
+    PreparedRiscvFetchAheadSpeculation, ProducerForwardedScalarContinuation,
+    RiscvFetchAheadDecision,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,19 +26,13 @@ impl RiscvCore {
         )
     }
 
-    pub(crate) fn next_producer_forwarded_fetch_ahead_before_retire(
-        &self,
-    ) -> Option<RiscvFetchAheadDecision> {
-        producer_forwarded_control_decision(self.next_fetch_ahead_before_retire())
-    }
-
     pub(crate) fn next_pending_data_fetch_ahead(
         &self,
         pending_data_blocks_new_work: bool,
     ) -> Option<RiscvFetchAheadDecision> {
         if pending_data_blocks_new_work {
             (!self.has_pending_fetch())
-                .then(|| self.next_producer_forwarded_fetch_ahead_before_retire())
+                .then(|| producer_forwarded_control_decision(self.next_fetch_ahead_before_retire()))
                 .flatten()
         } else {
             self.next_fetch_ahead_before_retire()
@@ -66,13 +61,6 @@ impl RiscvCore {
         self.next_fetch_ahead_before_retire_with_translation(translated)
     }
 
-    pub(crate) fn next_mmio_aware_producer_forwarded_fetch_ahead_before_retire(
-        &self,
-        bus: &MmioBus,
-    ) -> Option<RiscvFetchAheadDecision> {
-        producer_forwarded_control_decision(self.next_mmio_aware_fetch_ahead_before_retire(bus))
-    }
-
     pub(crate) fn next_pending_data_mmio_fetch_ahead(
         &self,
         bus: &MmioBus,
@@ -80,7 +68,11 @@ impl RiscvCore {
     ) -> Option<RiscvFetchAheadDecision> {
         if pending_data_blocks_new_work {
             (!self.has_pending_fetch())
-                .then(|| self.next_mmio_aware_producer_forwarded_fetch_ahead_before_retire(bus))
+                .then(|| {
+                    producer_forwarded_control_decision(
+                        self.next_mmio_aware_fetch_ahead_before_retire(bus),
+                    )
+                })
                 .flatten()
         } else {
             self.next_mmio_aware_fetch_ahead_before_retire(bus)
@@ -387,8 +379,11 @@ fn producer_forwarded_control_decision(
     decision.filter(|decision| {
         decision.producer_forwarded_scalar_continuation.is_some()
             || decision.branch_speculation().is_some_and(|speculation| {
-                speculation.producer_forwarded_control_target.is_some()
-                    || speculation.producer_forwarded_return_descendant.is_some()
+                matches!(
+                    speculation.target_authority(),
+                    PredictedControlTargetAuthority::ProducerForwarded(_)
+                        | PredictedControlTargetAuthority::ProducerForwardedReturn(_)
+                )
             })
     })
 }

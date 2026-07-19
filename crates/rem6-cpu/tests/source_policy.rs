@@ -14,7 +14,9 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LIN
 const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 850;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 120;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES: usize = 100;
+const MAX_RISCV_FETCH_AHEAD_RAS_REQUIRED_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
@@ -661,27 +663,55 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
     let driver = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/driver.rs")).unwrap(),
     );
+    let fetch = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead.rs")).unwrap(),
+    );
     let drive =
         production_rust_source(&fs::read_to_string(crate_dir.join("src/riscv_drive.rs")).unwrap());
     let cluster = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/riscv_cluster.rs")).unwrap(),
     );
-    let direct_filter = "next_producer_forwarded_fetch_ahead_before_retire";
-    let mmio_filter = "next_mmio_aware_producer_forwarded_fetch_ahead_before_retire";
     let direct_entry = "next_pending_data_fetch_ahead";
     let mmio_entry = "next_pending_data_mmio_fetch_ahead";
-    for helper in [direct_filter, mmio_filter, direct_entry, mmio_entry] {
+    for helper in [direct_entry, mmio_entry] {
         assert!(
             driver.contains(&format!("pub(crate) fn {helper}(")),
             "src/riscv_fetch_ahead/driver.rs must own `{helper}`"
+        );
+    }
+    for legacy in [
+        "next_producer_forwarded_fetch_ahead_before_retire",
+        "next_mmio_aware_producer_forwarded_fetch_ahead_before_retire",
+    ] {
+        assert!(
+            !driver.contains(&format!("fn {legacy}(")),
+            "obsolete producer-forwarded fetch facade remains: `{legacy}`"
+        );
+    }
+    let speculation = source_section(
+        &fetch,
+        "pub(crate) struct RiscvFetchAheadSpeculation {",
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\nenum ReturnAddressStackAction",
+    );
+    assert!(
+        speculation.contains("target_authority: PredictedControlTargetAuthority"),
+        "fetch speculation must carry one typed target authority"
+    );
+    for legacy in [
+        "producer_forwarded_control_target:",
+        "producer_forwarded_return_descendant:",
+    ] {
+        assert!(
+            !speculation.contains(legacy),
+            "parallel producer-forwarded authority field remains: `{legacy}`"
         );
     }
     let decision_filter = rust_function_definition(&driver, "producer_forwarded_control_decision")
         .expect("missing producer_forwarded_control_decision definition");
     for marker in [
         "producer_forwarded_scalar_continuation.is_some()",
-        "producer_forwarded_control_target.is_some()",
-        "producer_forwarded_return_descendant.is_some()",
+        "PredictedControlTargetAuthority::ProducerForwarded(",
+        "PredictedControlTargetAuthority::ProducerForwardedReturn(",
     ] {
         assert!(
             decision_filter.contains(marker),
@@ -694,9 +724,11 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
         "both pending-data entry points must reject an already pending fetch before filtering"
     );
     assert!(
-        driver.contains(&format!("self.{direct_filter}()"))
-            && driver.contains(&format!("self.{mmio_filter}(bus)")),
-        "pending-data entry points must delegate to the carried-authority filters"
+        driver
+            .matches("producer_forwarded_control_decision(")
+            .count()
+            >= 3,
+        "pending-data entry points must apply the carried-authority filter directly"
     );
     assert_eq!(
         drive.matches(direct_entry).count(),
@@ -1768,12 +1800,16 @@ fn producer_forwarded_chain_authority_stays_focused() {
     let checkpoint_test_path = crate_dir.join("src/riscv_fetch_ahead/tests/checkpoint.rs");
     let fetch_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return.rs");
+    let fetch_link_shapes_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_return_link_shapes.rs");
     let scalar_fetch_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs");
     let scalar_fetch_link_shapes_test_path = crate_dir
         .join("src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return_link_shapes.rs");
     let chain_validation_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs");
+    let ras_required_validation_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/ras_required_validation.rs");
     let control_validation_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/producer_forwarded_control_validation.rs");
     let runtime_root = fs::read_to_string(&runtime_root_path).unwrap();
@@ -2037,6 +2073,29 @@ fn producer_forwarded_chain_authority_stays_focused() {
             "missing exact fetch test definition `{anchor}`"
         );
     }
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod producer_forwarded_return_link_shapes;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach producer_forwarded_return_link_shapes exactly once"
+    );
+    assert!(fetch_link_shapes_test_path.exists());
+    let fetch_link_shapes_source = fs::read_to_string(&fetch_link_shapes_test_path).unwrap();
+    assert!(include_macro_lines(&fetch_link_shapes_source).is_empty());
+    assert!(
+        line_count(&fetch_link_shapes_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_LINK_SHAPES_TEST_LINES,
+        "producer_forwarded_return_link_shapes.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_LINK_SHAPES_TEST_LINES} lines"
+    );
+    let fetch_link_shapes_test = rust_code_without_comments_and_literals(&fetch_link_shapes_source);
+    assert!(
+        production_defines_exact_function(
+            &fetch_link_shapes_test,
+            "pending_data_gate_admits_same_and_split_link_direct_returns",
+        ),
+        "missing exact direct-return link-shape fetch test definition"
+    );
 
     assert_eq!(
         fetch_tests_root_code
@@ -2066,6 +2125,32 @@ fn producer_forwarded_chain_authority_stays_focused() {
             "missing exact chain-validation fetch test definition `{anchor}`"
         );
     }
+
+    assert_eq!(
+        fetch_tests_root_code
+            .matches("mod ras_required_validation;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach ras_required_validation exactly once"
+    );
+    assert!(ras_required_validation_test_path.exists());
+    let ras_required_validation_source =
+        fs::read_to_string(&ras_required_validation_test_path).unwrap();
+    assert!(include_macro_lines(&ras_required_validation_source).is_empty());
+    assert!(
+        line_count(&ras_required_validation_test_path)
+            <= MAX_RISCV_FETCH_AHEAD_RAS_REQUIRED_VALIDATION_TEST_LINES,
+        "ras_required_validation.rs exceeds {MAX_RISCV_FETCH_AHEAD_RAS_REQUIRED_VALIDATION_TEST_LINES} lines"
+    );
+    let ras_required_validation_test =
+        rust_code_without_comments_and_literals(&ras_required_validation_source);
+    assert!(
+        production_defines_exact_function(
+            &ras_required_validation_test,
+            "ras_required_apply_fails_closed_after_lineage_changes",
+        ),
+        "missing exact RAS-required apply validation test definition"
+    );
 
     assert_eq!(
         fetch_tests_root_code

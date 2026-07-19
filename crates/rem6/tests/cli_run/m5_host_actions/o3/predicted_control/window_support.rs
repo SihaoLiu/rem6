@@ -1,5 +1,45 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct ProducerForwardedLinkedCase {
+    pub(super) label: &'static str,
+    pub(super) target_source: u8,
+    pub(super) link: u8,
+    pub(super) memory_system: &'static str,
+    pub(super) max_tick: u64,
+}
+
+pub(super) const PRODUCER_FORWARDED_LINKED_CASES: [ProducerForwardedLinkedCase; 4] = [
+    ProducerForwardedLinkedCase {
+        label: "same-link-x1-direct",
+        target_source: 1,
+        link: 1,
+        memory_system: "direct",
+        max_tick: 2_500,
+    },
+    ProducerForwardedLinkedCase {
+        label: "same-link-x5-hierarchy",
+        target_source: 5,
+        link: 5,
+        memory_system: "cache-fabric-dram",
+        max_tick: 3_000,
+    },
+    ProducerForwardedLinkedCase {
+        label: "split-link-x5-direct",
+        target_source: 11,
+        link: 5,
+        memory_system: "direct",
+        max_tick: 2_500,
+    },
+    ProducerForwardedLinkedCase {
+        label: "split-link-x1-hierarchy",
+        target_source: 11,
+        link: 1,
+        memory_system: "cache-fabric-dram",
+        max_tick: 3_000,
+    },
+];
+
 pub(super) fn control_window_command(
     path: &Path,
     memory_system: &str,
@@ -320,6 +360,14 @@ pub(super) fn assert_direct_memory_activity(json: &Value) {
             Some(0),
             "direct memory route should bypass hierarchy resource {pointer}: {json}"
         );
+    }
+}
+
+pub(super) fn assert_control_window_route_activity(json: &Value, memory_system: &str) {
+    match memory_system {
+        "direct" => assert_direct_memory_activity(json),
+        "cache-fabric-dram" => assert_hierarchy_activity(json),
+        other => panic!("unsupported control-window memory system {other}"),
     }
 }
 

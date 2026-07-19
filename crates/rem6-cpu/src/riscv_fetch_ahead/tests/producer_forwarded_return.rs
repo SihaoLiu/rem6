@@ -1,10 +1,14 @@
 use super::*;
 
-pub(super) fn live_x1_return_core(branch_lookahead: usize) -> RiscvCore {
+pub(super) fn live_return_core(
+    branch_lookahead: usize,
+    target_source: u8,
+    link_destination: u8,
+) -> RiscvCore {
     let load_raw = i_type(0, 18, 0x6, 12, 0x03);
-    let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
-    let call_raw = i_type(0, 1, 0x0, 1, 0x67);
-    let return_raw = i_type(0, 1, 0x0, 0, 0x67);
+    let producer_raw = i_type(0, 11, 0x0, target_source, 0x13);
+    let call_raw = i_type(0, target_source, 0x0, link_destination, 0x67);
+    let return_raw = i_type(0, link_destination, 0x0, 0, 0x67);
     let producer = RiscvInstruction::decode(producer_raw).unwrap();
     let call = RiscvInstruction::decode(call_raw).unwrap();
     let core = core_with_completed_fetches([
@@ -47,7 +51,7 @@ pub(super) fn live_x1_return_core(branch_lookahead: usize) -> RiscvCore {
                     0x8004,
                     0x8008,
                     vec![rem6_isa_riscv::RegisterWrite::new(
-                        Register::new(1).unwrap(),
+                        Register::new(target_source).unwrap(),
                         0x9000,
                     )],
                     None,
@@ -69,7 +73,7 @@ pub(super) fn live_x1_return_core(branch_lookahead: usize) -> RiscvCore {
                     0x8008,
                     0x9000,
                     vec![rem6_isa_riscv::RegisterWrite::new(
-                        Register::new(1).unwrap(),
+                        Register::new(link_destination).unwrap(),
                         0x800c,
                     )],
                     None,
@@ -82,7 +86,7 @@ pub(super) fn live_x1_return_core(branch_lookahead: usize) -> RiscvCore {
 
 #[test]
 fn pending_data_gate_admits_producer_forwarded_call_target_return() {
-    let core = live_x1_return_core(2);
+    let core = live_return_core(2, 1, 1);
     let call_decision = core
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link call decision");
@@ -99,13 +103,15 @@ fn pending_data_gate_admits_producer_forwarded_call_target_return() {
     let speculation = return_decision.branch_speculation().unwrap();
     assert_eq!(speculation.pc(), Address::new(0x9000));
     assert_eq!(speculation.target(), Some(Address::new(0x800c)));
-    assert!(speculation.producer_forwarded_control_target.is_none());
-    assert!(speculation.producer_forwarded_return_descendant.is_some());
+    assert!(matches!(
+        speculation.target_authority(),
+        PredictedControlTargetAuthority::ProducerForwardedReturn(_)
+    ));
 }
 
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() {
-    let core = live_x1_return_core(2);
+    let core = live_return_core(2, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -139,7 +145,7 @@ fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() 
 
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
-    let core = live_x1_return_core(2);
+    let core = live_return_core(2, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)
@@ -166,7 +172,7 @@ fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
 
 #[test]
 fn branch_lookahead_one_does_not_stage_producer_forwarded_return() {
-    let core = live_x1_return_core(1);
+    let core = live_return_core(1, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&call_decision)

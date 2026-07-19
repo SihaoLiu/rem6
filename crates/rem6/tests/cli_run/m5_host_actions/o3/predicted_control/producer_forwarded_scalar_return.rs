@@ -1,9 +1,9 @@
 use super::window_support::{
-    assert_branch_kind_and_link, assert_control_prediction, assert_direct_memory_activity,
-    assert_hierarchy_activity, assert_integer_rename_maps_to_row_destination,
-    assert_no_data_address, assert_no_fetch_pc, assert_no_o3_stats, assert_ordered_commits,
-    assert_stopped_by_host, fetch_count_at_pc, fetch_tick_at_pc, finish_control_window_binary,
-    resident_rob_pcs, run_control_window_json,
+    assert_branch_kind_and_link, assert_control_prediction, assert_control_window_route_activity,
+    assert_integer_rename_maps_to_row_destination, assert_no_data_address, assert_no_fetch_pc,
+    assert_no_o3_stats, assert_ordered_commits, assert_stopped_by_host, fetch_count_at_pc,
+    fetch_tick_at_pc, finish_control_window_binary, resident_rob_pcs, run_control_window_json,
+    ProducerForwardedLinkedCase, PRODUCER_FORWARDED_LINKED_CASES,
 };
 use super::*;
 
@@ -26,46 +26,6 @@ const SCALAR_RETURN_STALE_TARGET_PC: &str = "0x80000040";
 const SCALAR_RETURN_SCALAR_PC: &str = "0x80000044";
 const SCALAR_RETURN_PC: &str = "0x80000048";
 const SCALAR_RETURN_WRONG_FALLTHROUGH_PC: &str = "0x8000004c";
-
-#[derive(Clone, Copy)]
-struct ProducerForwardedScalarReturnCase {
-    label: &'static str,
-    target_source: u8,
-    link: u8,
-    memory_system: &'static str,
-    max_tick: u64,
-}
-
-const PRODUCER_FORWARDED_SCALAR_RETURN_CASES: [ProducerForwardedScalarReturnCase; 4] = [
-    ProducerForwardedScalarReturnCase {
-        label: "same-link-x1-direct",
-        target_source: 1,
-        link: 1,
-        memory_system: "direct",
-        max_tick: 2_500,
-    },
-    ProducerForwardedScalarReturnCase {
-        label: "same-link-x5-hierarchy",
-        target_source: 5,
-        link: 5,
-        memory_system: "cache-fabric-dram",
-        max_tick: 3_000,
-    },
-    ProducerForwardedScalarReturnCase {
-        label: "split-link-x5-direct",
-        target_source: 11,
-        link: 5,
-        memory_system: "direct",
-        max_tick: 2_500,
-    },
-    ProducerForwardedScalarReturnCase {
-        label: "split-link-x1-hierarchy",
-        target_source: 11,
-        link: 1,
-        memory_system: "cache-fabric-dram",
-        max_tick: 3_000,
-    },
-];
 
 fn producer_forwarded_scalar_return_binary(
     name: &str,
@@ -127,15 +87,7 @@ fn run_scalar_return_json(
     )
 }
 
-fn assert_route_activity(json: &Value, memory_system: &str) {
-    match memory_system {
-        "direct" => assert_direct_memory_activity(json),
-        "cache-fabric-dram" => assert_hierarchy_activity(json),
-        other => panic!("unsupported producer-forwarded scalar-return route {other}"),
-    }
-}
-
-fn assert_producer_forwarded_scalar_return(case: ProducerForwardedScalarReturnCase) {
+fn assert_producer_forwarded_scalar_return(case: ProducerForwardedLinkedCase) {
     let path = producer_forwarded_scalar_return_binary(
         &format!("o3-producer-forwarded-scalar-return-{}", case.label),
         case.target_source,
@@ -239,19 +191,19 @@ fn assert_producer_forwarded_scalar_return(case: ProducerForwardedScalarReturnCa
         SCALAR_RETURN_CALL_PC,
         u64::from(case.link),
     );
-    assert_route_activity(&resident, case.memory_system);
+    assert_control_window_route_activity(&resident, case.memory_system);
 }
 
 #[test]
 fn rem6_run_o3_producer_forwarded_scalar_returns_cover_link_shape_route_matrix() {
-    for case in PRODUCER_FORWARDED_SCALAR_RETURN_CASES {
+    for case in PRODUCER_FORWARDED_LINKED_CASES {
         assert_producer_forwarded_scalar_return(case);
     }
 }
 
 #[test]
 fn rem6_run_o3_producer_forwarded_scalar_return_lookahead_one_keeps_return_unfetched() {
-    let case = PRODUCER_FORWARDED_SCALAR_RETURN_CASES[2];
+    let case = PRODUCER_FORWARDED_LINKED_CASES[2];
     let path = producer_forwarded_scalar_return_binary(
         "o3-producer-forwarded-scalar-return-lookahead-one",
         case.target_source,
@@ -287,7 +239,7 @@ fn rem6_run_o3_producer_forwarded_scalar_return_lookahead_one_keeps_return_unfet
 
 #[test]
 fn rem6_run_o3_producer_forwarded_scalar_return_rejects_non_link_scalar() {
-    let case = PRODUCER_FORWARDED_SCALAR_RETURN_CASES[2];
+    let case = PRODUCER_FORWARDED_LINKED_CASES[2];
     let path = producer_forwarded_scalar_return_binary(
         "o3-producer-forwarded-scalar-return-non-link-scalar",
         case.target_source,
@@ -321,8 +273,8 @@ fn rem6_run_o3_producer_forwarded_scalar_return_rejects_non_link_scalar() {
 #[test]
 fn rem6_run_timing_suppresses_o3_producer_forwarded_scalar_returns() {
     for case in [
-        PRODUCER_FORWARDED_SCALAR_RETURN_CASES[2],
-        PRODUCER_FORWARDED_SCALAR_RETURN_CASES[3],
+        PRODUCER_FORWARDED_LINKED_CASES[2],
+        PRODUCER_FORWARDED_LINKED_CASES[3],
     ] {
         let path = producer_forwarded_scalar_return_binary(
             &format!("o3-producer-forwarded-scalar-return-timing-{}", case.label),

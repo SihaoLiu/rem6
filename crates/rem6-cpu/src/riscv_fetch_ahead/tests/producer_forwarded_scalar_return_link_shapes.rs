@@ -17,9 +17,11 @@ fn retired_data_head_admits_same_and_split_link_scalar_return_predictions() {
         let speculation = decision.branch_speculation().unwrap();
         assert_eq!(speculation.pc(), Address::new(0x9004));
         assert_eq!(speculation.target(), Some(Address::new(0x800c)));
-        let descendant = speculation
-            .producer_forwarded_return_descendant
-            .expect("typed producer-forwarded return descendant");
+        let PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) =
+            speculation.target_authority()
+        else {
+            panic!("expected typed producer-forwarded return descendant");
+        };
         assert!(descendant.scalar_descendant().is_some());
         assert_eq!(
             descendant.parent().target_source(),

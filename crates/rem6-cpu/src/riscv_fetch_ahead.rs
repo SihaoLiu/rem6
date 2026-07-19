@@ -459,6 +459,7 @@ impl RiscvFetchAheadDecision {
         branch_kind: BranchTargetKind,
         predicted_taken: bool,
         target: Option<Address>,
+        target_authority: PredictedControlTargetAuthority,
         selected_speculation: Option<RiscvSelectedBranchSpeculation>,
         branch_target_prediction: Option<BranchTargetPrediction>,
         return_address_stack_action: Option<ReturnAddressStackAction>,
@@ -472,26 +473,14 @@ impl RiscvFetchAheadDecision {
                 branch_kind,
                 predicted_taken,
                 target,
+                target_authority,
                 selected_speculation,
                 branch_target_prediction,
                 return_address_stack_action,
                 target_provider,
-                producer_forwarded_control_target: None,
-                producer_forwarded_return_descendant: None,
             }),
             producer_forwarded_scalar_continuation: None,
         }
-    }
-
-    fn with_producer_forwarded_control_target(
-        mut self,
-        forwarded: crate::o3_runtime::O3ProducerForwardedControlTarget,
-    ) -> Self {
-        self.branch_speculation
-            .as_mut()
-            .expect("producer-forwarded target requires branch speculation")
-            .producer_forwarded_control_target = Some(forwarded);
-        self
     }
 
     fn with_producer_forwarded_scalar_continuation(
@@ -518,13 +507,17 @@ pub(crate) struct RiscvFetchAheadSpeculation {
     branch_kind: BranchTargetKind,
     predicted_taken: bool,
     target: Option<Address>,
+    target_authority: PredictedControlTargetAuthority,
     selected_speculation: Option<RiscvSelectedBranchSpeculation>,
     branch_target_prediction: Option<BranchTargetPrediction>,
     return_address_stack_action: Option<ReturnAddressStackAction>,
     target_provider: BranchTargetProvider,
-    producer_forwarded_control_target: Option<crate::o3_runtime::O3ProducerForwardedControlTarget>,
-    producer_forwarded_return_descendant:
-        Option<crate::o3_runtime::O3ProducerForwardedReturnDescendant>,
+}
+
+impl RiscvFetchAheadSpeculation {
+    const fn target_authority(&self) -> PredictedControlTargetAuthority {
+        self.target_authority
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -836,14 +829,8 @@ fn fetch_ahead_decision(
         }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
-    if let Some((
-        target,
-        branch_kind,
-        branch_target_prediction,
-        target_provider,
-        producer_forwarded_control_target,
-        producer_forwarded_return_descendant,
-    )) = direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
+    if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
+        direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
     {
         let selected_speculation = selected_direct_branch_speculation(
             state,
@@ -852,25 +839,19 @@ fn fetch_ahead_decision(
             branch_kind,
             target,
         )?;
-        let mut decision = RiscvFetchAheadDecision::branch(
+        return Some(RiscvFetchAheadDecision::branch(
             target,
             request.sequence(),
             fetch_pc,
             branch_kind,
             true,
             Some(target),
+            target_authority,
             selected_speculation,
             Some(branch_target_prediction),
             return_address_stack_action(instruction, sequential_pc),
             target_provider,
-        );
-        if let Some(forwarded) = producer_forwarded_control_target {
-            decision = decision.with_producer_forwarded_control_target(forwarded);
-        }
-        if let Some(descendant) = producer_forwarded_return_descendant {
-            decision = detailed_o3::with_producer_forwarded_return_descendant(decision, descendant);
-        }
-        return Some(decision);
+        ));
     }
     if !instruction_is_conditional_branch(instruction) {
         return None;
@@ -890,6 +871,7 @@ fn fetch_ahead_decision(
         BranchTargetKind::DirectConditional,
         prediction.predicted_taken,
         prediction.target,
+        target_authority,
         prediction.selected_speculation,
         prediction.branch_target_prediction,
         None,
@@ -1454,8 +1436,6 @@ fn direct_jump_fetch_ahead_target(
     BranchTargetKind,
     BranchTargetPrediction,
     BranchTargetProvider,
-    Option<crate::o3_runtime::O3ProducerForwardedControlTarget>,
-    Option<crate::o3_runtime::O3ProducerForwardedReturnDescendant>,
 )> {
     let kind = match instruction {
         RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
@@ -1463,18 +1443,11 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => return None,
     };
-    let (
-        ras_target,
-        forwarded_target,
-        producer_forwarded_control_target,
-        producer_forwarded_return_descendant,
-    ) = match target_authority {
+    let (ras_target, forwarded_target) = match target_authority {
         PredictedControlTargetAuthority::Normal => (
             (kind == BranchTargetKind::Return)
                 .then(|| state.return_address_stack.top())
                 .flatten(),
-            None,
-            None,
             None,
         ),
         PredictedControlTargetAuthority::ProducerForwarded(forwarded) => {
@@ -1485,7 +1458,7 @@ fn direct_jump_fetch_ahead_target(
             {
                 return None;
             }
-            (None, Some(forwarded.target()), Some(forwarded), None)
+            (None, Some(forwarded.target()))
         }
         PredictedControlTargetAuthority::ProducerForwardedReturn(descendant) => (
             Some(detailed_o3::unconsumed_producer_forwarded_return_target(
@@ -1495,8 +1468,6 @@ fn direct_jump_fetch_ahead_target(
                 descendant,
             )?),
             None,
-            None,
-            Some(descendant),
         ),
         PredictedControlTargetAuthority::RasRequired {
             push_sequence,
@@ -1513,8 +1484,6 @@ fn direct_jump_fetch_ahead_target(
                     pushed_address,
                     consumer,
                 )?),
-                None,
-                None,
                 None,
             )
         }
@@ -1539,14 +1508,7 @@ fn direct_jump_fetch_ahead_target(
         (RiscvInstruction::Jalr { .. }, false) => BranchTargetProvider::Indirect,
         _ => BranchTargetProvider::NoTarget,
     };
-    Some((
-        target,
-        kind,
-        branch_target_prediction,
-        target_provider,
-        producer_forwarded_control_target,
-        producer_forwarded_return_descendant,
-    ))
+    Some((target, kind, branch_target_prediction, target_provider))
 }
 
 fn return_address_stack_action(

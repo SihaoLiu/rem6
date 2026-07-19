@@ -10,7 +10,7 @@ fn assert_prepared_return_was_rejected(core: &RiscvCore) {
 
 #[test]
 fn direct_return_apply_fails_closed_after_fetch_identity_changes() {
-    let core = super::producer_forwarded_return::live_x1_return_core(2);
+    let core = super::producer_forwarded_return::live_return_core(2, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
     let call_prepared = core
         .prepare_fetch_ahead_speculation(&call_decision)

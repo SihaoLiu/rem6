@@ -30,8 +30,10 @@ mod detailed_o3_control;
 mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
 mod producer_forwarded_return;
+mod producer_forwarded_return_link_shapes;
 mod producer_forwarded_scalar_return;
 mod producer_forwarded_scalar_return_link_shapes;
+mod ras_required_validation;
 mod selected;
 mod speculative_history;
 

@@ -67,18 +67,6 @@ pub(crate) enum PredictedControlTargetAuthority {
     },
 }
 
-pub(super) fn with_producer_forwarded_return_descendant(
-    mut decision: super::RiscvFetchAheadDecision,
-    descendant: O3ProducerForwardedReturnDescendant,
-) -> super::RiscvFetchAheadDecision {
-    decision
-        .branch_speculation
-        .as_mut()
-        .expect("producer-forwarded return requires branch speculation")
-        .producer_forwarded_return_descendant = Some(descendant);
-    decision
-}
-
 pub(crate) fn predicted_control_target_authority(
     instruction: RiscvInstruction,
     sequential_pc: Address,
