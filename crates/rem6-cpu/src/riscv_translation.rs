@@ -1326,7 +1326,7 @@ impl RiscvCore {
                 Ok(Some(event))
             }
             PreparedDataParallelAccess::Forwarded { .. }
-            | PreparedDataParallelAccess::BufferedStore { .. }
+            | PreparedDataParallelAccess::BufferedEffect { .. }
             | PreparedDataParallelAccess::BufferedTransaction { .. } => {
                 unreachable!("translated data access cannot use untranslated O3 memory shortcuts")
             }

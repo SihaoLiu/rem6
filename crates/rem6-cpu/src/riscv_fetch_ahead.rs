@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
-use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
+use rem6_memory::{Address, MemoryRequestId};
 
 use crate::o3_runtime::o3_live_control_operands;
 use crate::{
@@ -19,6 +19,8 @@ use crate::{
 
 pub(crate) mod detailed_o3;
 mod driver;
+#[path = "riscv_fetch_ahead/memory_result_authorization.rs"]
+mod memory_result_authorization;
 mod prepared;
 #[path = "riscv_fetch_ahead/producer_forwarded_continuation.rs"]
 mod producer_forwarded_continuation;
@@ -28,69 +30,13 @@ pub(crate) use detailed_o3::{
     predicted_control_target_authority, recorded_predicted_pc, PredictedControlTargetAuthority,
     RecordedPredictedPc,
 };
+pub(crate) use memory_result_authorization::{
+    O3MemoryResultWindowAuthorization, O3MemoryResultWindowRole, O3MemoryResultWindowRoute,
+};
 pub(crate) use prepared::PreparedRiscvFetchAheadSpeculation;
 pub(crate) use producer_forwarded_continuation::ProducerForwardedScalarContinuation;
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum O3MemoryResultWindowRoute {
-    Memory,
-    Mmio,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum O3MemoryResultWindowRole {
-    Head,
-    YoungerRead,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct O3MemoryResultWindowAuthorization {
-    integer_destination: Option<rem6_isa_riscv::Register>,
-    route: O3MemoryResultWindowRoute,
-    physical_range: AddressRange,
-    role: O3MemoryResultWindowRole,
-}
-
-impl O3MemoryResultWindowAuthorization {
-    const fn new(
-        integer_destination: Option<rem6_isa_riscv::Register>,
-        route: O3MemoryResultWindowRoute,
-        physical_range: AddressRange,
-        role: O3MemoryResultWindowRole,
-    ) -> Self {
-        Self {
-            integer_destination,
-            route,
-            physical_range,
-            role,
-        }
-    }
-
-    pub(crate) const fn integer_destination(self) -> Option<rem6_isa_riscv::Register> {
-        self.integer_destination
-    }
-
-    pub(crate) const fn role(self) -> O3MemoryResultWindowRole {
-        self.role
-    }
-
-    pub(crate) const fn physical_range(self) -> AddressRange {
-        self.physical_range
-    }
-
-    pub(crate) fn matches(
-        self,
-        route: O3MemoryResultWindowRoute,
-        physical_address: Address,
-        size: AccessSize,
-    ) -> bool {
-        self.route == route
-            && AddressRange::new(physical_address, size)
-                .is_ok_and(|range| range == self.physical_range)
-    }
-}
 
 struct SelectedBranchRecordingState<'a> {
     branch_predictor: &'a BranchPredictor,

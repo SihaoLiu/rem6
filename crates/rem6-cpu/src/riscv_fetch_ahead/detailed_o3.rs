@@ -23,6 +23,8 @@ use crate::{
 
 #[path = "detailed_o3/data_access_result.rs"]
 mod data_access_result;
+#[path = "detailed_o3/data_access_result_effect_policy.rs"]
+mod data_access_result_effect_policy;
 #[path = "detailed_o3/data_access_result_pair_policy.rs"]
 mod data_access_result_pair_policy;
 #[path = "detailed_o3/retained_data_access_result.rs"]
@@ -308,9 +310,7 @@ pub(super) fn additional_fetch_candidate(
     if state
         .memory_result_window_authorizations
         .get(&current.first_consumed_request())
-        .is_some_and(|authorization| {
-            authorization.role() == super::O3MemoryResultWindowRole::YoungerRead
-        })
+        .is_some_and(|authorization| authorization.role().is_younger())
     {
         return DetailedFetchAheadCandidate::Blocked;
     }
@@ -320,6 +320,35 @@ pub(super) fn additional_fetch_candidate(
         current.decoded().instruction(),
         translated,
     );
+    if matches!(
+        scalar_memory_head,
+        Some(ScalarMemoryFetchAheadHead::Untranslated)
+    ) {
+        if let Some(authorization) = data_access_result_fetch_ahead_authorization(
+            state,
+            current.first_consumed_request(),
+            current.decoded().instruction(),
+            current.decoded().bytes(),
+            translated,
+        ) {
+            let candidate = data_access_result_window_candidate(
+                state,
+                fetch_events,
+                &current,
+                authorization,
+                translated,
+            );
+            if matches!(
+                &candidate,
+                DetailedFetchAheadCandidate::DataAccessResultWindow { authorizations, .. }
+                    if authorizations.iter().any(|(_, authorization)| {
+                        authorization.role().is_buffered_effect()
+                    })
+            ) {
+                return candidate;
+            }
+        }
+    }
     match scalar_memory_head {
         Some(ScalarMemoryFetchAheadHead::Untranslated) => {
             return scalar_memory_window_candidate(state, fetch_events, &current);

@@ -47,7 +47,7 @@ pub(crate) enum PreparedParallelAction {
         issue: OutstandingDataAccess,
         cleanup: PreparedDataIssueCleanup,
     },
-    LocalBufferedStore {
+    LocalBufferedEffect {
         cpu: CpuId,
         core: RiscvCore,
         issue: OutstandingDataAccess,
@@ -55,7 +55,7 @@ pub(crate) enum PreparedParallelAction {
         predecessor: MemoryRequestId,
         cleanup: PreparedDataIssueCleanup,
     },
-    BufferedStoreData {
+    BufferedEffectData {
         cpu: CpuId,
         core: RiscvCore,
         request_id: MemoryRequestId,
@@ -210,37 +210,38 @@ pub(crate) fn finish_prepared_parallel_actions(
                     first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
                 }
             },
-            PreparedParallelAction::LocalBufferedStore {
+            PreparedParallelAction::LocalBufferedEffect {
                 cpu,
                 core,
                 issue,
                 request,
                 predecessor,
                 cleanup,
-            } => match core.schedule_prepared_buffered_o3_store_parallel(
+            } => match core.schedule_prepared_buffered_o3_effect_parallel(
                 scheduler,
                 issue,
                 request,
                 predecessor,
             ) {
-                Ok(event) => {
+                Ok(Some(event)) => {
                     cleanup.disarm();
                     actions.push(RiscvClusterDriveEvent::new(
                         cpu,
                         RiscvCoreDriveAction::DataAccessIssued { event },
                     ));
                 }
+                Ok(None) => {}
                 Err(error) => {
                     first_error.get_or_insert(RiscvClusterError::Core { cpu, error });
                 }
             },
-            PreparedParallelAction::BufferedStoreData {
+            PreparedParallelAction::BufferedEffectData {
                 cpu,
                 core,
                 request_id,
                 transaction_index,
             } => {
-                core.record_buffered_o3_store_submission(request_id);
+                core.record_buffered_o3_effect_submission(request_id);
                 actions.push(RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::DataAccessIssued {
@@ -306,13 +307,13 @@ pub(crate) fn push_prepared_data_action(
                 cleanup,
             });
         }
-        PreparedDataParallelAccess::BufferedStore {
+        PreparedDataParallelAccess::BufferedEffect {
             issue,
             request,
             predecessor,
             cleanup,
         } => {
-            prepared_actions.push(PreparedParallelAction::LocalBufferedStore {
+            prepared_actions.push(PreparedParallelAction::LocalBufferedEffect {
                 cpu,
                 core: core.clone(),
                 issue,
@@ -328,7 +329,7 @@ pub(crate) fn push_prepared_data_action(
             let transaction_index = transactions.len();
             transaction_cpus.push(cpu);
             transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::BufferedStoreData {
+            prepared_actions.push(PreparedParallelAction::BufferedEffectData {
                 cpu,
                 core: core.clone(),
                 request_id,

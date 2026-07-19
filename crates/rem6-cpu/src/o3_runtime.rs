@@ -91,7 +91,8 @@ use o3_runtime_live_window::{
 };
 pub(crate) use o3_runtime_memory::{
     is_deferred_o3_data_access, o3_memory_result_destination, o3_memory_result_window_destination,
-    O3DataAccessWindowPolicy,
+    o3_memory_result_younger_buffered_effect_destination,
+    o3_memory_result_younger_read_destination, O3DataAccessWindowPolicy,
 };
 use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,

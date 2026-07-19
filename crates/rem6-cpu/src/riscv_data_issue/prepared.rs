@@ -20,7 +20,7 @@ pub(crate) enum PreparedDataParallelAccess {
         issue: OutstandingDataAccess,
         cleanup: PreparedDataIssueCleanup,
     },
-    BufferedStore {
+    BufferedEffect {
         issue: OutstandingDataAccess,
         request: MemoryRequest,
         predecessor: MemoryRequestId,
@@ -56,14 +56,14 @@ impl PreparedDataParallelAccess {
         Self::Forwarded { issue, cleanup }
     }
 
-    pub(crate) fn buffered_store(
+    pub(crate) fn buffered_effect(
         core: &RiscvCore,
         issue: OutstandingDataAccess,
         request: MemoryRequest,
         predecessor: MemoryRequestId,
     ) -> Self {
         let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
-        Self::BufferedStore {
+        Self::BufferedEffect {
             issue,
             request,
             predecessor,
@@ -88,7 +88,7 @@ impl RiscvCore {
         scheduler: &mut PartitionedScheduler,
         transport: &MemoryTransport,
         prepared: PreparedDataParallelAccess,
-    ) -> Result<PartitionEventId, RiscvCpuError> {
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
         match prepared {
             PreparedDataParallelAccess::Transaction {
                 issue,
@@ -98,31 +98,33 @@ impl RiscvCore {
                 let event = submit_single_parallel_data(scheduler, transport, transaction)?;
                 self.record_data_issue(issue);
                 cleanup.disarm();
-                Ok(event)
+                Ok(Some(event))
             }
             PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
                 let event = self.schedule_store_conditional_failure_parallel(scheduler, issue)?;
                 cleanup.disarm();
-                Ok(event)
+                Ok(Some(event))
             }
             PreparedDataParallelAccess::Forwarded { issue, cleanup } => {
                 let event = self.schedule_forwarded_load_completion_parallel(scheduler, issue)?;
                 cleanup.disarm();
-                Ok(event)
+                Ok(Some(event))
             }
-            PreparedDataParallelAccess::BufferedStore {
+            PreparedDataParallelAccess::BufferedEffect {
                 issue,
                 request,
                 predecessor,
                 cleanup,
             } => {
-                let event = self.schedule_prepared_buffered_o3_store_parallel(
+                let event = self.schedule_prepared_buffered_o3_effect_parallel(
                     scheduler,
                     issue,
                     request,
                     predecessor,
                 )?;
-                cleanup.disarm();
+                if event.is_some() {
+                    cleanup.disarm();
+                }
                 Ok(event)
             }
             PreparedDataParallelAccess::BufferedTransaction {
@@ -130,8 +132,8 @@ impl RiscvCore {
                 transaction,
             } => {
                 let event = submit_single_parallel_data(scheduler, transport, transaction)?;
-                self.record_buffered_o3_store_submission(request_id);
-                Ok(event)
+                self.record_buffered_o3_effect_submission(request_id);
+                Ok(Some(event))
             }
         }
     }

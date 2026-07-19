@@ -21,8 +21,11 @@ use super::super::{
 };
 use super::{
     completed_window_instruction_or_candidate,
-    data_access_result_pair_policy::result_head_allows_younger_read, DetailedFetchAheadCandidate,
-    TranslatedMemoryFetchAhead,
+    data_access_result_effect_policy::{
+        data_access_result_younger_authorization, result_head_allows_younger_effect,
+    },
+    data_access_result_pair_policy::result_head_allows_younger_read,
+    DetailedFetchAheadCandidate, TranslatedMemoryFetchAhead,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,7 +157,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization
     )
 }
 
-fn data_access_result_authorization(
+pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
     state: &RiscvCoreState,
     fetch_request: MemoryRequestId,
     instruction: RiscvInstruction,
@@ -214,30 +217,6 @@ fn data_access_result_authorization(
     ))
 }
 
-fn data_access_result_younger_read_authorization(
-    state: &RiscvCoreState,
-    instruction: &RiscvCompletedFetchInstruction,
-    translated: TranslatedMemoryFetchAhead,
-) -> Option<O3MemoryResultWindowAuthorization> {
-    if translated != TranslatedMemoryFetchAhead::Disabled || state.data_translation.is_some() {
-        return None;
-    }
-    match instruction.decoded().instruction() {
-        RiscvInstruction::Load { rd, .. } if !rd.is_zero() => {}
-        RiscvInstruction::FloatLoad { .. }
-        | RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride { .. }) => {}
-        _ => return None,
-    }
-    data_access_result_authorization(
-        state,
-        instruction.first_consumed_request(),
-        instruction.decoded().instruction(),
-        instruction.decoded().bytes(),
-        translated,
-        O3MemoryResultWindowRole::YoungerRead,
-    )
-}
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -292,14 +271,29 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
 
         if !scalar_started && result_rows == 1 {
             if let Some(younger_authorization) =
-                data_access_result_younger_read_authorization(state, &younger, translated)
+                data_access_result_younger_authorization(state, &younger, translated)
             {
-                if !result_head_allows_younger_read(
-                    current,
-                    &younger,
-                    head_authorization,
-                    younger_authorization,
-                ) {
+                if !younger_authorization.role().is_younger() {
+                    return DetailedFetchAheadCandidate::Blocked;
+                }
+                let allowed = match younger_authorization.role() {
+                    O3MemoryResultWindowRole::YoungerRead => result_head_allows_younger_read(
+                        current,
+                        &younger,
+                        head_authorization,
+                        younger_authorization,
+                    ),
+                    O3MemoryResultWindowRole::YoungerBufferedEffect => {
+                        result_head_allows_younger_effect(
+                            current,
+                            &younger,
+                            head_authorization,
+                            younger_authorization,
+                        )
+                    }
+                    O3MemoryResultWindowRole::Head => false,
+                };
+                if !allowed {
                     return DetailedFetchAheadCandidate::Blocked;
                 }
                 authorizations.push((younger.first_consumed_request(), younger_authorization));

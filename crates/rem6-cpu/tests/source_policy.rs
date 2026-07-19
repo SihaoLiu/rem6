@@ -28,7 +28,10 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_RISCV_DATA_ACCESS_RESULT_LINES: usize = 450;
 const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
+const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
+const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
+const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_FETCH_RESPONSE_TEST_LINES: usize = 200;
@@ -102,6 +105,8 @@ fn riscv_data_issue_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
     let data_issue_rs = crate_dir.join("src/riscv_data_issue.rs");
+    let data_issue = fs::read_to_string(&data_issue_rs).unwrap();
+    let buffered_effect_path = crate_dir.join("src/riscv_data_issue/buffered_effect.rs");
 
     assert!(
         data_issue_rs.exists(),
@@ -115,6 +120,30 @@ fn riscv_data_issue_lives_in_focused_module() {
         !lib_rs.contains("struct OutstandingDataAccess"),
         "src/lib.rs should delegate RISC-V data access records to a focused module"
     );
+    assert!(
+        data_issue.contains("mod buffered_effect;"),
+        "riscv_data_issue.rs must delegate buffered side effects to buffered_effect.rs"
+    );
+    assert!(buffered_effect_path.is_file());
+    assert!(!crate_dir
+        .join("src/riscv_data_issue/buffered_store.rs")
+        .exists());
+    let buffered_effect = fs::read_to_string(buffered_effect_path).unwrap();
+    assert!(
+        buffered_effect.lines().count() <= MAX_RISCV_BUFFERED_EFFECT_LINES,
+        "buffered_effect.rs exceeds {MAX_RISCV_BUFFERED_EFFECT_LINES} lines"
+    );
+    for anchor in [
+        "struct BufferedO3Effect",
+        "fn o3_buffered_effect_predecessor(",
+        "fn schedule_buffered_o3_effect(",
+        "fn record_buffered_o3_effect_submission(",
+    ] {
+        assert!(
+            buffered_effect.contains(anchor),
+            "buffered_effect.rs is missing `{anchor}`"
+        );
+    }
 }
 
 #[test]
@@ -824,6 +853,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let child_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs");
     let pair_policy_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_pair_policy.rs");
+    let effect_policy_path =
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_effect_policy.rs");
     let retained_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/retained_data_access_result.rs");
     let root = fs::read_to_string(&root_path).unwrap();
@@ -840,6 +871,12 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     assert!(
         root.contains(
+            "#[path = \"detailed_o3/data_access_result_effect_policy.rs\"]\nmod data_access_result_effect_policy;"
+        ),
+        "detailed_o3.rs must delegate effect policy to the focused child"
+    );
+    assert!(
+        root.contains(
             "#[path = \"detailed_o3/retained_data_access_result.rs\"]\nmod retained_data_access_result;"
         ),
         "detailed_o3.rs must delegate retained result authority to the focused child"
@@ -851,6 +888,7 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     let child = fs::read_to_string(&child_path).unwrap();
     let pair_policy = fs::read_to_string(&pair_policy_path).unwrap();
+    let effect_policy = fs::read_to_string(&effect_policy_path).unwrap();
     let retained = fs::read_to_string(&retained_path).unwrap();
     assert!(
         child.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_LINES,
@@ -868,6 +906,23 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         !child.contains("fn result_head_allows_younger_read("),
         "data_access_result.rs must not own pair dependency policy"
     );
+    assert!(
+        effect_policy.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES,
+        "data_access_result_effect_policy.rs exceeds {MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES} lines"
+    );
+    for anchor in [
+        "fn data_access_result_younger_authorization(",
+        "fn result_head_allows_younger_effect(",
+    ] {
+        assert!(
+            effect_policy.contains(anchor),
+            "effect policy is missing `{anchor}`"
+        );
+        assert!(
+            !child.contains(anchor),
+            "data_access_result.rs must not own effect policy `{anchor}`"
+        );
+    }
     assert!(
         retained.lines().count() <= MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES,
         "retained_data_access_result.rs exceeds {MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES} lines"
@@ -910,6 +965,65 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         assert!(
             !production.contains(stale),
             "stale result-window production name `{stale}`"
+        );
+    }
+}
+
+#[test]
+fn riscv_memory_result_authorization_has_focused_ownership() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
+    let owner_path = crate_dir.join("src/riscv_fetch_ahead/memory_result_authorization.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
+
+    assert!(
+        root.contains(
+            "#[path = \"riscv_fetch_ahead/memory_result_authorization.rs\"]\nmod memory_result_authorization;"
+        ),
+        "riscv_fetch_ahead.rs must delegate result authorization to a focused owner"
+    );
+    assert!(
+        owner_path.is_file(),
+        "memory-result authorization belongs in {}",
+        owner_path.display()
+    );
+    let owner = fs::read_to_string(&owner_path).unwrap();
+    assert!(
+        owner.lines().count() <= MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES,
+        "memory_result_authorization.rs exceeds {MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES} lines"
+    );
+    for anchor in [
+        "enum O3MemoryResultWindowRoute",
+        "enum O3MemoryResultWindowRole",
+        "struct O3MemoryResultWindowAuthorization",
+        "const fn is_younger(self)",
+        "const fn is_buffered_effect(self)",
+        "const fn route(self)",
+    ] {
+        assert!(
+            owner.contains(anchor),
+            "focused memory-result authorization owner is missing `{anchor}`"
+        );
+        assert!(
+            !root.contains(anchor),
+            "riscv_fetch_ahead.rs still owns `{anchor}`"
+        );
+    }
+    let production = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .map(|path| fs::read_to_string(path).unwrap())
+        .map(|source| production_rust_source(&source))
+        .collect::<String>();
+    for stale in [
+        "BufferedO3Store",
+        "buffered_o3_stores",
+        "ready_buffered_o3_store",
+        "schedule_buffered_o3_store",
+        "record_buffered_o3_store_submission",
+    ] {
+        assert!(
+            !production.contains(stale),
+            "stale buffered-store production name `{stale}`"
         );
     }
 }

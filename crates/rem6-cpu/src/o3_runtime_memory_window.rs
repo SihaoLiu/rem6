@@ -1,7 +1,8 @@
 use rem6_memory::AddressRange;
 
 use super::o3_runtime_memory::{
-    o3_memory_result_range, o3_memory_result_window_destination,
+    o3_memory_result_pure_read_destination, o3_memory_result_range,
+    o3_memory_result_window_destination, o3_memory_result_younger_buffered_effect_destination,
     o3_memory_result_younger_read_destination,
 };
 use super::o3_store_forwarding::{
@@ -181,7 +182,9 @@ impl O3RuntimeState {
         if window.rows != 1 || window.rows >= self.scalar_memory_window_limit {
             return false;
         }
-        if o3_memory_result_younger_read_destination(access).is_none() {
+        let younger_read = o3_memory_result_younger_read_destination(access).is_some();
+        let younger_effect = o3_memory_result_younger_buffered_effect_destination(access).is_some();
+        if !younger_read && !younger_effect {
             return false;
         }
         let Some(older_access) = self.live_data_accesses[0]
@@ -191,6 +194,12 @@ impl O3RuntimeState {
         else {
             return false;
         };
+        if younger_effect {
+            return o3_memory_result_pure_read_destination(older_access).is_some()
+                && o3_memory_result_range(older_access)
+                    .zip(o3_memory_result_range(access))
+                    .is_some_and(|(older, younger)| !older.overlaps(younger));
+        }
         match older_access {
             MemoryAccessKind::AtomicMemory {
                 acquire, release, ..
@@ -317,6 +326,18 @@ impl O3RuntimeState {
         self.live_data_accesses
             .last()
             .map(|store| store.data_request)
+    }
+
+    pub(crate) fn memory_result_effect_predecessor(
+        &self,
+        execution: &RiscvCpuExecutionEvent,
+    ) -> Option<MemoryRequestId> {
+        let access = execution.execution().memory_access()?;
+        o3_memory_result_younger_buffered_effect_destination(access)?;
+        if !self.can_stage_memory_result_window_access(access) {
+            return None;
+        }
+        self.live_data_accesses.last().map(|head| head.data_request)
     }
 
     pub(crate) fn can_stage_scalar_memory(&self, execution: &RiscvCpuExecutionEvent) -> bool {

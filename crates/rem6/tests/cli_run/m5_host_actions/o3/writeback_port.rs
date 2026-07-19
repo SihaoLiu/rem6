@@ -1243,3 +1243,6 @@ mod result_boundaries;
 
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;

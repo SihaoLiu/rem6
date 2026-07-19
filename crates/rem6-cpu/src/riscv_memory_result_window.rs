@@ -2,7 +2,10 @@ use rem6_isa_riscv::{MemoryAccessKind, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
-    o3_runtime::o3_memory_result_window_destination,
+    o3_runtime::{
+        o3_memory_result_window_destination, o3_memory_result_younger_buffered_effect_destination,
+        o3_memory_result_younger_read_destination,
+    },
     riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_fetch_ahead::{O3MemoryResultWindowRole, O3MemoryResultWindowRoute},
     RiscvCoreState, RiscvCpuExecutionEvent,
@@ -13,7 +16,7 @@ impl RiscvCoreState {
         let authorized = self
             .memory_result_window_authorizations
             .values()
-            .any(|authorization| authorization.role() == O3MemoryResultWindowRole::YoungerRead);
+            .any(|authorization| authorization.role().is_younger());
         let capacity = self.o3_runtime.can_consider_memory_result_younger();
         self.live_retire_gate.detailed_policy_enabled()
             && !self.outstanding_data.is_empty()
@@ -59,10 +62,20 @@ impl RiscvCoreState {
             .memory_result_window_authorizations
             .get(&fetch_request)
             .copied()
-            .filter(|authorization| authorization.role() == O3MemoryResultWindowRole::YoungerRead)
+            .filter(|authorization| authorization.role().is_younger())
         else {
             return false;
         };
+        let expected_role = if o3_memory_result_younger_read_destination(access).is_some() {
+            O3MemoryResultWindowRole::YoungerRead
+        } else if o3_memory_result_younger_buffered_effect_destination(access).is_some() {
+            O3MemoryResultWindowRole::YoungerBufferedEffect
+        } else {
+            return false;
+        };
+        if authorization.role() != expected_role {
+            return false;
+        }
         let Some(integer_destination) = o3_memory_result_window_destination(access) else {
             return false;
         };

@@ -12,10 +12,7 @@ impl RiscvCoreState {
         let mut requests = vec![fetch_request];
         if abort_pair {
             requests.extend(self.memory_result_window_authorizations.iter().filter_map(
-                |(request, authorization)| {
-                    (authorization.role() == O3MemoryResultWindowRole::YoungerRead)
-                        .then_some(*request)
-                },
+                |(request, authorization)| authorization.role().is_younger().then_some(*request),
             ));
         }
         let mut requested_aborted = false;
@@ -83,7 +80,7 @@ pub(super) fn record_o3_data_access_outcome(
     forwarding_plan: Option<O3StoreLoadForwardingPlan>,
 ) -> Result<bool, O3RuntimeError> {
     let Some(execution) = execution else {
-        state.buffered_o3_stores.remove(&access.request);
+        state.buffered_o3_effects.remove(&access.request);
         state
             .o3_runtime
             .discard_data_access_outcome(access.fetch_request);
@@ -109,7 +106,7 @@ pub(super) fn record_o3_data_access_outcome(
             .memory_result_window_authorizations
             .iter()
             .filter_map(|(request, authorization)| {
-                (authorization.role() == O3MemoryResultWindowRole::YoungerRead).then_some(*request)
+                authorization.role().is_younger().then_some(*request)
             })
             .collect::<Vec<_>>()
     })
@@ -149,13 +146,13 @@ pub(super) fn record_o3_data_access_outcome(
     };
     state.refresh_o3_writeback_wake(response_tick);
     if completed_live_data_access {
-        state.buffered_o3_stores.remove(&access.request);
+        state.buffered_o3_effects.remove(&access.request);
         for fetch_request in abort_unissued_younger {
             state.abort_deferred_o3_live_data_access_execution(fetch_request);
         }
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);
-            state.buffered_o3_stores.remove(&request);
+            state.buffered_o3_effects.remove(&request);
             state.issued_data_for_fetches.remove(&fetch_request);
             if let Some(event) = state.data_access_execution_mut(fetch_request) {
                 event.clear_data_access_retirement();

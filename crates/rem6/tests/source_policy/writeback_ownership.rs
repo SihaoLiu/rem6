@@ -15,7 +15,11 @@ const RESULT_BOUNDARIES_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_boundaries/support.rs";
 const STORE_CONDITIONAL_RESULT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/store_conditional_result.rs";
-const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 4] = [
+const YOUNGER_ATOMIC_RESULT: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result.rs";
+const YOUNGER_ATOMIC_BOUNDARIES: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result/boundaries.rs";
+const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 5] = [
     ExpectedModuleDeclaration {
         name: "result_support",
         path: "writeback_port/result_support.rs",
@@ -32,7 +36,15 @@ const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 4] = [
         name: "store_conditional_result",
         path: "writeback_port/store_conditional_result.rs",
     },
+    ExpectedModuleDeclaration {
+        name: "younger_atomic_result",
+        path: "writeback_port/younger_atomic_result.rs",
+    },
 ];
+const YOUNGER_ATOMIC_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedModuleDeclaration {
+    name: "boundaries",
+    path: "younger_atomic_result/boundaries.rs",
+}];
 const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
     [ExpectedModuleDeclaration {
         name: "support",
@@ -85,6 +97,13 @@ const STORE_CONDITIONAL_RESULT_ANCHORS: [&str; 6] = [
     "rem6_run_o3_store_conditional_result_live_actions_reject",
     "rem6_run_timing_suppresses_o3_store_conditional_result_surface",
 ];
+const YOUNGER_ATOMIC_RESULT_ANCHORS: [&str; 3] = [
+    "rem6_run_o3_younger_atomic_result_matrix_direct",
+    "rem6_run_o3_younger_atomic_result_matrix_cache_fabric_dram",
+    "rem6_run_timing_suppresses_o3_younger_atomic_result",
+];
+const YOUNGER_ATOMIC_BOUNDARY_ANCHORS: [&str; 1] =
+    ["rem6_run_o3_younger_atomic_result_boundaries_and_live_actions"];
 const RESULT_SUPPORT_HELPERS: [&str; 12] = [
     "data_trace",
     "event_str",
@@ -129,6 +148,9 @@ const RESULT_BOUNDARIES_MAX_LINES: usize = 700;
 const RESULT_BOUNDARIES_SUPPORT_MAX_LINES: usize = 140;
 const RESULT_BOUNDARIES_AGGREGATE_MAX_LINES: usize = 800;
 const STORE_CONDITIONAL_RESULT_MAX_LINES: usize = 650;
+const YOUNGER_ATOMIC_RESULT_MAX_LINES: usize = 450;
+const YOUNGER_ATOMIC_BOUNDARIES_MAX_LINES: usize = 350;
+const YOUNGER_ATOMIC_AGGREGATE_MAX_LINES: usize = 750;
 
 #[derive(Clone, Copy)]
 struct ExpectedModuleDeclaration {
@@ -155,6 +177,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let boundary_path = crate_dir.join(RESULT_BOUNDARIES);
     let boundary_support_path = crate_dir.join(RESULT_BOUNDARIES_SUPPORT);
     let store_conditional_path = crate_dir.join(STORE_CONDITIONAL_RESULT);
+    let younger_atomic_path = crate_dir.join(YOUNGER_ATOMIC_RESULT);
+    let younger_atomic_boundaries_path = crate_dir.join(YOUNGER_ATOMIC_BOUNDARIES);
     let root = fs::read_to_string(&root_path).unwrap();
     let child = fs::read_to_string(&child_path).unwrap();
     let scalar_suffix = fs::read_to_string(&scalar_suffix_path);
@@ -163,6 +187,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let boundary = fs::read_to_string(&boundary_path);
     let boundary_support = fs::read_to_string(&boundary_support_path);
     let store_conditional = fs::read_to_string(&store_conditional_path);
+    let younger_atomic = fs::read_to_string(&younger_atomic_path);
+    let younger_atomic_boundaries = fs::read_to_string(&younger_atomic_boundaries_path);
 
     let root_functions = top_level_function_names(WRITEBACK_ROOT, &root);
     let mut boundary_failures = Vec::new();
@@ -233,6 +259,12 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     if store_conditional.is_err() {
         boundary_failures.push(format!("{STORE_CONDITIONAL_RESULT} must exist"));
     }
+    if younger_atomic.is_err() {
+        boundary_failures.push(format!("{YOUNGER_ATOMIC_RESULT} must exist"));
+    }
+    if younger_atomic_boundaries.is_err() {
+        boundary_failures.push(format!("{YOUNGER_ATOMIC_BOUNDARIES} must exist"));
+    }
     match &boundary {
         Ok(boundary) => {
             boundary_failures.extend(boundary_support_module_failures(
@@ -267,6 +299,28 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             ));
         }
     }
+    if let Ok(younger_atomic) = &younger_atomic {
+        boundary_failures.extend(module_declaration_failures(
+            YOUNGER_ATOMIC_RESULT,
+            younger_atomic,
+            &YOUNGER_ATOMIC_CHILD_MODULES,
+        ));
+        let includes = top_level_include_paths(YOUNGER_ATOMIC_RESULT, younger_atomic);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{YOUNGER_ATOMIC_RESULT} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
+    if let Ok(younger_atomic_boundaries) = &younger_atomic_boundaries {
+        let includes =
+            top_level_include_paths(YOUNGER_ATOMIC_BOUNDARIES, younger_atomic_boundaries);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{YOUNGER_ATOMIC_BOUNDARIES} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
     assert!(
         boundary_failures.is_empty(),
         "writeback result ownership boundary is incomplete:\n{}",
@@ -278,6 +332,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let boundary = boundary.unwrap();
     let boundary_support = boundary_support.unwrap();
     let store_conditional = store_conditional.unwrap();
+    let younger_atomic = younger_atomic.unwrap();
+    let younger_atomic_boundaries = younger_atomic_boundaries.unwrap();
 
     assert!(
         line_count(&support_path) <= RESULT_SUPPORT_MAX_LINES,
@@ -324,6 +380,19 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         line_count(&store_conditional_path) <= STORE_CONDITIONAL_RESULT_MAX_LINES,
         "{STORE_CONDITIONAL_RESULT} must remain at or below {STORE_CONDITIONAL_RESULT_MAX_LINES} lines"
     );
+    assert!(
+        line_count(&younger_atomic_path) <= YOUNGER_ATOMIC_RESULT_MAX_LINES,
+        "{YOUNGER_ATOMIC_RESULT} must remain at or below {YOUNGER_ATOMIC_RESULT_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&younger_atomic_boundaries_path) <= YOUNGER_ATOMIC_BOUNDARIES_MAX_LINES,
+        "{YOUNGER_ATOMIC_BOUNDARIES} must remain at or below {YOUNGER_ATOMIC_BOUNDARIES_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&younger_atomic_path) + line_count(&younger_atomic_boundaries_path)
+            <= YOUNGER_ATOMIC_AGGREGATE_MAX_LINES,
+        "younger-atomic result evidence must remain at or below {YOUNGER_ATOMIC_AGGREGATE_MAX_LINES} aggregate lines"
+    );
     let support_leaf_failures = support_leaf_failures(RESULT_SUPPORT, &support);
     assert!(
         support_leaf_failures.is_empty(),
@@ -352,6 +421,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         top_level_module_names(RESULT_PAIRS, &pairs).is_empty(),
         "{RESULT_PAIRS} must remain a leaf module"
+    );
+    assert!(
+        top_level_module_names(YOUNGER_ATOMIC_BOUNDARIES, &younger_atomic_boundaries).is_empty(),
+        "{YOUNGER_ATOMIC_BOUNDARIES} must remain a leaf module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
@@ -416,6 +489,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (RESULT_BOUNDARIES, boundary.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
             (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -444,6 +522,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (RESULT_BOUNDARIES, boundary.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
             (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -471,6 +554,12 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (RESULT_PAIRS, pairs.as_str()),
             (RESULT_SUPPORT, support.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -500,11 +589,80 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (RESULT_SUPPORT, support.as_str()),
             (RESULT_BOUNDARIES, boundary.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
                 0,
                 "{relative} must not contain SC result anchor `{anchor}`"
+            );
+        }
+    }
+
+    let younger_atomic_tests = top_level_test_names(YOUNGER_ATOMIC_RESULT, &younger_atomic);
+    assert_eq!(
+        younger_atomic_tests, YOUNGER_ATOMIC_RESULT_ANCHORS,
+        "{YOUNGER_ATOMIC_RESULT} must own exactly the required younger-atomic anchors in order"
+    );
+    for anchor in YOUNGER_ATOMIC_RESULT_ANCHORS {
+        assert_eq!(
+            younger_atomic.matches(anchor).count(),
+            1,
+            "{YOUNGER_ATOMIC_RESULT} must contain younger-atomic anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
+            (RESULT_PAIRS, pairs.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain younger-atomic anchor `{anchor}`"
+            );
+        }
+    }
+
+    let younger_atomic_boundary_tests =
+        top_level_test_names(YOUNGER_ATOMIC_BOUNDARIES, &younger_atomic_boundaries);
+    assert_eq!(
+        younger_atomic_boundary_tests, YOUNGER_ATOMIC_BOUNDARY_ANCHORS,
+        "{YOUNGER_ATOMIC_BOUNDARIES} must own exactly the required boundary anchor"
+    );
+    for anchor in YOUNGER_ATOMIC_BOUNDARY_ANCHORS {
+        assert_eq!(
+            younger_atomic_boundaries.matches(anchor).count(),
+            1,
+            "{YOUNGER_ATOMIC_BOUNDARIES} must contain boundary anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
+            (RESULT_PAIRS, pairs.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain younger-atomic boundary anchor `{anchor}`"
             );
         }
     }
@@ -516,6 +674,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert_rustfmt_clean(&boundary_path);
     assert_rustfmt_clean(&boundary_support_path);
     assert_rustfmt_clean(&store_conditional_path);
+    assert_rustfmt_clean(&younger_atomic_path);
+    assert_rustfmt_clean(&younger_atomic_boundaries_path);
 }
 
 #[test]
@@ -531,6 +691,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#;
     assert!(module_declaration_failures("synthetic.rs", valid, &WRITEBACK_ROOT_MODULES).is_empty());
 
@@ -546,6 +708,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#,
         ),
         (
@@ -558,6 +722,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#,
         ),
         (
@@ -572,6 +738,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#,
         ),
         (
@@ -585,6 +753,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/store_conditional_result.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#,
         ),
         (
@@ -598,6 +768,8 @@ mod result_classes;
 mod result_boundaries;
 #[path = "writeback_port/wrong.rs"]
 mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
 "#,
         ),
     ] {
@@ -606,6 +778,31 @@ mod store_conditional_result;
                 .is_empty(),
             "{label} must be rejected"
         );
+    }
+}
+
+#[test]
+fn writeback_younger_atomic_boundary_module_policy_rejects_wrong_ownership() {
+    let valid = r#"
+#[path = "younger_atomic_result/boundaries.rs"]
+mod boundaries;
+"#;
+    assert!(
+        module_declaration_failures("synthetic.rs", valid, &YOUNGER_ATOMIC_CHILD_MODULES)
+            .is_empty()
+    );
+
+    for source in [
+        "mod boundaries;",
+        "#[path = \"wrong.rs\"]\nmod boundaries;",
+        "#[path = \"younger_atomic_result/boundaries.rs\"]\nmod boundaries {}",
+    ] {
+        assert!(!module_declaration_failures(
+            "synthetic.rs",
+            source,
+            &YOUNGER_ATOMIC_CHILD_MODULES
+        )
+        .is_empty());
     }
 }
 

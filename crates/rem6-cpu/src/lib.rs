@@ -411,7 +411,7 @@ impl RiscvCore {
     pub fn has_pending_data_access(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         !state.outstanding_data.is_empty()
-            || !state.buffered_o3_stores.is_empty()
+            || !state.buffered_o3_effects.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty()
     }
@@ -419,11 +419,11 @@ impl RiscvCore {
     pub(crate) fn pending_data_access_blocks_new_work(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         let has_pending = !state.outstanding_data.is_empty()
-            || !state.buffered_o3_stores.is_empty()
+            || !state.buffered_o3_effects.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty();
         has_pending
-            && !state.has_ready_buffered_o3_store()
+            && !state.has_ready_buffered_o3_effect()
             && !state.can_extend_detailed_scalar_memory_window()
             && !state.can_extend_detailed_memory_result_window()
     }
@@ -435,7 +435,7 @@ impl RiscvCore {
             && !state.o3_runtime.has_pending_retirement_authority()
             && !state.o3_writeback_wake.has_pending_checkpoint_authority()
             && state.outstanding_data.is_empty()
-            && state.buffered_o3_stores.is_empty()
+            && state.buffered_o3_effects.is_empty()
             && state.pending_data_translations.is_empty()
             && state.ready_translated_data.is_empty()
             && state.memory_result_window_authorizations.is_empty()
@@ -470,7 +470,7 @@ impl RiscvCore {
 
     pub fn has_unissued_data_access(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
-        state.has_ready_buffered_o3_store() || state.next_unissued_data_access().is_some()
+        state.has_ready_buffered_o3_effect() || state.next_unissued_data_access().is_some()
     }
 
     pub fn write_register(&self, register: Register, value: u64) {
@@ -874,7 +874,7 @@ struct RiscvCoreState {
         BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
     outstanding_data: BTreeMap<MemoryRequestId, riscv_data_issue::IssuedDataAccess>,
-    buffered_o3_stores: BTreeMap<MemoryRequestId, riscv_data_issue::BufferedO3Store>,
+    buffered_o3_effects: BTreeMap<MemoryRequestId, riscv_data_issue::BufferedO3Effect>,
     pending_trap: Option<RiscvTrap>,
     pending_trap_event: Option<RiscvCpuExecutionEvent>,
     reservation: Option<RiscvLoadReservation>,
@@ -937,7 +937,7 @@ impl RiscvCoreState {
             pending_data_translations: BTreeMap::new(),
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
-            buffered_o3_stores: BTreeMap::new(),
+            buffered_o3_effects: BTreeMap::new(),
             pending_trap: None,
             pending_trap_event: None,
             reservation: None,
@@ -1091,7 +1091,7 @@ impl RiscvCoreState {
         self.pending_data_translations.clear();
         self.ready_translated_data.clear();
         self.outstanding_data.clear();
-        self.buffered_o3_stores.clear();
+        self.buffered_o3_effects.clear();
         self.pending_terminal_memory_result = None;
     }
 

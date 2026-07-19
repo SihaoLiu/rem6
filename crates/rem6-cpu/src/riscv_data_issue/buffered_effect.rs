@@ -4,68 +4,101 @@ use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
 };
 
-use super::{OutstandingDataAccess, PreparedDataParallelAccess};
-use crate::riscv_execution_mode_handoff::RiscvIssuedScalarMemoryHandoff;
-use crate::{RiscvCore, RiscvCoreState, RiscvCpuError};
+use super::{BufferedO3EffectAdmission, OutstandingDataAccess, PreparedDataParallelAccess};
+use crate::{
+    o3_runtime::o3_memory_result_younger_buffered_effect_destination,
+    riscv_execution_mode_handoff::RiscvIssuedScalarMemoryHandoff, RiscvCore, RiscvCoreState,
+    RiscvCpuError,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BufferedO3Store {
-    predecessor: MemoryRequestId,
-    issue: OutstandingDataAccess,
-    request: MemoryRequest,
+pub(crate) struct BufferedO3Effect {
+    pub(super) predecessor: MemoryRequestId,
+    pub(super) issue: OutstandingDataAccess,
+    pub(super) request: MemoryRequest,
 }
 
-impl BufferedO3Store {
+impl BufferedO3Effect {
     pub(crate) fn scalar_memory_handoff(
         &self,
     ) -> Option<(RiscvIssuedScalarMemoryHandoff, MemoryRequestId)> {
         Some((self.issue.scalar_memory_handoff()?, self.predecessor))
     }
+
+    pub(crate) fn memory_result_requests(&self) -> Option<(MemoryRequestId, MemoryRequestId)> {
+        o3_memory_result_younger_buffered_effect_destination(&self.issue.access)?;
+        Some((self.issue.request_id, self.issue.fetch_request))
+    }
 }
 
 pub(super) enum PreparedDataAccess {
-    BufferedStore(BufferedO3Store),
+    BufferedEffect(BufferedO3Effect),
     New(OutstandingDataAccess),
 }
 
 impl RiscvCoreState {
-    pub(crate) fn has_ready_buffered_o3_store(&self) -> bool {
-        self.buffered_o3_stores
+    pub(crate) fn has_ready_buffered_o3_effect(&self) -> bool {
+        self.buffered_o3_effects
             .values()
-            .any(|store| !self.outstanding_data.contains_key(&store.predecessor))
+            .any(|effect| !self.outstanding_data.contains_key(&effect.predecessor))
     }
 
-    pub(crate) fn ready_buffered_o3_store(&self) -> Option<BufferedO3Store> {
-        self.buffered_o3_stores
+    pub(crate) fn ready_buffered_o3_effect(&self) -> Option<BufferedO3Effect> {
+        self.buffered_o3_effects
             .values()
-            .find(|store| !self.outstanding_data.contains_key(&store.predecessor))
+            .find(|effect| !self.outstanding_data.contains_key(&effect.predecessor))
             .cloned()
     }
 }
 
+pub(super) fn buffered_o3_effect_admission(
+    state: &RiscvCoreState,
+    issue: &OutstandingDataAccess,
+) -> BufferedO3EffectAdmission {
+    use BufferedO3EffectAdmission::{Blocked, Buffered, NotBuffered};
+
+    let Some(execution) = state.data_access_execution(issue.fetch_request) else {
+        return Blocked;
+    };
+    if let Some(predecessor) = state.o3_runtime.scalar_store_predecessor(execution) {
+        return Buffered(predecessor);
+    }
+    if o3_memory_result_younger_buffered_effect_destination(&issue.access).is_none()
+        || !state.o3_runtime.has_live_data_access()
+    {
+        return NotBuffered;
+    }
+    if !state.can_overlap_detailed_memory_result_event(execution) {
+        return Blocked;
+    }
+    state
+        .o3_runtime
+        .memory_result_effect_predecessor(execution)
+        .map_or(Blocked, Buffered)
+}
+
 impl RiscvCore {
-    pub(super) fn o3_store_predecessor(
+    pub(super) fn o3_buffered_effect_predecessor(
         &self,
         issue: &OutstandingDataAccess,
-    ) -> Option<MemoryRequestId> {
+    ) -> BufferedO3EffectAdmission {
         let state = self.state.lock().expect("riscv core lock");
-        let execution = state.data_access_execution(issue.fetch_request)?;
-        state.o3_runtime.scalar_store_predecessor(execution)
+        buffered_o3_effect_admission(&state, issue)
     }
 
-    pub(super) fn ready_buffered_o3_store(&self) -> Option<BufferedO3Store> {
+    pub(super) fn ready_buffered_o3_effect(&self) -> Option<BufferedO3Effect> {
         self.state
             .lock()
             .expect("riscv core lock")
-            .ready_buffered_o3_store()
+            .ready_buffered_o3_effect()
     }
 
-    pub(super) fn submit_buffered_o3_store<F>(
+    pub(super) fn submit_buffered_o3_effect<F>(
         &self,
         scheduler: &mut PartitionedScheduler,
         transport: &MemoryTransport,
         trace: MemoryTrace,
-        buffered: BufferedO3Store,
+        buffered: BufferedO3Effect,
         responder: F,
     ) -> Result<PartitionEventId, RiscvCpuError>
     where
@@ -92,13 +125,13 @@ impl RiscvCore {
                 move |delivery| core.record_data_response(delivery),
             )
             .map_err(RiscvCpuError::Transport)?;
-        self.record_buffered_o3_store_submission(request_id);
+        self.record_buffered_o3_effect_submission(request_id);
         Ok(event)
     }
 
-    pub(super) fn prepare_buffered_o3_store_parallel<F>(
+    pub(super) fn prepare_buffered_o3_effect_parallel<F>(
         &self,
-        buffered: BufferedO3Store,
+        buffered: BufferedO3Effect,
         trace: MemoryTrace,
         responder: F,
     ) -> PreparedDataParallelAccess
@@ -126,63 +159,52 @@ impl RiscvCore {
         PreparedDataParallelAccess::buffered_transaction(request_id, transaction)
     }
 
-    pub(crate) fn schedule_prepared_buffered_o3_store_parallel(
+    pub(crate) fn schedule_prepared_buffered_o3_effect_parallel(
         &self,
         scheduler: &mut PartitionedScheduler,
         issue: OutstandingDataAccess,
         request: MemoryRequest,
         predecessor: MemoryRequestId,
-    ) -> Result<PartitionEventId, RiscvCpuError> {
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
         let event = scheduler
             .schedule_parallel_at(self.partition(), scheduler.now(), |_context| {})
             .map_err(RiscvCpuError::Scheduler)?;
-        self.record_buffered_o3_store_issue(issue, request, predecessor);
-        Ok(event)
+        if !self.record_buffered_o3_effect_issue_state(issue, request, predecessor) {
+            scheduler
+                .cancel_event(event)
+                .map_err(RiscvCpuError::Scheduler)?;
+            return Ok(None);
+        }
+        Ok(Some(event))
     }
 
-    pub(super) fn schedule_buffered_o3_store(
+    pub(super) fn schedule_buffered_o3_effect(
         &self,
         scheduler: &mut PartitionedScheduler,
         issue: OutstandingDataAccess,
         request: MemoryRequest,
         predecessor: MemoryRequestId,
-    ) -> Result<PartitionEventId, RiscvCpuError> {
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
         let event = scheduler
             .schedule_at(self.partition(), scheduler.now(), |_context| {})
             .map_err(RiscvCpuError::Scheduler)?;
-        self.record_buffered_o3_store_issue(issue, request, predecessor);
-        Ok(event)
+        let recorded = self.record_buffered_o3_effect_issue_state(issue, request, predecessor);
+        if !recorded {
+            scheduler
+                .cancel_event(event)
+                .map_err(RiscvCpuError::Scheduler)?;
+            self.clear_deferred_o3_live_data_access_execution();
+        }
+        Ok(recorded.then_some(event))
     }
 
-    fn record_buffered_o3_store_issue(
-        &self,
-        issue: OutstandingDataAccess,
-        request: MemoryRequest,
-        predecessor: MemoryRequestId,
-    ) {
-        let request_id = issue.request_id;
-        let buffered = BufferedO3Store {
-            predecessor,
-            issue: issue.clone(),
-            request,
-        };
-        self.record_data_issue(issue);
-        let replaced = self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .buffered_o3_stores
-            .insert(request_id, buffered);
-        assert!(replaced.is_none(), "buffered O3 store request is unique");
-    }
-
-    pub(crate) fn record_buffered_o3_store_submission(&self, request_id: MemoryRequestId) {
+    pub(crate) fn record_buffered_o3_effect_submission(&self, request_id: MemoryRequestId) {
         let removed = self
             .state
             .lock()
             .expect("riscv core lock")
-            .buffered_o3_stores
+            .buffered_o3_effects
             .remove(&request_id);
-        assert!(removed.is_some(), "submitted O3 store was buffered");
+        assert!(removed.is_some(), "submitted O3 effect was buffered");
     }
 }

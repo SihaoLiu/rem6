@@ -487,7 +487,7 @@ fn detailed_disjoint_store_prefix_stages_ordered_rows_and_ignores_disjoint_bytes
 
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 4);
-    assert_eq!(state.buffered_o3_stores.len(), 2);
+    assert_eq!(state.buffered_o3_effects.len(), 2);
     assert_eq!(
         state
             .o3_runtime

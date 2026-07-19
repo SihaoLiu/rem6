@@ -15,7 +15,8 @@ use rem6_transport::{
 use crate::{
     o3_runtime::{
         is_deferred_o3_data_access, o3_memory_result_destination,
-        o3_memory_result_window_destination, O3DataAccessWindowPolicy, O3StoreLoadForwardingPlan,
+        o3_memory_result_window_destination, o3_memory_result_younger_buffered_effect_destination,
+        O3DataAccessWindowPolicy, O3StoreLoadForwardingPlan,
     },
     riscv_checker,
     riscv_cross_line::supports_cross_line_data_access,
@@ -33,7 +34,7 @@ use crate::{
     RiscvLoadReservation,
 };
 
-mod buffered_store;
+mod buffered_effect;
 mod forwarding;
 mod handoff;
 mod o3_callback;
@@ -41,8 +42,8 @@ mod prepared;
 mod request_helpers;
 mod store_conditional;
 
-pub(crate) use buffered_store::BufferedO3Store;
-use buffered_store::PreparedDataAccess;
+pub(crate) use buffered_effect::BufferedO3Effect;
+use buffered_effect::{buffered_o3_effect_admission, PreparedDataAccess};
 use o3_callback::{
     cloned_data_access_event_with_kind, mark_data_access_event_kind, record_callback_error,
     record_o3_data_access_outcome,
@@ -56,6 +57,12 @@ use request_helpers::{pma_access_kind, pma_alignment_checks, pmp_access_kind};
 
 #[cfg(test)]
 use crate::CpuId;
+
+pub(super) enum BufferedO3EffectAdmission {
+    NotBuffered,
+    Buffered(MemoryRequestId),
+    Blocked,
+}
 
 impl RiscvCore {
     pub fn issue_next_data_access<F>(
@@ -75,9 +82,9 @@ impl RiscvCore {
                 return Ok(None);
             };
             let issue = match prepared {
-                PreparedDataAccess::BufferedStore(buffered) => {
+                PreparedDataAccess::BufferedEffect(buffered) => {
                     return self
-                        .submit_buffered_o3_store(scheduler, transport, trace, buffered, responder)
+                        .submit_buffered_o3_effect(scheduler, transport, trace, buffered, responder)
                         .map(Some);
                 }
                 PreparedDataAccess::New(issue) => issue,
@@ -98,10 +105,20 @@ impl RiscvCore {
                 issue.size,
                 issue.memory_request()?,
             )?;
-            if let Some(predecessor) = self.o3_store_predecessor(&issue) {
-                return self
-                    .schedule_buffered_o3_store(scheduler, issue, request, predecessor)
-                    .map(Some);
+            match self.o3_buffered_effect_predecessor(&issue) {
+                BufferedO3EffectAdmission::Buffered(predecessor) => {
+                    return self.schedule_buffered_o3_effect(
+                        scheduler,
+                        issue,
+                        request,
+                        predecessor,
+                    );
+                }
+                BufferedO3EffectAdmission::Blocked => {
+                    self.clear_deferred_o3_live_data_access_execution();
+                    return Ok(None);
+                }
+                BufferedO3EffectAdmission::NotBuffered => {}
             }
 
             let request_id = issue.request_id;
@@ -148,7 +165,6 @@ impl RiscvCore {
         };
 
         self.submit_prepared_data_parallel_access(scheduler, transport, prepared)
-            .map(Some)
     }
 
     pub(crate) fn prepare_data_parallel_access<F>(
@@ -168,9 +184,9 @@ impl RiscvCore {
                 return Ok(None);
             };
             let issue = match prepared {
-                PreparedDataAccess::BufferedStore(buffered) => {
+                PreparedDataAccess::BufferedEffect(buffered) => {
                     return Ok(Some(
-                        self.prepare_buffered_o3_store_parallel(buffered, trace, responder),
+                        self.prepare_buffered_o3_effect_parallel(buffered, trace, responder),
                     ));
                 }
                 PreparedDataAccess::New(issue) => issue,
@@ -189,13 +205,20 @@ impl RiscvCore {
                 issue.size,
                 issue.memory_request()?,
             )?;
-            if let Some(predecessor) = self.o3_store_predecessor(&issue) {
-                return Ok(Some(PreparedDataParallelAccess::buffered_store(
-                    self,
-                    issue,
-                    request,
-                    predecessor,
-                )));
+            match self.o3_buffered_effect_predecessor(&issue) {
+                BufferedO3EffectAdmission::Buffered(predecessor) => {
+                    return Ok(Some(PreparedDataParallelAccess::buffered_effect(
+                        self,
+                        issue,
+                        request,
+                        predecessor,
+                    )));
+                }
+                BufferedO3EffectAdmission::Blocked => {
+                    self.clear_deferred_o3_live_data_access_execution();
+                    return Ok(None);
+                }
+                BufferedO3EffectAdmission::NotBuffered => {}
             }
             let request_id = issue.request_id;
             let responder_core = self.clone();
@@ -291,8 +314,8 @@ impl RiscvCore {
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<Option<PreparedDataAccess>, RiscvCpuError> {
-        if let Some(buffered) = self.ready_buffered_o3_store() {
-            return Ok(Some(PreparedDataAccess::BufferedStore(buffered)));
+        if let Some(buffered) = self.ready_buffered_o3_effect() {
+            return Ok(Some(PreparedDataAccess::BufferedEffect(buffered)));
         }
         if let Some(fetch) = self.data_translation_page_map_required_fetch() {
             return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
@@ -579,126 +602,164 @@ impl RiscvCore {
     }
 
     fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
+        assert!(
+            self.try_record_data_issue_state(issue, emit_issued_event, None),
+            "O3-owned data issue must own an available memory slot"
+        );
+    }
+
+    fn record_buffered_o3_effect_issue_state(
+        &self,
+        issue: OutstandingDataAccess,
+        request: MemoryRequest,
+        predecessor: MemoryRequestId,
+    ) -> bool {
+        self.try_record_data_issue_state(issue, true, Some((request, predecessor)))
+    }
+
+    fn try_record_data_issue_state(
+        &self,
+        issue: OutstandingDataAccess,
+        emit_issued_event: bool,
+        buffered_effect: Option<(MemoryRequest, MemoryRequestId)>,
+    ) -> bool {
         self.core.advance_sequence_past(issue.request_id);
-        let (o3_data_access, younger_window_policy) = {
-            let state = self.state.lock().expect("riscv core lock");
-            let detailed = state.live_retire_gate.detailed_policy_enabled();
-            let o3_data_access = is_deferred_o3_data_access(Some(&issue.access))
-                && (detailed
-                    || state
-                        .o3_runtime
-                        .owns_pending_live_data_access_retirement(issue.fetch_request));
-            let provisional_terminal_result = state
-                .pending_terminal_memory_result
-                .as_ref()
-                .is_some_and(|pending| pending.owns_fetch(issue.fetch_request));
-            let eligible_scalar_load = o3_data_access
-                && !provisional_terminal_result
-                && matches!(&issue.access, MemoryAccessKind::Load { .. })
-                && o3_memory_result_destination(&issue.access).is_some()
-                && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
-                && (state.data_translation.is_none()
-                    || state
-                        .translated_scalar_load_window_fetches
-                        .contains(&issue.fetch_request))
-                && matches!(
-                    state
-                        .pma
-                        .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
-                    Ok(false)
-                );
-            let memory_result_route = match &issue.target {
-                RiscvDataAccessTarget::Memory { .. } => O3MemoryResultWindowRoute::Memory,
-                RiscvDataAccessTarget::Mmio { .. } => O3MemoryResultWindowRoute::Mmio,
-            };
-            let memory_result_shape = o3_memory_result_window_destination(&issue.access);
-            let expected_memory_result_role = if state.o3_runtime.has_live_data_access() {
-                O3MemoryResultWindowRole::YoungerRead
-            } else {
-                O3MemoryResultWindowRole::Head
-            };
-            let eligible_memory_result_window = o3_data_access
-                && !provisional_terminal_result
-                && state
-                    .memory_result_window_authorizations
-                    .get(&issue.fetch_request)
-                    .copied()
-                    .is_some_and(|authorization| {
-                        authorization.role() == expected_memory_result_role
-                            && authorization.matches(
-                                memory_result_route,
-                                issue.physical_address,
-                                issue.size,
-                            )
-                            && memory_result_shape == Some(authorization.integer_destination())
-                            && (memory_result_route == O3MemoryResultWindowRoute::Mmio
-                                || matches!(
-                                    state.pma.is_uncacheable(
-                                        issue.physical_address.get(),
-                                        issue.size.bytes(),
-                                    ),
-                                    Ok(false)
-                                ))
-                            && (memory_result_route != O3MemoryResultWindowRoute::Mmio
-                                || matches!(
-                                    &issue.access,
-                                    MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
-                                ))
-                    });
-            let younger_window_policy = if eligible_memory_result_window {
-                O3DataAccessWindowPolicy::MemoryResultWindow
-            } else if eligible_scalar_load {
-                O3DataAccessWindowPolicy::ScalarMemoryPrefix
-            } else {
-                O3DataAccessWindowPolicy::None
-            };
-            (o3_data_access, younger_window_policy)
-        };
-        let fetch_events = if younger_window_policy != O3DataAccessWindowPolicy::None {
+        let fetch_events = if o3_memory_result_window_destination(&issue.access).is_some() {
             self.core.fetch_events()
         } else {
             Vec::new()
         };
         let mut state = self.state.lock().expect("riscv core lock");
+        if let Some((_, predecessor)) = buffered_effect.as_ref() {
+            if !matches!(
+                buffered_o3_effect_admission(&state, &issue),
+                BufferedO3EffectAdmission::Buffered(current) if current == *predecessor
+            ) {
+                return false;
+            }
+        }
+        let detailed = state.live_retire_gate.detailed_policy_enabled();
+        let o3_data_access = is_deferred_o3_data_access(Some(&issue.access))
+            && (detailed
+                || state
+                    .o3_runtime
+                    .owns_pending_live_data_access_retirement(issue.fetch_request));
+        let provisional_terminal_result = state
+            .pending_terminal_memory_result
+            .as_ref()
+            .is_some_and(|pending| pending.owns_fetch(issue.fetch_request));
+        let eligible_scalar_load = o3_data_access
+            && !provisional_terminal_result
+            && matches!(&issue.access, MemoryAccessKind::Load { .. })
+            && o3_memory_result_destination(&issue.access).is_some()
+            && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
+            && (state.data_translation.is_none()
+                || state
+                    .translated_scalar_load_window_fetches
+                    .contains(&issue.fetch_request))
+            && matches!(
+                state
+                    .pma
+                    .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
+                Ok(false)
+            );
+        let memory_result_route = match &issue.target {
+            RiscvDataAccessTarget::Memory { .. } => O3MemoryResultWindowRoute::Memory,
+            RiscvDataAccessTarget::Mmio { .. } => O3MemoryResultWindowRoute::Mmio,
+        };
+        let memory_result_shape = o3_memory_result_window_destination(&issue.access);
+        let expected_memory_result_role = if state.o3_runtime.has_live_data_access()
+            && o3_memory_result_younger_buffered_effect_destination(&issue.access).is_some()
+        {
+            O3MemoryResultWindowRole::YoungerBufferedEffect
+        } else if state.o3_runtime.has_live_data_access() {
+            O3MemoryResultWindowRole::YoungerRead
+        } else {
+            O3MemoryResultWindowRole::Head
+        };
+        let eligible_memory_result_window = o3_data_access
+            && !provisional_terminal_result
+            && state
+                .memory_result_window_authorizations
+                .get(&issue.fetch_request)
+                .copied()
+                .is_some_and(|authorization| {
+                    authorization.role() == expected_memory_result_role
+                        && authorization.matches(
+                            memory_result_route,
+                            issue.physical_address,
+                            issue.size,
+                        )
+                        && memory_result_shape == Some(authorization.integer_destination())
+                        && (memory_result_route == O3MemoryResultWindowRoute::Mmio
+                            || matches!(
+                                state.pma.is_uncacheable(
+                                    issue.physical_address.get(),
+                                    issue.size.bytes(),
+                                ),
+                                Ok(false)
+                            ))
+                        && (memory_result_route != O3MemoryResultWindowRoute::Mmio
+                            || matches!(
+                                &issue.access,
+                                MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
+                            ))
+                });
+        let younger_window_policy = if eligible_memory_result_window {
+            O3DataAccessWindowPolicy::MemoryResultWindow
+        } else if eligible_scalar_load {
+            O3DataAccessWindowPolicy::ScalarMemoryPrefix
+        } else {
+            O3DataAccessWindowPolicy::None
+        };
+        let execution = state.data_access_execution(issue.fetch_request).cloned();
+        if o3_data_access {
+            let Some(execution) = execution.as_ref() else {
+                return false;
+            };
+            if !state.o3_runtime.stage_live_data_access_issue(
+                execution,
+                issue.request_id,
+                issue.tick,
+                younger_window_policy,
+            ) {
+                return false;
+            }
+        }
         state
             .translated_scalar_load_window_fetches
             .remove(&issue.fetch_request);
         state
             .memory_result_window_authorizations
             .remove(&issue.fetch_request);
-        let execution = state.data_access_execution(issue.fetch_request).cloned();
         state.issued_data_for_fetches.insert(issue.fetch_request);
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        if o3_data_access {
-            let execution = execution
-                .as_ref()
-                .expect("issued O3 data access has a matching execution event");
-            let staged = state.o3_runtime.stage_live_data_access_issue(
-                execution,
-                issue.request_id,
+        if o3_data_access && younger_window_policy != O3DataAccessWindowPolicy::None {
+            stage_o3_data_access_younger_window(
+                &mut state,
+                execution.as_ref().expect("validated O3 execution"),
                 issue.tick,
-                younger_window_policy,
+                &fetch_events,
             );
-            assert!(
-                staged,
-                "O3-owned data issue must own an available memory slot"
-            );
-            if younger_window_policy != O3DataAccessWindowPolicy::None {
-                stage_o3_data_access_younger_window(
-                    &mut state,
-                    execution,
-                    issue.tick,
-                    &fetch_events,
-                );
-            }
         }
         if emit_issued_event {
             state
                 .data_events
                 .push(RiscvDataAccessEvent::issued(issue.record(issue.tick)));
         }
+        if let Some((request, predecessor)) = buffered_effect {
+            let request_id = issue.request_id;
+            let buffered = BufferedO3Effect {
+                predecessor,
+                issue,
+                request,
+            };
+            let replaced = state.buffered_o3_effects.insert(request_id, buffered);
+            assert!(replaced.is_none(), "buffered O3 effect request is unique");
+        }
+        true
     }
 
     fn o3_scalar_load_wakeup_fetch_events(

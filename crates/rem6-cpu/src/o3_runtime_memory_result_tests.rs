@@ -30,6 +30,8 @@ mod replan;
 mod store_conditional;
 #[path = "o3_runtime_memory_result_tests/writeback_maxima.rs"]
 mod writeback_maxima;
+#[path = "o3_runtime_memory_result_tests/younger_effect.rs"]
+mod younger_effect;
 #[path = "o3_runtime_memory_result_tests/younger_window.rs"]
 mod younger_window;
 

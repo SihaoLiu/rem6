@@ -813,7 +813,7 @@ impl RiscvCore {
     fn has_o3_live_data_authority(state: &RiscvCoreState) -> bool {
         !state.o3_runtime.live_data_access_lifecycle_is_quiescent()
             || !state.outstanding_data.is_empty()
-            || !state.buffered_o3_stores.is_empty()
+            || !state.buffered_o3_effects.is_empty()
             || !state.pending_data_translations.is_empty()
             || !state.ready_translated_data.is_empty()
             || state
@@ -861,7 +861,7 @@ impl RiscvCore {
         let mut issued_rows = Vec::with_capacity(rows.len());
         for issued in state.outstanding_data.values() {
             let issued = issued.scalar_memory_handoff()?;
-            let ownership = match state.buffered_o3_stores.get(&issued.data_request) {
+            let ownership = match state.buffered_o3_effects.get(&issued.data_request) {
                 Some(buffered) => {
                     let (buffered_issue, predecessor) = buffered.scalar_memory_handoff()?;
                     if buffered_issue != issued {

@@ -326,13 +326,33 @@ impl RiscvCore {
                 .memory_result_window_authorizations
                 .iter()
                 .filter_map(|(request, authorization)| {
-                    (authorization.role()
-                        == crate::riscv_fetch_ahead::O3MemoryResultWindowRole::YoungerRead)
-                        .then_some(*request)
+                    authorization.role().is_younger().then_some(*request)
                 })
                 .collect::<Vec<_>>();
             for fetch_request in younger_result_fetches {
                 state.abort_deferred_o3_live_data_access_execution(fetch_request);
+            }
+            let buffered_memory_results = state
+                .buffered_o3_effects
+                .values()
+                .filter_map(crate::riscv_data_issue::BufferedO3Effect::memory_result_requests)
+                .collect::<Vec<_>>();
+            for (data_request, fetch_request) in buffered_memory_results {
+                assert!(
+                    state
+                        .o3_runtime
+                        .discard_live_data_access_suffix(fetch_request, data_request),
+                    "buffered O3 memory-result effect owns a live suffix"
+                );
+                state.buffered_o3_effects.remove(&data_request);
+                state.outstanding_data.remove(&data_request);
+                state.issued_data_for_fetches.remove(&fetch_request);
+                state
+                    .memory_result_window_authorizations
+                    .remove(&fetch_request);
+                if let Some(event) = state.data_access_execution_mut(fetch_request) {
+                    event.clear_data_access_retirement();
+                }
             }
             if state.o3_runtime.has_live_retirement_authority() {
                 return;

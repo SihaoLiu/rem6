@@ -123,6 +123,33 @@ pub(crate) fn o3_memory_result_younger_read_destination(
     }
 }
 
+pub(crate) fn o3_memory_result_younger_buffered_effect_destination(
+    access: &MemoryAccessKind,
+) -> Option<Option<Register>> {
+    match access {
+        MemoryAccessKind::AtomicMemory {
+            rd,
+            acquire: false,
+            release: false,
+            ..
+        } if !rd.is_zero() => o3_memory_result_window_destination(access),
+        _ => None,
+    }
+}
+
+pub(crate) fn o3_memory_result_pure_read_destination(
+    access: &MemoryAccessKind,
+) -> Option<Option<Register>> {
+    match access {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. } => {
+            o3_memory_result_window_destination(access)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn o3_memory_result_range(access: &MemoryAccessKind) -> Option<AddressRange> {
     let (address, size) = memory_result_address_size(access)?;
     AddressRange::new(address, size).ok()
@@ -896,6 +923,34 @@ impl O3RuntimeState {
             return None;
         }
         live.memory_result.clone()
+    }
+
+    pub(crate) fn discard_live_data_access_suffix(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        data_request: MemoryRequestId,
+    ) -> bool {
+        let Some(index) = self.live_data_accesses.iter().position(|live| {
+            live.fetch_request == fetch_request && live.data_request == data_request
+        }) else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        let sequence = self.live_data_accesses[index].sequence;
+        let removed = self.live_data_accesses.drain(index..).collect::<Vec<_>>();
+        for live in &removed {
+            self.pending_data_accesses.remove(&live.fetch_request);
+        }
+        if self
+            .deferred_live_data_access_execution
+            .is_some_and(|request| removed.iter().any(|live| live.fetch_request == request))
+        {
+            self.deferred_live_data_access_execution = None;
+        }
+        self.discard_live_data_access_window_rows(sequence);
+        true
     }
 
     pub(crate) fn discard_live_data_access_lifecycle(&mut self) {

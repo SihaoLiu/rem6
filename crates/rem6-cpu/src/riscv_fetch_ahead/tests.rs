@@ -26,6 +26,7 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 mod btb;
 mod checkpoint;
 mod data_access_result;
+mod data_access_result_effect;
 mod data_access_result_pair;
 mod detailed_o3_control;
 mod producer_forwarded_chain_validation;
