@@ -107,7 +107,6 @@ pub(crate) fn transmit_qos_fabric_batch(
         let request_index = pending.remove(grant.queue_index());
         let request = &requests[request_index];
         let transfer = fabric.transmit(now, request.packet.clone(), request.path.clone())?;
-        let selected = queue[grant.queue_index()].clone();
         activities.push(FabricQosGrantActivity::new(
             direction,
             now,
@@ -117,7 +116,6 @@ pub(crate) fn transmit_qos_fabric_batch(
             queue,
             Vec::new(),
             grant.queue_index(),
-            selected,
             before.lrg_requestors().to_vec(),
             after.lrg_requestors().to_vec(),
         ));
@@ -165,7 +163,6 @@ pub(crate) fn transmit_ordered_qos_fabric_batch(
         let request_index = pending.remove(eligible_indexes[grant.queue_index()]);
         let request = &requests[request_index];
         let transfer = fabric.transmit(now, request.packet.clone(), request.path.clone())?;
-        let selected = queue[grant.queue_index()].clone();
         activities.push(FabricQosGrantActivity::new(
             FabricQosGrantDirection::Request,
             now,
@@ -175,7 +172,6 @@ pub(crate) fn transmit_ordered_qos_fabric_batch(
             queue,
             suppressed,
             grant.queue_index(),
-            selected,
             before.lrg_requestors().to_vec(),
             after.lrg_requestors().to_vec(),
         ));

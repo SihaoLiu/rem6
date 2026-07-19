@@ -1294,6 +1294,9 @@ fn transport_records_fifo_lifo_and_lrg_fabric_qos_grant_decisions() {
             [3, 2, 1],
             "{policy:?}"
         );
+        assert!(activities.iter().all(|activity| {
+            activity.grant() == &activity.candidates()[activity.selected_queue_index()]
+        }));
         assert!(activities
             .iter()
             .all(|activity| activity.policy() == policy));
@@ -1917,6 +1920,9 @@ fn transport_fabric_qos_arbitrates_same_tick_response_hops() {
             assert!(activities
                 .iter()
                 .all(|activity| activity.direction() == FabricQosGrantDirection::Response));
+            assert!(activities.iter().all(|activity| {
+                activity.grant() == &activity.candidates()[activity.selected_queue_index()]
+            }));
             assert_eq!(
                 activities
                     .iter()

@@ -176,6 +176,25 @@ fn rem6_run_routes_multicore_two_hop_fabric_with_qos_queue_policy_matrix() {
             request_qos_activities.len() + response_qos_activities.len(),
             qos_activities.len()
         );
+        for activity in qos_activities {
+            let candidates = activity["candidates"].as_array().unwrap();
+            let selected_queue_index = activity["selected_queue_index"].as_u64().unwrap() as usize;
+            assert!(selected_queue_index < candidates.len(), "{stdout}");
+            let selected = &candidates[selected_queue_index];
+            for field in [
+                "packet",
+                "request_id",
+                "requestor",
+                "priority",
+                "bytes",
+                "order",
+            ] {
+                assert_eq!(
+                    activity["grant"][field], selected[field],
+                    "policy {policy:?}, field {field}: {stdout}"
+                );
+            }
+        }
         let request_transfers = fabric_vn_transfer_count(&json, 7);
         let response_transfers = fabric_vn_transfer_count(&json, 8);
         assert!(request_transfers > 0);

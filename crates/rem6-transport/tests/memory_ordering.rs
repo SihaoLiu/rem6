@@ -420,6 +420,9 @@ fn shared_fabric_qos_activity_records_memory_order_suppression() {
     assert!(activities
         .iter()
         .all(|activity| activity.direction() == FabricQosGrantDirection::Request));
+    assert!(activities.iter().all(|activity| {
+        activity.grant() == &activity.candidates()[activity.selected_queue_index()]
+    }));
     let first = &activities[0];
     assert_eq!(first.candidates().len(), 1);
     assert_eq!(first.candidates()[0].order(), 0);

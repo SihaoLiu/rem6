@@ -103,6 +103,27 @@ fn fabric_qos_activity_contracts_live_in_focused_module() {
         !lib_rs.contains("pub enum FabricQosGrantDirection {"),
         "src/lib.rs should re-export fabric QoS grant direction from a focused module"
     );
+    let grant_activity = source_section(
+        &qos_activity,
+        "pub struct FabricQosGrantActivity {",
+        "pub struct SharedFabricQosState {",
+    );
+    assert_eq!(
+        grant_activity.matches("QosQueuedRequest").count(),
+        1,
+        "fabric QoS activity must not store a selected request beside its candidate queue"
+    );
+    let grant_accessor = source_section(
+        &qos_activity,
+        "pub fn grant(&self) -> &QosQueuedRequest {",
+        "pub fn lrg_requestors_before",
+    );
+    for authority in ["self.candidates", "self.selected_queue_index"] {
+        assert!(
+            grant_accessor.contains(authority),
+            "fabric QoS grant access must derive from `{authority}`"
+        );
+    }
 }
 
 #[test]
@@ -166,6 +187,16 @@ fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
             paths.push(path);
         }
     }
+}
+
+fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let (_, section) = source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("missing source section start `{start}`"));
+    let (section, _) = section
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing source section end `{end}`"));
+    section
 }
 
 fn line_count(path: &Path) -> usize {

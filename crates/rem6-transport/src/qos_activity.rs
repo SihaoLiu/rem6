@@ -44,7 +44,6 @@ pub struct FabricQosGrantActivity {
     candidates: Vec<QosQueuedRequest>,
     suppressed: Vec<FabricQosSuppressedRequest>,
     selected_queue_index: usize,
-    grant: QosQueuedRequest,
     lrg_requestors_before: Vec<QosRequestorId>,
     lrg_requestors_after: Vec<QosRequestorId>,
 }
@@ -87,11 +86,13 @@ impl FabricQosGrantActivity {
         candidates: Vec<QosQueuedRequest>,
         suppressed: Vec<FabricQosSuppressedRequest>,
         selected_queue_index: usize,
-        grant: QosQueuedRequest,
         lrg_requestors_before: Vec<QosRequestorId>,
         lrg_requestors_after: Vec<QosRequestorId>,
     ) -> Self {
-        debug_assert_eq!(candidates.get(selected_queue_index), Some(&grant));
+        assert!(
+            selected_queue_index < candidates.len(),
+            "fabric QoS selected queue index must identify a candidate"
+        );
         Self {
             direction,
             tick,
@@ -101,7 +102,6 @@ impl FabricQosGrantActivity {
             candidates,
             suppressed,
             selected_queue_index,
-            grant,
             lrg_requestors_before,
             lrg_requestors_after,
         }
@@ -140,7 +140,7 @@ impl FabricQosGrantActivity {
     }
 
     pub fn grant(&self) -> &QosQueuedRequest {
-        &self.grant
+        &self.candidates[self.selected_queue_index]
     }
 
     pub fn lrg_requestors_before(&self) -> &[QosRequestorId] {
