@@ -115,6 +115,12 @@ fn writeback_width_one_reserves_oldest_same_cycle_row_first() {
         reservation_rows(&reservations),
         vec![(4, 20, 20, 0, true), (5, 20, 21, 0, true)]
     );
+    let (cycle_ticks, ready_rows_by_tick) = runtime.live_writeback_schedule_debug();
+    assert_eq!(cycle_ticks, BTreeSet::from([20, 21]));
+    assert_eq!(
+        ready_rows_by_tick,
+        BTreeMap::from([(20, BTreeSet::from([4, 5]))])
+    );
 }
 
 #[test]
@@ -583,14 +589,6 @@ fn assert_writeback_error_left_state_unchanged(runtime: &O3RuntimeState, before:
         before.snapshot.pending_state()
     );
     assert_eq!(runtime.writeback_calendar, before.writeback_calendar);
-    assert_eq!(
-        runtime.live_writeback_cycle_ticks,
-        before.live_writeback_cycle_ticks
-    );
-    assert_eq!(
-        runtime.live_writeback_ready_rows_by_tick,
-        before.live_writeback_ready_rows_by_tick
-    );
     assert_eq!(
         runtime.snapshot.reorder_buffer(),
         before.snapshot.reorder_buffer()

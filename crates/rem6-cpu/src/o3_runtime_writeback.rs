@@ -600,7 +600,6 @@ impl O3RuntimeState {
         self.live_writeback_counted_sequences.clear();
         self.finalized_writeback_port_stats = finalized_stats;
         self.stats = stats;
-        self.rebuild_live_writeback_schedule_ownership(empty);
         self.writeback_calendar.clear();
         self.published_writeback_sequences.clear();
         Ok(())
@@ -610,8 +609,6 @@ impl O3RuntimeState {
         self.writeback_calendar.clear();
         self.published_writeback_sequences.clear();
         self.live_writeback_counted_sequences.clear();
-        self.live_writeback_cycle_ticks.clear();
-        self.live_writeback_ready_rows_by_tick.clear();
         self.finalized_writeback_port_stats = O3FinalizedWritebackPortStats::default();
     }
 
@@ -622,8 +619,6 @@ impl O3RuntimeState {
 
     pub(super) fn reset_writeback_stats_ownership(&mut self) {
         self.live_writeback_counted_sequences.clear();
-        self.live_writeback_cycle_ticks.clear();
-        self.live_writeback_ready_rows_by_tick.clear();
         self.finalized_writeback_port_stats
             .reset_counters_preserving_closure();
     }
@@ -695,7 +690,6 @@ impl O3RuntimeState {
             .reconcile_live_schedule(&replacement)?;
         self.stats
             .set_writeback_port_schedule(&self.finalized_writeback_port_stats, &replacement)?;
-        self.rebuild_live_writeback_schedule_ownership(replacement);
         Ok(())
     }
 
@@ -704,14 +698,6 @@ impl O3RuntimeState {
             &self.writeback_calendar,
             &self.live_writeback_counted_sequences,
         )
-    }
-
-    fn rebuild_live_writeback_schedule_ownership(
-        &mut self,
-        schedule: O3WritebackPortStatsSchedule,
-    ) {
-        self.live_writeback_cycle_ticks = schedule.cycle_ticks;
-        self.live_writeback_ready_rows_by_tick = schedule.ready_rows_by_tick;
     }
 }
 

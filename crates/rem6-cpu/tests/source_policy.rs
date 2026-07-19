@@ -940,6 +940,78 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         ownership.contains("fn finalize_live_writeback_ownership("),
         "src/o3_runtime_writeback/ownership.rs must own exact finalized/live ownership transfer"
     );
+    for redundant in [
+        "live_writeback_cycle_ticks",
+        "live_writeback_ready_rows_by_tick",
+    ] {
+        for (relative, source) in [
+            ("src/o3_runtime.rs", root.as_str()),
+            ("src/o3_runtime_writeback/replan.rs", replan.as_str()),
+        ] {
+            assert!(
+                !source.contains(redundant),
+                "{relative} must derive live writeback schedule state instead of storing `{redundant}`"
+            );
+        }
+    }
+    let runtime_state = source_section(
+        &root,
+        "pub struct O3RuntimeState {",
+        "struct O3PendingDataAccess",
+    );
+    assert_eq!(
+        runtime_state.matches("BTreeSet<u64>").count(),
+        5,
+        "O3RuntimeState gained an unreviewed sequence-set authority"
+    );
+    assert!(
+        !runtime_state.contains("BTreeMap<u64, BTreeSet<u64>>"),
+        "O3RuntimeState must not store a writeback-ready schedule cache"
+    );
+    let replan_transaction = source_section(
+        &replan,
+        "pub(super) struct O3WritebackReplanTransaction {",
+        "struct O3WritebackReservationPlan",
+    );
+    assert_eq!(
+        replan_transaction.matches("BTreeSet<u64>").count(),
+        3,
+        "bounded writeback replanning gained an unreviewed sequence-set authority"
+    );
+    assert!(
+        !replan_transaction.contains("BTreeMap<u64, BTreeSet<u64>>"),
+        "bounded writeback replanning must not capture a writeback-ready schedule cache"
+    );
+    assert_eq!(
+        module.matches("BTreeMap<u64, BTreeSet<u64>>").count(),
+        1,
+        "only the derived O3WritebackPortStatsSchedule may own ready rows by tick"
+    );
+    for (relative, source) in [
+        ("src/o3_runtime_writeback/replan.rs", replan.as_str()),
+        ("src/o3_runtime_writeback/ownership.rs", ownership.as_str()),
+    ] {
+        assert!(
+            !source.contains("BTreeMap<u64, BTreeSet<u64>>"),
+            "{relative} must not store a parallel ready-row schedule"
+        );
+    }
+    let live_schedule = rust_function_definition(&module, "live_writeback_schedule")
+        .expect("focused writeback authority must derive the live statistics schedule");
+    for anchor in [
+        "O3WritebackPortStatsSchedule::from_calendar",
+        "writeback_calendar",
+        "live_writeback_counted_sequences",
+    ] {
+        assert!(
+            live_schedule.contains(anchor),
+            "live writeback statistics schedule must derive from `{anchor}`"
+        );
+    }
+    assert!(
+        !module.contains("fn rebuild_live_writeback_schedule_ownership("),
+        "focused writeback authority must not rebuild parallel schedule caches"
+    );
 
     for anchor in [
         "pub(super) fn reserve_writeback_completions_in_place(",
@@ -1097,7 +1169,7 @@ fn task3_writeback_reservation_uses_bounded_transaction_state() {
     for anchor in [
         "fn finalize_writeback_reservations_before(",
         "fn discard_writeback_reservations(",
-        "fn rebuild_live_writeback_schedule_ownership(",
+        "fn live_writeback_schedule(",
     ] {
         assert!(
             writeback.contains(anchor),

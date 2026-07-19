@@ -224,8 +224,6 @@ pub struct O3RuntimeState {
     published_writeback_sequences: BTreeSet<u64>,
     live_writeback_counted_sequences: BTreeSet<u64>,
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
-    live_writeback_cycle_ticks: BTreeSet<u64>,
-    live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
     live_control_lineages: BTreeMap<u64, O3LiveControlLineage>,
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
@@ -329,10 +327,7 @@ impl O3RuntimeState {
         {
             return false;
         }
-        if !self.writeback_calendar.is_empty()
-            || !self.live_writeback_ready_rows_by_tick.is_empty()
-            || !self.live_writeback_cycle_ticks.is_empty()
-        {
+        if !self.writeback_calendar.is_empty() {
             return false;
         }
 
@@ -674,8 +669,6 @@ impl Default for O3RuntimeState {
             published_writeback_sequences: BTreeSet::new(),
             live_writeback_counted_sequences: BTreeSet::new(),
             finalized_writeback_port_stats: O3FinalizedWritebackPortStats::default(),
-            live_writeback_cycle_ticks: BTreeSet::new(),
-            live_writeback_ready_rows_by_tick: BTreeMap::new(),
             live_control_lineages: BTreeMap::new(),
             live_serializing_control_sequences: BTreeSet::new(),
             live_staged_fetch_identities: BTreeMap::new(),

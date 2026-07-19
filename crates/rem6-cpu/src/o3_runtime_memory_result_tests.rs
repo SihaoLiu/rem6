@@ -1231,9 +1231,10 @@ fn calendar_rows_with_raw(runtime: &O3RuntimeState) -> Vec<(u64, u64, u64, usize
 
 fn ready_rows_by_tick(runtime: &O3RuntimeState) -> Vec<(u64, Vec<u64>)> {
     runtime
-        .live_writeback_ready_rows_by_tick
-        .iter()
-        .map(|(tick, rows)| (*tick, rows.iter().copied().collect()))
+        .live_writeback_schedule_debug()
+        .1
+        .into_iter()
+        .map(|(tick, rows)| (tick, rows.into_iter().collect()))
         .collect()
 }
 

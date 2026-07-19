@@ -285,7 +285,6 @@ impl O3RuntimeState {
         self.finalized_writeback_port_stats = finalized_stats;
         self.stats = stats;
         self.published_writeback_sequences = published;
-        self.rebuild_live_writeback_schedule_ownership(replacement);
         Ok(())
     }
 }

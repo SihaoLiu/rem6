@@ -1,6 +1,15 @@
 use super::*;
 
 impl O3RuntimeState {
+    pub(crate) fn live_writeback_schedule_debug(
+        &self,
+    ) -> (BTreeSet<u64>, BTreeMap<u64, BTreeSet<u64>>) {
+        let live = self
+            .live_writeback_schedule()
+            .expect("live writeback schedule is coherent");
+        (live.cycle_ticks, live.ready_rows_by_tick)
+    }
+
     pub(crate) fn writeback_partial_ownership_debug(&self) -> (usize, usize, usize, bool) {
         let live = self
             .live_writeback_schedule()

@@ -19,8 +19,6 @@ pub(super) struct O3WritebackReplanTransaction {
     published_writeback_sequences: BTreeSet<u64>,
     live_writeback_counted_sequences: BTreeSet<u64>,
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
-    live_writeback_cycle_ticks: BTreeSet<u64>,
-    live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
     stats: O3RuntimeStats,
 }
 
@@ -44,8 +42,6 @@ impl O3WritebackReplanTransaction {
             published_writeback_sequences: runtime.published_writeback_sequences.clone(),
             live_writeback_counted_sequences: runtime.live_writeback_counted_sequences.clone(),
             finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
-            live_writeback_cycle_ticks: runtime.live_writeback_cycle_ticks.clone(),
-            live_writeback_ready_rows_by_tick: runtime.live_writeback_ready_rows_by_tick.clone(),
             stats: runtime.stats,
         }
     }
@@ -62,8 +58,6 @@ impl O3WritebackReplanTransaction {
         runtime.published_writeback_sequences = self.published_writeback_sequences;
         runtime.live_writeback_counted_sequences = self.live_writeback_counted_sequences;
         runtime.finalized_writeback_port_stats = self.finalized_writeback_port_stats;
-        runtime.live_writeback_cycle_ticks = self.live_writeback_cycle_ticks;
-        runtime.live_writeback_ready_rows_by_tick = self.live_writeback_ready_rows_by_tick;
         runtime.stats = self.stats;
     }
 
@@ -176,8 +170,6 @@ impl O3WritebackReplanTransaction {
             &self.finalized_writeback_port_stats,
             &replacement_schedule,
         )?;
-        self.live_writeback_cycle_ticks = replacement_schedule.cycle_ticks;
-        self.live_writeback_ready_rows_by_tick = replacement_schedule.ready_rows_by_tick;
         Ok(self.reservations_for_sequences(&requested_sequences))
     }
 

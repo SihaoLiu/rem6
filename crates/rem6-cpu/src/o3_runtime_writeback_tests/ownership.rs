@@ -672,11 +672,11 @@ fn assert_live_writeback_ownership(runtime: &O3RuntimeState, live_rows: usize) {
     assert_eq!(runtime.writeback_reservations().len(), live_rows);
     assert!(runtime.published_writeback_sequences.len() <= runtime.writeback_reservations().len());
     assert_eq!(runtime.live_writeback_counted_sequences.len(), live_rows);
-    assert_eq!(runtime.live_writeback_cycle_ticks.len(), live_rows);
-    assert_eq!(runtime.live_writeback_ready_rows_by_tick.len(), live_rows);
+    let (live_cycle_ticks, live_ready_rows_by_tick) = runtime.live_writeback_schedule_debug();
+    assert_eq!(live_cycle_ticks.len(), live_rows);
+    assert_eq!(live_ready_rows_by_tick.len(), live_rows);
     assert_eq!(
-        runtime
-            .live_writeback_ready_rows_by_tick
+        live_ready_rows_by_tick
             .values()
             .map(BTreeSet::len)
             .sum::<usize>(),
