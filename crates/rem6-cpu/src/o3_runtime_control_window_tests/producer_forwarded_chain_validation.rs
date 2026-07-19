@@ -62,13 +62,16 @@ fn executed_scalar_return_runtime() -> (O3RuntimeState, u64) {
 }
 
 #[test]
-fn direct_return_requires_dependency_and_window_membership() {
+fn direct_return_requires_dependency_and_live_staged_residency() {
     let (mut runtime, _, sequence) = executed_direct_return_runtime(false);
-    runtime.live_control_dependencies.remove(&sequence);
+    runtime.live_control_lineages.remove(&sequence);
     assert_eq!(runtime.producer_forwarded_return_descendant(), None);
 
     let (mut runtime, _, sequence) = executed_direct_return_runtime(false);
-    runtime.live_control_window_sequences.remove(&sequence);
+    runtime
+        .snapshot
+        .reorder_buffer
+        .retain(|entry| entry.sequence() != sequence);
     assert_eq!(runtime.producer_forwarded_return_descendant(), None);
 }
 
@@ -112,21 +115,20 @@ fn direct_return_carries_empty_scalar_chain() {
 }
 
 #[test]
-fn scalar_descendant_requires_dependency_and_window_membership() {
+fn scalar_descendant_requires_dependency_and_live_staged_residency() {
     let (mut runtime, _, scalar_chain) =
         super::producer_forwarded_scalar_return::recorded_x1_scalar_runtime();
     let descendant = scalar_chain.last().expect("one scalar descendant");
-    runtime
-        .live_control_dependencies
-        .remove(&descendant.sequence());
+    runtime.live_control_lineages.remove(&descendant.sequence());
     assert_eq!(runtime.producer_forwarded_scalar_chain(), None);
 
     let (mut runtime, _, scalar_chain) =
         super::producer_forwarded_scalar_return::recorded_x1_scalar_runtime();
     let descendant = scalar_chain.last().expect("one scalar descendant");
     runtime
-        .live_control_window_sequences
-        .remove(&descendant.sequence());
+        .snapshot
+        .reorder_buffer
+        .retain(|entry| entry.sequence() != descendant.sequence());
     assert_eq!(runtime.producer_forwarded_scalar_chain(), None);
 }
 
@@ -155,13 +157,16 @@ fn retained_scalar_chain_rejects_longer_candidate() {
 }
 
 #[test]
-fn scalar_return_requires_dependency_window_and_fetch_identity() {
+fn scalar_return_requires_dependency_residency_and_fetch_identity() {
     let (mut runtime, sequence) = executed_scalar_return_runtime();
-    runtime.live_control_dependencies.remove(&sequence);
+    runtime.live_control_lineages.remove(&sequence);
     assert_eq!(runtime.producer_forwarded_return_descendant(), None);
 
     let (mut runtime, sequence) = executed_scalar_return_runtime();
-    runtime.live_control_window_sequences.remove(&sequence);
+    runtime
+        .snapshot
+        .reorder_buffer
+        .retain(|entry| entry.sequence() != sequence);
     assert_eq!(runtime.producer_forwarded_return_descendant(), None);
 
     let (mut runtime, sequence) = executed_scalar_return_runtime();

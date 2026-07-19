@@ -3,6 +3,48 @@ use rem6_isa_riscv::{RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
 use super::o3_runtime_live_window::staged_rename_entry;
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct O3LiveControlLineage {
+    control_sequence: Option<u64>,
+    dependency_pending: bool,
+}
+
+impl O3LiveControlLineage {
+    const fn root() -> Self {
+        Self {
+            control_sequence: None,
+            dependency_pending: false,
+        }
+    }
+
+    const fn pending(control_sequence: u64) -> Self {
+        Self {
+            control_sequence: Some(control_sequence),
+            dependency_pending: true,
+        }
+    }
+
+    pub(super) const fn control_sequence(self) -> Option<u64> {
+        self.control_sequence
+    }
+
+    pub(super) const fn pending_control_sequence(self) -> Option<u64> {
+        if self.dependency_pending {
+            self.control_sequence()
+        } else {
+            None
+        }
+    }
+
+    fn bind(&mut self, control_sequence: u64) {
+        *self = Self::pending(control_sequence);
+    }
+
+    fn resolve(&mut self) {
+        self.dependency_pending = false;
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveSpeculativeExecution {
     pub(super) consumed_requests: Vec<MemoryRequestId>,
@@ -199,10 +241,7 @@ impl O3RuntimeState {
             }
         };
 
-        let control_sequence = self
-            .live_control_dependencies
-            .get(&entry.sequence())
-            .copied();
+        let control_sequence = self.pending_control_sequence_for(entry.sequence());
         let (mut producer_sequences, data_dependencies, forwarded_register_writes) =
             self.live_speculative_source_forwarding(index, &sources)?;
         if let Some(control_sequence) = control_sequence {
@@ -453,19 +492,74 @@ impl O3RuntimeState {
                 .producer_sequences
                 .retain(|producer| *producer != sequence);
         }
-        self.live_control_dependencies
-            .retain(|_, control| *control != sequence);
+        for lineage in self.live_control_lineages.values_mut() {
+            if lineage.pending_control_sequence() == Some(sequence) {
+                lineage.resolve();
+            }
+        }
         self.live_serializing_control_sequences.remove(&sequence);
     }
 
     pub(crate) fn has_live_control_descendants(&self, branch_sequence: u64) -> bool {
-        self.live_control_dependencies
+        self.live_control_lineages
             .values()
-            .any(|control| *control == branch_sequence)
+            .copied()
+            .any(|lineage| lineage.pending_control_sequence() == Some(branch_sequence))
+    }
+
+    pub(super) fn pending_control_sequence_for(&self, sequence: u64) -> Option<u64> {
+        self.live_control_lineages
+            .get(&sequence)
+            .copied()
+            .and_then(O3LiveControlLineage::pending_control_sequence)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_control_lineage_parent_for_test(&self, sequence: u64) -> Option<u64> {
+        self.live_control_lineages
+            .get(&sequence)
+            .copied()
+            .and_then(O3LiveControlLineage::control_sequence)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_live_control_lineage_parent_for_test(
+        &self,
+        sequence: u64,
+    ) -> Option<u64> {
+        self.pending_control_sequence_for(sequence)
+    }
+
+    pub(super) fn record_live_control_sequence(&mut self, sequence: u64) {
+        self.live_control_lineages
+            .entry(sequence)
+            .or_insert_with(O3LiveControlLineage::root);
+    }
+
+    pub(super) fn record_live_control_descendant(&mut self, sequence: u64, control_sequence: u64) {
+        self.live_control_lineages
+            .entry(sequence)
+            .and_modify(|lineage| lineage.bind(control_sequence))
+            .or_insert_with(|| O3LiveControlLineage::pending(control_sequence));
+    }
+
+    fn live_control_window_entry(&self, entry: &O3ReorderBufferEntry) -> bool {
+        entry.is_live_staged() && self.live_control_lineages.contains_key(&entry.sequence())
+    }
+
+    pub(super) fn is_live_control_window_sequence(&self, sequence: u64) -> bool {
+        self.snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.sequence() == sequence)
+            .is_some_and(|entry| self.live_control_window_entry(entry))
     }
 
     pub(crate) fn has_live_control_window(&self) -> bool {
-        !self.live_control_window_sequences.is_empty()
+        self.snapshot
+            .reorder_buffer
+            .iter()
+            .any(|entry| self.live_control_window_entry(entry))
     }
 
     pub(crate) fn discard_live_control_descendants_from_at(
@@ -489,10 +583,8 @@ impl O3RuntimeState {
             |execution| execution.sequence <= branch_sequence,
             now,
         );
-        self.live_control_dependencies
+        self.live_control_lineages
             .retain(|sequence, _| *sequence <= branch_sequence);
-        self.live_control_window_sequences
-            .retain(|sequence| *sequence <= branch_sequence);
         self.live_serializing_control_sequences
             .retain(|sequence| *sequence <= branch_sequence);
         self.live_staged_fetch_identities
@@ -525,11 +617,12 @@ impl O3RuntimeState {
                 }
             }
         }
-        self.live_control_dependencies.retain(|dependent, control| {
-            !invalidated.contains(dependent) && !invalidated.contains(control)
+        self.live_control_lineages.retain(|dependent, lineage| {
+            !invalidated.contains(dependent)
+                && !lineage
+                    .pending_control_sequence()
+                    .is_some_and(|control| invalidated.contains(&control))
         });
-        self.live_control_window_sequences
-            .retain(|sequence| !invalidated.contains(sequence));
         self.live_serializing_control_sequences
             .retain(|sequence| !invalidated.contains(sequence));
     }

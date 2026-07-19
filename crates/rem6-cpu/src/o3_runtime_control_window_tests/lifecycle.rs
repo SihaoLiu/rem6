@@ -38,12 +38,17 @@ fn outer_control_validation_preserves_inner_control_chain() {
 
     runtime.validate_live_speculative_producer(outer_sequence);
 
-    assert!(!runtime
-        .live_control_dependencies
-        .contains_key(&inner_sequence));
     assert_eq!(
-        runtime.live_control_dependencies.get(&descendant_sequence),
-        Some(&inner_sequence)
+        runtime.live_control_lineage_parent_for_test(inner_sequence),
+        Some(outer_sequence)
+    );
+    assert_eq!(
+        runtime.pending_live_control_lineage_parent_for_test(inner_sequence),
+        None
+    );
+    assert_eq!(
+        runtime.pending_live_control_lineage_parent_for_test(descendant_sequence),
+        Some(inner_sequence)
     );
     let inner_record = runtime
         .live_speculative_executions
@@ -86,11 +91,16 @@ fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
 
     runtime.validate_live_speculative_producer(outer_sequence);
 
-    assert!(runtime.live_control_dependencies.is_empty());
+    assert_eq!(
+        runtime.live_control_lineage_parent_for_test(inner_sequence),
+        Some(outer_sequence)
+    );
+    assert_eq!(
+        runtime.pending_live_control_lineage_parent_for_test(inner_sequence),
+        None
+    );
     assert!(runtime.has_live_control_window());
-    assert!(runtime
-        .live_control_window_sequences
-        .contains(&inner_sequence));
+    assert!(runtime.is_live_control_window_sequence(inner_sequence));
 
     runtime.discard_live_staged_window_from(outer_sequence);
 
@@ -233,16 +243,9 @@ fn middle_control_discard_removes_only_inner_control() {
         .live_speculative_executions
         .iter()
         .any(|issued| issued.execution.instruction() == inner));
-    assert_eq!(runtime.live_control_window_sequences.len(), 2);
-    assert!(runtime
-        .live_control_window_sequences
-        .contains(&outer_sequence));
-    assert!(runtime
-        .live_control_window_sequences
-        .contains(&middle_sequence));
-    assert!(!runtime
-        .live_control_window_sequences
-        .contains(&inner_sequence));
+    assert!(runtime.is_live_control_window_sequence(outer_sequence));
+    assert!(runtime.is_live_control_window_sequence(middle_sequence));
+    assert!(!runtime.is_live_control_window_sequence(inner_sequence));
 }
 
 #[test]
@@ -276,15 +279,9 @@ fn mixed_middle_control_discard_removes_only_indirect_jump() {
         .live_speculative_executions
         .iter()
         .any(|issued| issued.execution.instruction() == indirect_jump));
-    assert!(runtime
-        .live_control_window_sequences
-        .contains(&direct_jump_sequence));
-    assert!(runtime
-        .live_control_window_sequences
-        .contains(&conditional_sequence));
-    assert!(!runtime
-        .live_control_window_sequences
-        .contains(&indirect_jump_sequence));
+    assert!(runtime.is_live_control_window_sequence(direct_jump_sequence));
+    assert!(runtime.is_live_control_window_sequence(conditional_sequence));
+    assert!(!runtime.is_live_control_window_sequence(indirect_jump_sequence));
 }
 
 #[test]
@@ -317,7 +314,11 @@ fn split_inner_branch_suffix_replacement_prunes_nested_chain() {
             .instruction(),
         outer
     );
-    assert!(runtime.live_control_dependencies.is_empty());
+    assert!(runtime
+        .live_control_lineages
+        .values()
+        .copied()
+        .all(|lineage| lineage.pending_control_sequence().is_none()));
 }
 
 #[test]

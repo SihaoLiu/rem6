@@ -105,8 +105,8 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
     assert_eq!(runtime.snapshot.reorder_buffer.len(), 4);
     assert_eq!(runtime.live_data_access_younger_sequences.len(), 4);
     assert_eq!(
-        runtime.live_control_dependencies.get(&return_sequence),
-        Some(&descendant.parent().consumer_sequence())
+        runtime.pending_live_control_lineage_parent_for_test(return_sequence),
+        Some(descendant.parent().consumer_sequence())
     );
 
     let candidate = runtime

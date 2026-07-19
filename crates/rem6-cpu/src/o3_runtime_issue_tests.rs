@@ -246,13 +246,18 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
         .insert(coroutine_sequence);
     assert_eq!(
         runtime
-            .live_control_dependencies
-            .remove(&data_only_sequence),
+            .live_control_lineages
+            .remove(&data_only_sequence)
+            .and_then(O3LiveControlLineage::control_sequence),
         Some(coroutine_sequence)
     );
     assert_eq!(
-        runtime.live_control_dependencies.get(&serializing_sequence),
-        Some(&coroutine_sequence)
+        runtime
+            .live_control_lineages
+            .get(&serializing_sequence)
+            .copied()
+            .and_then(O3LiveControlLineage::control_sequence),
+        Some(coroutine_sequence)
     );
     for (pc, instruction, request_sequence) in [
         (BRANCH_PC, call, 10),
@@ -761,7 +766,7 @@ fn scoped_issue_rollback_uses_existing_producer_chain() {
     assert!(fixture.runtime.live_speculative_executions.is_empty());
     assert!(fixture
         .runtime
-        .live_control_dependencies
+        .live_control_lineages
         .keys()
         .all(|sequence| *sequence != dependent_sequence));
 }

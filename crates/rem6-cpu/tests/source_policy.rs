@@ -7,6 +7,7 @@ const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_LINEAGE_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize = 225;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 240;
@@ -1534,6 +1535,7 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("src/o3_runtime_control_window_tests.rs");
     let child_path = crate_dir.join("src/o3_runtime_control_window_tests/lifecycle.rs");
+    let lineage_path = crate_dir.join("src/o3_runtime_control_window_tests/lineage.rs");
     let producer_forwarded_target_path =
         crate_dir.join("src/o3_runtime_control_window_tests/producer_forwarded_target.rs");
     let producer_forwarded_return_path =
@@ -1558,6 +1560,15 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         ),
         1,
         "control-window lifecycle tests must have exactly one attached path-owned child declaration"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "o3_runtime_control_window_tests/lineage.rs",
+            "lineage",
+        ),
+        1,
+        "control-window lineage tests must have exactly one attached path-owned child declaration"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -1615,7 +1626,6 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
     for anchor in [
         "fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick(",
         "fn predicted_mul_wakes_dependent_add_candidate(",
-        "fn staged_window_truncation_prunes_control_dependencies(",
     ] {
         assert!(
             root_code.contains(anchor),
@@ -1660,6 +1670,29 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         assert!(
             !root_code.contains(anchor),
             "src/o3_runtime_control_window_tests.rs still owns lifecycle test `{anchor}`"
+        );
+    }
+
+    assert!(lineage_path.exists());
+    let lineage = fs::read_to_string(&lineage_path).unwrap();
+    let lineage_code = rust_code_without_comments_and_literals(&lineage);
+    assert!(include_macro_lines(&lineage).is_empty());
+    assert!(
+        line_count(&lineage_path) <= MAX_O3_RUNTIME_CONTROL_WINDOW_LINEAGE_TEST_LINES,
+        "src/o3_runtime_control_window_tests/lineage.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_LINEAGE_TEST_LINES} lines"
+    );
+    for anchor in [
+        "staged_window_truncation_prunes_control_lineage",
+        "validated_committed_control_keeps_scalar_descendant_window_until_drain",
+        "invalidated_resident_control_and_descendant_do_not_keep_window_live",
+    ] {
+        assert!(
+            production_defines_exact_function(&lineage_code, anchor),
+            "lineage.rs is missing `{anchor}`"
+        );
+        assert!(
+            !production_defines_exact_function(&child_code, anchor),
+            "lifecycle.rs still owns lineage test `{anchor}`"
         );
     }
 
@@ -1775,14 +1808,14 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         "producer_forwarded_chain_validation.rs exceeds {MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES} lines"
     );
     for anchor in [
-        "direct_return_requires_dependency_and_window_membership",
+        "direct_return_requires_dependency_and_live_staged_residency",
         "direct_return_requires_bound_fetch_identity",
         "head_retired_direct_return_reconstructs_exact_recorded_parent",
         "direct_return_carries_empty_scalar_chain",
-        "scalar_descendant_requires_dependency_and_window_membership",
+        "scalar_descendant_requires_dependency_and_live_staged_residency",
         "scalar_return_carries_one_step_scalar_chain",
         "retained_scalar_chain_rejects_longer_candidate",
-        "scalar_return_requires_dependency_window_and_fetch_identity",
+        "scalar_return_requires_dependency_residency_and_fetch_identity",
     ] {
         assert!(
             production_defines_exact_function(&producer_forwarded_chain_validation_code, anchor),
@@ -2566,6 +2599,93 @@ fn o3_control_window_has_no_obsolete_zero_tick_wrappers() {
         offenders.is_empty(),
         "obsolete non-time-aware O3 control-window wrappers remain: {}",
         offenders.join(", ")
+    );
+}
+
+#[test]
+fn o3_live_control_window_uses_one_typed_lineage_authority() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut offenders = Vec::new();
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        for forbidden in ["live_control_window_sequences", "live_control_dependencies"] {
+            if source.contains(forbidden) {
+                offenders.push(format!("{} contains {forbidden}", relative.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "live O3 control-window membership must use one typed lineage authority: {}",
+        offenders.join(", ")
+    );
+
+    let control_window =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_control_window.rs")).unwrap();
+    assert!(production_defines_exact_named_item(
+        &control_window,
+        "struct",
+        "O3LiveControlLineage",
+    ));
+    for method in [
+        "pending",
+        "control_sequence",
+        "pending_control_sequence",
+        "resolve",
+    ] {
+        assert!(
+            production_defines_exact_function(&control_window, method),
+            "typed O3 live-control lineage is missing `{method}`"
+        );
+    }
+    let membership = rust_function_definition(&control_window, "is_live_control_window_sequence")
+        .expect("O3 control-window authority must define derived sequence membership");
+    for anchor in ["reorder_buffer", "live_control_window_entry"] {
+        assert!(
+            membership.contains(anchor),
+            "derived O3 control-window sequence membership must consume `{anchor}`"
+        );
+    }
+
+    let entry_membership = rust_function_definition(&control_window, "live_control_window_entry")
+        .expect("O3 control-window authority must classify resident ROB entries");
+    for anchor in ["is_live_staged", "live_control_lineages"] {
+        assert!(
+            entry_membership.contains(anchor),
+            "derived O3 control-window entry membership must consume `{anchor}`"
+        );
+    }
+
+    let has_window = rust_function_definition(&control_window, "has_live_control_window")
+        .expect("O3 runtime must expose live control-window presence");
+    for anchor in ["reorder_buffer", "live_control_window_entry"] {
+        assert!(
+            has_window.contains(anchor),
+            "live control-window presence must consume `{anchor}`"
+        );
+    }
+
+    let validation =
+        rust_function_definition(&control_window, "validate_live_speculative_producer")
+            .expect("O3 control validation must update lineage state");
+    for anchor in ["live_control_lineages", "resolve"] {
+        assert!(
+            validation.contains(anchor),
+            "O3 control validation must consume `{anchor}`"
+        );
+    }
+
+    let issue = rust_function_definition(&control_window, "live_speculative_issue_candidate")
+        .expect("O3 control-window authority must select issue candidates");
+    assert!(
+        issue.contains("pending_control_sequence"),
+        "O3 issue dependencies must consume only pending control lineage"
     );
 }
 

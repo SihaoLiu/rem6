@@ -81,8 +81,8 @@ fn producer_forwarded_linked_calls_append_target_returns() {
             .expect("linked call target return append");
 
         assert_eq!(
-            runtime.live_control_dependencies.get(&return_sequence),
-            Some(&consumer_sequence)
+            runtime.pending_live_control_lineage_parent_for_test(return_sequence),
+            Some(consumer_sequence)
         );
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x9000), return_jump)
@@ -166,8 +166,8 @@ fn producer_forwarded_split_link_call_appends_return_after_data_head_retires() {
         )
         .expect("recorded split-link call survives successful data-head retirement");
     assert_eq!(
-        runtime.live_control_dependencies.get(&return_sequence),
-        Some(&consumer_sequence)
+        runtime.pending_live_control_lineage_parent_for_test(return_sequence),
+        Some(consumer_sequence)
     );
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x9000), return_jump)

@@ -139,9 +139,7 @@ impl O3RuntimeState {
             self.discard_live_staged_window_from(sequence);
             return None;
         }
-        self.live_control_dependencies
-            .insert(sequence, authority.consumer_sequence());
-        self.live_control_window_sequences.insert(sequence);
+        self.record_live_control_descendant(sequence, authority.consumer_sequence());
         self.live_data_access_younger_sequences.insert(sequence);
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
@@ -165,7 +163,7 @@ impl O3RuntimeState {
         let mut control_sequence =
             head_sequence.filter(|_| o3_live_control_operands(current).is_some());
         if let Some(sequence) = control_sequence {
-            self.live_control_window_sequences.insert(sequence);
+            self.record_live_control_sequence(sequence);
         }
         for (pc, instruction) in younger {
             if is_deferred_o3_data_instruction(instruction) {
@@ -175,14 +173,11 @@ impl O3RuntimeState {
                 continue;
             };
             if let Some(control_sequence) = control_sequence {
-                self.live_control_dependencies
-                    .insert(sequence, control_sequence);
+                self.record_live_control_descendant(sequence, control_sequence);
             }
             let live_control = o3_live_control_operands(instruction).is_some();
-            if control_sequence.is_some() || live_control {
-                self.live_control_window_sequences.insert(sequence);
-            }
             if live_control {
+                self.record_live_control_sequence(sequence);
                 control_sequence = Some(sequence);
             }
         }
@@ -232,18 +227,15 @@ impl O3RuntimeState {
             };
             staged_rows += 1;
             if let Some(control_sequence) = control_sequence {
-                self.live_control_dependencies
-                    .insert(sequence, control_sequence);
+                self.record_live_control_descendant(sequence, control_sequence);
             }
-            if control_sequence.is_some()
-                || matches!(
-                    decision,
-                    RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
-                        | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
-                        | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
-                )
-            {
-                self.live_control_window_sequences.insert(sequence);
+            if matches!(
+                decision,
+                RiscvScalarIntegerYoungerDecision::AdmitTerminalControl
+                    | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
+                    | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
+            ) {
+                self.record_live_control_sequence(sequence);
             }
             if decision == RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl {
                 self.live_serializing_control_sequences.insert(sequence);
@@ -335,10 +327,8 @@ impl O3RuntimeState {
                 |speculative| speculative.sequence < boundary_sequence,
                 retire_tick,
             );
-            self.live_control_dependencies
+            self.live_control_lineages
                 .retain(|sequence, _| *sequence < boundary_sequence);
-            self.live_control_window_sequences
-                .retain(|sequence| *sequence < boundary_sequence);
             self.live_serializing_control_sequences
                 .retain(|sequence| *sequence < boundary_sequence);
             self.live_staged_fetch_identities
@@ -438,8 +428,7 @@ impl O3RuntimeState {
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
         self.live_data_access_younger_sequences.clear();
-        self.live_control_dependencies.clear();
-        self.live_control_window_sequences.clear();
+        self.live_control_lineages.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
@@ -455,8 +444,7 @@ impl O3RuntimeState {
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
         self.live_data_access_younger_sequences.clear();
-        self.live_control_dependencies.clear();
-        self.live_control_window_sequences.clear();
+        self.live_control_lineages.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
@@ -526,10 +514,8 @@ impl O3RuntimeState {
             self.live_speculative_executions
                 .retain(|execution| execution.sequence < sequence);
         }
-        self.live_control_dependencies
+        self.live_control_lineages
             .retain(|dependent, _| *dependent < sequence);
-        self.live_control_window_sequences
-            .retain(|control| *control < sequence);
         self.live_serializing_control_sequences
             .retain(|control| *control < sequence);
         self.live_staged_fetch_identities
@@ -715,10 +701,8 @@ impl O3RuntimeState {
             .collect::<BTreeSet<_>>();
         self.live_data_access_younger_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
-        self.live_control_dependencies
+        self.live_control_lineages
             .retain(|sequence, _| resident_sequences.contains(sequence));
-        self.live_control_window_sequences
-            .retain(|sequence| resident_sequences.contains(sequence));
         self.live_serializing_control_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
         self.live_staged_fetch_identities

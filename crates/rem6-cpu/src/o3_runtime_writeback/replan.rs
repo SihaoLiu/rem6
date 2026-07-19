@@ -12,8 +12,7 @@ pub(super) struct O3WritebackReplanTransaction {
     reorder_buffer: Vec<O3ReorderBufferEntry>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     live_data_accesses: Vec<O3LiveDataAccess>,
-    live_control_dependencies: BTreeMap<u64, u64>,
-    live_control_window_sequences: BTreeSet<u64>,
+    live_control_lineages: BTreeMap<u64, O3LiveControlLineage>,
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     writeback_calendar: O3WritebackReservationCalendar,
@@ -38,8 +37,7 @@ impl O3WritebackReplanTransaction {
             reorder_buffer: runtime.snapshot.reorder_buffer.clone(),
             live_speculative_executions: runtime.live_speculative_executions.clone(),
             live_data_accesses: runtime.live_data_accesses.clone(),
-            live_control_dependencies: runtime.live_control_dependencies.clone(),
-            live_control_window_sequences: runtime.live_control_window_sequences.clone(),
+            live_control_lineages: runtime.live_control_lineages.clone(),
             live_serializing_control_sequences: runtime.live_serializing_control_sequences.clone(),
             live_staged_fetch_identities: runtime.live_staged_fetch_identities.clone(),
             writeback_calendar: runtime.writeback_calendar.clone(),
@@ -57,8 +55,7 @@ impl O3WritebackReplanTransaction {
         runtime.snapshot.reorder_buffer = self.reorder_buffer;
         runtime.live_speculative_executions = self.live_speculative_executions;
         runtime.live_data_accesses = self.live_data_accesses;
-        runtime.live_control_dependencies = self.live_control_dependencies;
-        runtime.live_control_window_sequences = self.live_control_window_sequences;
+        runtime.live_control_lineages = self.live_control_lineages;
         runtime.live_serializing_control_sequences = self.live_serializing_control_sequences;
         runtime.live_staged_fetch_identities = self.live_staged_fetch_identities;
         runtime.writeback_calendar = self.writeback_calendar;

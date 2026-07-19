@@ -13,6 +13,8 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 mod coroutine;
 #[path = "o3_runtime_control_window_tests/lifecycle.rs"]
 mod lifecycle;
+#[path = "o3_runtime_control_window_tests/lineage.rs"]
+mod lineage;
 #[path = "o3_runtime_control_window_tests/producer_forwarded_chain_validation.rs"]
 mod producer_forwarded_chain_validation;
 #[path = "o3_runtime_control_window_tests/producer_forwarded_return.rs"]
@@ -352,10 +354,13 @@ fn nested_control_dependencies_follow_immediate_branch() {
     let inner = rob[2].sequence();
     let descendant = rob[3].sequence();
 
-    assert_eq!(runtime.live_control_dependencies.get(&inner), Some(&outer));
     assert_eq!(
-        runtime.live_control_dependencies.get(&descendant),
-        Some(&inner)
+        runtime.live_control_lineage_parent_for_test(inner),
+        Some(outer)
+    );
+    assert_eq!(
+        runtime.live_control_lineage_parent_for_test(descendant),
+        Some(inner)
     );
 }
 
@@ -368,9 +373,17 @@ fn three_deep_control_dependencies_follow_immediate_branch() {
     let middle = rob[2].sequence();
     let inner = rob[3].sequence();
 
-    assert_eq!(runtime.live_control_dependencies.get(&middle), Some(&outer));
-    assert_eq!(runtime.live_control_dependencies.get(&inner), Some(&middle));
-    assert_eq!(runtime.live_control_window_sequences.len(), 3);
+    assert_eq!(
+        runtime.live_control_lineage_parent_for_test(middle),
+        Some(outer)
+    );
+    assert_eq!(
+        runtime.live_control_lineage_parent_for_test(inner),
+        Some(middle)
+    );
+    for sequence in [outer, middle, inner] {
+        assert!(runtime.is_live_control_window_sequence(sequence));
+    }
 }
 
 #[test]
@@ -384,14 +397,16 @@ fn mixed_control_dependencies_follow_immediate_control() {
     let indirect_jump = rob[3].sequence();
 
     assert_eq!(
-        runtime.live_control_dependencies.get(&conditional),
-        Some(&direct_jump)
+        runtime.live_control_lineage_parent_for_test(conditional),
+        Some(direct_jump)
     );
     assert_eq!(
-        runtime.live_control_dependencies.get(&indirect_jump),
-        Some(&conditional)
+        runtime.live_control_lineage_parent_for_test(indirect_jump),
+        Some(conditional)
     );
-    assert_eq!(runtime.live_control_window_sequences.len(), 3);
+    for sequence in [direct_jump, conditional, indirect_jump] {
+        assert!(runtime.is_live_control_window_sequence(sequence));
+    }
 }
 
 #[test]
@@ -965,29 +980,6 @@ fn linked_call_rollback_restores_prior_committed_rename() {
             .map(|entry| entry.physical()),
         Some(committed_x1)
     );
-}
-
-#[test]
-fn staged_window_truncation_prunes_control_dependencies() {
-    let mut runtime = O3RuntimeState::default();
-    runtime.set_scalar_memory_window_limit(4);
-    let load = scalar_load_event();
-    assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
-    runtime.stage_live_data_access_younger_window(
-        load.fetch().request_id(),
-        [
-            (Address::new(0x8004), beq(5, 6)),
-            (Address::new(0x8008), mul(7, 1, 2)),
-            (Address::new(0x800c), addi(8, 7, 1)),
-        ],
-    );
-    assert_eq!(runtime.live_control_dependencies.len(), 2);
-    let load_sequence = runtime.snapshot().reorder_buffer()[0].sequence();
-
-    runtime.discard_live_staged_window_from(load_sequence);
-
-    assert!(runtime.live_control_dependencies.is_empty());
-    assert!(!runtime.has_live_control_window());
 }
 
 fn scalar_load_runtime_with_branch(branch: RiscvInstruction) -> O3RuntimeState {

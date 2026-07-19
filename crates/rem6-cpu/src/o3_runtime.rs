@@ -74,7 +74,7 @@ pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_control_window::{
     execution_writes_rename_destination, valid_live_speculative_fetch_identity,
-    O3LiveSpeculativeExecution, O3LiveSpeculativeIssueCandidate,
+    O3LiveControlLineage, O3LiveSpeculativeExecution, O3LiveSpeculativeIssueCandidate,
 };
 pub use o3_runtime_error::O3RuntimeError;
 use o3_runtime_helpers::{
@@ -226,8 +226,7 @@ pub struct O3RuntimeState {
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     live_writeback_cycle_ticks: BTreeSet<u64>,
     live_writeback_ready_rows_by_tick: BTreeMap<u64, BTreeSet<u64>>,
-    live_control_dependencies: BTreeMap<u64, u64>,
-    live_control_window_sequences: BTreeSet<u64>,
+    live_control_lineages: BTreeMap<u64, O3LiveControlLineage>,
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
@@ -271,8 +270,7 @@ impl O3RuntimeState {
         self.live_issue_cycle_ticks.clear();
         self.clear_all_writeback_state();
         self.seed_finalized_writeback_stats_from_aggregate();
-        self.live_control_dependencies.clear();
-        self.live_control_window_sequences.clear();
+        self.live_control_lineages.clear();
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
@@ -678,8 +676,7 @@ impl Default for O3RuntimeState {
             finalized_writeback_port_stats: O3FinalizedWritebackPortStats::default(),
             live_writeback_cycle_ticks: BTreeSet::new(),
             live_writeback_ready_rows_by_tick: BTreeMap::new(),
-            live_control_dependencies: BTreeMap::new(),
-            live_control_window_sequences: BTreeSet::new(),
+            live_control_lineages: BTreeMap::new(),
             live_serializing_control_sequences: BTreeSet::new(),
             live_staged_fetch_identities: BTreeMap::new(),
             invalidated_live_staged_fetch_identities: BTreeMap::new(),

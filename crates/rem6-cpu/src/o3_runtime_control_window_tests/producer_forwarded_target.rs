@@ -190,8 +190,8 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         )
         .expect("same-link target descendant append");
     assert_eq!(
-        runtime.live_control_dependencies.get(&descendant_sequence),
-        Some(&consumer_sequence)
+        runtime.pending_live_control_lineage_parent_for_test(descendant_sequence),
+        Some(consumer_sequence)
     );
     assert_eq!(runtime.live_data_access_younger_sequences.len(), 3);
     assert!(runtime.has_recorded_producer_forwarded_control_target(consumer_sequence));

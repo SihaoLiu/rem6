@@ -98,12 +98,10 @@ impl O3RuntimeState {
             .reorder_buffer
             .iter()
             .find(|entry| entry.is_live_staged() && entry.sequence() == consumer_sequence)?;
-        if !self
-            .live_control_window_sequences
-            .contains(&consumer_sequence)
+        if !self.is_live_control_window_sequence(consumer_sequence)
             || self
-                .live_control_dependencies
-                .contains_key(&consumer_sequence)
+                .pending_control_sequence_for(consumer_sequence)
+                .is_some()
         {
             return None;
         }
@@ -293,8 +291,8 @@ impl O3RuntimeState {
         parent: O3ProducerForwardedControlTarget,
         sequence: u64,
     ) -> bool {
-        self.live_control_dependencies.get(&sequence) == Some(&parent.consumer_sequence())
-            && self.live_control_window_sequences.contains(&sequence)
+        self.pending_control_sequence_for(sequence) == Some(parent.consumer_sequence())
+            && self.is_live_control_window_sequence(sequence)
     }
 
     fn producer_forwarded_return_descendant_for_sequence(
@@ -525,9 +523,7 @@ impl O3RuntimeState {
             return None;
         }
         let consumer_sequence = scalar_chain.parent().consumer_sequence();
-        self.live_control_dependencies
-            .insert(sequence, consumer_sequence);
-        self.live_control_window_sequences.insert(sequence);
+        self.record_live_control_descendant(sequence, consumer_sequence);
         self.live_data_access_younger_sequences.insert(sequence);
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
