@@ -243,9 +243,9 @@ fn dram_controller_qos_turnaround_burst_limit_switches_only_to_waiting_direction
 fn dram_controller_qos_batch_can_escalate_requestor_priority() {
     let mut controller = DramController::new(geometry(), timing());
     let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
-    let old_low = read_from(7, 0x0000, 8, 50);
+    let old_low = read_from(7, 0x0000, 4, 50);
     let other_mid = read_from(8, 0x0040, 8, 51);
-    let new_high = read_from(7, 0x0100, 8, 52);
+    let new_high = read_from(7, 0x0100, 16, 52);
 
     let accesses = controller
         .schedule_qos_batch_with_policy(
@@ -278,21 +278,25 @@ fn dram_controller_qos_batch_can_escalate_requestor_priority() {
     assert_eq!(escalated.requestor(), QosRequestorId::new(7));
     assert_eq!(escalated.assigned_priority(), QosPriority::new(2));
     assert_eq!(escalated.effective_priority(), QosPriority::new(0));
-    assert_eq!(escalated.bytes(), 8);
+    assert_eq!(accesses[0].byte_count(), 4);
+    assert_eq!(accesses[1].byte_count(), 16);
+    assert_eq!(accesses[2].byte_count(), 8);
     assert!(escalated.escalated());
 
     let profile = controller.activity_profile();
     assert_eq!(profile.qos_access_count(), 3);
-    assert_eq!(profile.qos_byte_count(), 24);
+    assert_eq!(profile.qos_byte_count(), 28);
     assert_eq!(profile.qos_escalated_access_count(), 1);
     assert_eq!(profile.qos_priority_access_count(QosPriority::new(0)), 2);
-    assert_eq!(profile.qos_priority_byte_count(QosPriority::new(0)), 16);
+    assert_eq!(profile.qos_priority_byte_count(QosPriority::new(0)), 20);
     assert_eq!(profile.qos_priority_access_count(QosPriority::new(1)), 1);
+    assert_eq!(profile.qos_priority_byte_count(QosPriority::new(1)), 8);
     assert_eq!(
         profile.qos_requestor_access_count(QosRequestorId::new(7)),
         2
     );
-    assert_eq!(profile.qos_requestor_byte_count(QosRequestorId::new(7)), 16);
+    assert_eq!(profile.qos_requestor_byte_count(QosRequestorId::new(7)), 20);
+    assert_eq!(profile.qos_requestor_byte_count(QosRequestorId::new(8)), 8);
 }
 
 #[test]

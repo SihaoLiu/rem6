@@ -301,6 +301,7 @@ dependencies = [
  "rem6-fabric",
  "rem6-kernel",
  "rem6-memory",
+ "syn",
 ]
 
 [[package]]

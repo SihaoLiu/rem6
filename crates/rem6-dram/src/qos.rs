@@ -148,7 +148,6 @@ pub struct DramQosAccess {
     requestor: QosRequestorId,
     assigned_priority: QosPriority,
     effective_priority: QosPriority,
-    bytes: u64,
 }
 
 impl DramQosAccess {
@@ -157,7 +156,6 @@ impl DramQosAccess {
             requestor: request.requestor(),
             assigned_priority: request.assigned_priority(),
             effective_priority: request.effective_priority(),
-            bytes: request.request().size().bytes(),
         }
     }
 
@@ -171,10 +169,6 @@ impl DramQosAccess {
 
     pub const fn effective_priority(self) -> QosPriority {
         self.effective_priority
-    }
-
-    pub const fn bytes(self) -> u64 {
-        self.bytes
     }
 
     pub const fn escalated(self) -> bool {

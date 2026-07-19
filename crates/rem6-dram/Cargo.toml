@@ -10,5 +10,8 @@ rem6-fabric = { path = "../rem6-fabric" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
 
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+
 [lints]
 workspace = true

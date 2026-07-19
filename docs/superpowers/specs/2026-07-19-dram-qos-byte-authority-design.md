@@ -108,8 +108,8 @@ Focused behavior then proves:
 
 - a priority-escalated DRAM request still records the correct access byte
   count through `DramAccess`;
-- aggregate, priority, and requestor QoS byte summaries still equal the access
-  byte counts; and
+- heterogeneous 4-, 8-, and 16-byte QoS accesses produce exact aggregate,
+  priority, and requestor byte summaries; and
 - the real trace-replay CLI emits unchanged DRAM QoS access, byte, priority,
   and requestor stats.
 

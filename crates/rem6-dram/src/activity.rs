@@ -108,8 +108,9 @@ impl DramBankActivity {
         }
         self.max_ready_latency_cycles = self.max_ready_latency_cycles.max(ready_latency);
         if let Some(qos) = access.qos() {
+            let byte_count = access.byte_count();
             self.qos_access_count += 1;
-            self.qos_byte_count += qos.bytes();
+            self.qos_byte_count += byte_count;
             if qos.escalated() {
                 self.qos_escalated_access_count += 1;
             }
@@ -120,7 +121,7 @@ impl DramBankActivity {
             *self
                 .qos_priority_byte_counts
                 .entry(qos.effective_priority())
-                .or_default() += qos.bytes();
+                .or_default() += byte_count;
             *self
                 .qos_requestor_access_counts
                 .entry(qos.requestor())
@@ -128,7 +129,7 @@ impl DramBankActivity {
             *self
                 .qos_requestor_byte_counts
                 .entry(qos.requestor())
-                .or_default() += qos.bytes();
+                .or_default() += byte_count;
         }
         self.low_power.record_events_for_bank(
             access.low_power_events(),
