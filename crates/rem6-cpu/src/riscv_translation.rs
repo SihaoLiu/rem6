@@ -26,6 +26,7 @@ use crate::riscv_in_order_drive::{RiscvInOrderDriveStatus, RiscvInOrderFetchAdmi
 use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
+use crate::o3_runtime::o3_memory_result_destination;
 use crate::riscv_data_issue::{
     access_address, access_size, masked_vector_memory_request_span, OutstandingDataAccess,
     PreparedDataParallelAccess,
@@ -1019,6 +1020,58 @@ impl RiscvCore {
             .and_then(CpuTranslationFrontend::next_ready_tick)
     }
 
+    pub(crate) fn advance_next_data_translation(
+        &self,
+        tick: Tick,
+        page_map: &TranslationPageMap,
+    ) -> Result<(), RiscvCpuError> {
+        self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+        let has_ready = {
+            let state = self.state.lock().expect("riscv core lock");
+            ready_translated_fetch_request(&state).is_some()
+        };
+        if !has_ready && self.enqueue_next_data_translation(tick)? {
+            self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ready_translated_scalar_load_window_fetch_request(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+    ) -> Result<Option<MemoryRequestId>, RiscvCpuError> {
+        let translated = {
+            let state = self.state.lock().expect("riscv core lock");
+            let Some(fetch_request) = ready_translated_fetch_request(&state) else {
+                return Ok(None);
+            };
+            state
+                .ready_translated_data
+                .get(&fetch_request)
+                .expect("selected ready data translation exists")
+                .clone()
+        };
+        let issue = self.prepare_translated_data_access(tick, transport, translated)?;
+        let state = self.state.lock().expect("riscv core lock");
+        let provisional_terminal_result = state
+            .pending_terminal_memory_result
+            .as_ref()
+            .is_some_and(|pending| pending.owns_fetch(issue.fetch_request));
+        let eligible = state.live_retire_gate.detailed_policy_enabled()
+            && !provisional_terminal_result
+            && matches!(&issue.access, rem6_isa_riscv::MemoryAccessKind::Load { .. })
+            && o3_memory_result_destination(&issue.access).is_some()
+            && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
+            && matches!(
+                state
+                    .pma
+                    .is_uncacheable(issue.physical_address.get(), issue.size.bytes()),
+                Ok(false)
+            );
+        Ok(eligible.then_some(issue.fetch_request))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_next_action_with_data_translation<F, D>(
         &self,
@@ -1050,6 +1103,28 @@ impl RiscvCore {
         }
         let has_data_work = self.has_unissued_data_access() || self.has_pending_data_access();
         if has_data_work {
+            if self.ready_translated_memory_fetch_ahead_is_pending() {
+                return Ok(None);
+            }
+            self.advance_next_data_translation(scheduler.now(), page_map)?;
+            if let Some(fetch_request) =
+                self.ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)?
+            {
+                if let Some(decision) =
+                    self.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request)
+                {
+                    let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
+                    self.set_fetch_ahead_pc(decision.pc());
+                    let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                        scheduler,
+                        transport,
+                        fetch_trace,
+                        fetch_responder,
+                        fetch_ahead,
+                    )?;
+                    return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
+                }
+            }
             if let Some(event) = self.issue_next_translated_data_access(
                 scheduler,
                 transport,
@@ -1363,14 +1438,8 @@ impl RiscvCore {
         transport: &MemoryTransport,
         page_map: &TranslationPageMap,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
-        self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-        let mut issue = self.prepare_ready_translated_data_access(tick, transport)?;
-        if issue.is_none() && self.enqueue_next_data_translation(tick)? {
-            self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-            issue = self.prepare_ready_translated_data_access(tick, transport)?;
-        }
-
-        Ok(issue)
+        self.advance_next_data_translation(tick, page_map)?;
+        self.prepare_ready_translated_data_access(tick, transport)
     }
 
     fn prepare_next_translated_mmio_data_access(
@@ -1380,14 +1449,8 @@ impl RiscvCore {
         page_map: &TranslationPageMap,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
         let tick = scheduler.now();
-        self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-        let mut issue = self.prepare_ready_translated_mmio_data_access(scheduler, bus)?;
-        if issue.is_none() && self.enqueue_next_data_translation(tick)? {
-            self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-            issue = self.prepare_ready_translated_mmio_data_access(scheduler, bus)?;
-        }
-
-        Ok(issue)
+        self.advance_next_data_translation(tick, page_map)?;
+        self.prepare_ready_translated_mmio_data_access(scheduler, bus)
     }
 
     fn enqueue_next_data_translation(&self, tick: Tick) -> Result<bool, RiscvCpuError> {
@@ -1458,7 +1521,7 @@ impl RiscvCore {
             },
             None => {
                 state
-                    .cached_translated_scalar_load_window_fetches
+                    .translated_scalar_load_window_fetches
                     .remove(&fetch_request);
                 state
                     .pending_data_translations

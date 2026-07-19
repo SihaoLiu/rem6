@@ -40,6 +40,7 @@ const MAX_M5_HOST_ACTIONS_O3_LSQ_ROOT_LINES: usize = 1400;
 const MAX_M5_HOST_ACTIONS_O3_BRANCH_LINES: usize = 1600;
 const MAX_M5_HOST_ACTIONS_O3_MODULE_LINES: usize = 1800;
 const MAX_M5_HOST_ACTIONS_O3_RUNTIME_LINES: usize = 1600;
+const MAX_TRANSLATED_SCALAR_LOAD_LINES: usize = 1400;
 const MAX_STATS_OUTPUT_CPU_LINES: usize = 1700;
 const MAX_O3_RUNTIME_STATS_LINES: usize = 1700;
 const MAX_O3_RUNTIME_FOCUSED_STATS_LINES: usize = 800;
@@ -787,6 +788,18 @@ fn cli_m5_host_actions_o3_branch_keeps_headroom() {
     assert!(
         lines <= MAX_M5_HOST_ACTIONS_O3_BRANCH_LINES,
         "tests/cli_run/m5_host_actions/o3/branch.rs should split large branch evidence helpers before reaching the child-module ceiling, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn cli_translated_scalar_load_matrix_keeps_headroom() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/cli_run/m5_host_actions/o3/switch/translated_scalar_load.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_TRANSLATED_SCALAR_LOAD_LINES,
+        "translated scalar-load lifecycle evidence should split before reaching {MAX_TRANSLATED_SCALAR_LOAD_LINES} lines, but it has {lines} lines"
     );
 }
 

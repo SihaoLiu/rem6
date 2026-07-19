@@ -824,9 +824,7 @@ fn fetch_ahead_decision(
             scalar_memory_head,
             Some(detailed_o3::ScalarMemoryFetchAheadHead::CachedTranslatedLoad { .. })
         ) {
-            state
-                .cached_translated_scalar_load_window_fetches
-                .insert(request);
+            state.translated_scalar_load_window_fetches.insert(request);
         }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }

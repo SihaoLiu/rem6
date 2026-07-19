@@ -7,11 +7,13 @@ use rem6_mmio::MmioBus;
 use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 use crate::riscv_cluster_drive::{
-    completed_fetch_drive_event, fetch_before_pipeline_is_admitted,
-    finish_prepared_parallel_actions, push_completed_fetch_drive_event,
+    can_retire_completed_fetch_while_fetch_pending, completed_fetch_drive_event,
+    fetch_before_pipeline_is_admitted, finish_prepared_parallel_actions,
+    prepare_fetch_ahead_speculation, push_completed_fetch_drive_event,
     push_pipeline_cycle_drive_event, push_prepared_completed_fetch_drive_event,
     push_prepared_data_action, push_prepared_parallel_fetch_action,
-    push_prepared_pipeline_cycle_drive_event, PreparedParallelAction, PreparedParallelActions,
+    push_prepared_pipeline_cycle_drive_event, record_pending_fetch_resource_stall,
+    PreparedParallelAction, PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -20,9 +22,9 @@ use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
 use crate::riscv_cluster_translation::{
-    can_retire_mmio_fetch_pending, schedule_pending_data_translation_wake,
+    advance_parallel_data_translation, can_retire_mmio_fetch_pending,
+    push_ready_translated_memory_fetch_ahead, schedule_pending_data_translation_wake,
 };
-use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
     CpuId, HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvStoreConditionalFailureDiagnostic,
@@ -32,32 +34,6 @@ use crate::{
 pub struct RiscvCluster {
     cores: BTreeMap<CpuId, RiscvCore>,
     reservations: Arc<Mutex<RiscvReservationTracker>>,
-}
-
-fn can_retire_completed_fetch_while_fetch_pending(
-    cpu: CpuId,
-    core: &RiscvCore,
-) -> Result<bool, RiscvClusterError> {
-    core.can_retire_completed_fetch_while_fetch_pending()
-        .map_err(|error| RiscvClusterError::Core { cpu, error })
-}
-
-fn record_pending_fetch_resource_stall(
-    cpu: CpuId,
-    core: &RiscvCore,
-) -> Result<(), RiscvClusterError> {
-    core.record_in_order_fetch_wait_stall_cycle()
-        .map(|_| ())
-        .map_err(|error| RiscvClusterError::Core { cpu, error })
-}
-
-fn prepare_fetch_ahead_speculation(
-    cpu: CpuId,
-    core: &RiscvCore,
-    decision: &RiscvFetchAheadDecision,
-) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvClusterError> {
-    core.prepare_fetch_ahead_speculation(decision)
-        .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 
 impl RiscvCluster {
@@ -722,6 +698,22 @@ impl RiscvCluster {
             }
             let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
             if has_data_work {
+                if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
+                    continue;
+                }
+                if push_ready_translated_memory_fetch_ahead(
+                    *cpu,
+                    core,
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    &mut fetch_responder,
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )? {
+                    continue;
+                }
                 let prepared = core
                     .prepare_translated_data_parallel_access(
                         scheduler.now(),
@@ -883,6 +875,9 @@ impl RiscvCluster {
             }
             let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
             if has_data_work {
+                if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
+                    continue;
+                }
                 if let Some(event) = core
                     .issue_next_translated_mmio_data_access_parallel(scheduler, bus, page_map)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
@@ -902,6 +897,20 @@ impl RiscvCluster {
                             RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
                         ),
                     ));
+                    continue;
+                }
+
+                if push_ready_translated_memory_fetch_ahead(
+                    *cpu,
+                    core,
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    &mut fetch_responder,
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )? {
                     continue;
                 }
 
@@ -1554,96 +1563,6 @@ impl RiscvCluster {
         self.check_pending_callback_errors()?;
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn drive_turn_parallel_with_data_translation<F, D, FR, DR>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        fetch_trace: MemoryTrace,
-        data_trace: MemoryTrace,
-        page_map: &TranslationPageMap,
-        fetch_responder: F,
-        data_responder: D,
-    ) -> Result<RiscvClusterTurn, RiscvClusterError>
-    where
-        F: FnMut(CpuId) -> FR,
-        D: FnMut(CpuId) -> DR,
-        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-    {
-        let core_events = self.drive_ready_cores_parallel_with_data_translation(
-            scheduler,
-            transport,
-            fetch_trace,
-            data_trace,
-            page_map,
-            fetch_responder,
-            data_responder,
-        )?;
-        if !core_events.is_empty() {
-            return Ok(RiscvClusterTurn::core(core_events));
-        }
-
-        if scheduler.is_idle() {
-            return Ok(RiscvClusterTurn::idle(scheduler.now()));
-        }
-
-        let turn = drive_parallel_scheduler_turn(scheduler)?;
-        self.check_pending_callback_errors()?;
-        self.reconcile_reservation_invalidations();
-        Ok(turn)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn drive_turn_parallel_with_mmio_and_data_translation<F, D, FR, DR>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        bus: &MmioBus,
-        fetch_trace: MemoryTrace,
-        data_trace: MemoryTrace,
-        page_map: &TranslationPageMap,
-        fetch_responder: F,
-        data_responder: D,
-    ) -> Result<RiscvClusterTurn, RiscvClusterError>
-    where
-        F: FnMut(CpuId) -> FR,
-        D: FnMut(CpuId) -> DR,
-        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-    {
-        let core_events = self.drive_ready_cores_parallel_with_mmio_and_data_translation(
-            scheduler,
-            transport,
-            bus,
-            fetch_trace,
-            data_trace,
-            page_map,
-            fetch_responder,
-            data_responder,
-        )?;
-        if !core_events.is_empty() {
-            return Ok(RiscvClusterTurn::core(core_events));
-        }
-
-        if scheduler.is_idle() {
-            return Ok(RiscvClusterTurn::idle(scheduler.now()));
-        }
-
-        let turn = drive_parallel_scheduler_turn(scheduler)?;
-        self.check_pending_callback_errors()?;
-        self.reconcile_reservation_invalidations();
-        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]

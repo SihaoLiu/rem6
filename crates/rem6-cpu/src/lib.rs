@@ -864,7 +864,7 @@ struct RiscvCoreState {
         Option<riscv_live_retire_window::RiscvPendingTerminalMemoryResult>,
     next_terminal_memory_result_issue_wake_generation: u64,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
-    cached_translated_scalar_load_window_fetches: BTreeSet<MemoryRequestId>,
+    translated_scalar_load_window_fetches: BTreeSet<MemoryRequestId>,
     pending_data_translations:
         BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
@@ -927,7 +927,7 @@ impl RiscvCoreState {
             pending_terminal_memory_result: None,
             next_terminal_memory_result_issue_wake_generation: 0,
             issued_data_for_fetches: BTreeSet::new(),
-            cached_translated_scalar_load_window_fetches: BTreeSet::new(),
+            translated_scalar_load_window_fetches: BTreeSet::new(),
             pending_data_translations: BTreeMap::new(),
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
@@ -1073,7 +1073,7 @@ impl RiscvCoreState {
             }
         }
         self.issued_data_for_fetches.extend(stale_data_fetches);
-        self.cached_translated_scalar_load_window_fetches.clear();
+        self.translated_scalar_load_window_fetches.clear();
         if let Some(frontend) = self.data_translation.as_mut() {
             frontend.clear_pending();
         }

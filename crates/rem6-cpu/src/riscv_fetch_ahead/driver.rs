@@ -47,6 +47,81 @@ impl RiscvCore {
         )
     }
 
+    pub(crate) fn next_ready_translated_memory_fetch_ahead_before_issue(
+        &self,
+        fetch_request: rem6_memory::MemoryRequestId,
+    ) -> Option<RiscvFetchAheadDecision> {
+        let fetch_events = self.core.fetch_events();
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some()
+            || state.pending_fetch_prefix.is_some()
+            || hart_has_enabled_pending_interrupt(&state.hart)
+            || !state.ready_translated_data.contains_key(&fetch_request)
+        {
+            return None;
+        }
+        let mut completed = fetch_events
+            .iter()
+            .filter(|event| {
+                event.kind() == CpuFetchEventKind::Completed
+                    && !state.executed_fetches.contains(&event.request_id())
+            })
+            .collect::<Vec<_>>();
+        completed.sort_by_key(|event| event.request_id().sequence());
+        state
+            .translated_scalar_load_window_fetches
+            .insert(fetch_request);
+        match detailed_o3::ready_translated_scalar_load_window_candidate(
+            &state,
+            &fetch_events,
+            fetch_request,
+        ) {
+            detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
+                Some(RiscvFetchAheadDecision::straight_line(pc))
+            }
+            detailed_o3::DetailedFetchAheadCandidate::ReadyPredictedControl {
+                request,
+                pc,
+                sequential_pc,
+                instruction,
+                target_authority,
+            } => fetch_ahead_decision(
+                &mut state,
+                &completed,
+                request,
+                pc,
+                sequential_pc,
+                instruction,
+                target_authority,
+                detailed_o3::TranslatedMemoryFetchAhead::CachedMemory,
+            ),
+            detailed_o3::DetailedFetchAheadCandidate::ReadyProducerForwardedScalar {
+                pc,
+                scalar_chain,
+            } => Some(
+                RiscvFetchAheadDecision::straight_line(pc)
+                    .with_producer_forwarded_scalar_continuation(scalar_chain),
+            ),
+            detailed_o3::DetailedFetchAheadCandidate::ReadyCachedTranslatedLoad { pc, .. } => {
+                Some(RiscvFetchAheadDecision::straight_line(pc))
+            }
+            detailed_o3::DetailedFetchAheadCandidate::NotApplicable
+            | detailed_o3::DetailedFetchAheadCandidate::Blocked => None,
+        }
+    }
+
+    pub(crate) fn ready_translated_memory_fetch_ahead_is_pending(&self) -> bool {
+        if !self.core.has_pending_fetch() {
+            return false;
+        }
+        let state = self.state.lock().expect("riscv core lock");
+        state.ready_translated_data.keys().any(|fetch_request| {
+            state
+                .translated_scalar_load_window_fetches
+                .contains(fetch_request)
+        })
+    }
+
     pub(crate) fn next_mmio_aware_fetch_ahead_before_retire(
         &self,
         bus: &MmioBus,
@@ -169,7 +244,7 @@ impl RiscvCore {
                 fetch_request,
             } => {
                 state
-                    .cached_translated_scalar_load_window_fetches
+                    .translated_scalar_load_window_fetches
                     .insert(fetch_request);
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
             }

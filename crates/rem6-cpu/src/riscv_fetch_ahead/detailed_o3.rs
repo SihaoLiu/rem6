@@ -803,6 +803,34 @@ fn translated_scalar_load_window_candidate(
     scalar_integer_fu_window_candidate(state, fetch_events, current, window)
 }
 
+pub(super) fn ready_translated_scalar_load_window_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    fetch_request: MemoryRequestId,
+) -> DetailedFetchAheadCandidate {
+    let Some(translated) = state.ready_translated_data.get(&fetch_request) else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    let MemoryAccessKind::Load { rd, .. } = &translated.access else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    let Some(window) = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+        [*rd],
+        1,
+        state.o3_runtime.scalar_memory_window_limit(),
+    ) else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    scalar_integer_window_candidate_from(
+        state,
+        fetch_events,
+        fetch_request,
+        Address::new(state.hart.pc()),
+        window,
+        Vec::new(),
+    )
+}
+
 fn scalar_integer_fu_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],

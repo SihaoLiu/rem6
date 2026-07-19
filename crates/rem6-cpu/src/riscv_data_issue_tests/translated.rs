@@ -5,7 +5,7 @@ use rem6_memory::{
 use super::*;
 
 #[test]
-fn detailed_translated_cold_scalar_load_is_terminal_before_retirement() {
+fn detailed_translated_cold_cacheable_scalar_load_stages_younger_after_translation_completion() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data_translation(
         cpu_core(fetch_route, 0x8000),
@@ -18,11 +18,29 @@ fn detailed_translated_cold_scalar_load_is_terminal_before_retirement() {
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(2);
     complete_scalar_load_and_younger_fetch(&core, &mut scheduler, &transport, 0x4008);
+    let page_map = translated_test_page_map();
+    core.advance_next_data_translation(scheduler.now(), &page_map)
+        .unwrap();
+    let fetch_request = core
+        .ready_translated_scalar_load_window_fetch_request(scheduler.now(), &transport)
+        .unwrap()
+        .expect("cold translated scalar load should authorize a younger window");
+    assert_eq!(
+        core.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request),
+        None,
+        "the completed younger fetch already fills the depth-two window"
+    );
     issue_translated_data_without_response(&core, &mut scheduler, &transport);
 
     let snapshot = core.o3_runtime_snapshot();
-    assert_eq!(snapshot.reorder_buffer().len(), 1);
-    assert_eq!(snapshot.reorder_buffer()[0].pc(), Address::new(0x8000));
+    assert_eq!(
+        snapshot
+            .reorder_buffer()
+            .iter()
+            .map(|row| row.pc())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x8000), Address::new(0x8004)]
+    );
     assert_eq!(snapshot.load_store_queue().len(), 1);
 }
 

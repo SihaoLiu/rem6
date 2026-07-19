@@ -9,7 +9,7 @@ use crate::riscv_cluster_run::RiscvClusterDriveEvent;
 use crate::riscv_data_issue::{
     OutstandingDataAccess, PreparedDataIssueCleanup, PreparedDataParallelAccess,
 };
-use crate::riscv_fetch_ahead::PreparedRiscvFetchAheadSpeculation;
+use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_in_order_drive::RiscvInOrderDriveStatus;
 use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError};
 
@@ -412,6 +412,32 @@ pub(crate) fn push_prepared_completed_fetch_drive_event(
         return Ok(true);
     }
     Ok(false)
+}
+
+pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
+    cpu: CpuId,
+    core: &RiscvCore,
+) -> Result<bool, RiscvClusterError> {
+    core.can_retire_completed_fetch_while_fetch_pending()
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
+}
+
+pub(crate) fn record_pending_fetch_resource_stall(
+    cpu: CpuId,
+    core: &RiscvCore,
+) -> Result<(), RiscvClusterError> {
+    core.record_in_order_fetch_wait_stall_cycle()
+        .map(|_| ())
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
+}
+
+pub(crate) fn prepare_fetch_ahead_speculation(
+    cpu: CpuId,
+    core: &RiscvCore,
+    decision: &RiscvFetchAheadDecision,
+) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvClusterError> {
+    core.prepare_fetch_ahead_speculation(decision)
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 
 pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {

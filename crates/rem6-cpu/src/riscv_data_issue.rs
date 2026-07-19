@@ -598,7 +598,7 @@ impl RiscvCore {
                 && matches!(&issue.target, RiscvDataAccessTarget::Memory { .. })
                 && (state.data_translation.is_none()
                     || state
-                        .cached_translated_scalar_load_window_fetches
+                        .translated_scalar_load_window_fetches
                         .contains(&issue.fetch_request))
                 && matches!(
                     state
@@ -620,7 +620,7 @@ impl RiscvCore {
         };
         let mut state = self.state.lock().expect("riscv core lock");
         state
-            .cached_translated_scalar_load_window_fetches
+            .translated_scalar_load_window_fetches
             .remove(&issue.fetch_request);
         let execution = state.data_access_execution(issue.fetch_request).cloned();
         state.issued_data_for_fetches.insert(issue.fetch_request);
