@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use syn::{Item, UseTree, Visibility};
+use syn::{Fields, ImplItem, Item, Type, UseTree, Visibility};
 
 const MAX_FACADE_LINES: usize = 200;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -190,6 +190,60 @@ fn fabric_runtime_domains_live_in_focused_modules() {
             "src/model.rs is missing private runtime state `{definition}`"
         );
     }
+}
+
+#[test]
+fn qos_grant_keeps_only_selected_queue_index() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(crate_dir.join("src/qos.rs")).unwrap();
+    let syntax = syn::parse_file(&source).unwrap();
+
+    let fields = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Struct(item) if item.ident == "QosGrant" => Some(&item.fields),
+            _ => None,
+        })
+        .expect("src/qos.rs must define QosGrant");
+    let Fields::Named(fields) = fields else {
+        panic!("QosGrant must remain a named-field struct");
+    };
+    let field_names = fields
+        .named
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap().to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        field_names,
+        ["queue_index".to_string()].into_iter().collect(),
+        "QosGrant must not cache metadata already owned by its candidate queue"
+    );
+
+    let mut public_methods = BTreeSet::new();
+    for item in &syntax.items {
+        let Item::Impl(item_impl) = item else {
+            continue;
+        };
+        let Type::Path(self_ty) = item_impl.self_ty.as_ref() else {
+            continue;
+        };
+        if !self_ty.path.is_ident("QosGrant") {
+            continue;
+        }
+        for item in &item_impl.items {
+            if let ImplItem::Fn(method) = item {
+                if matches!(method.vis, Visibility::Public(_)) {
+                    public_methods.insert(method.sig.ident.to_string());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        public_methods,
+        ["queue_index".to_string()].into_iter().collect(),
+        "QosGrant public access must expose only the selected queue position"
+    );
 }
 
 #[test]

@@ -474,41 +474,15 @@ impl QosQueuedRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QosGrant {
     queue_index: usize,
-    request_id: QosRequestId,
-    requestor: QosRequestorId,
-    priority: QosPriority,
-    bytes: u64,
 }
 
 impl QosGrant {
-    fn from_request(queue_index: usize, request: &QosQueuedRequest) -> Self {
-        Self {
-            queue_index,
-            request_id: request.request_id,
-            requestor: request.requestor,
-            priority: request.priority,
-            bytes: request.bytes,
-        }
+    const fn new(queue_index: usize) -> Self {
+        Self { queue_index }
     }
 
     pub const fn queue_index(&self) -> usize {
         self.queue_index
-    }
-
-    pub const fn request_id(&self) -> QosRequestId {
-        self.request_id
-    }
-
-    pub const fn requestor(&self) -> QosRequestorId {
-        self.requestor
-    }
-
-    pub const fn priority(&self) -> QosPriority {
-        self.priority
-    }
-
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
     }
 }
 
@@ -640,7 +614,7 @@ impl QosQueueArbiter {
 
         for requestor in self.lrg_requestors.iter().copied() {
             if let Some(index) = first_by_requestor.get(&requestor) {
-                let grant = QosGrant::from_request(*index, &queue[*index]);
+                let grant = QosGrant::new(*index);
                 self.rotate_lrg_after_grant(requestor);
                 return Some(grant);
             }
@@ -676,7 +650,7 @@ fn fifo_grant(queue: &[QosQueuedRequest], priority: QosPriority) -> Option<QosGr
         .enumerate()
         .filter(|(_, request)| request.priority == priority)
         .min_by_key(|(index, request)| (request.order, *index))
-        .map(|(index, request)| QosGrant::from_request(index, request))
+        .map(|(index, _)| QosGrant::new(index))
 }
 
 fn lifo_grant(queue: &[QosQueuedRequest], priority: QosPriority) -> Option<QosGrant> {
@@ -685,7 +659,7 @@ fn lifo_grant(queue: &[QosQueuedRequest], priority: QosPriority) -> Option<QosGr
         .enumerate()
         .filter(|(_, request)| request.priority == priority)
         .max_by_key(|(index, request)| (request.order, *index))
-        .map(|(index, request)| QosGrant::from_request(index, request))
+        .map(|(index, _)| QosGrant::new(index))
 }
 
 fn first_eligible_by_requestor(

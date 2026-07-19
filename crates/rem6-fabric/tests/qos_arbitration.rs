@@ -217,14 +217,16 @@ fn qos_queue_arbiter_selects_highest_priority_fifo_and_lifo() {
     let mut fifo = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
     let grant = fifo.grant(&queue).unwrap();
     assert_eq!(grant.queue_index(), 1);
-    assert_eq!(grant.request_id(), QosRequestId::new(2));
-    assert_eq!(grant.priority(), QosPriority::new(0));
+    let selected = &queue[grant.queue_index()];
+    assert_eq!(selected.request_id(), QosRequestId::new(2));
+    assert_eq!(selected.priority(), QosPriority::new(0));
 
     let mut lifo = QosQueueArbiter::new(QosQueuePolicyKind::Lifo);
     let grant = lifo.grant(&queue).unwrap();
     assert_eq!(grant.queue_index(), 2);
-    assert_eq!(grant.request_id(), QosRequestId::new(3));
-    assert_eq!(grant.priority(), QosPriority::new(0));
+    let selected = &queue[grant.queue_index()];
+    assert_eq!(selected.request_id(), QosRequestId::new(3));
+    assert_eq!(selected.priority(), QosPriority::new(0));
 }
 
 #[test]
@@ -254,8 +256,9 @@ fn qos_lrg_round_robins_requestors_without_mutating_empty_polls() {
     ];
     let first = arbiter.grant(&first_queue).unwrap();
     assert_eq!(first.queue_index(), 0);
-    assert_eq!(first.requestor(), QosRequestorId::new(1));
-    assert_eq!(first.request_id(), QosRequestId::new(10));
+    let selected = &first_queue[first.queue_index()];
+    assert_eq!(selected.requestor(), QosRequestorId::new(1));
+    assert_eq!(selected.request_id(), QosRequestId::new(10));
 
     let restored = arbiter.snapshot();
     let second_queue = [
@@ -265,8 +268,9 @@ fn qos_lrg_round_robins_requestors_without_mutating_empty_polls() {
     ];
     let second = arbiter.grant(&second_queue).unwrap();
     assert_eq!(second.queue_index(), 1);
-    assert_eq!(second.requestor(), QosRequestorId::new(2));
-    assert_eq!(second.request_id(), QosRequestId::new(12));
+    let selected = &second_queue[second.queue_index()];
+    assert_eq!(selected.requestor(), QosRequestorId::new(2));
+    assert_eq!(selected.request_id(), QosRequestId::new(12));
 
     arbiter.restore(restored);
     let replayed = arbiter.grant(&second_queue).unwrap();
@@ -279,8 +283,9 @@ fn qos_lrg_round_robins_requestors_without_mutating_empty_polls() {
     ];
     let third = arbiter.grant(&third_queue).unwrap();
     assert_eq!(third.queue_index(), 0);
-    assert_eq!(third.requestor(), QosRequestorId::new(1));
-    assert_eq!(third.request_id(), QosRequestId::new(11));
+    let selected = &third_queue[third.queue_index()];
+    assert_eq!(selected.requestor(), QosRequestorId::new(1));
+    assert_eq!(selected.request_id(), QosRequestId::new(11));
 }
 
 #[test]

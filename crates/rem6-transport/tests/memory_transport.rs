@@ -1447,8 +1447,9 @@ fn transport_parallel_batch_uses_explicit_qos_requestor_for_shared_fabric_lrg() 
     let fabric = Arc::new(Mutex::new(FabricModel::new()));
     let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted);
     let priming = [qos_request(1, 200, 0, 8, 0), qos_request(2, 100, 0, 8, 1)];
+    let grant = arbiter.grant(&priming).unwrap();
     assert_eq!(
-        arbiter.grant(&priming).unwrap().requestor(),
+        priming[grant.queue_index()].requestor(),
         QosRequestorId::new(200)
     );
     let qos = SharedFabricQosState::new(arbiter);
@@ -2023,11 +2024,10 @@ fn response_qos_arbiter_starts_without_request_lrg_history() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let fabric = Arc::new(Mutex::new(FabricModel::new()));
     let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted);
+    let priming = [qos_request(1, 1, 0, 8, 0), qos_request(2, 2, 0, 8, 1)];
+    let grant = arbiter.grant(&priming).unwrap();
     assert_eq!(
-        arbiter
-            .grant(&[qos_request(1, 1, 0, 8, 0), qos_request(2, 2, 0, 8, 1),])
-            .unwrap()
-            .requestor(),
+        priming[grant.queue_index()].requestor(),
         QosRequestorId::new(1)
     );
     let qos = SharedFabricQosState::new(arbiter);
