@@ -598,7 +598,7 @@ cargo test --workspace --all-targets -q
 
 Expected: exit 0 with zero failed tests.
 
-- [ ] **Step 5: Commit the mechanical generalization**
+- [x] **Step 5: Commit the mechanical generalization**
 
 If the buffered-effect rename is independently clean after review:
 
@@ -609,7 +609,7 @@ git commit -m "refactor: generalize buffered O3 effects"
 
 Otherwise keep it in the behavior commit to avoid a partially useful boundary.
 
-- [ ] **Step 6: Commit the behavior, evidence, and ledger**
+- [x] **Step 6: Commit the behavior, evidence, and ledger**
 
 ```bash
 git add crates docs
@@ -617,7 +617,7 @@ git diff --cached --check
 git commit -m "feat: buffer younger O3 atomic results"
 ```
 
-- [ ] **Step 7: Push and verify the remote state**
+- [x] **Step 7: Push and verify the remote state**
 
 ```bash
 git push origin main
