@@ -777,7 +777,9 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
             state,
             authority.fetch_request(),
             authority.sequential_pc(),
-            crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(authority),
+            &crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(
+                authority,
+            ),
         )
     else {
         return false;
@@ -813,9 +815,10 @@ pub(crate) fn stage_o3_producer_forwarded_control_descendant(
         issue_tick,
     )
     .expect("producer-forwarded control descendant writeback reservation");
-    if let Some(descendant) = state.o3_runtime.producer_forwarded_scalar_descendant() {
+    if let Some(scalar_chain) = state.o3_runtime.producer_forwarded_scalar_chain() {
         let continuation = crate::riscv_fetch_ahead::ProducerForwardedScalarContinuation::capture(
-            state, descendant,
+            state,
+            scalar_chain,
         );
         state.producer_forwarded_scalar_continuation = continuation;
     }
@@ -826,18 +829,21 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     state: &mut RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> bool {
-    let Some((descendant, head, retirement_tick)) = state
+    let Some((scalar_chain, head, retirement_tick)) = state
         .o3_runtime
         .producer_forwarded_scalar_return_issue_context()
     else {
         return false;
     };
-    let parent = descendant.parent();
+    let parent = scalar_chain.parent();
+    let Some(scalar) = scalar_chain.last() else {
+        return false;
+    };
     if crate::riscv_fetch_ahead::recorded_predicted_pc(
         state,
         parent.fetch_request(),
         parent.sequential_pc(),
-        crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(parent),
+        &crate::riscv_fetch_ahead::PredictedControlTargetAuthority::ProducerForwarded(parent),
     ) != crate::riscv_fetch_ahead::RecordedPredictedPc::Ready(parent.target())
         || state.branch_speculations.len() >= state.branch_lookahead
         || crate::riscv_fetch_ahead::detailed_o3::unconsumed_ras_required_target(
@@ -852,8 +858,8 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     let Some(returned) = completed_fetch_instruction_at(
         state,
         fetch_events,
-        descendant.last_fetch_request(),
-        descendant.sequential_pc(),
+        scalar.last_fetch_request(),
+        scalar.sequential_pc(),
     ) else {
         return false;
     };
@@ -862,7 +868,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
         || state
             .o3_runtime
             .append_producer_forwarded_scalar_return_descendant(
-                descendant,
+                &scalar_chain,
                 returned.pc(),
                 instruction,
                 returned.consumed_requests(),
@@ -1045,7 +1051,7 @@ fn completed_scalar_integer_younger_window(
                     state,
                     prediction_request,
                     sequential_pc,
-                    target_authority,
+                    &target_authority,
                 )
             else {
                 break;

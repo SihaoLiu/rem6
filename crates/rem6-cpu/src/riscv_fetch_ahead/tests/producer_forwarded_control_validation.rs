@@ -17,7 +17,7 @@ fn recorded_forwarded_pc(
         state,
         forwarded.fetch_request(),
         forwarded.sequential_pc(),
-        PredictedControlTargetAuthority::ProducerForwarded(forwarded),
+        &PredictedControlTargetAuthority::ProducerForwarded(forwarded),
     )
 }
 

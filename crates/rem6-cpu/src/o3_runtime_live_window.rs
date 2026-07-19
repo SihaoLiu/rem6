@@ -51,8 +51,8 @@ impl O3LiveStagedFetchIdentity {
     }
     pub(super) const fn forwarded_return_identity(
         &self,
-    ) -> Option<O3ProducerForwardedReturnDescendant> {
-        self.producer_forwarded_return_descendant
+    ) -> Option<&O3ProducerForwardedReturnDescendant> {
+        self.producer_forwarded_return_descendant.as_ref()
     }
     fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
         if !valid_live_speculative_fetch_identity(consumed_requests) {

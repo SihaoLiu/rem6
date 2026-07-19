@@ -113,10 +113,8 @@ impl RiscvCore {
             .o3_runtime
             .producer_forwarded_return_descendant()
             .is_some();
-        let has_producer_forwarded_scalar = state
-            .o3_runtime
-            .producer_forwarded_scalar_descendant()
-            .is_some();
+        let has_producer_forwarded_scalar =
+            state.o3_runtime.producer_forwarded_scalar_chain().is_some();
         if staged_producer_forwarded_descendant
             && !has_producer_forwarded_return
             && !has_producer_forwarded_scalar
@@ -141,11 +139,11 @@ impl RiscvCore {
             }
             detailed_o3::DetailedFetchAheadCandidate::ReadyProducerForwardedScalar {
                 pc,
-                descendant,
+                scalar_chain,
             } => {
                 return Some(
                     RiscvFetchAheadDecision::straight_line(pc)
-                        .with_producer_forwarded_scalar_continuation(descendant),
+                        .with_producer_forwarded_scalar_continuation(scalar_chain),
                 );
             }
             detailed_o3::DetailedFetchAheadCandidate::ReadyPredictedControl {
@@ -225,9 +223,9 @@ impl RiscvCore {
     ) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvCpuError> {
         let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
-        if let Some(descendant) = decision.producer_forwarded_scalar_continuation {
+        if let Some(scalar_chain) = decision.producer_forwarded_scalar_continuation.as_ref() {
             return Ok(
-                ProducerForwardedScalarContinuation::capture(&state, descendant)
+                ProducerForwardedScalarContinuation::capture(&state, scalar_chain.clone())
                     .map(PreparedRiscvFetchAheadSpeculation::scalar),
             );
         }

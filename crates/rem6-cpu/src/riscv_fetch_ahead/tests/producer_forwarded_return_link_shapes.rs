@@ -38,7 +38,7 @@ fn pending_data_gate_admits_same_and_split_link_direct_returns() {
         else {
             panic!("expected producer-forwarded direct-return authority");
         };
-        assert_eq!(descendant.parent(), parent);
+        assert_eq!(descendant.parent(), *parent);
         core.record_prepared_fetch_ahead_speculation(
             core.prepare_fetch_ahead_speculation(&return_decision)
                 .unwrap(),
@@ -46,7 +46,10 @@ fn pending_data_gate_admits_same_and_split_link_direct_returns() {
 
         let state = core.state.lock().expect("riscv core lock");
         assert_eq!(
-            state.o3_runtime.producer_forwarded_return_descendant(),
+            state
+                .o3_runtime
+                .producer_forwarded_return_descendant()
+                .as_ref(),
             Some(descendant)
         );
         assert_eq!(

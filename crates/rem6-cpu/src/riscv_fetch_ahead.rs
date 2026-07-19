@@ -20,15 +20,16 @@ use crate::{
 pub(crate) mod detailed_o3;
 mod driver;
 mod prepared;
+#[path = "riscv_fetch_ahead/producer_forwarded_continuation.rs"]
+mod producer_forwarded_continuation;
 mod speculation;
 
 pub(crate) use detailed_o3::{
     predicted_control_target_authority, recorded_predicted_pc, PredictedControlTargetAuthority,
     RecordedPredictedPc,
 };
-pub(crate) use prepared::{
-    PreparedRiscvFetchAheadSpeculation, ProducerForwardedScalarContinuation,
-};
+pub(crate) use prepared::PreparedRiscvFetchAheadSpeculation;
+pub(crate) use producer_forwarded_continuation::ProducerForwardedScalarContinuation;
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
@@ -440,7 +441,7 @@ pub(crate) struct RiscvFetchAheadDecision {
     pc: Address,
     branch_speculation: Option<RiscvFetchAheadSpeculation>,
     producer_forwarded_scalar_continuation:
-        Option<crate::o3_runtime::O3ProducerForwardedScalarDescendant>,
+        Option<crate::o3_runtime::O3ProducerForwardedScalarChain>,
 }
 
 impl RiscvFetchAheadDecision {
@@ -485,9 +486,9 @@ impl RiscvFetchAheadDecision {
 
     fn with_producer_forwarded_scalar_continuation(
         mut self,
-        descendant: crate::o3_runtime::O3ProducerForwardedScalarDescendant,
+        scalar_chain: crate::o3_runtime::O3ProducerForwardedScalarChain,
     ) -> Self {
-        self.producer_forwarded_scalar_continuation = Some(descendant);
+        self.producer_forwarded_scalar_continuation = Some(scalar_chain);
         self
     }
 
@@ -515,8 +516,8 @@ pub(crate) struct RiscvFetchAheadSpeculation {
 }
 
 impl RiscvFetchAheadSpeculation {
-    const fn target_authority(&self) -> PredictedControlTargetAuthority {
-        self.target_authority
+    const fn target_authority(&self) -> &PredictedControlTargetAuthority {
+        &self.target_authority
     }
 }
 
@@ -830,7 +831,7 @@ fn fetch_ahead_decision(
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
-        direct_jump_fetch_ahead_target(state, fetch_pc, instruction, target_authority)
+        direct_jump_fetch_ahead_target(state, fetch_pc, instruction, &target_authority)
     {
         let selected_speculation = selected_direct_branch_speculation(
             state,
@@ -1430,7 +1431,7 @@ fn direct_jump_fetch_ahead_target(
     state: &mut RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
-    target_authority: detailed_o3::PredictedControlTargetAuthority,
+    target_authority: &detailed_o3::PredictedControlTargetAuthority,
 ) -> Option<(
     Address,
     BranchTargetKind,
@@ -1480,9 +1481,9 @@ fn direct_jump_fetch_ahead_target(
             (
                 Some(detailed_o3::unconsumed_ras_required_target(
                     state,
-                    push_sequence,
-                    pushed_address,
-                    consumer,
+                    *push_sequence,
+                    *pushed_address,
+                    *consumer,
                 )?),
                 None,
             )

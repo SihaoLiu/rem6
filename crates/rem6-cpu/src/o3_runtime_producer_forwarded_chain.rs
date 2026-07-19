@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct O3ProducerForwardedControlTarget {
+struct O3ProducerForwardedControlIdentity {
     data_access_fetch_request: MemoryRequestId,
     fetch_request: MemoryRequestId,
     last_fetch_request: MemoryRequestId,
@@ -10,252 +10,17 @@ pub(crate) struct O3ProducerForwardedControlTarget {
     instruction: RiscvInstruction,
     consumer_sequence: u64,
     producer_sequence: u64,
-    ready_tick: u64,
     target_source: rem6_isa_riscv::Register,
     target: Address,
 }
 
-impl O3ProducerForwardedControlTarget {
-    fn same_control_identity(self, other: Self) -> bool {
-        self.data_access_fetch_request == other.data_access_fetch_request
-            && self.fetch_request == other.fetch_request
-            && self.last_fetch_request == other.last_fetch_request
-            && self.pc == other.pc
-            && self.sequential_pc == other.sequential_pc
-            && self.instruction == other.instruction
-            && self.consumer_sequence == other.consumer_sequence
-            && self.producer_sequence == other.producer_sequence
-            && self.target_source == other.target_source
-            && self.target == other.target
-    }
+#[path = "o3_runtime_producer_forwarded_chain/value.rs"]
+mod value;
 
-    pub(crate) const fn data_access_fetch_request(self) -> MemoryRequestId {
-        self.data_access_fetch_request
-    }
-
-    pub(crate) const fn fetch_request(self) -> MemoryRequestId {
-        self.fetch_request
-    }
-
-    pub(crate) const fn last_fetch_request(self) -> MemoryRequestId {
-        self.last_fetch_request
-    }
-
-    pub(crate) const fn pc(self) -> Address {
-        self.pc
-    }
-
-    pub(crate) const fn sequential_pc(self) -> Address {
-        self.sequential_pc
-    }
-
-    pub(crate) const fn instruction(self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub(crate) const fn consumer_sequence(self) -> u64 {
-        self.consumer_sequence
-    }
-
-    pub(crate) const fn producer_sequence(self) -> u64 {
-        self.producer_sequence
-    }
-
-    pub(crate) const fn ready_tick(self) -> u64 {
-        self.ready_tick
-    }
-
-    pub(crate) const fn target_source(self) -> rem6_isa_riscv::Register {
-        self.target_source
-    }
-
-    pub(crate) const fn target(self) -> Address {
-        self.target
-    }
-
-    pub(crate) fn link_destination(self) -> Option<rem6_isa_riscv::Register> {
-        let control = o3_live_control_operands(self.instruction())?;
-        (control.kind() == BranchTargetKind::CallIndirect).then_some(control.destination())?
-    }
-
-    pub(crate) fn fetched_scalar_descendant(
-        self,
-        instruction: RiscvInstruction,
-        instruction_bytes: u8,
-        consumed_requests: &[MemoryRequestId],
-    ) -> Option<O3ProducerForwardedScalarDescendant> {
-        let link = self.link_destination()?;
-        let (destination, sources) = o3_predicted_scalar_descendant_operands(instruction)?;
-        if destination.is_zero()
-            || destination == link
-            || !sources.contains(&link)
-            || !valid_live_speculative_fetch_identity(consumed_requests)
-        {
-            return None;
-        }
-        let fetch_request = *consumed_requests.first()?;
-        Some(O3ProducerForwardedScalarDescendant {
-            parent: self,
-            fetch_request,
-            last_fetch_request: *consumed_requests.last()?,
-            pc: self.target(),
-            sequential_pc: Address::new(
-                self.target()
-                    .get()
-                    .wrapping_add(u64::from(instruction_bytes)),
-            ),
-            instruction,
-            sequence: fetch_request.sequence(),
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct O3ProducerForwardedScalarDescendant {
-    parent: O3ProducerForwardedControlTarget,
-    fetch_request: MemoryRequestId,
-    last_fetch_request: MemoryRequestId,
-    pc: Address,
-    sequential_pc: Address,
-    instruction: RiscvInstruction,
-    sequence: u64,
-}
-
-impl PartialEq for O3ProducerForwardedScalarDescendant {
-    fn eq(&self, other: &Self) -> bool {
-        self.parent.same_control_identity(other.parent)
-            && self.fetch_request == other.fetch_request
-            && self.last_fetch_request == other.last_fetch_request
-            && self.pc == other.pc
-            && self.sequential_pc == other.sequential_pc
-            && self.instruction == other.instruction
-            && self.sequence == other.sequence
-    }
-}
-
-impl Eq for O3ProducerForwardedScalarDescendant {}
-
-impl O3ProducerForwardedScalarDescendant {
-    pub(crate) const fn parent(self) -> O3ProducerForwardedControlTarget {
-        self.parent
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn fetch_request(self) -> MemoryRequestId {
-        self.fetch_request
-    }
-
-    pub(crate) const fn last_fetch_request(self) -> MemoryRequestId {
-        self.last_fetch_request
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn pc(self) -> Address {
-        self.pc
-    }
-
-    pub(crate) const fn sequential_pc(self) -> Address {
-        self.sequential_pc
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn sequence(self) -> u64 {
-        self.sequence
-    }
-
-    pub(crate) fn retained_return_descendant(
-        self,
-        instruction: RiscvInstruction,
-        instruction_bytes: u8,
-        consumed_requests: &[MemoryRequestId],
-    ) -> Option<O3ProducerForwardedReturnDescendant> {
-        if o3_exact_link_return_source(instruction) != self.parent().link_destination()
-            || !valid_live_speculative_fetch_identity(consumed_requests)
-        {
-            return None;
-        }
-        let fetch_request = *consumed_requests.first()?;
-        Some(O3ProducerForwardedReturnDescendant {
-            parent: self.parent(),
-            scalar_descendant: Some(self),
-            fetch_request,
-            last_fetch_request: *consumed_requests.last()?,
-            pc: self.sequential_pc(),
-            sequential_pc: Address::new(
-                self.sequential_pc()
-                    .get()
-                    .wrapping_add(u64::from(instruction_bytes)),
-            ),
-            instruction,
-            sequence: fetch_request.sequence(),
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct O3ProducerForwardedReturnDescendant {
-    parent: O3ProducerForwardedControlTarget,
-    scalar_descendant: Option<O3ProducerForwardedScalarDescendant>,
-    fetch_request: MemoryRequestId,
-    last_fetch_request: MemoryRequestId,
-    pc: Address,
-    sequential_pc: Address,
-    instruction: RiscvInstruction,
-    sequence: u64,
-}
-
-impl PartialEq for O3ProducerForwardedReturnDescendant {
-    fn eq(&self, other: &Self) -> bool {
-        self.parent.same_control_identity(other.parent)
-            && self.scalar_descendant == other.scalar_descendant
-            && self.fetch_request == other.fetch_request
-            && self.last_fetch_request == other.last_fetch_request
-            && self.pc == other.pc
-            && self.sequential_pc == other.sequential_pc
-            && self.instruction == other.instruction
-            && self.sequence == other.sequence
-    }
-}
-
-impl Eq for O3ProducerForwardedReturnDescendant {}
-
-impl O3ProducerForwardedReturnDescendant {
-    pub(crate) const fn parent(self) -> O3ProducerForwardedControlTarget {
-        self.parent
-    }
-
-    pub(crate) const fn scalar_descendant(self) -> Option<O3ProducerForwardedScalarDescendant> {
-        self.scalar_descendant
-    }
-
-    pub(crate) const fn fetch_request(self) -> MemoryRequestId {
-        self.fetch_request
-    }
-
-    pub(crate) const fn last_fetch_request(self) -> MemoryRequestId {
-        self.last_fetch_request
-    }
-
-    pub(crate) const fn pc(self) -> Address {
-        self.pc
-    }
-
-    pub(crate) const fn sequential_pc(self) -> Address {
-        self.sequential_pc
-    }
-
-    pub(crate) const fn instruction(self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub(crate) const fn sequence(self) -> u64 {
-        self.sequence
-    }
-
-    pub(crate) const fn target(self) -> Address {
-        self.parent.sequential_pc()
-    }
-}
+pub(crate) use value::{
+    O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
+    O3ProducerForwardedScalarChain, O3ProducerForwardedScalarDescendant,
+};
 
 impl O3RuntimeState {
     pub(crate) fn producer_forwarded_control_target(
@@ -392,24 +157,26 @@ impl O3RuntimeState {
         }
         let fetch_request = *consumer_execution.consumed_requests.first()?;
         let last_fetch_request = *consumer_execution.consumed_requests.last()?;
-        Some(O3ProducerForwardedControlTarget {
-            data_access_fetch_request,
-            fetch_request,
-            last_fetch_request,
-            pc: consumer.pc(),
-            sequential_pc: Address::new(
-                consumer_execution
-                    .execution
-                    .pc()
-                    .wrapping_add(u64::from(consumer_execution.execution.instruction_bytes())),
-            ),
-            instruction: consumer_execution.execution.instruction(),
-            consumer_sequence,
-            producer_sequence,
-            ready_tick: producer_execution.admitted_writeback_tick,
-            target_source: rs1,
-            target: Address::new(target),
-        })
+        Some(O3ProducerForwardedControlTarget::new(
+            O3ProducerForwardedControlIdentity {
+                data_access_fetch_request,
+                fetch_request,
+                last_fetch_request,
+                pc: consumer.pc(),
+                sequential_pc: Address::new(
+                    consumer_execution
+                        .execution
+                        .pc()
+                        .wrapping_add(u64::from(consumer_execution.execution.instruction_bytes())),
+                ),
+                instruction: consumer_execution.execution.instruction(),
+                consumer_sequence,
+                producer_sequence,
+                target_source: rs1,
+                target: Address::new(target),
+            },
+            producer_execution.admitted_writeback_tick,
+        ))
     }
 
     pub(crate) fn record_producer_forwarded_control_target(
@@ -532,11 +299,11 @@ impl O3RuntimeState {
 
     fn producer_forwarded_return_descendant_for_sequence(
         &self,
-        parent: O3ProducerForwardedControlTarget,
-        scalar_descendant: Option<O3ProducerForwardedScalarDescendant>,
+        scalar_chain: O3ProducerForwardedScalarChain,
         expected_pc: Address,
         return_sequence: u64,
     ) -> Option<O3ProducerForwardedReturnDescendant> {
+        let parent = scalar_chain.parent();
         if !self.producer_forwarded_control_descendant_sequence(parent, return_sequence) {
             return None;
         }
@@ -553,21 +320,20 @@ impl O3RuntimeState {
         {
             return None;
         }
-        Some(O3ProducerForwardedReturnDescendant {
-            parent,
-            scalar_descendant,
-            fetch_request: *issued.consumed_requests.first()?,
-            last_fetch_request: *issued.consumed_requests.last()?,
-            pc: entry.pc(),
-            sequential_pc: Address::new(
+        Some(O3ProducerForwardedReturnDescendant::new(
+            scalar_chain,
+            *issued.consumed_requests.first()?,
+            *issued.consumed_requests.last()?,
+            entry.pc(),
+            Address::new(
                 issued
                     .execution
                     .pc()
                     .wrapping_add(u64::from(issued.execution.instruction_bytes())),
             ),
-            instruction: issued.execution.instruction(),
-            sequence: return_sequence,
-        })
+            issued.execution.instruction(),
+            return_sequence,
+        ))
     }
 
     pub(crate) fn producer_forwarded_descendant_issue_context(
@@ -633,19 +399,18 @@ impl O3RuntimeState {
             sequences.next()?,
         )?;
         self.producer_forwarded_return_descendant_for_sequence(
-            parent,
-            None,
+            O3ProducerForwardedScalarChain::empty(parent),
             parent.target(),
             sequences.next()?,
         )
     }
 
-    fn producer_forwarded_scalar_descendant_for_sequences(
+    fn producer_forwarded_scalar_chain_for_sequences(
         &self,
         producer_sequence: u64,
         consumer_sequence: u64,
         scalar_sequence: u64,
-    ) -> Option<O3ProducerForwardedScalarDescendant> {
+    ) -> Option<O3ProducerForwardedScalarChain> {
         let parent = self.producer_forwarded_parent_for_descendant_sequences(
             producer_sequence,
             consumer_sequence,
@@ -675,30 +440,30 @@ impl O3RuntimeState {
         {
             return None;
         }
-        Some(O3ProducerForwardedScalarDescendant {
-            parent,
-            fetch_request: *issued.consumed_requests.first()?,
-            last_fetch_request: *issued.consumed_requests.last()?,
-            pc: entry.pc(),
-            sequential_pc: Address::new(
-                issued
-                    .execution
-                    .pc()
-                    .wrapping_add(u64::from(issued.execution.instruction_bytes())),
+        Some(O3ProducerForwardedScalarChain::from_descendant(
+            O3ProducerForwardedScalarDescendant::new(
+                parent,
+                *issued.consumed_requests.first()?,
+                *issued.consumed_requests.last()?,
+                entry.pc(),
+                Address::new(
+                    issued
+                        .execution
+                        .pc()
+                        .wrapping_add(u64::from(issued.execution.instruction_bytes())),
+                ),
+                issued.execution.instruction(),
+                scalar_sequence,
             ),
-            instruction: issued.execution.instruction(),
-            sequence: scalar_sequence,
-        })
+        ))
     }
 
-    pub(crate) fn producer_forwarded_scalar_descendant(
-        &self,
-    ) -> Option<O3ProducerForwardedScalarDescendant> {
+    pub(crate) fn producer_forwarded_scalar_chain(&self) -> Option<O3ProducerForwardedScalarChain> {
         if self.live_data_access_younger_sequences.len() != 3 {
             return None;
         }
         let mut sequences = self.live_data_access_younger_sequences.iter().copied();
-        self.producer_forwarded_scalar_descendant_for_sequences(
+        self.producer_forwarded_scalar_chain_for_sequences(
             sequences.next()?,
             sequences.next()?,
             sequences.next()?,
@@ -708,21 +473,22 @@ impl O3RuntimeState {
     pub(crate) fn producer_forwarded_scalar_return_issue_context(
         &self,
     ) -> Option<(
-        O3ProducerForwardedScalarDescendant,
+        O3ProducerForwardedScalarChain,
         O3LiveIssueHeadReservation,
         u64,
     )> {
         if !self.live_data_accesses.is_empty() {
             return None;
         }
-        let descendant = self.producer_forwarded_scalar_descendant()?;
+        let scalar_chain = self.producer_forwarded_scalar_chain()?;
         let retirement_tick = self.last_live_commit_tick?;
+        let parent = scalar_chain.parent();
         let producer = self
             .live_speculative_executions
             .iter()
-            .find(|execution| execution.sequence == descendant.parent().producer_sequence())?;
+            .find(|execution| execution.sequence == parent.producer_sequence())?;
         Some((
-            descendant,
+            scalar_chain,
             O3LiveIssueHeadReservation::for_instruction(
                 producer.sequence,
                 producer.issue_tick,
@@ -734,14 +500,16 @@ impl O3RuntimeState {
 
     pub(crate) fn append_producer_forwarded_scalar_return_descendant(
         &mut self,
-        descendant: O3ProducerForwardedScalarDescendant,
+        scalar_chain: &O3ProducerForwardedScalarChain,
         pc: Address,
         instruction: RiscvInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
-        if self.producer_forwarded_scalar_return_issue_context()?.0 != descendant
-            || pc != descendant.sequential_pc()
-            || o3_exact_link_return_source(instruction) != descendant.parent().link_destination()
+        let current = self.producer_forwarded_scalar_return_issue_context()?.0;
+        let scalar = scalar_chain.last()?;
+        if current != *scalar_chain
+            || pc != scalar.sequential_pc()
+            || o3_exact_link_return_source(instruction) != scalar_chain.parent().link_destination()
             || self.live_data_accesses.len() + self.live_data_access_younger_sequences.len()
                 >= self.scalar_memory_window_limit
         {
@@ -756,7 +524,7 @@ impl O3RuntimeState {
             self.discard_live_staged_window_from(sequence);
             return None;
         }
-        let consumer_sequence = descendant.parent().consumer_sequence();
+        let consumer_sequence = scalar_chain.parent().consumer_sequence();
         self.live_control_dependencies
             .insert(sequence, consumer_sequence);
         self.live_control_window_sequences.insert(sequence);
@@ -776,15 +544,15 @@ impl O3RuntimeState {
             return None;
         }
         let mut sequences = self.live_data_access_younger_sequences.iter().copied();
-        let scalar_descendant = self.producer_forwarded_scalar_descendant_for_sequences(
+        let scalar_chain = self.producer_forwarded_scalar_chain_for_sequences(
             sequences.next()?,
             sequences.next()?,
             sequences.next()?,
         )?;
+        let scalar = scalar_chain.last()?;
         self.producer_forwarded_return_descendant_for_sequence(
-            scalar_descendant.parent(),
-            Some(scalar_descendant),
-            scalar_descendant.sequential_pc(),
+            scalar_chain,
+            scalar.sequential_pc(),
             sequences.next()?,
         )
     }
@@ -795,7 +563,7 @@ impl O3RuntimeState {
         retire_tick: u64,
     ) -> bool {
         if self.live_data_accesses.len() != 1
-            || self.producer_forwarded_scalar_descendant().is_none()
+            || self.producer_forwarded_scalar_chain().is_none()
             || self
                 .snapshot
                 .reorder_buffer

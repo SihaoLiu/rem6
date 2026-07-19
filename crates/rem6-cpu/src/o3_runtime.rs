@@ -95,7 +95,7 @@ use o3_runtime_memory::{
 };
 pub(crate) use o3_runtime_producer_forwarded_chain::{
     O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
-    O3ProducerForwardedScalarDescendant,
+    O3ProducerForwardedScalarChain,
 };
 pub use o3_runtime_snapshot_entries::{
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,

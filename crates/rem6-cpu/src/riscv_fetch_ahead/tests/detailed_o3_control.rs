@@ -36,7 +36,7 @@ fn producer_forwarded_target(
     let PredictedControlTargetAuthority::ProducerForwarded(forwarded) = authority else {
         panic!("expected producer-forwarded target authority");
     };
-    forwarded
+    *forwarded
 }
 
 pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvCpuExecutionEvent) {
@@ -179,15 +179,15 @@ fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
         .unwrap();
     let authority = PredictedControlTargetAuthority::ProducerForwarded(forwarded);
     assert_eq!(
-        recorded_predicted_pc(&state, request(2), Address::new(0x800c), authority),
+        recorded_predicted_pc(&state, request(2), Address::new(0x800c), &authority),
         RecordedPredictedPc::Ready(Address::new(0x9000))
     );
     assert_eq!(
-        recorded_predicted_pc(&state, request(99), Address::new(0x800c), authority),
+        recorded_predicted_pc(&state, request(99), Address::new(0x800c), &authority),
         RecordedPredictedPc::Invalid
     );
     assert_eq!(
-        recorded_predicted_pc(&state, request(2), Address::new(0x8010), authority),
+        recorded_predicted_pc(&state, request(2), Address::new(0x8010), &authority),
         RecordedPredictedPc::Invalid
     );
     let descendant = RiscvInstruction::Addi {
@@ -205,7 +205,7 @@ fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
         )
         .is_some());
     assert_eq!(
-        recorded_predicted_pc(&state, request(2), Address::new(0x800c), authority),
+        recorded_predicted_pc(&state, request(2), Address::new(0x800c), &authority),
         RecordedPredictedPc::Invalid
     );
 }
@@ -240,7 +240,7 @@ fn recorded_producer_forwarded_target_rejects_unmarked_same_target_speculation()
             &state,
             forwarded.fetch_request(),
             forwarded.sequential_pc(),
-            PredictedControlTargetAuthority::ProducerForwarded(forwarded),
+            &PredictedControlTargetAuthority::ProducerForwarded(forwarded),
         ),
         RecordedPredictedPc::Invalid
     );
@@ -425,7 +425,7 @@ fn recorded_same_window_coroutine_pc(core: &RiscvCore) -> RecordedPredictedPc {
         &state,
         request(2),
         Address::new(0x8010),
-        recorded_same_window_coroutine_target_authority(),
+        &recorded_same_window_coroutine_target_authority(),
     )
 }
 
@@ -513,7 +513,7 @@ fn recorded_same_window_round_trip_pc(core: &RiscvCore) -> RecordedPredictedPc {
         &state,
         request(3),
         Address::new(0x800c),
-        recorded_same_window_round_trip_target_authority(),
+        &recorded_same_window_round_trip_target_authority(),
     )
 }
 
@@ -585,7 +585,7 @@ fn recorded_second_linked_coroutine_pc(core: &RiscvCore) -> RecordedPredictedPc 
         &state,
         request(3),
         Address::new(0x800c),
-        second_linked_coroutine_target_authority(),
+        &second_linked_coroutine_target_authority(),
     )
 }
 
@@ -939,7 +939,7 @@ fn detailed_full_ras_call_producer_opens_exact_return() {
     .unwrap();
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(
-        recorded_predicted_pc(&state, request(2), Address::new(0x8010), target_authority),
+        recorded_predicted_pc(&state, request(2), Address::new(0x8010), &target_authority),
         RecordedPredictedPc::Ready(Address::new(0x8008))
     );
 }
@@ -962,7 +962,7 @@ fn detailed_recorded_second_linked_coroutine_consumes_replacement_push() {
     assert_eq!(state.return_address_stack.pending_operation_count(), 3);
     assert_eq!(state.return_address_stack.top(), Some(Address::new(0x800c)));
     assert_eq!(
-        recorded_predicted_pc(&state, request(3), Address::new(0x800c), target_authority,),
+        recorded_predicted_pc(&state, request(3), Address::new(0x800c), &target_authority),
         RecordedPredictedPc::Ready(Address::new(0x8010))
     );
 }

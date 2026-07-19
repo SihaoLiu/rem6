@@ -104,10 +104,7 @@ pub(super) fn record_call_and_scalar(core: &RiscvCore) {
         assert!(decision.branch_speculation().is_none());
     }
     let state = core.state.lock().expect("riscv core lock");
-    assert!(state
-        .o3_runtime
-        .producer_forwarded_scalar_descendant()
-        .is_some());
+    assert!(state.o3_runtime.producer_forwarded_scalar_chain().is_some());
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
 }
 
@@ -249,7 +246,7 @@ fn committed_scalar_continuation_retains_exact_return_authority() {
     else {
         panic!("expected producer-forwarded scalar-return authority");
     };
-    assert!(descendant.scalar_descendant().is_some());
+    assert!(descendant.scalar_chain().is_one_step());
 }
 
 #[test]
@@ -282,7 +279,7 @@ fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
     else {
         panic!("expected retained producer-forwarded scalar-return authority");
     };
-    assert!(descendant.scalar_descendant().is_some());
+    assert!(descendant.scalar_chain().is_one_step());
 }
 
 #[test]
@@ -562,7 +559,8 @@ fn scalar_return_apply_fails_closed_after_scalar_lineage_changes() {
             .o3_runtime
             .producer_forwarded_return_descendant()
             .unwrap()
-            .scalar_descendant()
+            .scalar_chain()
+            .last()
             .unwrap()
             .sequence();
         state

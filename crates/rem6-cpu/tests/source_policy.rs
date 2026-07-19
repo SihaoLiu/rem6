@@ -11,7 +11,9 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize 
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 240;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 180;
-const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 850;
+const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 650;
+const MAX_O3_RUNTIME_PRODUCER_FORWARDED_VALUE_LINES: usize = 400;
+const MAX_O3_RUNTIME_PRODUCER_FORWARDED_OWNER_LINES: usize = 1000;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 120;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_RAS_REQUIRED_VALIDATION_TEST_LINES: usize = 100;
@@ -19,7 +21,9 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
-const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 375;
+const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 175;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
+const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
@@ -1774,7 +1778,10 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
         "direct_return_requires_dependency_and_window_membership",
         "direct_return_requires_bound_fetch_identity",
         "head_retired_direct_return_reconstructs_exact_recorded_parent",
+        "direct_return_carries_empty_scalar_chain",
         "scalar_descendant_requires_dependency_and_window_membership",
+        "scalar_return_carries_one_step_scalar_chain",
+        "retained_scalar_chain_rejects_longer_candidate",
         "scalar_return_requires_dependency_window_and_fetch_identity",
     ] {
         assert!(
@@ -1789,12 +1796,162 @@ fn o3_runtime_control_window_lifecycle_tests_live_in_focused_child() {
 }
 
 #[test]
+fn producer_forwarded_scalar_authority_uses_one_typed_chain() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_chain.rs");
+    let value_path = crate_dir.join("src/o3_runtime_producer_forwarded_chain/value.rs");
+    let fetch_root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
+    let continuation_path =
+        crate_dir.join("src/riscv_fetch_ahead/producer_forwarded_continuation.rs");
+    let detailed_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
+
+    assert!(
+        value_path.exists(),
+        "producer-forwarded scalar-chain values need one focused owner"
+    );
+    assert!(
+        continuation_path.exists(),
+        "retained producer-forwarded fetch state needs one focused owner"
+    );
+
+    let runtime = fs::read_to_string(runtime_path).unwrap();
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime,
+            "o3_runtime_producer_forwarded_chain/value.rs",
+            "value",
+        ),
+        1,
+        "the runtime chain owner must attach its value module exactly once"
+    );
+    let values = production_rust_source(&fs::read_to_string(value_path).unwrap());
+    assert!(
+        production_defines_exact_named_item(&values, "struct", "O3ProducerForwardedScalarChain",),
+        "producer-forwarded scalar lineage must have one typed chain"
+    );
+    assert!(
+        production_defines_exact_named_item(
+            &values,
+            "enum",
+            "O3ProducerForwardedScalarDescendants",
+        ),
+        "the scalar chain must keep its zero/one-step cases inline"
+    );
+    let descendants_definition =
+        production_enum_definition(&values, "O3ProducerForwardedScalarDescendants")
+            .expect("missing inline scalar-descendant representation");
+    assert!(
+        enum_has_unit_variant(&descendants_definition, "Empty"),
+        "the zero-step scalar chain must remain inline"
+    );
+    assert!(
+        enum_tuple_variant_payload(&descendants_definition, "One").is_some_and(|payload| {
+            contains_rust_identifier(
+                &payload.chars().collect::<Vec<_>>(),
+                "O3ProducerForwardedScalarDescendant",
+            )
+        }),
+        "the one-step scalar chain must remain inline"
+    );
+    assert!(
+        enum_tuple_variant_payload(&descendants_definition, "Many").is_some_and(|payload| {
+            generic_type_contains_named_type(&payload, "Vec", "O3ProducerForwardedScalarDescendant")
+        }),
+        "only the multi-step fallback may own a descendant vector"
+    );
+    let chain_definition = production_struct_definitions(&values)
+        .into_iter()
+        .find(|definition| {
+            production_defines_exact_named_item(
+                definition,
+                "struct",
+                "O3ProducerForwardedScalarChain",
+            )
+        })
+        .expect("missing producer-forwarded scalar-chain definition");
+    assert!(
+        !generic_type_contains_named_type(
+            &chain_definition,
+            "Vec",
+            "O3ProducerForwardedScalarDescendant",
+        ),
+        "the scalar chain must not heap-allocate its admitted zero/one-step cases"
+    );
+    let mut fixed_shape_owners = Vec::new();
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        let mut definitions = production_struct_definitions(&source);
+        definitions.extend(production_type_alias_definitions(&source));
+        if definitions.iter().any(|definition| {
+            generic_type_contains_named_type(
+                definition,
+                "Option",
+                "O3ProducerForwardedScalarDescendant",
+            )
+        }) {
+            fixed_shape_owners.push(relative.display().to_string());
+        }
+    }
+    assert!(
+        fixed_shape_owners.is_empty(),
+        "producer-forwarded authority restored the fixed optional-scalar shape: {}",
+        fixed_shape_owners.join(", ")
+    );
+
+    let fetch_root = fs::read_to_string(fetch_root_path).unwrap();
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &fetch_root,
+            "riscv_fetch_ahead/producer_forwarded_continuation.rs",
+            "producer_forwarded_continuation",
+        ),
+        1,
+        "fetch ahead must attach the retained-chain continuation exactly once"
+    );
+    let continuation = production_rust_source(&fs::read_to_string(continuation_path).unwrap());
+    assert!(
+        production_defines_exact_named_item(
+            &continuation,
+            "struct",
+            "ProducerForwardedScalarContinuation",
+        ),
+        "retained fetch state is missing its typed-chain owner"
+    );
+    assert!(
+        production_defines_exact_function(&values, "matches_retained_candidate"),
+        "the typed chain must own the bounded retained-candidate predicate"
+    );
+    assert!(
+        !contains_rust_identifier(&continuation.chars().collect::<Vec<_>>(), "is_prefix_of",),
+        "retained fetch authority must not restore unbounded prefix matching"
+    );
+    let detailed = production_rust_source(&fs::read_to_string(detailed_path).unwrap());
+    let authority = detailed
+        .find("pub(crate) enum PredictedControlTargetAuthority")
+        .expect("missing predicted-control target authority");
+    let derive = detailed[..authority]
+        .rfind("#[derive(")
+        .expect("predicted-control target authority needs derives");
+    assert!(
+        !detailed[derive..authority].contains("Copy"),
+        "producer-forwarded return authority owns a scalar chain and must not be Copy"
+    );
+}
+
+#[test]
 fn producer_forwarded_chain_authority_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_root_path = crate_dir.join("src/o3_runtime.rs");
     let runtime_path = crate_dir.join("src/o3_runtime_producer_forwarded_chain.rs");
+    let value_path = crate_dir.join("src/o3_runtime_producer_forwarded_chain/value.rs");
     let fetch_root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
     let prepared_path = crate_dir.join("src/riscv_fetch_ahead/prepared.rs");
+    let continuation_path =
+        crate_dir.join("src/riscv_fetch_ahead/producer_forwarded_continuation.rs");
     let detailed_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
     let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
     let checkpoint_test_path = crate_dir.join("src/riscv_fetch_ahead/tests/checkpoint.rs");
@@ -1864,41 +2021,60 @@ fn producer_forwarded_chain_authority_stays_focused() {
         );
     }
     assert!(runtime_path.exists());
+    assert!(value_path.exists());
     assert!(
         line_count(&runtime_path) <= MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES,
         "o3_runtime_producer_forwarded_chain.rs exceeds {MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES} lines"
     );
     let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
+    assert!(include_macro_lines(&fs::read_to_string(&value_path).unwrap()).is_empty());
+    assert!(
+        line_count(&value_path) <= MAX_O3_RUNTIME_PRODUCER_FORWARDED_VALUE_LINES,
+        "producer-forwarded value owner exceeds {MAX_O3_RUNTIME_PRODUCER_FORWARDED_VALUE_LINES} lines"
+    );
+    assert!(
+        module_family_line_count(&runtime_path) <= MAX_O3_RUNTIME_PRODUCER_FORWARDED_OWNER_LINES,
+        "producer-forwarded runtime owner exceeds {MAX_O3_RUNTIME_PRODUCER_FORWARDED_OWNER_LINES} aggregate lines"
+    );
+    let values = production_rust_source(&fs::read_to_string(&value_path).unwrap());
+    let runtime_authority = format!("{runtime}\n{values}");
     let runtime_items = [
         "O3ProducerForwardedControlTarget",
         "O3ProducerForwardedScalarDescendant",
+        "O3ProducerForwardedScalarChain",
         "O3ProducerForwardedReturnDescendant",
     ];
     for item in runtime_items {
         assert!(
-            production_defines_exact_named_item(&runtime, "struct", item),
+            production_defines_exact_named_item(&runtime_authority, "struct", item),
             "producer-forwarded chain owner is missing `{item}`"
         );
         assert!(
-            production_defines_exact_inherent_impl(&runtime, item),
+            production_defines_exact_inherent_impl(&runtime_authority, item),
             "producer-forwarded chain owner is missing inherent implementation for `{item}`"
         );
     }
     let runtime_trait_impls = [
         ("PartialEq", "O3ProducerForwardedScalarDescendant"),
         ("Eq", "O3ProducerForwardedScalarDescendant"),
+        ("PartialEq", "O3ProducerForwardedScalarChain"),
+        ("Eq", "O3ProducerForwardedScalarChain"),
         ("PartialEq", "O3ProducerForwardedReturnDescendant"),
         ("Eq", "O3ProducerForwardedReturnDescendant"),
     ];
     for (trait_name, item) in runtime_trait_impls {
         assert!(
-            production_defines_exact_trait_impl(&runtime, trait_name, item),
+            production_defines_exact_trait_impl(&runtime_authority, trait_name, item),
             "producer-forwarded chain owner is missing `{trait_name}` for `{item}`"
         );
     }
     let runtime_functions = [
         "target_source",
         "link_destination",
+        "fetched_scalar_chain",
+        "scalar_chain",
+        "matches_retained_candidate",
+        "retained_return_descendant",
         "producer_forwarded_control_target",
         "retained_producer_forwarded_control_target",
         "producer_forwarded_control_target_with_completed",
@@ -1917,20 +2093,19 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "has_recorded_producer_forwarded_return_descendant",
         "producer_forwarded_return_descendant",
         "direct_producer_forwarded_return_descendant",
-        "producer_forwarded_scalar_descendant_for_sequences",
-        "producer_forwarded_scalar_descendant",
+        "producer_forwarded_scalar_chain_for_sequences",
+        "producer_forwarded_scalar_chain",
         "producer_forwarded_scalar_return_issue_context",
         "append_producer_forwarded_scalar_return_descendant",
         "producer_forwarded_scalar_return_descendant",
     ];
     for anchor in runtime_functions {
         assert!(
-            production_defines_exact_function(&runtime, anchor),
+            production_defines_exact_function(&runtime_authority, anchor),
             "producer-forwarded chain owner is missing `{anchor}`"
         );
     }
     for anchor in [
-        "same_control_identity",
         "producer_forwarded_control_target_with_completed",
         "producer_forwarded_control_target_for_sequences",
         "producer_forwarded_control_target_from_rows",
@@ -1940,7 +2115,7 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "producer_forwarded_control_descendant_sequence",
         "producer_forwarded_return_descendant_for_sequence",
         "direct_producer_forwarded_return_descendant",
-        "producer_forwarded_scalar_descendant_for_sequences",
+        "producer_forwarded_scalar_chain_for_sequences",
         "producer_forwarded_scalar_return_descendant",
     ] {
         assert!(
@@ -1961,11 +2136,12 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "target_source",
         "target",
         "parent",
-        "scalar_descendant",
+        "descendants",
+        "scalar_chain",
         "sequence",
     ] {
         assert!(
-            !production_defines_visible_field(&runtime, field),
+            !production_defines_visible_field(&runtime_authority, field),
             "producer-forwarded chain field `{field}` must remain private"
         );
     }
@@ -2024,7 +2200,10 @@ fn producer_forwarded_chain_authority_stays_focused() {
     );
     let mut escaped_owners = Vec::new();
     for path in rust_source_files(&crate_dir.join("src")) {
-        if path == runtime_path || is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap()) {
+        if path == runtime_path
+            || path == value_path
+            || is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap())
+        {
             continue;
         }
         let source = production_rust_source(&fs::read_to_string(&path).unwrap());
@@ -2195,15 +2374,38 @@ fn producer_forwarded_chain_authority_stays_focused() {
         "riscv_fetch_ahead/prepared.rs exceeds {MAX_RISCV_FETCH_AHEAD_PREPARED_LINES} lines"
     );
     let prepared_code = production_rust_source(&prepared);
-    for owner in [
-        "ProducerForwardedScalarContinuation",
+    assert!(production_defines_exact_named_item(
+        &prepared_code,
+        "struct",
         "PreparedRiscvFetchAheadSpeculation",
-    ] {
-        assert!(
-            production_defines_exact_named_item(&prepared_code, "struct", owner),
-            "prepared.rs is missing authority owner `{owner}`"
-        );
-    }
+    ));
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &fetch_root,
+            "riscv_fetch_ahead/producer_forwarded_continuation.rs",
+            "producer_forwarded_continuation",
+        ),
+        1,
+        "riscv_fetch_ahead.rs must attach the retained scalar-chain continuation exactly once"
+    );
+    assert!(continuation_path.exists());
+    let continuation = fs::read_to_string(&continuation_path).unwrap();
+    assert!(include_macro_lines(&continuation).is_empty());
+    assert!(
+        line_count(&continuation_path)
+            <= MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES,
+        "producer_forwarded_continuation.rs exceeds {MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES} lines"
+    );
+    assert!(
+        module_family_line_count(&prepared_path) + module_family_line_count(&continuation_path)
+            <= MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES,
+        "fetch preparation owner exceeds {MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES} aggregate lines"
+    );
+    assert!(production_defines_exact_named_item(
+        &production_rust_source(&continuation),
+        "struct",
+        "ProducerForwardedScalarContinuation",
+    ));
     assert!(production_defines_exact_function(
         &production_rust_source(&fs::read_to_string(&detailed_path).unwrap()),
         "retained_parent_resolution_preserves_fetch_path",
@@ -2389,6 +2591,205 @@ fn production_defines_exact_function(source: &str, name: &str) -> bool {
         index = end;
     }
     false
+}
+
+fn generic_type_contains_named_type(source: &str, outer: &str, inner: &str) -> bool {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        let open = skip_rust_whitespace(&chars, end);
+        if identifier == outer && chars.get(open) == Some(&'<') {
+            let Some(close) = matching_delimiter(&chars, open, '<', '>') else {
+                return false;
+            };
+            let mut nested = open + 1;
+            while nested < close {
+                let Some((nested_identifier, nested_end)) = rust_identifier_at(&chars, nested)
+                else {
+                    nested += 1;
+                    continue;
+                };
+                if nested_identifier == inner {
+                    return true;
+                }
+                nested = nested_end;
+            }
+            index = close + 1;
+            continue;
+        }
+        index = end;
+    }
+    false
+}
+
+fn production_struct_definitions(source: &str) -> Vec<String> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut definitions = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != "struct" {
+            index = end;
+            continue;
+        }
+        let name_start = skip_rust_whitespace(&chars, end);
+        let Some((_, name_end)) = rust_identifier_at(&chars, name_start) else {
+            index = end;
+            continue;
+        };
+        let mut body = skip_rust_whitespace(&chars, name_end);
+        if chars.get(body) == Some(&'<') {
+            let Some(generics_end) = matching_delimiter(&chars, body, '<', '>') else {
+                index = name_end;
+                continue;
+            };
+            body = skip_rust_whitespace(&chars, generics_end + 1);
+        }
+        if chars.get(body) == Some(&'(') {
+            let Some(close) = matching_delimiter(&chars, body, '(', ')') else {
+                index = body + 1;
+                continue;
+            };
+            definitions.push(chars[index..=close].iter().collect());
+            index = close + 1;
+            continue;
+        }
+        while body < chars.len() && !matches!(chars[body], '{' | ';') {
+            body += 1;
+        }
+        if chars.get(body) == Some(&'{') {
+            let Some(close) = matching_delimiter(&chars, body, '{', '}') else {
+                index = body + 1;
+                continue;
+            };
+            definitions.push(chars[index..=close].iter().collect());
+            index = close + 1;
+            continue;
+        }
+        index = body.saturating_add(1);
+    }
+    definitions
+}
+
+fn production_enum_definition(source: &str, name: &str) -> Option<String> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != "enum" {
+            index = end;
+            continue;
+        }
+        let name_start = skip_rust_whitespace(&chars, end);
+        let Some((item_name, name_end)) = rust_identifier_at(&chars, name_start) else {
+            index = end;
+            continue;
+        };
+        if item_name != name {
+            index = name_end;
+            continue;
+        }
+        let mut body = skip_rust_whitespace(&chars, name_end);
+        if chars.get(body) == Some(&'<') {
+            body = matching_delimiter(&chars, body, '<', '>')? + 1;
+        }
+        while body < chars.len() && chars[body] != '{' {
+            if chars[body] == ';' {
+                return None;
+            }
+            body += 1;
+        }
+        let close = matching_delimiter(&chars, body, '{', '}')?;
+        return Some(chars[index..=close].iter().collect());
+    }
+    None
+}
+
+fn production_type_alias_definitions(source: &str) -> Vec<String> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut definitions = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != "type" {
+            index = end;
+            continue;
+        }
+        let name_start = skip_rust_whitespace(&chars, end);
+        let Some((_, name_end)) = rust_identifier_at(&chars, name_start) else {
+            index = end;
+            continue;
+        };
+        let Some(close) = chars
+            .iter()
+            .enumerate()
+            .skip(name_end)
+            .find_map(|(candidate, character)| (*character == ';').then_some(candidate))
+        else {
+            break;
+        };
+        if chars[name_end..close].contains(&'=') {
+            definitions.push(chars[index..=close].iter().collect());
+        }
+        index = close + 1;
+    }
+    definitions
+}
+
+fn enum_has_unit_variant(definition: &str, name: &str) -> bool {
+    let chars = definition.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == name
+            && matches!(
+                chars.get(skip_rust_whitespace(&chars, end)),
+                Some(',' | '}')
+            )
+        {
+            return true;
+        }
+        index = end;
+    }
+    false
+}
+
+fn enum_tuple_variant_payload(definition: &str, name: &str) -> Option<String> {
+    let chars = definition.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        let open = skip_rust_whitespace(&chars, end);
+        if identifier == name && chars.get(open) == Some(&'(') {
+            let close = matching_delimiter(&chars, open, '(', ')')?;
+            return Some(chars[open + 1..close].iter().collect());
+        }
+        index = end;
+    }
+    None
 }
 
 fn production_function_is_visible(source: &str, name: &str) -> bool {
@@ -2822,6 +3223,89 @@ fn not_obsolete_name() {}
         !production_defines_exact_function(&production, "obsolete_name"),
         "unrelated identifiers, calls, comments, literals, or longer names must not count"
     );
+}
+
+#[test]
+fn source_policy_helper_detects_named_types_inside_generics() {
+    assert!(generic_type_contains_named_type(
+        "type Legacy = Option<\ncrate::o3_runtime::O3ProducerForwardedScalarDescendant\n>;",
+        "Option",
+        "O3ProducerForwardedScalarDescendant",
+    ));
+    assert!(generic_type_contains_named_type(
+        "type Nested = Option<Vec<O3ProducerForwardedScalarDescendant>>;",
+        "Option",
+        "O3ProducerForwardedScalarDescendant",
+    ));
+    assert!(!generic_type_contains_named_type(
+        "// Option<O3ProducerForwardedScalarDescendant>\ntype Current = O3ProducerForwardedScalarChain;",
+        "Option",
+        "O3ProducerForwardedScalarDescendant",
+    ));
+
+    let source = "\
+struct Authority<T>\n\
+where\n\
+    T: Copy,\n\
+{\n\
+    scalar: Option<crate::o3_runtime::O3ProducerForwardedScalarDescendant>,\n\
+}\n\
+struct Tuple(Option<O3ProducerForwardedScalarDescendant>);\n\
+fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
+    let definitions = production_struct_definitions(source);
+    assert_eq!(definitions.len(), 2);
+    for definition in definitions {
+        assert!(generic_type_contains_named_type(
+            &definition,
+            "Option",
+            "O3ProducerForwardedScalarDescendant",
+        ));
+        assert!(!definition.contains("fn query"));
+    }
+    assert!(production_struct_definitions(
+        "fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }"
+    )
+    .is_empty());
+}
+
+#[test]
+fn source_policy_helper_extracts_enum_variants_and_type_aliases() {
+    let source = "\
+enum Descendants<T>\n\
+where\n\
+    T: Copy,\n\
+{\n\
+    Empty,\n\
+    One(O3ProducerForwardedScalarDescendant),\n\
+    Many(Vec<O3ProducerForwardedScalarDescendant>),\n\
+}\n\
+type Legacy = Option<O3ProducerForwardedScalarDescendant>;\n\
+fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
+    let definition = production_enum_definition(source, "Descendants").unwrap();
+    assert!(!definition.contains("type Legacy"));
+    assert!(enum_has_unit_variant(&definition, "Empty"));
+    assert!(
+        enum_tuple_variant_payload(&definition, "One").is_some_and(|payload| {
+            contains_rust_identifier(
+                &payload.chars().collect::<Vec<_>>(),
+                "O3ProducerForwardedScalarDescendant",
+            )
+        })
+    );
+    assert!(
+        enum_tuple_variant_payload(&definition, "Many").is_some_and(|payload| {
+            generic_type_contains_named_type(&payload, "Vec", "O3ProducerForwardedScalarDescendant")
+        })
+    );
+
+    let aliases = production_type_alias_definitions(source);
+    assert_eq!(aliases.len(), 1);
+    assert!(generic_type_contains_named_type(
+        &aliases[0],
+        "Option",
+        "O3ProducerForwardedScalarDescendant",
+    ));
+    assert!(!aliases[0].contains("fn query"));
 }
 
 #[test]
@@ -3407,6 +3891,17 @@ fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn module_family_rust_source_files(root: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![root.to_path_buf()];
+    let family = root.with_extension("");
+    if family.is_dir() {
+        paths.extend(rust_source_files(&family));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(root).unwrap() {
         let entry = entry.unwrap();
@@ -3421,6 +3916,24 @@ fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
 
 fn line_count(path: &Path) -> usize {
     fs::read_to_string(path).unwrap().lines().count()
+}
+
+fn module_family_line_count(root: &Path) -> usize {
+    module_family_rust_source_files(root)
+        .iter()
+        .map(|path| line_count(path))
+        .sum()
+}
+
+#[test]
+fn source_policy_helper_collects_module_family_files() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate_dir.join("src/o3_runtime_producer_forwarded_chain.rs");
+    let value = crate_dir.join("src/o3_runtime_producer_forwarded_chain/value.rs");
+    let files = module_family_rust_source_files(&root);
+
+    assert!(files.contains(&root));
+    assert!(files.contains(&value));
 }
 
 fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {

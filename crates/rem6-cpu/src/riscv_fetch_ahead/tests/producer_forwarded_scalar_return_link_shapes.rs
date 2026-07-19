@@ -22,7 +22,7 @@ fn retired_data_head_admits_same_and_split_link_scalar_return_predictions() {
         else {
             panic!("expected typed producer-forwarded return descendant");
         };
-        assert!(descendant.scalar_descendant().is_some());
+        assert!(descendant.scalar_chain().is_one_step());
         assert_eq!(
             descendant.parent().target_source(),
             Register::new(target_source).unwrap()
@@ -41,7 +41,10 @@ fn retired_data_head_admits_same_and_split_link_scalar_return_predictions() {
         let state = core.state.lock().expect("riscv core lock");
         assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 4);
         assert_eq!(
-            state.o3_runtime.producer_forwarded_return_descendant(),
+            state
+                .o3_runtime
+                .producer_forwarded_return_descendant()
+                .as_ref(),
             Some(descendant)
         );
         assert_eq!(
