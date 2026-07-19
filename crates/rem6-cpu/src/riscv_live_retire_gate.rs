@@ -325,6 +325,7 @@ impl RiscvCore {
             if state.o3_runtime.has_live_retirement_authority() {
                 return;
             }
+            state.memory_result_scalar_suffix_authorizations.clear();
             if state.o3_runtime.has_live_data_access_window() {
                 state.o3_runtime.discard_live_retire_window();
             } else {
@@ -412,6 +413,7 @@ impl RiscvCore {
         state.o3_writeback_wake.clear();
         state.pending_callback_error = None;
         state.producer_forwarded_scalar_continuation = None;
+        state.memory_result_scalar_suffix_authorizations.clear();
         Ok(())
     }
 }

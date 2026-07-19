@@ -3,6 +3,8 @@ use super::*;
 const WRITEBACK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port.rs";
 const RESULT_SUPPORT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_support.rs";
 const RESULT_CLASSES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes.rs";
+const RESULT_SCALAR_SUFFIX: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/scalar_suffix.rs";
 const RESULT_CLASSES_OLD_SUPPORT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/support.rs";
 const RESULT_BOUNDARIES: &str =
@@ -34,12 +36,23 @@ const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
         name: "support",
         path: "result_boundaries/support.rs",
     }];
+const RESULT_CLASS_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedModuleDeclaration {
+    name: "scalar_suffix",
+    path: "result_classes/scalar_suffix.rs",
+}];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";
 const RESULT_CLASS_ANCHORS: [&str; 4] = [
     "rem6_run_o3_memory_result_writeback_matrix_direct",
     "rem6_run_o3_memory_result_writeback_matrix_cache_fabric_dram",
     "rem6_run_o3_memory_result_writeback_width_two_exact_fit",
     "rem6_run_o3_memory_result_writeback_readfile_mmio",
+];
+const RESULT_SCALAR_SUFFIX_ANCHORS: [&str; 5] = [
+    "rem6_run_o3_memory_result_scalar_suffix_matrix_direct",
+    "rem6_run_o3_memory_result_scalar_suffix_matrix_cache_fabric_dram",
+    "rem6_run_o3_memory_result_scalar_suffix_width_two_exact_fit_direct",
+    "rem6_run_o3_memory_result_scalar_suffix_readfile_mmio",
+    "rem6_run_timing_suppresses_o3_memory_result_scalar_suffix",
 ];
 const RESULT_BOUNDARY_ANCHORS: [&str; 6] = [
     "rem6_run_o3_memory_result_writeback_rejects_resultless_and_unsupported_shapes",
@@ -57,7 +70,7 @@ const STORE_CONDITIONAL_RESULT_ANCHORS: [&str; 6] = [
     "rem6_run_o3_store_conditional_result_live_actions_reject",
     "rem6_run_timing_suppresses_o3_store_conditional_result_surface",
 ];
-const RESULT_SUPPORT_HELPERS: [&str; 11] = [
+const RESULT_SUPPORT_HELPERS: [&str; 12] = [
     "data_trace",
     "event_str",
     "json_u64",
@@ -69,8 +82,9 @@ const RESULT_SUPPORT_HELPERS: [&str; 11] = [
     "rob_entry_at_sequence",
     "assert_rob_sequence_absent",
     "memory_result_event_at_pc",
+    "result_memory_trace",
 ];
-const RESULT_SUPPORT_FUNCTIONS: [&str; 12] = [
+const RESULT_SUPPORT_FUNCTIONS: [&str; 13] = [
     "data_trace",
     "event_str",
     "json_u64",
@@ -83,6 +97,7 @@ const RESULT_SUPPORT_FUNCTIONS: [&str; 12] = [
     "rob_entry_at_sequence",
     "assert_rob_sequence_absent",
     "memory_result_event_at_pc",
+    "result_memory_trace",
 ];
 const RESULT_BOUNDARY_SUPPORT_HELPERS: [&str; 2] = [
     "pmp_denied_amo_output",
@@ -91,7 +106,9 @@ const RESULT_BOUNDARY_SUPPORT_HELPERS: [&str; 2] = [
 const WRITEBACK_ROOT_MAX_LINES: usize = 1250;
 const RESULT_SUPPORT_MAX_LINES: usize = 160;
 const RESULT_CLASSES_MAX_LINES: usize = 700;
-const RESULT_CLASSES_AGGREGATE_MAX_LINES: usize = 800;
+const RESULT_CLASSES_AGGREGATE_MAX_LINES: usize = 805;
+const RESULT_SCALAR_SUFFIX_MAX_LINES: usize = 500;
+const RESULT_CLASS_FAMILY_AGGREGATE_MAX_LINES: usize = 1300;
 const RESULT_BOUNDARIES_MAX_LINES: usize = 700;
 const RESULT_BOUNDARIES_SUPPORT_MAX_LINES: usize = 140;
 const RESULT_BOUNDARIES_AGGREGATE_MAX_LINES: usize = 800;
@@ -116,12 +133,14 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let root_path = crate_dir.join(WRITEBACK_ROOT);
     let support_path = crate_dir.join(RESULT_SUPPORT);
     let child_path = crate_dir.join(RESULT_CLASSES);
+    let scalar_suffix_path = crate_dir.join(RESULT_SCALAR_SUFFIX);
     let old_support_path = crate_dir.join(RESULT_CLASSES_OLD_SUPPORT);
     let boundary_path = crate_dir.join(RESULT_BOUNDARIES);
     let boundary_support_path = crate_dir.join(RESULT_BOUNDARIES_SUPPORT);
     let store_conditional_path = crate_dir.join(STORE_CONDITIONAL_RESULT);
     let root = fs::read_to_string(&root_path).unwrap();
     let child = fs::read_to_string(&child_path).unwrap();
+    let scalar_suffix = fs::read_to_string(&scalar_suffix_path);
     let support = fs::read_to_string(&support_path);
     let boundary = fs::read_to_string(&boundary_path);
     let boundary_support = fs::read_to_string(&boundary_support_path);
@@ -159,6 +178,22 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     }
     if old_support_path.exists() {
         boundary_failures.push(format!("{RESULT_CLASSES_OLD_SUPPORT} must be removed"));
+    }
+    boundary_failures.extend(module_declaration_failures(
+        RESULT_CLASSES,
+        &child,
+        &RESULT_CLASS_CHILD_MODULES,
+    ));
+    if scalar_suffix.is_err() {
+        boundary_failures.push(format!("{RESULT_SCALAR_SUFFIX} must exist"));
+    }
+    if let Ok(scalar_suffix) = &scalar_suffix {
+        let includes = top_level_include_paths(RESULT_SCALAR_SUFFIX, scalar_suffix);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{RESULT_SCALAR_SUFFIX} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
     }
     if support.is_err() {
         boundary_failures.push(format!("{RESULT_SUPPORT} must exist"));
@@ -209,6 +244,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         boundary_failures.join("\n")
     );
     let support = support.unwrap();
+    let scalar_suffix = scalar_suffix.unwrap();
     let boundary = boundary.unwrap();
     let boundary_support = boundary_support.unwrap();
     let store_conditional = store_conditional.unwrap();
@@ -224,6 +260,15 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         line_count(&child_path) + line_count(&support_path) <= RESULT_CLASSES_AGGREGATE_MAX_LINES,
         "result-class implementation must remain at or below {RESULT_CLASSES_AGGREGATE_MAX_LINES} aggregate lines"
+    );
+    assert!(
+        line_count(&scalar_suffix_path) <= RESULT_SCALAR_SUFFIX_MAX_LINES,
+        "{RESULT_SCALAR_SUFFIX} must remain at or below {RESULT_SCALAR_SUFFIX_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&child_path) + line_count(&support_path) + line_count(&scalar_suffix_path)
+            <= RESULT_CLASS_FAMILY_AGGREGATE_MAX_LINES,
+        "result-class family must remain at or below {RESULT_CLASS_FAMILY_AGGREGATE_MAX_LINES} aggregate lines"
     );
     assert!(
         line_count(&boundary_path) <= RESULT_BOUNDARIES_MAX_LINES,
@@ -262,6 +307,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         top_level_module_names(STORE_CONDITIONAL_RESULT, &store_conditional).is_empty(),
         "{STORE_CONDITIONAL_RESULT} must remain a leaf module"
+    );
+    assert!(
+        top_level_module_names(RESULT_SCALAR_SUFFIX, &scalar_suffix).is_empty(),
+        "{RESULT_SCALAR_SUFFIX} must remain a leaf module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
@@ -307,6 +356,33 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
     }
 
+    let scalar_suffix_tests = top_level_test_names(RESULT_SCALAR_SUFFIX, &scalar_suffix);
+    assert_eq!(
+        scalar_suffix_tests, RESULT_SCALAR_SUFFIX_ANCHORS,
+        "{RESULT_SCALAR_SUFFIX} must own exactly the required scalar-suffix anchors in order"
+    );
+    for anchor in RESULT_SCALAR_SUFFIX_ANCHORS {
+        assert_eq!(
+            scalar_suffix.matches(anchor).count(),
+            1,
+            "{RESULT_SCALAR_SUFFIX} must contain scalar-suffix anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain scalar-suffix anchor `{anchor}`"
+            );
+        }
+    }
+
     let boundary_tests = top_level_test_names(RESULT_BOUNDARIES, &boundary);
     assert_eq!(
         boundary_tests, RESULT_BOUNDARY_ANCHORS,
@@ -321,6 +397,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
             (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_SUPPORT, support.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
         ] {
@@ -347,6 +424,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
             (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_SUPPORT, support.as_str()),
             (RESULT_BOUNDARIES, boundary.as_str()),
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
@@ -360,6 +438,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     }
 
     assert_rustfmt_clean(&child_path);
+    assert_rustfmt_clean(&scalar_suffix_path);
     assert_rustfmt_clean(&support_path);
     assert_rustfmt_clean(&boundary_path);
     assert_rustfmt_clean(&boundary_support_path);

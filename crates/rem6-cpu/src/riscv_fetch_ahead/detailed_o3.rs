@@ -47,6 +47,11 @@ pub(super) enum DetailedFetchAheadCandidate {
         pc: Address,
         fetch_request: MemoryRequestId,
     },
+    ReadyDataAccessResult {
+        pc: Address,
+        fetch_request: MemoryRequestId,
+        authorization: super::O3MemoryResultScalarSuffixAuthorization,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,10 +131,19 @@ pub(super) fn allows_detailed_data_access_head_fetch_ahead(
     state: &RiscvCoreState,
     fetch_request: rem6_memory::MemoryRequestId,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     translated: TranslatedMemoryFetchAhead,
 ) -> bool {
     state.live_retire_gate.detailed_policy_enabled()
-        && scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
+        && (scalar_memory_fetch_ahead_head(state, fetch_request, instruction, translated).is_some()
+            || data_access_result_fetch_ahead_authorization(
+                state,
+                fetch_request,
+                instruction,
+                instruction_bytes,
+                translated,
+            )
+            .is_some())
 }
 
 pub(super) fn scalar_memory_fetch_ahead_head(
@@ -168,10 +182,16 @@ pub(super) fn data_access_has_younger_fetch(
     memory_request: rem6_memory::MemoryRequestId,
     younger_pc: Address,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     translated: TranslatedMemoryFetchAhead,
 ) -> bool {
-    allows_detailed_data_access_head_fetch_ahead(state, memory_request, instruction, translated)
-        && has_live_younger_fetch_at(state, fetch_events, memory_request, younger_pc)
+    allows_detailed_data_access_head_fetch_ahead(
+        state,
+        memory_request,
+        instruction,
+        instruction_bytes,
+        translated,
+    ) && has_live_younger_fetch_at(state, fetch_events, memory_request, younger_pc)
 }
 
 fn has_live_younger_fetch_at(
@@ -212,23 +232,26 @@ pub(super) fn data_access_waits_for_younger_fetch(
     else {
         return false;
     };
-    let Some([a, b, c, d]) = memory.data() else {
-        return false;
-    };
-    let Ok(decoded) = RiscvInstruction::decode_with_length(u32::from_le_bytes([*a, *b, *c, *d]))
+    let Some(current) =
+        completed_fetch_instruction_starting_with(&state.executed_fetches, fetch_events, memory)
     else {
         return false;
     };
-    if state.can_overlap_detailed_scalar_memory_instruction(decoded.instruction()) {
+    if state.can_overlap_detailed_scalar_memory_instruction(current.decoded().instruction()) {
         return false;
     }
 
     allows_detailed_data_access_head_fetch_ahead(
         state,
-        memory.request_id(),
-        decoded.instruction(),
+        current.first_consumed_request(),
+        current.decoded().instruction(),
+        current.decoded().bytes(),
         translated,
-    ) && super::has_pending_younger_fetch(state, fetch_events, memory.request_id().sequence())
+    ) && super::has_pending_younger_fetch(
+        state,
+        fetch_events,
+        current.last_consumed_request().sequence(),
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -264,7 +287,7 @@ pub(super) fn data_access_result_head_physical_probe(
     else {
         return DataAccessResultHeadPhysicalProbe::Memory;
     };
-    let fetch_request = current.last_consumed_request();
+    let fetch_request = current.first_consumed_request();
     let instruction = current.decoded().instruction();
     if data_access_result_fetch_ahead_shape(state, instruction).is_none() {
         return DataAccessResultHeadPhysicalProbe::Memory;
@@ -360,6 +383,33 @@ pub(super) fn additional_fetch_candidate(
             };
         }
         None => {}
+    }
+    if let Some(authorization) = data_access_result_fetch_ahead_authorization(
+        state,
+        current.first_consumed_request(),
+        current.decoded().instruction(),
+        current.decoded().bytes(),
+        translated,
+    ) {
+        let candidate = scalar_integer_fu_window_candidate(
+            state,
+            fetch_events,
+            &current,
+            RiscvScalarIntegerLiveWindow::from_memory_result(
+                authorization.integer_destination(),
+                state.o3_runtime.scalar_memory_window_limit(),
+            ),
+        );
+        return match candidate {
+            DetailedFetchAheadCandidate::Ready(pc) => {
+                DetailedFetchAheadCandidate::ReadyDataAccessResult {
+                    pc,
+                    fetch_request: current.first_consumed_request(),
+                    authorization,
+                }
+            }
+            candidate => candidate,
+        };
     }
     let Some(window) = RiscvScalarIntegerLiveWindow::from_fu_head(current.decoded().instruction())
     else {
@@ -710,6 +760,64 @@ fn data_access_result_fetch_ahead_shape(
         _ => return None,
     };
     Some(integer_destination)
+}
+
+pub(super) fn data_access_result_fetch_ahead_authorization(
+    state: &RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    instruction: RiscvInstruction,
+    instruction_bytes: u8,
+    translated: TranslatedMemoryFetchAhead,
+) -> Option<super::O3MemoryResultScalarSuffixAuthorization> {
+    if !state.live_retire_gate.detailed_policy_enabled()
+        || instruction_bytes != 4
+        || state.o3_runtime.scalar_memory_window_limit() <= 1
+        || translated == TranslatedMemoryFetchAhead::Blocked
+        || (translated == TranslatedMemoryFetchAhead::Mmio && state.data_translation.is_some())
+    {
+        return None;
+    }
+    let integer_destination = data_access_result_fetch_ahead_shape(state, instruction)?;
+    let probe = data_access_result_head_probe(state, fetch_request, instruction)?;
+    if translated == TranslatedMemoryFetchAhead::Mmio
+        && !matches!(&probe.access, MemoryAccessKind::Load { rd, .. } if !rd.is_zero())
+    {
+        return None;
+    }
+    let physical_range = if state.data_translation.is_none() {
+        probe.virtual_range
+    } else {
+        if !matches!(
+            translated,
+            TranslatedMemoryFetchAhead::CachedMemory | TranslatedMemoryFetchAhead::Mmio
+        ) {
+            return None;
+        }
+        let DataAccessResultTranslationProbe::Ready(physical_address) =
+            data_access_result_translation_probe(state, &probe)
+        else {
+            return None;
+        };
+        AddressRange::new(physical_address, probe.virtual_range.size()).ok()?
+    };
+    if translated != TranslatedMemoryFetchAhead::Mmio
+        && state
+            .pma
+            .is_uncacheable(physical_range.start().get(), physical_range.size().bytes())
+            .ok()?
+    {
+        return None;
+    }
+    let route = if translated == TranslatedMemoryFetchAhead::Mmio {
+        super::O3MemoryResultScalarSuffixRoute::Mmio
+    } else {
+        super::O3MemoryResultScalarSuffixRoute::Memory
+    };
+    Some(super::O3MemoryResultScalarSuffixAuthorization::new(
+        integer_destination,
+        route,
+        physical_range,
+    ))
 }
 
 struct DataAccessResultHeadProbe {

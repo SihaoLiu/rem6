@@ -54,6 +54,21 @@ fn completed_fetch_with_raw(sequence: u64, pc: u64, raw: u32) -> CpuFetchEvent {
     )
 }
 
+fn completed_fetch_with_bytes(sequence: u64, pc: u64, bytes: Vec<u8>) -> CpuFetchEvent {
+    CpuFetchEvent::completed(
+        CpuFetchRecord::new(
+            10 + sequence,
+            PartitionId::new(0),
+            MemoryRouteId::new(0),
+            endpoint("cpu0.ifetch"),
+            MemoryRequestId::new(AgentId::new(7), sequence),
+            Address::new(pc),
+            AccessSize::new(bytes.len() as u64).unwrap(),
+        ),
+        bytes,
+    )
+}
+
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (funct7 << 25)
         | (u32::from(rs2) << 20)
@@ -943,8 +958,8 @@ fn stale_terminal_issue_wake_does_not_rebind_after_redirect() {
 }
 
 #[test]
-fn detailed_mmio_result_is_terminal_and_does_not_fetch_a_younger_div() {
-    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+fn detailed_mmio_result_consumes_fetch_authority_for_a_younger_div() {
+    let (mut scheduler, _transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(
         cpu_core(fetch_route, 0x8000),
         CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
@@ -952,30 +967,288 @@ fn detailed_mmio_result_is_terminal_and_does_not_fetch_a_younger_div() {
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(4);
     core.write_register(reg(2), 0xa000);
-    fetch_and_execute(
-        &core,
-        &mut scheduler,
-        &transport,
-        i_type(0, 2, 0b011, 12, 0x03),
-    );
-
+    let div = r_type(1, 2, 1, 0b100, 3, 0x33);
+    {
+        let mut fetch_state = core.core.state.lock().expect("cpu core lock");
+        fetch_state.events.extend([
+            completed_fetch_with_raw(0, 0x8000, i_type(0, 2, 0b011, 12, 0x03)),
+            completed_fetch_with_raw(1, 0x8004, div),
+        ]);
+    }
     let bus = test_mmio_bus(0xa000, 42_u64.to_le_bytes().to_vec());
-    assert!(core
-        .next_mmio_aware_fetch_ahead_before_retire(&bus)
-        .is_none());
+    assert_eq!(
+        core.next_mmio_aware_fetch_ahead_before_retire(&bus)
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    assert_eq!(
+        core.execute_next_completed_fetch()
+            .unwrap()
+            .expect("MMIO result head executes")
+            .fetch_pc(),
+        Address::new(0x8000)
+    );
     core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
         .unwrap()
-        .expect("terminal MMIO result issues");
-    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::None);
+        .expect("MMIO result head issues");
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
     let state = core.state.lock().expect("riscv core lock");
-    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
-    assert!(state.o3_runtime.writeback_reservations().is_empty());
-    drop(state);
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
+}
+
+#[test]
+fn split_mmio_result_consumes_authority_for_its_execution_request() {
+    let (mut scheduler, _transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0xa000);
+    core.write_register(reg(1), 84);
+    let load = i_type(0, 2, 0b011, 12, 0x03).to_le_bytes();
+    let div = r_type(1, 2, 1, 0b100, 3, 0x33);
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .extend([
+            completed_fetch_with_bytes(0, 0x8000, load[..2].to_vec()),
+            completed_fetch_with_bytes(1, 0x8002, load[2..].to_vec()),
+            completed_fetch_with_raw(2, 0x8004, div),
+        ]);
+    let bus = test_mmio_bus(0xa000, 42_u64.to_le_bytes().to_vec());
+
+    assert_eq!(
+        core.next_mmio_aware_fetch_ahead_before_retire(&bus)
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    assert!(core.execute_next_completed_fetch().unwrap().is_none());
+    assert_eq!(
+        core.execute_next_completed_fetch()
+            .unwrap()
+            .expect("split MMIO result head executes")
+            .fetch_pc(),
+        Address::new(0x8000)
+    );
+    core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+        .unwrap()
+        .expect("split MMIO result head issues");
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
+}
+
+#[test]
+fn stale_result_suffix_authority_rejects_route_range_and_pma_changes() {
+    for stale in ["route", "range", "pma"] {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = RiscvCore::with_data(
+            cpu_core(fetch_route, 0x8000),
+            CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        );
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_scalar_memory_depth(4);
+        core.write_register(reg(2), 0x9000);
+        core.write_register(reg(1), 84);
+        let float_load = i_type(0, 2, 0b011, 1, 0x07);
+        let div = r_type(1, 2, 1, 0b100, 3, 0x33);
+        core.core
+            .state
+            .lock()
+            .expect("cpu core lock")
+            .events
+            .extend([
+                completed_fetch_with_raw(0, 0x8000, float_load),
+                completed_fetch_with_raw(1, 0x8004, div),
+            ]);
+        assert_eq!(
+            core.next_fetch_ahead_before_retire()
+                .map(|decision| decision.pc()),
+            Some(Address::new(0x8008)),
+            "{stale} authorization"
+        );
+        match stale {
+            "range" => core.write_register(reg(2), 0xa000),
+            "pma" => core
+                .add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9008).unwrap())
+                .unwrap(),
+            "route" => {}
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            core.execute_next_completed_fetch()
+                .unwrap()
+                .expect("float result head executes")
+                .fetch_pc(),
+            Address::new(0x8000)
+        );
+        if stale == "route" {
+            let bus = test_mmio_bus(0x9000, 42_u64.to_le_bytes().to_vec());
+            core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+                .unwrap()
+                .expect("rerouted result head issues");
+        } else {
+            core.issue_next_data_access(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |_delivery, _context| TargetOutcome::NoResponse,
+            )
+            .unwrap()
+            .expect("changed result head issues");
+        }
+        assert_younger_window_policy(&core, O3DataAccessWindowPolicy::None);
+    }
+}
+
+#[test]
+fn aborting_deferred_result_issue_clears_fetch_authority() {
+    let (_scheduler, _transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0x9000);
+    let float_load = i_type(0, 2, 0b011, 1, 0x07);
+    let independent = i_type(7, 0, 0, 6, 0x13);
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .extend([
+            completed_fetch_with_raw(0, 0x8000, float_load),
+            completed_fetch_with_raw(1, 0x8004, independent),
+        ]);
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    assert_eq!(
+        core.execute_next_completed_fetch()
+            .unwrap()
+            .expect("float result head executes")
+            .fetch_pc(),
+        Address::new(0x8000)
+    );
+    let fetch_request = MemoryRequestId::new(AgentId::new(7), 0);
+    let mut state = core.state.lock().expect("riscv core lock");
+    assert!(!state.memory_result_scalar_suffix_authorizations.is_empty());
+    assert!(state.abort_deferred_o3_live_data_access_execution(fetch_request));
+    assert!(state.memory_result_scalar_suffix_authorizations.is_empty());
+}
+
+#[test]
+fn failed_result_issue_clears_fetch_authority_before_retry() {
+    let (mut retry_scheduler, transport, fetch_route, data_route) = memory_routes();
+    let mut rejecting_scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0x9000);
+    let float_load = i_type(0, 2, 0b011, 1, 0x07);
+    let independent = i_type(7, 0, 0, 6, 0x13);
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .extend([
+            completed_fetch_with_raw(0, 0x8000, float_load),
+            completed_fetch_with_raw(1, 0x8004, independent),
+        ]);
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("float result head executes");
+
+    let error = core
+        .issue_next_data_access(
+            &mut rejecting_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap_err();
+    assert!(matches!(error, RiscvCpuError::Transport(_)));
     assert!(core
-        .core
-        .fetch_events()
-        .iter()
-        .all(|event| event.pc() != Address::new(0x8004)));
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_scalar_suffix_authorizations
+        .is_empty());
+
+    core.issue_next_data_access(
+        &mut retry_scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .expect("retry issues without stale result-suffix authority");
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::None);
+}
+
+#[test]
+fn disabling_detailed_mode_preserves_executed_result_suffix_authority() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0x9000);
+    let float_load = i_type(0, 2, 0b011, 1, 0x07);
+    let independent = i_type(7, 0, 0, 6, 0x13);
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .extend([
+            completed_fetch_with_raw(0, 0x8000, float_load),
+            completed_fetch_with_raw(1, 0x8004, independent),
+        ]);
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("float result head executes");
+
+    core.set_detailed_live_retire_gate_enabled(false);
+
+    assert!(!core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_scalar_suffix_authorizations
+        .is_empty());
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .expect("preserved result head issues after detailed disable");
+    assert_younger_window_policy(&core, O3DataAccessWindowPolicy::MemoryResultScalarSuffix);
 }
 
 #[test]

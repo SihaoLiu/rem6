@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
-use rem6_memory::{Address, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
 
 use crate::o3_runtime::o3_live_control_operands;
 use crate::{
@@ -32,6 +32,48 @@ pub(crate) use prepared::PreparedRiscvFetchAheadSpeculation;
 pub(crate) use producer_forwarded_continuation::ProducerForwardedScalarContinuation;
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum O3MemoryResultScalarSuffixRoute {
+    Memory,
+    Mmio,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct O3MemoryResultScalarSuffixAuthorization {
+    integer_destination: Option<rem6_isa_riscv::Register>,
+    route: O3MemoryResultScalarSuffixRoute,
+    physical_range: AddressRange,
+}
+
+impl O3MemoryResultScalarSuffixAuthorization {
+    const fn new(
+        integer_destination: Option<rem6_isa_riscv::Register>,
+        route: O3MemoryResultScalarSuffixRoute,
+        physical_range: AddressRange,
+    ) -> Self {
+        Self {
+            integer_destination,
+            route,
+            physical_range,
+        }
+    }
+
+    pub(crate) const fn integer_destination(self) -> Option<rem6_isa_riscv::Register> {
+        self.integer_destination
+    }
+
+    pub(crate) fn matches(
+        self,
+        route: O3MemoryResultScalarSuffixRoute,
+        physical_address: Address,
+        size: AccessSize,
+    ) -> bool {
+        self.route == route
+            && AddressRange::new(physical_address, size)
+                .is_ok_and(|range| range == self.physical_range)
+    }
+}
 
 struct SelectedBranchRecordingState<'a> {
     branch_predictor: &'a BranchPredictor,
@@ -810,12 +852,17 @@ fn fetch_ahead_decision(
 ) -> Option<RiscvFetchAheadDecision> {
     let scalar_memory_head =
         detailed_o3::scalar_memory_fetch_ahead_head(state, request, instruction, translated);
-    let data_access_head = detailed_o3::allows_detailed_data_access_head_fetch_ahead(
-        state,
-        request,
-        instruction,
-        translated,
-    );
+    let result_authorization = scalar_memory_head.is_none().then(|| {
+        detailed_o3::data_access_result_fetch_ahead_authorization(
+            state,
+            request,
+            instruction,
+            u8::try_from(sequential_pc.get().wrapping_sub(fetch_pc.get())).unwrap_or(0),
+            translated,
+        )
+    });
+    let result_authorization = result_authorization.flatten();
+    let data_access_head = scalar_memory_head.is_some() || result_authorization.is_some();
     if instruction_allows_straight_line_fetch_ahead(instruction)
         || data_access_head
         || instruction_allows_trap_fallthrough_fetch_ahead(state, instruction)
@@ -825,6 +872,11 @@ fn fetch_ahead_decision(
             Some(detailed_o3::ScalarMemoryFetchAheadHead::CachedTranslatedLoad { .. })
         ) {
             state.translated_scalar_load_window_fetches.insert(request);
+        }
+        if let Some(authorization) = result_authorization {
+            state
+                .memory_result_scalar_suffix_authorizations
+                .insert(request, authorization);
         }
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }

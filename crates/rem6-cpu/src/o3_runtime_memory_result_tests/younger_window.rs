@@ -8,6 +8,14 @@ fn div_x20() -> RiscvInstruction {
     }
 }
 
+fn addi(rd: u8, rs1: u8) -> RiscvInstruction {
+    RiscvInstruction::Addi {
+        rd: reg(rd),
+        rs1: reg(rs1),
+        imm: Immediate::new(1),
+    }
+}
+
 fn assert_terminal_result(label: &str, event: RiscvCpuExecutionEvent) {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
@@ -62,6 +70,87 @@ fn supported_memory_results_are_terminal_without_younger_speculation() {
 }
 
 #[test]
+fn result_scalar_suffix_admits_independent_rows_without_an_integer_result() {
+    for (label, event) in [
+        ("float load", float_load_event(0x8000, 1)),
+        (
+            "restricted vector e64 m1",
+            vector_unit_event(
+                0x8000,
+                1,
+                0x9000,
+                Some([vec![false; 8], vec![true; 8]].concat()),
+            ),
+        ),
+    ] {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        assert!(runtime.stage_live_data_access_issue(
+            &event,
+            request(20),
+            31,
+            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+        ));
+        assert_eq!(
+            runtime.stage_live_data_access_younger_window(
+                event.fetch().request_id(),
+                [
+                    (Address::new(0x8004), div_x20()),
+                    (Address::new(0x8008), addi(21, 20)),
+                    (Address::new(0x800c), addi(22, 21)),
+                ],
+            ),
+            3,
+            "{label}"
+        );
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 4, "{label}");
+        assert_eq!(runtime.snapshot().load_store_queue().len(), 1, "{label}");
+    }
+}
+
+#[test]
+fn integer_result_scalar_suffix_stops_at_the_exact_result_consumer() {
+    for (label, event, result_register, lsq_rows) in [
+        (
+            "load reserved",
+            load_reserved_event(0x8000, 1, 7, 0x9000),
+            7,
+            1,
+        ),
+        ("atomic", atomic_event(0x8000, 1, 11), 11, 2),
+        ("scalar MMIO load", load_event(0x8000, 1, 12), 12, 1),
+    ] {
+        let mut runtime = O3RuntimeState::default();
+        runtime.set_scalar_memory_window_limit(4);
+        assert!(runtime.stage_live_data_access_issue(
+            &event,
+            request(20),
+            31,
+            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+        ));
+        assert_eq!(
+            runtime.stage_live_data_access_younger_window(
+                event.fetch().request_id(),
+                [
+                    (Address::new(0x8004), div_x20()),
+                    (Address::new(0x8008), addi(21, 20)),
+                    (Address::new(0x800c), addi(22, result_register)),
+                    (Address::new(0x8010), addi(23, 22)),
+                ],
+            ),
+            3,
+            "{label}"
+        );
+        assert_eq!(runtime.snapshot().reorder_buffer().len(), 4, "{label}");
+        assert_eq!(
+            runtime.snapshot().load_store_queue().len(),
+            lsq_rows,
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn result_window_rejects_second_data_access_and_unsupported_shapes() {
     for (label, event) in [
         ("float load", float_load_event(0x8000, 1)),
@@ -84,6 +173,28 @@ fn result_window_rejects_second_data_access_and_unsupported_shapes() {
                 32
             ),
             "{label} remains terminal for a second data access"
+        );
+    }
+
+    for (label, event) in [
+        ("float load", float_load_event(0x8000, 1)),
+        ("load reserved", load_reserved_event(0x8000, 1, 7, 0x9000)),
+        ("atomic", atomic_event(0x8000, 1, 11)),
+    ] {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.stage_live_data_access_issue(
+            &event,
+            request(20),
+            31,
+            O3DataAccessWindowPolicy::MemoryResultScalarSuffix,
+        ));
+        assert!(
+            !runtime.stage_live_data_access_issue_for_test(
+                &load_event(0x8004, 2, 13),
+                request(21),
+                32
+            ),
+            "{label} suffix still rejects a second data access"
         );
     }
 

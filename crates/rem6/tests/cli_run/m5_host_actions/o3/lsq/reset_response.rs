@@ -85,6 +85,8 @@ fn assert_cross_reset_atomic_response(case: CrossResetMemoryCase) {
             "2",
             "--memory-route-delay",
             "13",
+            "--riscv-o3-scalar-memory-depth",
+            "1",
             "--debug-flags",
             "O3,Data,Memory",
         ])

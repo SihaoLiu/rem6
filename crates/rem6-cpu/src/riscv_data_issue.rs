@@ -14,7 +14,8 @@ use rem6_transport::{
 
 use crate::{
     o3_runtime::{
-        is_deferred_o3_data_access, o3_memory_result_destination, O3DataAccessWindowPolicy,
+        is_deferred_o3_data_access, o3_memory_result_destination,
+        o3_memory_result_scalar_suffix_destination, O3DataAccessWindowPolicy,
         O3StoreLoadForwardingPlan,
     },
     riscv_checker,
@@ -22,6 +23,7 @@ use crate::{
     riscv_data_access,
     riscv_data_completion::{apply_data_completion, RiscvDataCompletion},
     riscv_execute,
+    riscv_fetch_ahead::O3MemoryResultScalarSuffixRoute,
     riscv_fu_latency::riscv_data_completion_execute_wait_cycles,
     riscv_live_retire_window::{
         stage_o3_data_access_younger_window, wake_o3_data_access_younger_window,
@@ -606,8 +608,41 @@ impl RiscvCore {
                         .is_uncacheable(issue.physical_address.get(), issue.size.bytes(),),
                     Ok(false)
                 );
+            let memory_result_route = match &issue.target {
+                RiscvDataAccessTarget::Memory { .. } => O3MemoryResultScalarSuffixRoute::Memory,
+                RiscvDataAccessTarget::Mmio { .. } => O3MemoryResultScalarSuffixRoute::Mmio,
+            };
+            let memory_result_shape = o3_memory_result_scalar_suffix_destination(&issue.access);
+            let eligible_memory_result_suffix = o3_data_access
+                && !provisional_terminal_result
+                && state
+                    .memory_result_scalar_suffix_authorizations
+                    .get(&issue.fetch_request)
+                    .copied()
+                    .is_some_and(|authorization| {
+                        authorization.matches(
+                            memory_result_route,
+                            issue.physical_address,
+                            issue.size,
+                        ) && memory_result_shape == Some(authorization.integer_destination())
+                            && (memory_result_route == O3MemoryResultScalarSuffixRoute::Mmio
+                                || matches!(
+                                    state.pma.is_uncacheable(
+                                        issue.physical_address.get(),
+                                        issue.size.bytes(),
+                                    ),
+                                    Ok(false)
+                                ))
+                            && (memory_result_route != O3MemoryResultScalarSuffixRoute::Mmio
+                                || matches!(
+                                    &issue.access,
+                                    MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
+                                ))
+                    });
             let younger_window_policy = if eligible_scalar_load {
                 O3DataAccessWindowPolicy::ScalarMemoryPrefix
+            } else if eligible_memory_result_suffix {
+                O3DataAccessWindowPolicy::MemoryResultScalarSuffix
             } else {
                 O3DataAccessWindowPolicy::None
             };
@@ -621,6 +656,9 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state
             .translated_scalar_load_window_fetches
+            .remove(&issue.fetch_request);
+        state
+            .memory_result_scalar_suffix_authorizations
             .remove(&issue.fetch_request);
         let execution = state.data_access_execution(issue.fetch_request).cloned();
         state.issued_data_for_fetches.insert(issue.fetch_request);

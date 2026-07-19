@@ -5,6 +5,8 @@ impl RiscvCoreState {
         &mut self,
         fetch_request: MemoryRequestId,
     ) -> bool {
+        self.memory_result_scalar_suffix_authorizations
+            .remove(&fetch_request);
         let aborted = self
             .o3_runtime
             .abort_deferred_live_data_access_execution(fetch_request);

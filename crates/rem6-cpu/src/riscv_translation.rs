@@ -1524,6 +1524,9 @@ impl RiscvCore {
                     .translated_scalar_load_window_fetches
                     .remove(&fetch_request);
                 state
+                    .memory_result_scalar_suffix_authorizations
+                    .remove(&fetch_request);
+                state
                     .pending_data_translations
                     .insert(translation_id, pending);
             }

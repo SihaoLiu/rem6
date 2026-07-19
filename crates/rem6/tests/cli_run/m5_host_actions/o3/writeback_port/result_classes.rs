@@ -1,9 +1,12 @@
 use super::result_support::{
     assert_event_order, assert_register, assert_register_absent, assert_resource_counter,
     assert_rob_sequence_absent, data_trace, event_str, json_u64, memory_dump_hex,
-    memory_result_event_at_pc, rob_entry_at_sequence,
+    memory_result_event_at_pc, result_memory_trace, rob_entry_at_sequence,
 };
 use super::*;
+
+#[path = "result_classes/scalar_suffix.rs"]
+mod scalar_suffix;
 
 pub(super) const RESULT_MAX_TICK: u64 = 2_000;
 const ROUTE_DELAY_CANDIDATES: [u64; 13] = [1, 2, 3, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];
@@ -468,31 +471,9 @@ fn assert_result_request_transport<'a>(
         "witness traffic completed early: {json}"
     );
     let data = result_data_record(json, fixture.class);
-    let trace = json
-        .pointer("/debug/memory_trace")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("result memory trace missing: {json}"))
-        .iter()
-        .filter(|record| event_str(record, "channel") == "data")
-        .collect::<Vec<_>>();
-    assert_eq!(
-        trace.len(),
-        3,
-        "exact data request/response required: {trace:?}"
-    );
-    let (sent, arrived, response) = (trace[0], trace[1], trace[2]);
+    let (sent, arrived, response) = result_memory_trace(json);
     let request = event_u64(sent, "request");
     let route = event_u64(sent, "route");
-    for (record, kind, endpoint) in [
-        (sent, "request_sent", "cpu0.dmem"),
-        (arrived, "request_arrived", "memory"),
-        (response, "response_arrived", "cpu0.dmem"),
-    ] {
-        assert_eq!(event_str(record, "kind"), kind);
-        assert_eq!(event_str(record, "endpoint"), endpoint);
-        assert_eq!(event_u64(record, "request"), request);
-        assert_eq!(event_u64(record, "route"), route);
-    }
     let result = memory_result_event_at_pc(json, fixture.class.pcs()[0]);
     assert_eq!(event_u64(sent, "tick"), event_u64(result, "issue_tick"));
     assert_eq!(

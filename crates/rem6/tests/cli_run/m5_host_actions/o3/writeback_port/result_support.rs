@@ -22,10 +22,8 @@ pub(super) fn json_u64(json: &Value, pointer: &str) -> u64 {
 
 pub(super) fn assert_event_order(events: [&Value; 3], field: &str, strict: bool) {
     let [first, second, third] = events.map(|event| event_u64(event, field));
-    assert!(match strict {
-        true => first < second && second < third,
-        false => first <= second && second <= third,
-    });
+    assert!(first <= second && second <= third);
+    assert!(!strict || first < second && second < third);
 }
 
 pub(super) fn assert_resource_counter(json: &Value, suffix: &str, expected: u64) {
@@ -104,4 +102,27 @@ pub(super) fn memory_result_event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Va
         "O3 trace must include exactly one positive memory result at {pc}: {json}"
     );
     result
+}
+
+pub(super) fn result_memory_trace(json: &Value) -> (&Value, &Value, &Value) {
+    let records = json
+        .pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("result memory trace")
+        .iter()
+        .filter(|record| event_str(record, "channel") == "data")
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 3, "exact result request/response trace");
+    let (sent, arrived, response) = (records[0], records[1], records[2]);
+    for (record, kind, endpoint) in [
+        (sent, "request_sent", "cpu0.dmem"),
+        (arrived, "request_arrived", "memory"),
+        (response, "response_arrived", "cpu0.dmem"),
+    ] {
+        assert_eq!(event_str(record, "kind"), kind);
+        assert_eq!(event_str(record, "endpoint"), endpoint);
+        assert_eq!(event_u64(record, "request"), event_u64(sent, "request"));
+        assert_eq!(event_u64(record, "route"), event_u64(sent, "route"));
+    }
+    (sent, arrived, response)
 }

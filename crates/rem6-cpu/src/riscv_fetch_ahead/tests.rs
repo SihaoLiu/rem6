@@ -807,7 +807,7 @@ fn detailed_scalar_load_waits_for_completed_younger_fetch() {
 }
 
 #[test]
-fn detailed_float_load_result_does_not_wait_for_a_younger_fetch() {
+fn detailed_float_load_result_waits_for_its_younger_scalar_fetch() {
     let float_load = i_type(0, 5, 0b011, 1, 0x07);
     let div = (1_u32 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33;
     let core = core_with_completed_fetch(float_load.to_le_bytes().to_vec());
@@ -828,7 +828,7 @@ fn detailed_float_load_result_does_not_wait_for_a_younger_fetch() {
         .events
         .push(crate::CpuFetchEvent::issued(younger.clone()));
 
-    assert!(core
+    assert!(!core
         .can_retire_completed_fetch_while_fetch_pending()
         .unwrap());
 
@@ -1112,13 +1112,17 @@ fn translated_cached_memory_driver_fetches_third_younger_alu() {
 }
 
 #[test]
-fn detailed_float_load_result_is_terminal_before_retirement() {
+fn detailed_float_load_result_requests_a_bounded_scalar_suffix() {
     let float_load = i_type(0, 5, 0b011, 1, 0x07);
     let core = core_with_completed_fetch(float_load.to_le_bytes().to_vec());
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(2);
 
-    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8004))
+    );
 }
 
 #[test]

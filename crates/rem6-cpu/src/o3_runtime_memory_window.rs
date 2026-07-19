@@ -1,5 +1,6 @@
 use rem6_memory::AddressRange;
 
+use super::o3_runtime_memory::o3_memory_result_scalar_suffix_destination;
 use super::o3_store_forwarding::{
     o3_load_forwarding_access, o3_store_forwarding_entry, o3_store_load_composition,
     O3StoreLoadForwardingPlan, O3StoreLoadRelation,
@@ -117,6 +118,20 @@ impl O3RuntimeState {
                     window.rows,
                     self.scalar_memory_window_limit,
                 )
+            }
+            O3DataAccessWindowPolicy::MemoryResultScalarSuffix => {
+                if self.live_data_accesses.len() != 1
+                    || !self.live_data_access_younger_sequences.is_empty()
+                {
+                    return None;
+                }
+                let destination = o3_memory_result_scalar_suffix_destination(
+                    tail.execution.execution().memory_access()?,
+                )?;
+                Some(RiscvScalarIntegerLiveWindow::from_memory_result(
+                    destination,
+                    self.scalar_memory_window_limit,
+                ))
             }
         }
     }

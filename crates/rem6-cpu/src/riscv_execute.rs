@@ -5,15 +5,18 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    o3_runtime::o3_live_control_operands, riscv_branch_kind::riscv_branch_target_kind,
-    riscv_execution_event::RiscvRetiredBranchUpdates, riscv_fu_latency::riscv_execute_wait_cycles,
-    riscv_live_retire_window::RiscvLiveRetireWindowRequest, BranchTargetKind, CpuFetchEvent,
-    CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
-    InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
-    InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate,
-    RiscvSelectedBranchSpeculation, RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
-    StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    o3_runtime::{o3_live_control_operands, o3_memory_result_scalar_suffix_destination},
+    riscv_branch_kind::riscv_branch_target_kind,
+    riscv_execution_event::RiscvRetiredBranchUpdates,
+    riscv_fu_latency::riscv_execute_wait_cycles,
+    riscv_live_retire_window::RiscvLiveRetireWindowRequest,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction,
+    InOrderBranchRedirect, InOrderPipelineCycleRecord, InOrderPipelineInstruction,
+    InOrderPipelineStage, InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvMultiperspectivePerceptronBranchUpdate, RiscvSelectedBranchSpeculation,
+    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
@@ -447,6 +450,17 @@ impl RiscvCore {
             .into_iter()
             .chain(stale_requests)
             .collect::<BTreeSet<_>>();
+        let consumed_without_result_authority = !state.live_retire_gate.detailed_policy_enabled()
+            || event
+                .execution()
+                .memory_access()
+                .is_none_or(|access| o3_memory_result_scalar_suffix_destination(access).is_none());
+        state
+            .memory_result_scalar_suffix_authorizations
+            .retain(|request, _| {
+                !discarded_requests.contains(request)
+                    && !(consumed_without_result_authority && consumed_requests.contains(request))
+            });
         self.core
             .discard_outstanding_fetches(discarded_requests.iter().copied());
         state

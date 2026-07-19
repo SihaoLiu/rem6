@@ -100,6 +100,21 @@ impl RiscvScalarIntegerLiveWindow {
             .then(|| Self::new(unresolved_destinations, occupied_rows, row_limit, true))
     }
 
+    pub(crate) fn from_memory_result(
+        integer_destination: Option<Register>,
+        row_limit: usize,
+    ) -> Self {
+        Self::new(
+            integer_destination
+                .filter(|destination| !destination.is_zero())
+                .into_iter()
+                .collect(),
+            1,
+            row_limit,
+            false,
+        )
+    }
+
     fn new(
         unresolved_destinations: Vec<Register>,
         rows: usize,

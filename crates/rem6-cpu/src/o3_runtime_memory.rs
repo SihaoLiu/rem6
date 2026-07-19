@@ -28,6 +28,7 @@ pub(super) struct O3LiveDataAccess {
 pub(crate) enum O3DataAccessWindowPolicy {
     None,
     ScalarMemoryPrefix,
+    MemoryResultScalarSuffix,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +90,26 @@ pub(crate) fn o3_memory_result_destination(
     }
 }
 
+pub(crate) fn o3_memory_result_scalar_suffix_destination(
+    access: &MemoryAccessKind,
+) -> Option<Option<Register>> {
+    match access {
+        MemoryAccessKind::Load { rd, .. }
+        | MemoryAccessKind::LoadReserved { rd, .. }
+        | MemoryAccessKind::AtomicMemory { rd, .. }
+            if !rd.is_zero() =>
+        {
+            o3_memory_result_destination(access)?;
+            Some(Some(*rd))
+        }
+        MemoryAccessKind::FloatLoad { .. } | MemoryAccessKind::VectorLoadUnitStride { .. } => {
+            o3_memory_result_destination(access)?;
+            Some(None)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn is_deferred_o3_data_access(access: Option<&MemoryAccessKind>) -> bool {
     access.is_some_and(|access| {
         matches!(access, MemoryAccessKind::StoreConditional { .. })
@@ -107,6 +128,9 @@ fn live_data_access_younger_window_policy_matches(
             access,
             MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
         ),
+        O3DataAccessWindowPolicy::MemoryResultScalarSuffix => {
+            o3_memory_result_scalar_suffix_destination(access).is_some()
+        }
     }
 }
 
@@ -359,8 +383,8 @@ impl O3RuntimeState {
         }
     }
 
-    pub(crate) fn clear_deferred_live_data_access_execution(&mut self) -> bool {
-        self.deferred_live_data_access_execution.take().is_some()
+    pub(crate) fn clear_deferred_live_data_access_execution(&mut self) -> Option<MemoryRequestId> {
+        self.deferred_live_data_access_execution.take()
     }
 
     pub(crate) fn stage_live_data_access_issue(
@@ -934,7 +958,12 @@ impl crate::RiscvCore {
     pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
         let cleared = state.o3_runtime.clear_deferred_live_data_access_execution();
+        if let Some(fetch_request) = cleared {
+            state
+                .memory_result_scalar_suffix_authorizations
+                .remove(&fetch_request);
+        }
         state.pending_terminal_memory_result = None;
-        cleared
+        cleared.is_some()
     }
 }
