@@ -2143,6 +2143,38 @@ fn producer_forwarded_scalar_authority_uses_one_typed_chain() {
 }
 
 #[test]
+fn producer_forwarded_test_helpers_live_only_in_test_modules() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let forbidden = [
+        "retire_producer_forwarded_data_head_for_test",
+        "producer_forwarded_scalar_return_issue_tick_for_test",
+        "replace_producer_forwarded_chain_fetch_identity_for_test",
+        "repeated_last_for_test",
+    ];
+    let mut offenders = Vec::new();
+
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if is_test_only_rust_source(relative) {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        let code = rust_code_without_comments_and_literals(&source);
+        for helper in forbidden {
+            if production_defines_exact_function(&code, helper) {
+                offenders.push(format!("{} defines {helper}(", relative.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "producer-forwarded test helpers must live in test-only modules, not production source files: {}",
+        offenders.join(", ")
+    );
+}
+
+#[test]
 fn producer_forwarded_chain_authority_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_root_path = crate_dir.join("src/o3_runtime.rs");

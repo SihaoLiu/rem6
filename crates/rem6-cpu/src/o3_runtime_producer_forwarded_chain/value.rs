@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "value_tests.rs"]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3ProducerForwardedControlTarget {
     identity: O3ProducerForwardedControlIdentity,
@@ -259,15 +263,6 @@ impl O3ProducerForwardedScalarChain {
     #[cfg(test)]
     pub(crate) const fn is_one_step(&self) -> bool {
         self.descendants.is_one()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn repeated_last_for_test(&self) -> Self {
-        let mut repeated = self.clone();
-        if let Some(descendant) = repeated.last() {
-            assert!(repeated.push(descendant));
-        }
-        repeated
     }
 
     pub(crate) fn matches_retained_candidate(&self, candidate: &Self) -> bool {

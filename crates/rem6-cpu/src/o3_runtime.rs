@@ -55,6 +55,9 @@ mod o3_runtime_memory_tests;
 mod o3_runtime_memory_window;
 #[path = "o3_runtime_producer_forwarded_chain.rs"]
 mod o3_runtime_producer_forwarded_chain;
+#[cfg(test)]
+#[path = "o3_runtime_producer_forwarded_chain_tests.rs"]
+mod o3_runtime_producer_forwarded_chain_tests;
 #[path = "o3_runtime_retire.rs"]
 mod o3_runtime_retire;
 #[path = "o3_runtime_snapshot_entries.rs"]
