@@ -3282,7 +3282,8 @@ fn o3_store_forwarding_policy_lives_in_focused_module() {
 #[test]
 fn riscv_live_data_handoff_codec_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = fs::read_to_string(crate_dir.join("src/riscv_execution_mode_handoff.rs")).unwrap();
+    let root_path = crate_dir.join("src/riscv_execution_mode_handoff.rs");
+    let root = fs::read_to_string(&root_path).unwrap();
     let codec_path = crate_dir.join("src/riscv_execution_mode_handoff/codec.rs");
 
     assert!(
@@ -3308,6 +3309,18 @@ fn riscv_live_data_handoff_codec_lives_in_focused_module() {
             !root.contains(anchor),
             "the semantic handoff root still owns codec detail `{anchor}`"
         );
+    }
+
+    for path in module_family_rust_source_files(&root_path) {
+        let source = fs::read_to_string(&path).unwrap();
+        let code = rust_code_without_comments_and_literals(&source);
+        for forbidden in ["fn encode_legacy", "fn write_legacy", "_legacy_for_test"] {
+            assert!(
+                !code.contains(forbidden),
+                "RISC-V live-data handoff compatibility must use frozen decode fixtures instead of retired-schema writer `{forbidden}` in {}",
+                path.display()
+            );
+        }
     }
 }
 

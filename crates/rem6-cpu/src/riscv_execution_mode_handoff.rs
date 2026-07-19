@@ -27,8 +27,10 @@ use codec::{
 };
 #[cfg(test)]
 use legacy_payload_fixtures::{
-    LEGACY_V2_TYPED_TARGET_PAYLOAD, LEGACY_V3_FORWARDED_PAYLOAD, LEGACY_V4_PARTIAL_OVERLAY_PAYLOAD,
-    LEGACY_V5_SINGLE_SOURCE_PARTIAL_OVERLAY_PAYLOAD,
+    LEGACY_V1_SINGLE_ENTRY_PAYLOAD, LEGACY_V2_TYPED_TARGET_PAYLOAD, LEGACY_V3_FORWARDED_PAYLOAD,
+    LEGACY_V4_PARTIAL_OVERLAY_PAYLOAD, LEGACY_V5_FORWARDED_PAYLOAD,
+    LEGACY_V5_SINGLE_SOURCE_PARTIAL_OVERLAY_PAYLOAD, LEGACY_V5_TYPED_TARGET_PAYLOAD,
+    LEGACY_V6_MULTI_SOURCE_PENDING_PAYLOAD,
 };
 
 pub(crate) use partial_overlay::RiscvPendingPartialScalarLoadHandoff;
@@ -1034,15 +1036,6 @@ mod tests {
     const CURRENT_O3_SEQUENCE_OFFSET: usize = 71;
     const CURRENT_TRACE_SEQUENCE_OFFSET: usize = 80;
 
-    const LEGACY_V1_SINGLE_ENTRY_PAYLOAD: [u8; HEADER_BYTES + V1_ENTRY_BYTES] = [
-        0x4f, 0x33, 0x44, 0x48, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
-        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0b,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x02, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x01, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-
     fn entry(sequence: u64) -> RiscvO3LiveDataHandoffEntry {
         RiscvO3LiveDataHandoffEntry {
             fetch_request: MemoryRequestId::new(AgentId::new(3), sequence),
@@ -1225,7 +1218,7 @@ mod tests {
     #[test]
     fn live_data_handoff_decodes_legacy_v1_and_reencodes_current_bytes() {
         let (decoded, version) =
-            RiscvO3LiveDataHandoff::decode_with_version(&LEGACY_V1_SINGLE_ENTRY_PAYLOAD).unwrap();
+            RiscvO3LiveDataHandoff::decode_with_version(LEGACY_V1_SINGLE_ENTRY_PAYLOAD).unwrap();
 
         assert_eq!(version, 1);
         assert_eq!(
@@ -1238,7 +1231,7 @@ mod tests {
         );
         let current = decoded.encode();
         assert_eq!(current[MAGIC.len()], VERSION_CURRENT);
-        assert_ne!(current, LEGACY_V1_SINGLE_ENTRY_PAYLOAD);
+        assert_ne!(current.as_slice(), LEGACY_V1_SINGLE_ENTRY_PAYLOAD);
         assert_eq!(
             RiscvO3LiveDataHandoff::decode_with_version(&current),
             Ok((decoded, VERSION_CURRENT))
@@ -1246,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn live_data_handoff_decodes_legacy_v2_through_v5_bytes() {
+    fn live_data_handoff_decodes_legacy_v2_through_v5_and_migrates_to_current() {
         let typed = RiscvO3LiveDataHandoff::new(vec![entry(1), mmio_entry(2)], 1).unwrap();
 
         let mut store = entry(1);
@@ -1293,28 +1286,29 @@ mod tests {
                 overlay.clone(),
                 VERSION_SINGLE_SOURCE_CURRENT,
             ),
+            (
+                LEGACY_V5_TYPED_TARGET_PAYLOAD,
+                typed.clone(),
+                VERSION_SINGLE_SOURCE_CURRENT,
+            ),
+            (
+                LEGACY_V5_FORWARDED_PAYLOAD,
+                forwarded.clone(),
+                VERSION_SINGLE_SOURCE_CURRENT,
+            ),
         ] {
-            assert_eq!(
-                RiscvO3LiveDataHandoff::decode_with_version(payload),
-                Ok((handoff.clone(), version))
-            );
-            assert_eq!(handoff.encode_legacy_for_test(version), payload);
-        }
+            let (decoded, decoded_version) =
+                RiscvO3LiveDataHandoff::decode_with_version(payload).unwrap();
+            assert_eq!(decoded_version, version);
+            assert_eq!(decoded, handoff);
 
-        for (handoff, version) in [
-            (typed.clone(), VERSION_TYPED_TARGET),
-            (forwarded.clone(), VERSION_FORWARDING),
-            (overlay.clone(), VERSION_PARTIAL_OVERLAY),
-            (typed, VERSION_SINGLE_SOURCE_CURRENT),
-            (forwarded, VERSION_SINGLE_SOURCE_CURRENT),
-            (overlay, VERSION_SINGLE_SOURCE_CURRENT),
-        ] {
-            let payload = handoff.encode_legacy_for_test(version);
+            let current = decoded.encode();
+            assert_eq!(current[MAGIC.len()], VERSION_CURRENT);
+            assert_ne!(current.as_slice(), payload);
             assert_eq!(
-                RiscvO3LiveDataHandoff::decode_with_version(&payload),
-                Ok((handoff.clone(), version))
+                RiscvO3LiveDataHandoff::decode_with_version(&current),
+                Ok((decoded, VERSION_CURRENT))
             );
-            assert_eq!(handoff.encode()[MAGIC.len()], VERSION_CURRENT);
         }
     }
 
