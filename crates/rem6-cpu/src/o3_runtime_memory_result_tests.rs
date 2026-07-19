@@ -70,6 +70,7 @@ fn memory_result_policy_rejects_zero_destination_and_unsupported_shapes() {
     let mut scalar_x0 = O3RuntimeState::default();
     let x0_load = load_event(0x8000, 1, 0);
     assert!(scalar_x0.stage_live_data_access_issue_for_test(&x0_load, request(20), 31));
+    let x0_sequence = scalar_x0.live_data_accesses[0].sequence;
     assert_eq!(scalar_x0.snapshot().reorder_buffer()[0].destination(), None);
     let mut completed_x0 = x0_load;
     completed_x0.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
@@ -84,10 +85,7 @@ fn memory_result_policy_rejects_zero_destination_and_unsupported_shapes() {
             )
             .unwrap()
     );
-    assert_eq!(
-        scalar_x0.live_data_accesses[0].admitted_writeback_tick,
-        None
-    );
+    assert!(scalar_x0.writeback_reservation(x0_sequence).is_none());
 
     for (label, instruction, access) in unsupported_results() {
         let mut runtime = O3RuntimeState::default();
@@ -272,14 +270,12 @@ fn memory_result_response_waits_for_admitted_writeback_tick() {
             state.o3_runtime.live_data_accesses[0].response_tick,
             Some(41)
         );
-        assert_eq!(
-            state.o3_runtime.live_data_accesses[0].raw_ready_tick,
-            Some(42)
-        );
-        assert_eq!(
-            state.o3_runtime.live_data_accesses[0].admitted_writeback_tick,
-            Some(42)
-        );
+        let reservation = state
+            .o3_runtime
+            .writeback_reservation(state.o3_runtime.live_data_accesses[0].sequence)
+            .expect("memory result owns a writeback reservation");
+        assert_eq!(reservation.raw_ready_tick(), 42);
+        assert_eq!(reservation.admitted_tick(), 42);
         assert!(!state.o3_runtime.snapshot().reorder_buffer()[0].is_ready());
     }
 
@@ -1163,9 +1159,12 @@ fn assert_memory_owner(
         .iter()
         .find(|live| live.sequence == sequence)
         .expect("live memory-result owner exists");
-    assert_eq!(live.raw_ready_tick, Some(42));
-    assert_eq!(live.admitted_writeback_tick, admitted_tick);
-    assert_eq!(live.writeback_slot, slot);
+    let reservation = runtime
+        .writeback_reservation(sequence)
+        .expect("live memory-result writeback reservation exists");
+    assert_eq!(reservation.raw_ready_tick(), 42);
+    assert_eq!(Some(reservation.admitted_tick()), admitted_tick);
+    assert_eq!(Some(reservation.slot()), slot);
     assert_eq!(
         runtime.earliest_unpublished_memory_result_writeback_tick(),
         admitted_tick

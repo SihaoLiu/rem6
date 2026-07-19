@@ -267,6 +267,55 @@ fn owner_source_mismatch_error_leaves_writeback_state_unchanged() {
 }
 
 #[test]
+fn memory_result_owner_source_mismatch_leaves_writeback_state_unchanged() {
+    let (mut runtime, sequence, raw_ready_tick) = runtime_with_completed_memory_result_writeback();
+    runtime.force_test_writeback_reservation_to_fixed_fu(sequence);
+    let before = runtime.clone();
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+            99,
+            raw_ready_tick.saturating_sub(1),
+        )])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackOwnerSourceMismatch {
+            sequence,
+            owner: "live data access",
+            reservation_source: "FixedFu",
+        }
+    );
+    assert_writeback_error_left_state_unchanged(&runtime, &before);
+}
+
+#[test]
+fn memory_result_owner_raw_ready_mismatch_leaves_writeback_state_unchanged() {
+    let (mut runtime, sequence, raw_ready_tick) = runtime_with_completed_memory_result_writeback();
+    runtime.force_test_writeback_reservation_raw_ready_tick(sequence, raw_ready_tick + 1);
+    let before = runtime.clone();
+
+    let error = runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+            99,
+            raw_ready_tick.saturating_sub(1),
+        )])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        O3RuntimeError::WritebackOwnerReservationMismatch {
+            sequence,
+            owner: "live data access",
+            owner_raw_ready_tick: raw_ready_tick,
+            reservation_raw_ready_tick: raw_ready_tick + 1,
+        }
+    );
+    assert_writeback_error_left_state_unchanged(&runtime, &before);
+}
+
+#[test]
 fn owner_validation_error_leaves_writeback_state_unchanged() {
     let (mut runtime, sequence, admitted_tick) = runtime_with_live_speculative_writeback();
     runtime
@@ -551,11 +600,15 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
         )
         .unwrap());
     assert_eq!(
-        runtime.live_data_accesses[0].admitted_writeback_tick,
+        runtime
+            .writeback_reservation(oldest_sequence)
+            .map(O3WritebackReservation::admitted_tick),
         Some(40)
     );
     assert_eq!(
-        runtime.live_data_accesses[2].admitted_writeback_tick,
+        runtime
+            .writeback_reservation(discarded_sequence)
+            .map(O3WritebackReservation::admitted_tick),
         Some(41)
     );
 
@@ -567,7 +620,9 @@ fn assert_scalar_memory_suffix_cleanup(kind: RiscvDataAccessEventKind) {
 
     assert_eq!(runtime.live_data_accesses.len(), 2);
     assert_eq!(
-        runtime.live_data_accesses[0].admitted_writeback_tick,
+        runtime
+            .writeback_reservation(oldest_sequence)
+            .map(O3WritebackReservation::admitted_tick),
         Some(40)
     );
     assert!(runtime
@@ -638,6 +693,32 @@ fn runtime_with_live_speculative_writeback() -> (O3RuntimeState, u64, u64) {
         Some(admitted_tick)
     );
     (runtime, sequence, admitted_tick)
+}
+
+fn runtime_with_completed_memory_result_writeback() -> (O3RuntimeState, u64, u64) {
+    let mut runtime = O3RuntimeState::default();
+    let load = scalar_load_event(0x8000, 10, 13, 0x9000);
+    let data_request = memory_request(20);
+    assert!(runtime.stage_live_data_access_issue_for_test(&load, data_request, 31));
+    let sequence = runtime.live_data_accesses[0].sequence;
+    let mut completed = load;
+    completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert!(
+        runtime
+            .complete_live_data_access_response(
+                &completed,
+                data_request,
+                39,
+                8,
+                Some(&[0x2a, 0, 0, 0]),
+            )
+            .unwrap()
+    );
+    let raw_ready_tick = runtime
+        .writeback_reservation(sequence)
+        .expect("completed memory result owns writeback")
+        .raw_ready_tick();
+    (runtime, sequence, raw_ready_tick)
 }
 
 fn runtime_with_large_trace_history(len: usize) -> O3RuntimeState {

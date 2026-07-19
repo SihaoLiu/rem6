@@ -445,7 +445,7 @@ impl O3RuntimeState {
         if live_data_access.is_none() && is_terminal_o3_data_access_event(execution) {
             return;
         }
-        if live_data_access.as_ref().is_some_and(|live| {
+        if live_data_access.as_ref().is_some_and(|(live, _)| {
             matches!(
                 live.outcome,
                 O3LiveDataAccessOutcome::Retried | O3LiveDataAccessOutcome::Failed
@@ -455,12 +455,15 @@ impl O3RuntimeState {
         }
         let completed_live_data_access = live_data_access
             .as_ref()
-            .filter(|live| live.outcome == O3LiveDataAccessOutcome::Completed);
-        let mut trace_record = self.record_runtime_state(execution, completed_live_data_access);
-        if let Some(tick) = completed_live_data_access.and_then(|live| live.admitted_writeback_tick)
-        {
-            trace_record.set_admitted_writeback_tick(tick);
-        }
+            .filter(|(live, _)| live.outcome == O3LiveDataAccessOutcome::Completed);
+        let admitted_writeback_tick = completed_live_data_access
+            .and_then(|(_, admitted_writeback_tick)| *admitted_writeback_tick);
+        let completed_live_data_access = completed_live_data_access.map(|(live, _)| live);
+        let mut trace_record = self.record_runtime_state(
+            execution,
+            completed_live_data_access,
+            admitted_writeback_tick,
+        );
         self.stats
             .record_retired_instruction(execution, trace_record);
         let observation = self

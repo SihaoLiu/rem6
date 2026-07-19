@@ -20,7 +20,7 @@ fn nonzero_store_conditional_is_one_integer_memory_result() {
 }
 
 #[test]
-fn zero_destination_store_conditional_has_no_result_reservation() {
+fn zero_destination_store_conditional_publishes_at_response_tick_without_a_reservation() {
     let mut runtime = O3RuntimeState::default();
     let event = store_conditional_event(0x8000, 1, 0);
     assert!(runtime.stage_live_data_access_issue_for_test(&event, request(20), 31));
@@ -40,11 +40,35 @@ fn zero_destination_store_conditional_has_no_result_reservation() {
         .unwrap());
 
     assert!(runtime.writeback_reservations().is_empty());
-    assert_eq!(runtime.live_data_accesses[0].raw_ready_tick, None);
-    assert_eq!(runtime.live_data_accesses[0].admitted_writeback_tick, None);
     assert_eq!(
         runtime.ready_live_memory_result_completion(),
         Some(completion)
+    );
+    assert_eq!(
+        runtime.ready_live_data_access_completion_timing(),
+        Some((completed.fetch().request_id(), 31, 41))
+    );
+    assert!(runtime.take_ready_live_data_access_event(40).is_none());
+    assert_eq!(
+        runtime.take_ready_live_data_access_event(41),
+        Some(completed.clone())
+    );
+    assert!(runtime.snapshot().reorder_buffer()[0].is_ready());
+    assert_eq!(runtime.snapshot().reorder_buffer()[0].ready_tick(), 41);
+
+    runtime.record_retired_instruction_with_trace(&completed, true);
+
+    assert!(runtime.live_data_accesses.is_empty());
+    assert!(runtime.snapshot().reorder_buffer().is_empty());
+    assert!(runtime.snapshot().load_store_queue().is_empty());
+    assert!(runtime.writeback_reservations().is_empty());
+    assert_eq!(
+        runtime
+            .trace_records()
+            .last()
+            .expect("zero-destination SC records retirement trace")
+            .admitted_writeback_tick(),
+        None
     );
 }
 

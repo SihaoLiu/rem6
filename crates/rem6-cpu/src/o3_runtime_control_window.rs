@@ -456,7 +456,8 @@ impl O3RuntimeState {
         }
         Some((
             RegisterWrite::new(source, writeback.value()),
-            live.admitted_writeback_tick?,
+            self.memory_result_writeback_reservation(live.sequence)?
+                .admitted_tick(),
         ))
     }
 

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use crate::o3_pipeline::{
     O3PendingStateSnapshot, O3WritebackCompletion, O3WritebackTransferBuffer,
@@ -11,12 +11,7 @@ pub(super) struct O3WritebackReplanTransaction {
     pending_state: O3PendingStateSnapshot,
     reorder_buffer: Vec<O3ReorderBufferEntry>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
-    live_data_accesses: Vec<O3LiveDataAccess>,
-    live_control_lineages: BTreeMap<u64, O3LiveControlLineage>,
-    live_serializing_control_sequences: BTreeSet<u64>,
-    live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     writeback_calendar: O3WritebackReservationCalendar,
-    published_writeback_sequences: BTreeSet<u64>,
     live_writeback_counted_sequences: BTreeSet<u64>,
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     stats: O3RuntimeStats,
@@ -34,12 +29,7 @@ impl O3WritebackReplanTransaction {
             pending_state: runtime.snapshot.pending_state.clone(),
             reorder_buffer: runtime.snapshot.reorder_buffer.clone(),
             live_speculative_executions: runtime.live_speculative_executions.clone(),
-            live_data_accesses: runtime.live_data_accesses.clone(),
-            live_control_lineages: runtime.live_control_lineages.clone(),
-            live_serializing_control_sequences: runtime.live_serializing_control_sequences.clone(),
-            live_staged_fetch_identities: runtime.live_staged_fetch_identities.clone(),
             writeback_calendar: runtime.writeback_calendar.clone(),
-            published_writeback_sequences: runtime.published_writeback_sequences.clone(),
             live_writeback_counted_sequences: runtime.live_writeback_counted_sequences.clone(),
             finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
             stats: runtime.stats,
@@ -50,12 +40,7 @@ impl O3WritebackReplanTransaction {
         runtime.snapshot.pending_state = self.pending_state;
         runtime.snapshot.reorder_buffer = self.reorder_buffer;
         runtime.live_speculative_executions = self.live_speculative_executions;
-        runtime.live_data_accesses = self.live_data_accesses;
-        runtime.live_control_lineages = self.live_control_lineages;
-        runtime.live_serializing_control_sequences = self.live_serializing_control_sequences;
-        runtime.live_staged_fetch_identities = self.live_staged_fetch_identities;
         runtime.writeback_calendar = self.writeback_calendar;
-        runtime.published_writeback_sequences = self.published_writeback_sequences;
         runtime.live_writeback_counted_sequences = self.live_writeback_counted_sequences;
         runtime.finalized_writeback_port_stats = self.finalized_writeback_port_stats;
         runtime.stats = self.stats;
@@ -64,6 +49,8 @@ impl O3WritebackReplanTransaction {
     pub(super) fn reserve_writeback_completions_in_place(
         &mut self,
         mut ready: Vec<O3LiveWritebackReady>,
+        published_writeback_sequences: &BTreeSet<u64>,
+        live_data_accesses: &[O3LiveDataAccess],
     ) -> Result<Vec<O3WritebackReservation>, O3RuntimeError> {
         ready.sort_by_key(|row| (row.sequence(), row.raw_ready_tick()));
         for pair in ready.windows(2) {
@@ -122,9 +109,7 @@ impl O3WritebackReplanTransaction {
                 .values()
                 .flatten()
                 .filter(|reservation| {
-                    !self
-                        .published_writeback_sequences
-                        .contains(&reservation.sequence)
+                    !published_writeback_sequences.contains(&reservation.sequence)
                 })
                 .filter(|reservation| reservation.raw_ready_tick >= raw_ready_tick)
                 .copied()
@@ -159,7 +144,7 @@ impl O3WritebackReplanTransaction {
 
         self.pending_state = rebuilt_pending_state(&self.pending_state, plan.writeback)?;
         self.writeback_calendar = plan.calendar;
-        self.sync_writeback_reservation_owners()?;
+        self.sync_writeback_reservation_owners(live_data_accesses)?;
         let replacement_schedule = O3WritebackPortStatsSchedule::from_calendar(
             &self.writeback_calendar,
             &self.live_writeback_counted_sequences,
@@ -232,7 +217,10 @@ impl O3WritebackReplanTransaction {
         reservations
     }
 
-    fn sync_writeback_reservation_owners(&mut self) -> Result<(), O3RuntimeError> {
+    fn sync_writeback_reservation_owners(
+        &mut self,
+        live_data_accesses: &[O3LiveDataAccess],
+    ) -> Result<(), O3RuntimeError> {
         let reservations = self
             .writeback_calendar
             .by_tick
@@ -241,19 +229,18 @@ impl O3WritebackReplanTransaction {
             .copied()
             .collect::<Vec<_>>();
         for reservation in reservations {
-            self.sync_live_memory_result_writeback_owner(reservation)?;
+            Self::validate_live_memory_result_writeback_owner(live_data_accesses, reservation)?;
             self.sync_live_fixed_fu_writeback_owner(reservation)?;
         }
         Ok(())
     }
 
-    fn sync_live_memory_result_writeback_owner(
-        &mut self,
+    fn validate_live_memory_result_writeback_owner(
+        live_data_accesses: &[O3LiveDataAccess],
         reservation: O3WritebackReservation,
     ) -> Result<(), O3RuntimeError> {
-        let Some(live) = self
-            .live_data_accesses
-            .iter_mut()
+        let Some(live) = live_data_accesses
+            .iter()
             .find(|live| live.sequence == reservation.sequence)
         else {
             return Ok(());
@@ -276,12 +263,13 @@ impl O3WritebackReplanTransaction {
                 reservation_source: reservation.source.name(),
             });
         }
-        let owner_raw_ready_tick =
-            live.raw_ready_tick
-                .ok_or(O3RuntimeError::WritebackOwnerMissingRawReadyTick {
-                    sequence: reservation.sequence,
-                    owner: "live data access",
-                })?;
+        let owner_raw_ready_tick = live
+            .response_tick
+            .and_then(|response_tick| response_tick.checked_add(1))
+            .ok_or(O3RuntimeError::WritebackOwnerMissingRawReadyTick {
+                sequence: reservation.sequence,
+                owner: "live data access",
+            })?;
         if owner_raw_ready_tick != reservation.raw_ready_tick {
             return Err(O3RuntimeError::WritebackOwnerReservationMismatch {
                 sequence: reservation.sequence,
@@ -290,8 +278,6 @@ impl O3WritebackReplanTransaction {
                 reservation_raw_ready_tick: reservation.raw_ready_tick,
             });
         }
-        live.admitted_writeback_tick = Some(reservation.admitted_tick);
-        live.writeback_slot = Some(reservation.slot);
         Ok(())
     }
 

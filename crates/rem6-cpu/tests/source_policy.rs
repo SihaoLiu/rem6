@@ -973,11 +973,38 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         "pub(super) struct O3WritebackReplanTransaction {",
         "struct O3WritebackReservationPlan",
     );
+    let live_data_access = source_section(
+        &memory,
+        "pub(super) struct O3LiveDataAccess {",
+        "pub(crate) enum O3DataAccessWindowPolicy",
+    );
+    for redundant in [
+        "raw_ready_tick: Option<u64>",
+        "admitted_writeback_tick: Option<u64>",
+        "writeback_slot: Option<usize>",
+    ] {
+        assert!(
+            !live_data_access.contains(redundant),
+            "live data access must derive writeback reservation state instead of storing `{redundant}`"
+        );
+    }
     assert_eq!(
         replan_transaction.matches("BTreeSet<u64>").count(),
-        3,
+        1,
         "bounded writeback replanning gained an unreviewed sequence-set authority"
     );
+    for unrelated in [
+        "live_data_accesses: Vec<O3LiveDataAccess>",
+        "live_control_lineages: BTreeMap<u64, O3LiveControlLineage>",
+        "live_serializing_control_sequences: BTreeSet<u64>",
+        "live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>",
+        "published_writeback_sequences: BTreeSet<u64>",
+    ] {
+        assert!(
+            !replan_transaction.contains(unrelated),
+            "bounded writeback replanning must borrow read-only authority instead of cloning `{unrelated}`"
+        );
+    }
     assert!(
         !replan_transaction.contains("BTreeMap<u64, BTreeSet<u64>>"),
         "bounded writeback replanning must not capture a writeback-ready schedule cache"
@@ -1012,6 +1039,42 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         !module.contains("fn rebuild_live_writeback_schedule_ownership("),
         "focused writeback authority must not rebuild parallel schedule caches"
     );
+    assert!(
+        !replan.contains("fn sync_live_memory_result_writeback_owner("),
+        "transactional replanning must validate calendar-backed memory results without synchronizing shadow owner fields"
+    );
+    let memory_result_reservation =
+        rust_function_definition(&module, "memory_result_writeback_reservation")
+            .expect("focused writeback authority must classify memory-result reservations");
+    for anchor in [
+        "writeback_calendar",
+        "O3LiveWritebackReadySource::MemoryResult",
+    ] {
+        assert!(
+            memory_result_reservation.contains(anchor),
+            "memory-result writeback lookup must consume `{anchor}`"
+        );
+    }
+    let publication_tick = rust_function_definition(&memory, "live_data_access_publication_tick")
+        .expect("live data access publication must derive timing from writeback authority");
+    for anchor in ["memory_result_writeback_reservation", "response_tick"] {
+        assert!(
+            publication_tick.contains(anchor),
+            "live data access publication timing must consume `{anchor}`"
+        );
+    }
+    for function in [
+        "ready_live_data_access_completion_timing",
+        "take_ready_live_data_access_event",
+        "live_data_access_publication_is_admitted",
+    ] {
+        let definition = rust_function_definition(&memory, function)
+            .unwrap_or_else(|| panic!("missing live data access timing consumer `{function}`"));
+        assert!(
+            definition.contains("live_data_access_publication_tick"),
+            "`{function}` must consume the derived live data access publication tick"
+        );
+    }
 
     for anchor in [
         "pub(super) fn reserve_writeback_completions_in_place(",

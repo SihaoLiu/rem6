@@ -15,9 +15,6 @@ pub(super) struct O3LiveDataAccess {
     pub(super) issue_lsq_occupancy: usize,
     pub(super) younger_window_policy: O3DataAccessWindowPolicy,
     pub(super) response_tick: Option<u64>,
-    pub(super) raw_ready_tick: Option<u64>,
-    pub(super) admitted_writeback_tick: Option<u64>,
-    pub(super) writeback_slot: Option<usize>,
     pub(super) latency_ticks: Option<u64>,
     pub(super) commit_tick: Option<u64>,
     pub(super) load_data: Option<Vec<u8>>,
@@ -243,9 +240,20 @@ impl O3RuntimeState {
 
     pub(crate) fn earliest_unpublished_memory_result_writeback_tick(&self) -> Option<u64> {
         let live = self.live_data_accesses.first()?;
-        (live.outcome == O3LiveDataAccessOutcome::Completed && !live.event_taken)
-            .then_some(live.admitted_writeback_tick)
-            .flatten()
+        if live.outcome != O3LiveDataAccessOutcome::Completed || live.event_taken {
+            return None;
+        }
+        self.memory_result_writeback_reservation(live.sequence)
+            .map(|reservation| reservation.admitted_tick())
+    }
+
+    fn live_data_access_publication_tick(&self, live: &O3LiveDataAccess) -> Option<u64> {
+        if live.outcome != O3LiveDataAccessOutcome::Completed {
+            return None;
+        }
+        self.memory_result_writeback_reservation(live.sequence)
+            .map(|reservation| reservation.admitted_tick())
+            .or(live.response_tick)
     }
 
     pub(crate) fn ready_live_data_access_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
@@ -266,10 +274,8 @@ impl O3RuntimeState {
         Some((
             live.fetch_request,
             live.issue_tick,
-            live.admitted_writeback_tick.unwrap_or_else(|| {
-                live.response_tick
-                    .expect("completed live data access has a response tick")
-            }),
+            self.live_data_access_publication_tick(live)
+                .expect("completed live data access has a publication tick"),
         ))
     }
 
@@ -427,9 +433,6 @@ impl O3RuntimeState {
             issue_lsq_occupancy,
             younger_window_policy,
             response_tick: None,
-            raw_ready_tick: None,
-            admitted_writeback_tick: None,
-            writeback_slot: None,
             latency_ticks: None,
             commit_tick: None,
             load_data: None,
@@ -681,7 +684,7 @@ impl O3RuntimeState {
                 let has_result_destination = memory_result
                     .as_ref()
                     .is_some_and(|result| o3_memory_result_destination(result.access()).is_some());
-                let (raw_ready_tick, reservation) = if has_result_destination
+                if has_result_destination
                     && self.snapshot.reorder_buffer[rob_index]
                         .rename_destination()
                         .is_some()
@@ -691,27 +694,20 @@ impl O3RuntimeState {
                             tick: response_tick,
                         },
                     )?;
-                    let reservation = self
-                        .reserve_writeback_completions([O3LiveWritebackReady::memory_result(
-                            sequence,
-                            raw_ready_tick,
-                        )])?
-                        .into_iter()
-                        .next()
-                        .expect("single memory-result reservation returns one row");
-                    (Some(raw_ready_tick), Some(reservation))
-                } else {
-                    (None, None)
-                };
+                    self.reserve_writeback_completions([O3LiveWritebackReady::memory_result(
+                        sequence,
+                        raw_ready_tick,
+                    )])?
+                    .into_iter()
+                    .next()
+                    .expect("single memory-result reservation returns one row");
+                }
                 for entry in &mut self.snapshot.load_store_queue {
                     if entry.sequence() >= sequence && entry.sequence() < lsq_end {
                         entry.mark_completed();
                     }
                 }
                 let live = &mut self.live_data_accesses[index];
-                live.raw_ready_tick = raw_ready_tick;
-                live.admitted_writeback_tick = reservation.map(|row| row.admitted_tick());
-                live.writeback_slot = reservation.map(|row| row.slot());
                 live.memory_result = memory_result;
                 O3LiveDataAccessOutcome::Completed
             }
@@ -764,19 +760,29 @@ impl O3RuntimeState {
         &mut self,
         current_tick: u64,
     ) -> Option<RiscvCpuExecutionEvent> {
-        let live = self.live_data_accesses.first_mut()?;
-        if live.outcome == O3LiveDataAccessOutcome::Resident || live.event_taken {
-            return None;
-        }
-        let event = live.execution.clone();
-        if live.outcome == O3LiveDataAccessOutcome::Completed {
-            let response_tick = live
-                .response_tick
-                .expect("completed live data access has a response tick");
-            let publication_tick = live.admitted_writeback_tick.unwrap_or(response_tick);
+        let (event, publication_tick) = {
+            let live = self.live_data_accesses.first()?;
+            if live.outcome == O3LiveDataAccessOutcome::Resident || live.event_taken {
+                return None;
+            }
+            let publication_tick = if live.outcome == O3LiveDataAccessOutcome::Completed {
+                Some(
+                    self.live_data_access_publication_tick(live)
+                        .expect("completed live data access has a publication tick"),
+                )
+            } else {
+                None
+            };
+            (live.execution.clone(), publication_tick)
+        };
+        if let Some(publication_tick) = publication_tick {
             if publication_tick > current_tick {
                 return None;
             }
+            let live = self
+                .live_data_accesses
+                .first_mut()
+                .expect("ready live data access remains resident");
             let rob = self
                 .snapshot
                 .reorder_buffer
@@ -786,6 +792,10 @@ impl O3RuntimeState {
             live.commit_tick =
                 Some(publication_tick.max(self.last_live_commit_tick.unwrap_or(publication_tick)));
         }
+        let live = self
+            .live_data_accesses
+            .first_mut()
+            .expect("ready live data access remains resident");
         live.event_taken = true;
         Some(event)
     }
@@ -797,16 +807,16 @@ impl O3RuntimeState {
         live.outcome != O3LiveDataAccessOutcome::Resident
             && !live.event_taken
             && (live.outcome != O3LiveDataAccessOutcome::Completed
-                || live.admitted_writeback_tick.unwrap_or_else(|| {
-                    live.response_tick
-                        .expect("completed live data access has response tick")
-                }) <= current_tick)
+                || self
+                    .live_data_access_publication_tick(live)
+                    .expect("completed live data access has publication tick")
+                    <= current_tick)
     }
 
     pub(super) fn consume_live_data_access_retirement(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
-    ) -> Option<O3LiveDataAccess> {
+    ) -> Option<(O3LiveDataAccess, Option<u64>)> {
         let live = self.live_data_accesses.first()?;
         if live.fetch_request != execution.fetch().request_id()
             || live.execution != *execution
@@ -815,6 +825,9 @@ impl O3RuntimeState {
         {
             return None;
         }
+        let admitted_writeback_tick = self
+            .memory_result_writeback_reservation(live.sequence)
+            .map(|reservation| reservation.admitted_tick());
         let fetch_request = live.fetch_request;
         self.pending_data_accesses.remove(&fetch_request);
         let live = self.live_data_accesses.remove(0);
@@ -822,7 +835,7 @@ impl O3RuntimeState {
             self.last_live_commit_tick = live.commit_tick;
         }
         self.finalize_writeback_publication(live.sequence);
-        Some(live)
+        Some((live, admitted_writeback_tick))
     }
 
     pub(crate) fn ready_live_memory_result_completion(&self) -> Option<RiscvDataCompletion> {

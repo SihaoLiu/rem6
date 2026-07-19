@@ -29,10 +29,10 @@ impl O3RuntimeState {
                     .reservation(instruction.sequence)
                     .is_some()
             })
-            || self
-                .live_data_accesses
-                .iter()
-                .any(|live| live.admitted_writeback_tick.is_some())
+            || self.live_data_accesses.iter().any(|live| {
+                self.memory_result_writeback_reservation(live.sequence)
+                    .is_some()
+            })
     }
 
     pub(crate) fn owns_pending_retirement_authority(&self, fetch_request: MemoryRequestId) -> bool {

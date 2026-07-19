@@ -425,6 +425,15 @@ impl O3RuntimeState {
         )
     }
 
+    pub(super) fn memory_result_writeback_reservation(
+        &self,
+        sequence: u64,
+    ) -> Option<O3WritebackReservation> {
+        self.writeback_calendar
+            .reservation(sequence)
+            .filter(|reservation| reservation.source == O3LiveWritebackReadySource::MemoryResult)
+    }
+
     #[cfg(test)]
     pub(crate) fn writeback_reservation(&self, sequence: u64) -> Option<O3WritebackReservation> {
         self.writeback_calendar.reservation(sequence)
@@ -444,6 +453,28 @@ impl O3RuntimeState {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn force_test_writeback_reservation_to_fixed_fu(&mut self, sequence: u64) {
+        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
+            if reservation.sequence == sequence {
+                reservation.source = O3LiveWritebackReadySource::FixedFu;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn force_test_writeback_reservation_raw_ready_tick(
+        &mut self,
+        sequence: u64,
+        raw_ready_tick: u64,
+    ) {
+        for reservation in self.writeback_calendar.by_tick.values_mut().flatten() {
+            if reservation.sequence == sequence {
+                reservation.raw_ready_tick = raw_ready_tick;
+            }
+        }
+    }
+
     pub(crate) fn reserve_writeback_completions<I>(
         &mut self,
         ready: I,
@@ -453,7 +484,11 @@ impl O3RuntimeState {
     {
         let ready = ready.into_iter().collect::<Vec<_>>();
         let mut transaction = O3WritebackReplanTransaction::capture(self);
-        let reservations = transaction.reserve_writeback_completions_in_place(ready)?;
+        let reservations = transaction.reserve_writeback_completions_in_place(
+            ready,
+            &self.published_writeback_sequences,
+            &self.live_data_accesses,
+        )?;
         transaction.commit(self);
         Ok(reservations)
     }

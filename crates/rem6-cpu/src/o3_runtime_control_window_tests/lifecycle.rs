@@ -148,9 +148,10 @@ fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
     assert!(runtime
         .complete_live_data_access_response(&load, request(20), 10, 0, Some(&[0x2a, 0, 0, 0]),)
         .unwrap());
-    let load_admitted_tick = runtime.live_data_accesses[0]
-        .admitted_writeback_tick
-        .unwrap();
+    let load_admitted_tick = runtime
+        .writeback_reservation(load_sequence)
+        .expect("completed load keeps its writeback reservation")
+        .admitted_tick();
     let descendant_admitted_tick = runtime
         .live_speculative_executions
         .iter()
@@ -161,10 +162,7 @@ fn branch_descendant_cleanup_discards_only_future_writeback_reservations() {
 
     runtime.discard_live_control_descendants_from_at(branch_sequence, 12);
 
-    assert_eq!(
-        runtime.live_data_accesses[0].admitted_writeback_tick,
-        Some(load_admitted_tick)
-    );
+    assert_eq!(runtime.live_data_accesses[0].sequence, load_sequence);
     assert!(runtime
         .live_speculative_executions
         .iter()

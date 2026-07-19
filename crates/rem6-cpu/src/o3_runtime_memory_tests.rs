@@ -106,7 +106,12 @@ fn completed_response_marks_only_matching_rows_ready() {
     let live = runtime.live_data_accesses.first().unwrap();
     assert_eq!(live.outcome, O3LiveDataAccessOutcome::Completed);
     assert_eq!(live.response_tick, Some(41));
-    assert_eq!(live.admitted_writeback_tick, Some(42));
+    assert_eq!(
+        runtime
+            .writeback_reservation(live.sequence)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(42)
+    );
     assert_eq!(live.latency_ticks, Some(10));
     assert_eq!(live.load_data.as_deref(), Some(&[0x2a, 0, 0, 0][..]));
     assert_eq!(
@@ -130,8 +135,11 @@ fn completed_response_marks_only_matching_rows_ready() {
 fn completed_scalar_load_reserves_writeback_before_marking_rob_ready() {
     let runtime = completed_live_load_runtime(41);
     let live = &runtime.live_data_accesses[0];
-    assert_eq!(live.raw_ready_tick, Some(42));
-    assert_eq!(live.admitted_writeback_tick, Some(42));
+    let reservation = runtime
+        .writeback_reservation(live.sequence)
+        .expect("completed scalar load reserves writeback");
+    assert_eq!(reservation.raw_ready_tick(), 42);
+    assert_eq!(reservation.admitted_tick(), 42);
     assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
     assert!(runtime.snapshot().load_store_queue()[0].is_completed());
 }
@@ -194,8 +202,9 @@ fn scalar_load_reservation_failure_does_not_partially_commit_response() {
     let live = &runtime.live_data_accesses[0];
     assert_eq!(live.outcome, O3LiveDataAccessOutcome::Resident);
     assert_eq!(live.response_tick, None);
-    assert_eq!(live.raw_ready_tick, None);
-    assert_eq!(live.admitted_writeback_tick, None);
+    assert!(runtime
+        .memory_result_writeback_reservation(sequence)
+        .is_none());
     assert!(!runtime.snapshot().load_store_queue()[0].is_completed());
     assert!(!runtime.snapshot().reorder_buffer()[0].is_ready());
 }

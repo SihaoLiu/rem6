@@ -21,6 +21,7 @@ impl O3RuntimeState {
         &mut self,
         execution: &RiscvCpuExecutionEvent,
         live_data_access: Option<&O3LiveDataAccess>,
+        live_data_access_admitted_writeback_tick: Option<u64>,
     ) -> O3RuntimeTraceRecord {
         let record = execution.execution();
         let live_retired = live_data_access
@@ -43,7 +44,7 @@ impl O3RuntimeState {
             O3RobRetireObservation {
                 sequence: live.sequence,
                 issue_tick: live.issue_tick,
-                admitted_writeback_tick: live.admitted_writeback_tick,
+                admitted_writeback_tick: live_data_access_admitted_writeback_tick,
                 commit_tick,
                 occupancy: live.issue_rob_occupancy,
                 commits: 1,
