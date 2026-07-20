@@ -493,7 +493,7 @@ tests. Resolve every valid finding and request a clean follow-up.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-19-fabric-hop-telemetry-authority.md`
 
-- [ ] **Step 1: Commit and push the implementation**
+- [x] **Step 1: Commit and push the implementation**
 
 Run:
 
@@ -517,7 +517,7 @@ git commit -m "refactor: unify fabric hop telemetry authority"
 git push origin main
 ```
 
-- [ ] **Step 2: Close and push the plan**
+- [x] **Step 2: Close and push the plan**
 
 Mark the final checkbox complete, then run:
 
