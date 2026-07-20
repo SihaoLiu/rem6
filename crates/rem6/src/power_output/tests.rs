@@ -34,14 +34,33 @@ fn run_power_emits_refresh_only_dram_resource() {
 #[test]
 fn run_power_emits_low_power_only_dram_resource() {
     let dram = Rem6DramSummary {
-        low_power_self_refresh_entries: 1,
+        low_power_active_powerdown_entries: 2,
+        low_power_active_powerdown_ticks: 7,
+        low_power_precharge_powerdown_entries: 3,
+        low_power_precharge_powerdown_ticks: 9,
+        low_power_self_refresh_entries: 5,
         low_power_self_refresh_ticks: 11,
+        low_power_exits: 4,
         ..Rem6DramSummary::default()
     };
     let records = run_records_with_dram(0, &dram);
-    let record = record_for_target(&records, "memory.dram").expect("self refresh is DRAM activity");
+    let low_power_entries = dram
+        .low_power_active_powerdown_entries
+        .saturating_add(dram.low_power_precharge_powerdown_entries)
+        .saturating_add(dram.low_power_self_refresh_entries);
+    let events = low_power_entries.max(dram.low_power_exits);
+    let operations = low_power_entries.saturating_add(dram.low_power_exits);
+    let expected = watts_from_activity(events, operations, 0, 0.000_004, 0.000_003, 0.000_000_5);
+    let record = record_for_target(&records, "memory.dram").unwrap_or_else(|| {
+        panic!("low-power activity must emit memory.dram with dynamic watts {expected:.12}")
+    });
 
     assert_eq!(record.residency_ticks(PowerStateKind::On), 11);
+    assert!(
+        (record.dynamic_watts() - expected).abs() < 1e-12,
+        "memory.dram dynamic watts {} != canonical {expected:.12} from events={events}, operations={operations}, bytes=0",
+        record.dynamic_watts()
+    );
 }
 
 #[test]
