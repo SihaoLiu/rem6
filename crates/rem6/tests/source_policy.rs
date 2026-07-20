@@ -1094,24 +1094,6 @@ fn gem5_migration_sections_are_auditable() {
             cells[0],
             bucket.name
         );
-        if cells[0] == "`tests/gem5/stats`" {
-            assert_eq!(
-                cells[2], "74% representative",
-                "`tests/gem5/stats` score ratchet must retain canonical four-route/two-format power evidence"
-            );
-            assert!(
-                cells[3].contains("`rem6_run_power_activity_matches_canonical_resource_matrix`"),
-                "`tests/gem5/stats` evidence must retain the canonical power matrix test anchor"
-            );
-            assert!(
-                cells[3].contains("canonical actual-byte DRAM dynamic watts"),
-                "`tests/gem5/stats` evidence must retain canonical actual-byte DRAM power calibration"
-            );
-            assert!(
-                cells[4].contains("physical fabrication/vendor coefficient calibration"),
-                "`tests/gem5/stats` next evidence must retain the physical coefficient calibration gap"
-            );
-        }
     }
     assert!(
         row_count > 0,

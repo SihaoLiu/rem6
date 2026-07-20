@@ -66,6 +66,38 @@ fn run_power_activity_owner_inventory_counts_only_test_functions() {
 }
 
 #[test]
+fn gem5_stats_score_ratchet_tracks_canonical_power_evidence() {
+    let migration =
+        fs::read_to_string(repo_root().join("docs/architecture/gem5-to-rem6-migration.md"))
+            .unwrap();
+    let table = markdown_section(&migration, "## Test Migration Ledger")
+        .expect("missing test migration ledger");
+    let cells = markdown_table_rows(table)
+        .into_iter()
+        .find(|cells| {
+            cells
+                .first()
+                .is_some_and(|cell| *cell == "`tests/gem5/stats`")
+        })
+        .expect("missing tests/gem5/stats migration row");
+
+    assert_eq!(cells.len(), 5, "tests/gem5/stats row must have five cells");
+    assert_eq!(cells[2], "74% representative");
+    assert!(
+        cells[3].contains("`rem6_run_power_activity_matches_canonical_resource_matrix`"),
+        "tests/gem5/stats evidence must retain the canonical power matrix test anchor"
+    );
+    assert!(
+        cells[3].contains("canonical actual-byte DRAM dynamic watts"),
+        "tests/gem5/stats evidence must retain canonical actual-byte DRAM power calibration"
+    );
+    assert!(
+        cells[4].contains("physical fabrication/vendor coefficient calibration"),
+        "tests/gem5/stats next evidence must retain the physical coefficient calibration gap"
+    );
+}
+
+#[test]
 fn normal_run_power_builder_uses_only_canonical_memory_resources() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let power_source = fs::read_to_string(crate_dir.join(POWER_OUTPUT)).unwrap();
