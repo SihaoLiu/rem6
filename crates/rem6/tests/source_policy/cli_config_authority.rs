@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
-use syn::{Expr, ImplItem, Item, Lit, Pat, Type, UseTree};
+use syn::{Attribute, Expr, ImplItem, Item, Lit, Meta, Pat, Type, UseTree};
 
 use super::{line_count, rust_source_files};
 
@@ -173,7 +173,18 @@ fn auxiliary_commands_consume_cli_config_authority() {
         "src/power_import_cli.rs must not define required_value"
     );
 
-    for path in rust_source_files(&crate_dir.join("src")) {
+    let cli_config_tests_path = crate_dir.join("src/cli_config/tests.rs");
+    assert!(
+        test_gated_external_module_paths(&cli_config_path, &authority_syntax)
+            .contains(&cli_config_tests_path),
+        "src/cli_config/tests.rs exclusion must derive from #[cfg(test)] mod tests"
+    );
+    let production_sources = production_rust_source_files(&crate_dir.join("src"));
+    assert!(
+        !production_sources.contains(&cli_config_tests_path),
+        "src/cli_config/tests.rs must not enter the production helper inventory"
+    );
+    for path in production_sources {
         let source = fs::read_to_string(&path).unwrap();
         let syntax = parse_rust(&source, &path);
         let functions = function_definition_names(&syntax);
@@ -236,16 +247,357 @@ fn auxiliary_explicit_profiles_match_command_parsers() {
     }
 }
 
+#[test]
+fn auxiliary_wrappers_bind_designated_explicit_profiles() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = crate_dir.join("src/cli_config.rs");
+    let source = fs::read_to_string(&path).unwrap();
+    let syntax = parse_rust(&source, &path);
+
+    for (wrapper, value_flags, bool_flags) in [
+        (
+            "gpu_run_file_config_from_args",
+            "GPU_RUN_VALUE_FLAGS",
+            Some("GPU_RUN_BOOL_FLAGS"),
+        ),
+        (
+            "accelerator_run_file_config_from_args",
+            "ACCELERATOR_RUN_VALUE_FLAGS",
+            None,
+        ),
+        (
+            "multi_run_file_config_from_args",
+            "MULTI_RUN_VALUE_FLAGS",
+            Some("MULTI_RUN_BOOL_FLAGS"),
+        ),
+        (
+            "resource_acquire_file_config_from_args",
+            "RESOURCE_ACQUIRE_VALUE_FLAGS",
+            None,
+        ),
+    ] {
+        assert_eq!(
+            explicit_wrapper_profile(&syntax, wrapper),
+            ExplicitProfileReference {
+                value_flags: value_flags.to_string(),
+                bool_flags: bool_flags.map(str::to_string),
+            },
+            "{wrapper} must bind its designated explicit profile"
+        );
+    }
+}
+
+#[test]
+fn synthetic_explicit_wrapper_profile_extraction_detects_swaps() {
+    let syntax = syn::parse_file(
+        r#"
+        pub(crate) fn correct(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+            config_path_from_args(
+                args,
+                ConfigPrescanProfile::explicit(GPU_RUN_VALUE_FLAGS, GPU_RUN_BOOL_FLAGS),
+            )
+        }
+
+        pub(crate) fn swapped(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+            config_path_from_args(
+                args,
+                ConfigPrescanProfile::explicit(ACCELERATOR_RUN_VALUE_FLAGS, &[]),
+            )
+        }
+        "#,
+    )
+    .unwrap();
+    let expected = ExplicitProfileReference {
+        value_flags: "GPU_RUN_VALUE_FLAGS".to_string(),
+        bool_flags: Some("GPU_RUN_BOOL_FLAGS".to_string()),
+    };
+
+    assert_eq!(explicit_wrapper_profile(&syntax, "correct"), expected);
+    assert_ne!(explicit_wrapper_profile(&syntax, "swapped"), expected);
+}
+
+#[test]
+fn synthetic_production_facts_exclude_test_gated_items_and_modules() {
+    let syntax = syn::parse_file(
+        r#"
+        use crate::cli_config::required_value;
+
+        fn production_helper() {
+            required_value("--flag", None);
+        }
+
+        #[cfg(test)]
+        use crate::cli_config::read_toml_config;
+
+        #[cfg(any(test, feature = "synthetic"))]
+        pub(crate) fn required_value() {
+            let _ = Rem6CliError::ReadConfig { path, error };
+            let _ = Rem6CliError::ParseConfig { path, error };
+            path.is_relative();
+            hidden_call();
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use crate::cli_config::resolve_config_path;
+
+            fn duplicate_helper() {
+                hidden_call();
+            }
+        }
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        function_definition_names(&syntax),
+        BTreeSet::from(["production_helper".to_string()])
+    );
+    assert_eq!(
+        cli_config_imports(&syntax),
+        BTreeSet::from(["required_value".to_string()])
+    );
+    assert!(calls_function(&syntax, "required_value"));
+    assert!(!calls_function(&syntax, "hidden_call"));
+    assert!(!has_pub_crate_function(&syntax, "required_value"));
+    assert_eq!(syntax_usage(&syntax), SyntaxUsage::default());
+
+    let owner = Path::new("/repo/src/cli_config.rs");
+    let module_syntax = syn::parse_file("#[cfg(test)] mod tests;").unwrap();
+    assert_eq!(
+        test_gated_external_module_paths(owner, &module_syntax),
+        BTreeSet::from([Path::new("/repo/src/cli_config/tests.rs").to_path_buf()])
+    );
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExplicitProfileReference {
+    value_flags: String,
+    bool_flags: Option<String>,
+}
+
+fn explicit_wrapper_profile(syntax: &syn::File, wrapper_name: &str) -> ExplicitProfileReference {
+    let wrappers = syntax
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(function)
+                if !is_test_gated(&function.attrs) && function.sig.ident == wrapper_name =>
+            {
+                Some(function)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        wrappers.len(),
+        1,
+        "must define exactly one production wrapper `{wrapper_name}`"
+    );
+    let returned = wrappers[0]
+        .block
+        .stmts
+        .last()
+        .and_then(|statement| match statement {
+            syn::Stmt::Expr(expression, None) => Some(expression),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{wrapper_name} must return a tail expression"));
+    let Expr::Call(config_call) = unwrap_expr(returned) else {
+        panic!("{wrapper_name} must return config_path_from_args(...)");
+    };
+    assert!(
+        expression_path_ends_with(&config_call.func, &["config_path_from_args"]),
+        "{wrapper_name} must return config_path_from_args(...)"
+    );
+    assert_eq!(
+        config_call.args.len(),
+        2,
+        "{wrapper_name} config_path_from_args call must have two arguments"
+    );
+    assert!(
+        expression_is_ident(&config_call.args[0], "args"),
+        "{wrapper_name} must scan its args parameter"
+    );
+
+    let Expr::Call(profile_call) = unwrap_expr(&config_call.args[1]) else {
+        panic!("{wrapper_name} must use ConfigPrescanProfile::explicit(...)");
+    };
+    assert!(
+        expression_path_ends_with(&profile_call.func, &["ConfigPrescanProfile", "explicit"]),
+        "{wrapper_name} must use ConfigPrescanProfile::explicit(...)"
+    );
+    assert_eq!(
+        profile_call.args.len(),
+        2,
+        "{wrapper_name} explicit profile must have value and boolean arguments"
+    );
+
+    ExplicitProfileReference {
+        value_flags: profile_constant_name(&profile_call.args[0], wrapper_name, "value"),
+        bool_flags: profile_bool_constant_name(&profile_call.args[1], wrapper_name),
+    }
+}
+
+fn profile_constant_name(expression: &Expr, wrapper_name: &str, kind: &str) -> String {
+    let Expr::Path(path) = unwrap_expr(expression) else {
+        panic!("{wrapper_name} {kind} profile must reference a named constant");
+    };
+    assert!(
+        path.qself.is_none() && path.path.segments.len() == 1,
+        "{wrapper_name} {kind} profile must reference one named constant"
+    );
+    path.path.segments[0].ident.to_string()
+}
+
+fn profile_bool_constant_name(expression: &Expr, wrapper_name: &str) -> Option<String> {
+    match unwrap_expr(expression) {
+        Expr::Array(array) if array.elems.is_empty() => None,
+        expression => Some(profile_constant_name(expression, wrapper_name, "boolean")),
+    }
+}
+
+fn expression_path_ends_with(expression: &Expr, expected: &[&str]) -> bool {
+    let Expr::Path(path) = unwrap_expr(expression) else {
+        return false;
+    };
+    let actual = path
+        .path
+        .segments
+        .iter()
+        .rev()
+        .take(expected.len())
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    actual.len() == expected.len()
+        && actual
+            .iter()
+            .rev()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+}
+
 fn parse_rust(source: &str, path: &Path) -> syn::File {
     syn::parse_file(source)
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
+}
+
+fn is_test_gated(attributes: &[Attribute]) -> bool {
+    attributes
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("cfg"))
+        .any(|attribute| {
+            let meta = attribute
+                .parse_args::<Meta>()
+                .unwrap_or_else(|error| panic!("failed to parse cfg attribute: {error}"));
+            cfg_enables_test(&meta)
+        })
+}
+
+fn cfg_enables_test(meta: &Meta) -> bool {
+    match meta {
+        Meta::Path(path) => path.is_ident("test"),
+        Meta::List(list) if list.path.is_ident("not") => false,
+        Meta::List(list) => list
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+            .unwrap_or_else(|error| panic!("failed to parse nested cfg attribute: {error}"))
+            .iter()
+            .any(cfg_enables_test),
+        Meta::NameValue(_) => false,
+    }
+}
+
+fn item_attributes(item: &Item) -> &[Attribute] {
+    match item {
+        Item::Const(item) => &item.attrs,
+        Item::Enum(item) => &item.attrs,
+        Item::ExternCrate(item) => &item.attrs,
+        Item::Fn(item) => &item.attrs,
+        Item::ForeignMod(item) => &item.attrs,
+        Item::Impl(item) => &item.attrs,
+        Item::Macro(item) => &item.attrs,
+        Item::Mod(item) => &item.attrs,
+        Item::Static(item) => &item.attrs,
+        Item::Struct(item) => &item.attrs,
+        Item::Trait(item) => &item.attrs,
+        Item::TraitAlias(item) => &item.attrs,
+        Item::Type(item) => &item.attrs,
+        Item::Union(item) => &item.attrs,
+        Item::Use(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+fn impl_item_attributes(item: &ImplItem) -> &[Attribute] {
+    match item {
+        ImplItem::Const(item) => &item.attrs,
+        ImplItem::Fn(item) => &item.attrs,
+        ImplItem::Type(item) => &item.attrs,
+        ImplItem::Macro(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+fn trait_item_attributes(item: &syn::TraitItem) -> &[Attribute] {
+    match item {
+        syn::TraitItem::Const(item) => &item.attrs,
+        syn::TraitItem::Fn(item) => &item.attrs,
+        syn::TraitItem::Type(item) => &item.attrs,
+        syn::TraitItem::Macro(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+fn test_gated_external_module_paths(owner: &Path, syntax: &syn::File) -> BTreeSet<PathBuf> {
+    syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Mod(module) = item else {
+                return None;
+            };
+            (module.content.is_none() && is_test_gated(&module.attrs))
+                .then(|| external_module_path(owner, &module.ident.to_string()))
+        })
+        .collect()
+}
+
+fn external_module_path(owner: &Path, module_name: &str) -> PathBuf {
+    let parent = owner.parent().unwrap_or_else(|| Path::new(""));
+    let module_dir = match owner.file_name().and_then(|name| name.to_str()) {
+        Some("lib.rs" | "main.rs" | "mod.rs") => parent.to_path_buf(),
+        _ => parent.join(owner.file_stem().unwrap()),
+    };
+    let flat = module_dir.join(format!("{module_name}.rs"));
+    let nested = module_dir.join(module_name).join("mod.rs");
+    if flat.is_file() || !nested.is_file() {
+        flat
+    } else {
+        nested
+    }
+}
+
+fn production_rust_source_files(root: &Path) -> Vec<PathBuf> {
+    let paths = rust_source_files(root);
+    let excluded = paths
+        .iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(path).unwrap();
+            let syntax = parse_rust(&source, path);
+            test_gated_external_module_paths(path, &syntax)
+        })
+        .collect::<BTreeSet<_>>();
+    paths
+        .into_iter()
+        .filter(|path| !excluded.contains(path))
+        .collect()
 }
 
 fn declares_module(syntax: &syn::File, module_name: &str) -> bool {
     syntax
         .items
         .iter()
-        .any(|item| matches!(item, Item::Mod(module) if module.ident == module_name))
+        .any(|item| matches!(item, Item::Mod(module) if !is_test_gated(&module.attrs) && module.ident == module_name))
 }
 
 fn has_pub_crate_function(syntax: &syn::File, function_name: &str) -> bool {
@@ -253,7 +605,8 @@ fn has_pub_crate_function(syntax: &syn::File, function_name: &str) -> bool {
         let Item::Fn(function) = item else {
             return false;
         };
-        function.sig.ident == function_name
+        !is_test_gated(&function.attrs)
+            && function.sig.ident == function_name
             && matches!(
                 &function.vis,
                 syn::Visibility::Restricted(visibility)
@@ -274,6 +627,24 @@ struct FunctionDefinitionVisitor {
 }
 
 impl<'ast> Visit<'ast> for FunctionDefinitionVisitor {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !is_test_gated(item_attributes(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if !is_test_gated(impl_item_attributes(item)) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_gated(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
     fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
         self.names.insert(function.sig.ident.to_string());
         syn::visit::visit_item_fn(self, function);
@@ -294,6 +665,9 @@ fn cli_config_imports(syntax: &syn::File) -> BTreeSet<String> {
     let mut imports = BTreeSet::new();
     for item in &syntax.items {
         if let Item::Use(item_use) = item {
+            if is_test_gated(&item_use.attrs) {
+                continue;
+            }
             collect_cli_config_imports(&item_use.tree, &mut Vec::new(), &mut imports);
         }
     }
@@ -359,6 +733,24 @@ struct FunctionCallVisitor<'a> {
 }
 
 impl<'ast> Visit<'ast> for FunctionCallVisitor<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !is_test_gated(item_attributes(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if !is_test_gated(impl_item_attributes(item)) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_gated(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         if let Expr::Path(path) = unwrap_expr(&call.func) {
             self.found |= path
@@ -371,7 +763,7 @@ impl<'ast> Visit<'ast> for FunctionCallVisitor<'_> {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 struct SyntaxUsage {
     read_config_error: bool,
     parse_config_error: bool,
@@ -379,6 +771,24 @@ struct SyntaxUsage {
 }
 
 impl<'ast> Visit<'ast> for SyntaxUsage {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !is_test_gated(item_attributes(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if !is_test_gated(impl_item_attributes(item)) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_gated(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let mut segments = path.segments.iter().rev();
         let variant = segments.next().map(|segment| segment.ident.to_string());
@@ -442,7 +852,11 @@ fn string_array_constant(syntax: &syn::File, constant_name: &str) -> BTreeSet<St
         .items
         .iter()
         .find_map(|item| match item {
-            Item::Const(constant) if constant.ident == constant_name => Some(constant),
+            Item::Const(constant)
+                if !is_test_gated(&constant.attrs) && constant.ident == constant_name =>
+            {
+                Some(constant)
+            }
             _ => None,
         })
         .unwrap_or_else(|| panic!("src/cli_config.rs must define {constant_name}"));
@@ -483,12 +897,14 @@ fn parse_args_flag_sets(syntax: &syn::File, config_type: &str, relative: &str) -
         let Item::Impl(item_impl) = item else {
             continue;
         };
-        if type_ident(&item_impl.self_ty).as_deref() != Some(config_type) {
+        if is_test_gated(&item_impl.attrs)
+            || type_ident(&item_impl.self_ty).as_deref() != Some(config_type)
+        {
             continue;
         }
         for item in &item_impl.items {
             if let ImplItem::Fn(function) = item {
-                if function.sig.ident == "parse_args" {
+                if !is_test_gated(&function.attrs) && function.sig.ident == "parse_args" {
                     parse_args_methods.push(function);
                 }
             }
