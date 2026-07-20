@@ -40,8 +40,8 @@ For Stats, the existing power/thermal checklist item becomes complete and the
 component moves to `74% representative`: 24 of 26 checklist items, or 92% raw,
 capped at 74%. The representative cap is justified by a real route matrix that
 correlates canonical cache, transport, fabric, and DRAM resource activity with
-McPAT-shaped and DSENT-shaped record selection, reconciles the same active fields
-with stats, and adds exact cache and DRAM numeric boundaries.
+McPAT-shaped and DSENT-shaped record selection, reconciles active fields plus the
+DRAM profile count with stats, and adds exact cache and DRAM numeric boundaries.
 
 For Power and Physical-Design Export Adapters, a new canonical run-memory
 selection and cache/DRAM calibration item raises the raw score to 6 of 8, or 75%,
@@ -51,9 +51,10 @@ remain explicit gaps.
 
 The increment does not claim that the current coefficients match a fabricated
 implementation or a vendor power model. Canonical selection means target
-presence follows the executed typed activity exposed by the run artifact and
-stats. Exact calibration is narrower: cache and DRAM residency, events,
-operations, bytes, temperature, and dynamic power are deterministically checked.
+presence follows executed typed activity, except DRAM also retains a configured
+profile-only static record through `active || profiled_targets`. Exact
+calibration is narrower: cache and DRAM residency, events, operations, bytes,
+temperature, and dynamic power are deterministically checked.
 
 ## Approaches
 
@@ -132,7 +133,7 @@ external behavior are not expanded in this increment.
 A table-driven top-level CLI test executes one load/store RISC-V program through
 representative memory routes and writes run, stats, and power artifacts.
 
-| Row | Memory route | Power format | Required active targets | Required suppressed targets |
+| Row | Memory route | Power format | Required selected targets | Required suppressed targets |
 | --- | --- | --- | --- | --- |
 | direct | direct | McPAT XML | CPU core, transport | L1 caches, shared caches, fabric, DRAM |
 | dram | direct transport plus DRAM | DSENT CSV | CPU core, transport, DRAM | L1 caches, shared caches, fabric |
@@ -141,8 +142,9 @@ representative memory routes and writes run, stats, and power artifacts.
 
 Each row imports the emitted power artifact with `rem6-power`, parses the run and
 stats artifacts, proves that each `memory_resources.*.active` field equals its
-`sim.memory.resources.*.active` stat, and proves that target presence follows
-that canonical evidence. Active records require positive dynamic power,
+`sim.memory.resources.*.active` stat, and also reconciles canonical DRAM
+`profiled_targets`. Target presence follows `active`, except DRAM follows
+`active || profiled_targets`. Selected records require positive dynamic power,
 positive residency, and a temperature at or above the component base. Suppressed
 targets must be absent rather than emitted as zero-activity records.
 
@@ -156,6 +158,7 @@ run:
 
 - a refresh-only DRAM resource emits a DRAM power record;
 - a low-power-only DRAM resource emits a DRAM power record;
+- a profile-only DRAM resource retains its compatibility static record;
 - access-dominant residency and command-dominant operation counts remain distinct;
 - an all-zero memory resource suppresses every memory component; and
 - cache records use the canonical resource activity predicate.
@@ -182,7 +185,8 @@ The increment preserves:
 - McPAT XML and DSENT CSV schemas;
 - power target names and deterministic target ordering;
 - CPU core, GPU, and trace-replay power ownership;
-- stats and run-artifact schemas; and
+- existing stats and run-artifact fields, with additive canonical DRAM
+  `profiled_targets` selection evidence; and
 - existing error behavior.
 
 Expected output-value changes are limited to normal-run memory records that were

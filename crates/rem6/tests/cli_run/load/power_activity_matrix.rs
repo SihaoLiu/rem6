@@ -10,7 +10,7 @@ struct PowerActivityCase {
     name: &'static str,
     extra_args: &'static [&'static str],
     format: &'static str,
-    expected_active_targets: &'static [&'static str],
+    expected_power_targets: &'static [&'static str],
 }
 
 #[derive(Clone, Copy)]
@@ -18,6 +18,8 @@ struct CanonicalPowerTarget {
     target: &'static str,
     active_path: &'static str,
     active_stat_path: &'static str,
+    profiled_path: Option<&'static str>,
+    profiled_stat_path: Option<&'static str>,
     base_temperature_c: f64,
 }
 
@@ -26,13 +28,13 @@ const POWER_ACTIVITY_CASES: &[PowerActivityCase] = &[
         name: "direct",
         extra_args: &["--memory-system", "direct"],
         format: "mcpat-xml",
-        expected_active_targets: &["memory.transport"],
+        expected_power_targets: &["memory.transport"],
     },
     PowerActivityCase {
         name: "dram",
         extra_args: &["--dram-memory"],
         format: "dsent-csv",
-        expected_active_targets: &["memory.transport", "memory.dram"],
+        expected_power_targets: &["memory.transport", "memory.dram"],
     },
     PowerActivityCase {
         name: "cache",
@@ -51,7 +53,7 @@ const POWER_ACTIVITY_CASES: &[PowerActivityCase] = &[
             "msi",
         ],
         format: "mcpat-xml",
-        expected_active_targets: &[
+        expected_power_targets: &[
             "cpu.instruction_cache",
             "cpu.data_cache",
             "memory.cache.l2",
@@ -63,7 +65,7 @@ const POWER_ACTIVITY_CASES: &[PowerActivityCase] = &[
         name: "hierarchy",
         extra_args: &["--memory-system", "cache-fabric-dram"],
         format: "dsent-csv",
-        expected_active_targets: &[
+        expected_power_targets: &[
             "cpu.instruction_cache",
             "cpu.data_cache",
             "memory.cache.l2",
@@ -80,42 +82,56 @@ const CANONICAL_POWER_TARGETS: &[CanonicalPowerTarget] = &[
         target: "cpu.instruction_cache",
         active_path: "/memory_resources/cache/instruction/l1/active",
         active_stat_path: "sim.memory.resources.cache.instruction.l1.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 39.0,
     },
     CanonicalPowerTarget {
         target: "cpu.data_cache",
         active_path: "/memory_resources/cache/data/l1/active",
         active_stat_path: "sim.memory.resources.cache.data.l1.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 39.0,
     },
     CanonicalPowerTarget {
         target: "memory.cache.l2",
         active_path: "/memory_resources/cache/l2/active",
         active_stat_path: "sim.memory.resources.cache.l2.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 38.5,
     },
     CanonicalPowerTarget {
         target: "memory.cache.l3",
         active_path: "/memory_resources/cache/l3/active",
         active_stat_path: "sim.memory.resources.cache.l3.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 38.5,
     },
     CanonicalPowerTarget {
         target: "memory.transport",
         active_path: "/memory_resources/transport/active",
         active_stat_path: "sim.memory.resources.transport.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 37.0,
     },
     CanonicalPowerTarget {
         target: "memory.fabric",
         active_path: "/memory_resources/fabric/active",
         active_stat_path: "sim.memory.resources.fabric.active",
+        profiled_path: None,
+        profiled_stat_path: None,
         base_temperature_c: 37.5,
     },
     CanonicalPowerTarget {
         target: "memory.dram",
         active_path: "/memory_resources/dram/active",
         active_stat_path: "sim.memory.resources.dram.active",
+        profiled_path: Some("/memory_resources/dram/profiled_targets"),
+        profiled_stat_path: Some("sim.memory.resources.dram.profiled_targets"),
         base_temperature_c: 38.0,
     },
 ];
@@ -240,22 +256,38 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
                 "row {} stat {} must match canonical artifact path {}",
                 case.name, mapping.active_stat_path, mapping.active_path
             );
-            let active = active_value > 0;
-            let expected_active = case.expected_active_targets.contains(&mapping.target);
+            let profiled = match (mapping.profiled_path, mapping.profiled_stat_path) {
+                (Some(profiled_path), Some(profiled_stat_path)) => {
+                    let profiled_value = json_u64(&artifact, profiled_path, case.name);
+                    let profiled_stat = stat_u64(&stats, profiled_stat_path, case.name);
+                    assert_eq!(
+                        profiled_stat, profiled_value,
+                        "row {} stat {} must match canonical artifact path {}",
+                        case.name, profiled_stat_path, profiled_path
+                    );
+                    profiled_value > 0
+                }
+                (None, None) => false,
+                _ => panic!(
+                    "target {} has an incomplete profile mapping",
+                    mapping.target
+                ),
+            };
+            let selected = active_value > 0 || profiled;
+            let expected_selected = case.expected_power_targets.contains(&mapping.target);
             assert_eq!(
-                active, expected_active,
-                "row {} canonical activity mismatch for {} at {}",
+                selected, expected_selected,
+                "row {} canonical selection mismatch for {} at {}",
                 case.name, mapping.target, mapping.active_path
             );
 
             let record = record_for_target(records, mapping.target);
             assert_eq!(
                 record.is_some(),
-                active,
-                "row {} target {} presence must follow {}",
+                selected,
+                "row {} target {} presence must follow canonical active/profile selection",
                 case.name,
-                mapping.target,
-                mapping.active_path
+                mapping.target
             );
             if let Some(record) = record {
                 assert_active_power_record(case.name, record, mapping.base_temperature_c);

@@ -101,13 +101,15 @@ fn gem5_stats_score_ratchet_tracks_canonical_power_evidence() {
 fn component_scores_track_scoped_canonical_power_evidence() {
     const STATS_HEADING: &str =
         "### Stats, Probes, Debug, Host Actions, and Checkpointing - 74% representative";
+    const CONFIG_HEADING: &str =
+        "### Configuration, Resources, Suites, GPU, and Accelerators - 74% representative";
     const POWER_HEADING: &str =
         "### Power and Physical-Design Export Adapters - 74% representative";
     const NEXT_HEADING: &str = "### Native Loader and Math Replacement - 50% single-axis";
     let migration =
         fs::read_to_string(repo_root().join("docs/architecture/gem5-to-rem6-migration.md"))
             .unwrap();
-    let stats = source_section(&migration, STATS_HEADING, POWER_HEADING);
+    let stats = source_section(&migration, STATS_HEADING, CONFIG_HEADING);
     let power = source_section(&migration, POWER_HEADING, NEXT_HEADING);
 
     assert!(stats.contains("24 of 26 items have executable evidence, or 92% raw"));
@@ -117,6 +119,7 @@ fn component_scores_track_scoped_canonical_power_evidence() {
     assert!(stats.contains("`rem6_run_power_activity_matches_canonical_resource_matrix`"));
     assert!(stats.contains("`run_dram_power_uses_accesses_when_they_dominate_residency`"));
     assert!(stats.contains("`run_cache_power_preserves_legacy_target_calibrations`"));
+    assert!(stats.contains("`sim.memory.resources.dram.profiled_targets`"));
     assert!(stats.contains("physical fabrication/vendor coefficient calibration"));
 
     assert!(power.contains("6 of 8 items have executable evidence, or 75% raw"));
@@ -125,6 +128,7 @@ fn component_scores_track_scoped_canonical_power_evidence() {
     ));
     for evidence in [
         "`rem6_run_power_activity_matches_canonical_resource_matrix`",
+        "`run_power_emits_profile_only_dram_resource_with_legacy_baseline`",
         "`run_dram_power_uses_canonical_byte_total`",
         "`run_dram_power_uses_accesses_when_they_dominate_residency`",
         "`run_dram_power_keeps_commands_out_of_event_count`",
@@ -136,6 +140,7 @@ fn component_scores_track_scoped_canonical_power_evidence() {
         );
     }
     assert!(power.contains("full external McPAT/DSENT schema/tool parity"));
+    assert!(power.contains("canonical `active || profiled_targets`"));
     assert!(power.contains("GPU/trace-replay calibration breadth"));
     assert!(power.contains("physical fabrication/vendor coefficient calibration"));
 }

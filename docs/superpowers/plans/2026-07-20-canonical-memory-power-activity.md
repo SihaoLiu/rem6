@@ -220,13 +220,18 @@ Use four rows: `direct`, `dram`, `cache`, and `hierarchy`. For each row:
 /memory_resources/transport/active
 /memory_resources/fabric/active
 /memory_resources/dram/active
+/memory_resources/dram/profiled_targets
 ```
 
-For every active record assert `dynamic_watts() > 0.0`,
+Reconcile each path with the matching `sim.memory.resources.*` stat. Target
+presence follows `active`, except DRAM follows `active || profiled_targets` to
+preserve the configured profile-only static record.
+
+For every selected record assert `dynamic_watts() > 0.0`,
 `residency_ticks(PowerStateKind::On) > 0`, and a target-specific minimum
-temperature. For DRAM, calculate the expected byte contribution from
-`/memory_resources/dram/read_bytes` plus `write_bytes` and assert the imported
-record matches the canonical formula.
+temperature. For DRAM, reconstruct primitive events, operations, and
+`read_bytes + write_bytes`, then assert the imported record matches the complete
+canonical formula and differs from the legacy fixed-64-byte estimate.
 
 - [ ] **Step 3: Run focused tests and observe RED**
 
@@ -273,24 +278,22 @@ Update both callers. `run_power_analysis_records` forwards only the execution's
 tick, cores, and memory resources. `build_run_execution_summary` no longer passes
 raw instruction cache, data cache, or DRAM summaries.
 
-- [ ] **Step 2: Introduce focused activity projections**
+- [ ] **Step 2: Introduce focused canonical record constructors**
 
-Replace the duplicate raw/resource cache predicates with one projection:
+Replace duplicate raw/resource predicates with focused normal-run helpers:
 
-```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CachePowerActivity {
-    events: u64,
-    operations: u64,
-    bytes: u64,
-}
-```
+- `cache_resource_power_record` consumes a `Rem6CacheResourceSummary` plus a
+  target-specific `CachePowerCalibration`;
+- `memory_transport_power_record` consumes `Rem6TransportResourceSummary` while
+  preserving the existing aggregate transport formula;
+- `FabricPowerActivity::from_resource` retains the existing typed fabric
+  projection; and
+- `dram_resource_power_record` consumes `Rem6DramResourceSummary` directly.
 
-Add analogous `TransportPowerActivity` and `DramPowerActivity`; retain the
-existing `FabricPowerActivity`. Each type owns `is_active`, `operation_count`
-where needed, and `residency_ticks`.
+Do not add parallel cache, transport, or DRAM activity structs; the canonical
+resource summary remains the typed authority for those records.
 
-Build normal-run activities from:
+Build normal-run records from:
 
 ```rust
 memory_resources.cache_instruction.l1

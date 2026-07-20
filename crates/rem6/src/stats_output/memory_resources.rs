@@ -99,6 +99,7 @@ fn emit_dram_resource_stats(
         ("active_targets", "Count", summary.active_targets),
         ("active_ports", "Count", summary.active_ports),
         ("active_banks", "Count", summary.active_banks),
+        ("profiled_targets", "Count", summary.profiled_targets),
         ("accesses", "Count", summary.accesses),
         ("reads", "Count", summary.reads),
         ("writes", "Count", summary.writes),
