@@ -1,5 +1,5 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use rem6_gpu::{
     GpuCoalescedMemoryAccess, GpuComputeConfig, GpuComputeUnitQueueWaitSummary, GpuDevice,
@@ -12,7 +12,7 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_system::RiscvDataCacheProtocol;
-use rem6_transport::{MemoryTrace, ParallelMemoryTransaction};
+use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTraceKind, ParallelMemoryTransaction};
 use serde::Deserialize;
 
 mod fabric;
@@ -759,6 +759,16 @@ pub(crate) struct Rem6GpuComputeUnitActivity {
     global_memory_writes: u64,
     first_started_at: Option<u64>,
     last_completed_at: Option<u64>,
+    memory_transport: Rem6GpuComputeUnitMemoryTransportActivity,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6GpuComputeUnitMemoryTransportActivity {
+    responses: u64,
+    round_trip_ticks: u64,
+    max_round_trip_ticks: u64,
+    first_response_at: Option<u64>,
+    last_response_at: Option<u64>,
 }
 
 impl Rem6GpuComputeUnitActivity {
@@ -775,6 +785,7 @@ impl Rem6GpuComputeUnitActivity {
             global_memory_writes: 0,
             first_started_at: None,
             last_completed_at: None,
+            memory_transport: Rem6GpuComputeUnitMemoryTransportActivity::new(),
         }
     }
 
@@ -852,9 +863,13 @@ impl Rem6GpuComputeUnitActivity {
         self.last_completed_at
     }
 
+    pub(crate) const fn memory_transport(&self) -> &Rem6GpuComputeUnitMemoryTransportActivity {
+        &self.memory_transport
+    }
+
     fn to_json(&self) -> String {
         format!(
-            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"workgroup_queue_wait_count\":{},\"workgroup_queue_wait_ticks\":{},\"max_workgroup_queue_wait_ticks\":{},\"busy_cycles\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
+            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"workgroup_queue_wait_count\":{},\"workgroup_queue_wait_ticks\":{},\"max_workgroup_queue_wait_ticks\":{},\"busy_cycles\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"first_started_at\":{},\"last_completed_at\":{},\"memory_transport\":{}}}",
             self.compute_unit,
             self.workgroup_completions,
             self.workgroup_queue_wait_count,
@@ -866,6 +881,77 @@ impl Rem6GpuComputeUnitActivity {
             self.global_memory_writes,
             optional_tick_json(self.first_started_at),
             optional_tick_json(self.last_completed_at),
+            self.memory_transport.to_json(),
+        )
+    }
+}
+
+impl Rem6GpuComputeUnitMemoryTransportActivity {
+    const fn new() -> Self {
+        Self {
+            responses: 0,
+            round_trip_ticks: 0,
+            max_round_trip_ticks: 0,
+            first_response_at: None,
+            last_response_at: None,
+        }
+    }
+
+    fn record_response(
+        &mut self,
+        round_trip_ticks: u64,
+        response_at: u64,
+    ) -> Result<(), Rem6CliError> {
+        self.responses = self
+            .responses
+            .checked_add(1)
+            .ok_or_else(|| execute_error("GPU compute-unit response count overflow"))?;
+        self.round_trip_ticks = self
+            .round_trip_ticks
+            .checked_add(round_trip_ticks)
+            .ok_or_else(|| execute_error("GPU compute-unit round-trip tick overflow"))?;
+        self.max_round_trip_ticks = self.max_round_trip_ticks.max(round_trip_ticks);
+        self.first_response_at = Some(
+            self.first_response_at
+                .map(|tick| tick.min(response_at))
+                .unwrap_or(response_at),
+        );
+        self.last_response_at = Some(
+            self.last_response_at
+                .map(|tick| tick.max(response_at))
+                .unwrap_or(response_at),
+        );
+        Ok(())
+    }
+
+    pub(crate) const fn responses(&self) -> u64 {
+        self.responses
+    }
+
+    pub(crate) const fn round_trip_ticks(&self) -> u64 {
+        self.round_trip_ticks
+    }
+
+    pub(crate) const fn max_round_trip_ticks(&self) -> u64 {
+        self.max_round_trip_ticks
+    }
+
+    pub(crate) const fn first_response_at(&self) -> Option<u64> {
+        self.first_response_at
+    }
+
+    pub(crate) const fn last_response_at(&self) -> Option<u64> {
+        self.last_response_at
+    }
+
+    fn to_json(self) -> String {
+        format!(
+            "{{\"responses\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"first_response_at\":{},\"last_response_at\":{}}}",
+            self.responses,
+            self.round_trip_ticks,
+            self.max_round_trip_ticks,
+            optional_tick_json(self.first_response_at),
+            optional_tick_json(self.last_response_at),
         )
     }
 }
@@ -1073,15 +1159,8 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         .add_route(gpu_memory_route(&config)?)
         .map_err(execute_error)?;
     let trace = MemoryTrace::new();
-    let memory_responses = Arc::new(Mutex::new(Vec::new()));
     let snapshot = gpu.snapshot();
     let accesses = snapshot.coalesced_memory_accesses().to_vec();
-    let compute_unit_activity = gpu_compute_unit_activity(
-        config.compute_units(),
-        snapshot.completions(),
-        &accesses,
-        gpu_summary.compute_unit_queue_waits(),
-    )?;
     let memory_end = config.memory_end()?;
     let transactions = accesses
         .iter()
@@ -1104,7 +1183,6 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
             )?;
             let request_memory = memory.clone();
             let request_data_cache = data_cache_hierarchy.clone();
-            let response_records = Arc::clone(&memory_responses);
             Ok(ParallelMemoryTransaction::new(
                 memory_route,
                 request,
@@ -1112,12 +1190,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
                 move |delivery, _context| {
                     cli_data_memory_response(&request_data_cache, &request_memory, &delivery)
                 },
-                move |delivery| {
-                    response_records
-                        .lock()
-                        .expect("GPU memory response record lock")
-                        .push(delivery.response().status());
-                },
+                move |_delivery| {},
             ))
         })
         .collect::<Result<Vec<_>, Rem6CliError>>()?;
@@ -1135,19 +1208,13 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
             return Err(error);
         }
     }
-    let memory_responses = memory_responses
-        .lock()
-        .expect("GPU memory response record lock")
-        .clone();
-    if let Some(status) = memory_responses
-        .iter()
-        .copied()
-        .find(|status| *status != ResponseStatus::Completed)
-    {
-        return Err(execute_error(format!(
-            "GPU memory request completed with {status:?}"
-        )));
-    }
+    let compute_unit_activity = gpu_compute_unit_activity(
+        config.compute_units(),
+        snapshot.completions(),
+        &accesses,
+        gpu_summary.compute_unit_queue_waits(),
+        &trace,
+    )?;
 
     let final_tick = gpu_summary
         .final_tick()
@@ -1189,7 +1256,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         memory_accesses: gpu_summary.memory_access_count() as u64,
         coalesced_memory_accesses: gpu_summary.coalesced_memory_access_count() as u64,
         global_memory_requests: accesses.len() as u64,
-        memory_responses: memory_responses.len() as u64,
+        memory_responses: transport.counters.responses,
         scheduler_epochs: gpu_summary.epoch_count() as u64,
         scheduler_dispatches: gpu_summary.dispatch_count() as u64,
         memory_scheduler_epochs: memory_scheduler_run.epoch_count() as u64,
@@ -1330,6 +1397,7 @@ fn gpu_compute_unit_activity(
     completions: &[GpuWorkgroupCompletion],
     accesses: &[GpuCoalescedMemoryAccess],
     queue_waits: &[GpuComputeUnitQueueWaitSummary],
+    trace: &MemoryTrace,
 ) -> Result<Vec<Rem6GpuComputeUnitActivity>, Rem6CliError> {
     let mut activity = (0..compute_units)
         .map(Rem6GpuComputeUnitActivity::new)
@@ -1379,7 +1447,88 @@ fn gpu_compute_unit_activity(
     for (activity, intervals) in activity.iter_mut().zip(active_intervals) {
         activity.busy_cycles = merged_interval_cycles(intervals);
     }
+    record_gpu_compute_unit_memory_transport(&mut activity, trace)?;
+    let responses = activity.iter().try_fold(0_u64, |total, activity| {
+        total
+            .checked_add(activity.memory_transport.responses())
+            .ok_or_else(|| execute_error("GPU memory response total overflow"))
+    })?;
+    let requests = u64::try_from(accesses.len())
+        .map_err(|_| execute_error("GPU memory request count does not fit u64"))?;
+    if responses != requests {
+        return Err(execute_error(format!(
+            "GPU memory response count {responses} did not match request count {requests}"
+        )));
+    }
     Ok(activity)
+}
+
+fn record_gpu_compute_unit_memory_transport(
+    activity: &mut [Rem6GpuComputeUnitActivity],
+    trace: &MemoryTrace,
+) -> Result<(), Rem6CliError> {
+    let mut requests = BTreeMap::<(MemoryRouteId, MemoryRequestId), (u64, String)>::new();
+    for event in trace.snapshot() {
+        let key = (event.route(), event.request_id());
+        match event.kind() {
+            MemoryTraceKind::RequestSent => {
+                if requests
+                    .insert(key, (event.tick(), event.endpoint().as_str().to_string()))
+                    .is_some()
+                {
+                    return Err(execute_error(format!(
+                        "GPU memory request {:?} was sent more than once",
+                        event.request_id()
+                    )));
+                }
+            }
+            MemoryTraceKind::RequestArrived => {}
+            MemoryTraceKind::ResponseArrived => {
+                let Some((sent_at, source)) = requests.get(&key) else {
+                    return Err(execute_error(format!(
+                        "GPU memory response {:?} has no source request",
+                        event.request_id()
+                    )));
+                };
+                if event.endpoint().as_str() != source {
+                    continue;
+                }
+                let status = event.response_status().ok_or_else(|| {
+                    execute_error(format!(
+                        "GPU memory response {:?} omitted status",
+                        event.request_id()
+                    ))
+                })?;
+                if status != ResponseStatus::Completed {
+                    return Err(execute_error(format!(
+                        "GPU memory request completed with {status:?}"
+                    )));
+                }
+                let compute_unit =
+                    usize::try_from(event.request_id().agent().get()).map_err(|_| {
+                        execute_error("GPU response compute unit index does not fit usize")
+                    })?;
+                let compute_units = activity.len();
+                let Some(activity) = activity.get_mut(compute_unit) else {
+                    return Err(execute_error(format!(
+                        "GPU memory response used compute unit {} outside configured count {}",
+                        event.request_id().agent().get(),
+                        compute_units
+                    )));
+                };
+                let round_trip_ticks = event.tick().checked_sub(*sent_at).ok_or_else(|| {
+                    execute_error(format!(
+                        "GPU memory response {:?} arrived before its source request",
+                        event.request_id()
+                    ))
+                })?;
+                activity
+                    .memory_transport
+                    .record_response(round_trip_ticks, event.tick())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn merged_interval_cycles(mut intervals: Vec<(u64, u64)>) -> u64 {

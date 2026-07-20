@@ -164,6 +164,28 @@ pub(crate) fn gpu_run_stats_output(
             StatResetPolicy::Monotonic,
             activity.global_memory_writes(),
         )?;
+        let memory_transport = activity.memory_transport();
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.memory_transport.responses"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            memory_transport.responses(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.memory_transport.round_trip_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            memory_transport.round_trip_ticks(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.memory_transport.max_round_trip_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            memory_transport.max_round_trip_ticks(),
+        )?;
         if let Some(first_started_at) = activity.first_started_at() {
             increment_stat(
                 &mut stats,
@@ -180,6 +202,24 @@ pub(crate) fn gpu_run_stats_output(
                 "Tick",
                 StatResetPolicy::Monotonic,
                 last_completed_at,
+            )?;
+        }
+        if let Some(first_response_at) = memory_transport.first_response_at() {
+            increment_stat(
+                &mut stats,
+                &format!("{prefix}.memory_transport.first_response_at"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                first_response_at,
+            )?;
+        }
+        if let Some(last_response_at) = memory_transport.last_response_at() {
+            increment_stat(
+                &mut stats,
+                &format!("{prefix}.memory_transport.last_response_at"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                last_response_at,
             )?;
         }
     }
