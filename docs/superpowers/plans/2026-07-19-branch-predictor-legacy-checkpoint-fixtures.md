@@ -456,7 +456,7 @@ Reviewers must check fixture literal ownership, v1-v5 schema coverage, v5 BTB
 counter defaults, current-v6 migration, malformed-test preservation, source
 policy robustness, and absence of production codec changes.
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 Run:
 
