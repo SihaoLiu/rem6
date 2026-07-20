@@ -73,6 +73,25 @@ fn run_power_emits_active_only_dram_resource() {
 }
 
 #[test]
+fn run_dram_power_uses_accesses_when_they_dominate_residency() {
+    let records = run_records_with_dram(
+        7,
+        Rem6DramResourceSummary {
+            activity: 29,
+            active: 1,
+            active_banks: 1,
+            accesses: 29,
+            read_bytes: 8,
+            commands: 3,
+            ..Rem6DramResourceSummary::default()
+        },
+    );
+    let record = record_for_target(&records, "memory.dram").expect("DRAM accesses are activity");
+
+    assert_record_values(record, "memory.dram", 0.001_129, 0.010_500, 38.001_129, 29);
+}
+
+#[test]
 fn run_cache_power_emits_operation_only_resource() {
     for (name, scheduled_misses, coalesced_misses, expected_dynamic) in [
         ("scheduled", 2, 0, 0.001_008),
