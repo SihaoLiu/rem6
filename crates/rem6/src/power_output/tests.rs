@@ -77,7 +77,7 @@ fn run_dram_power_uses_accesses_when_they_dominate_residency() {
     let records = run_records_with_dram(
         7,
         Rem6DramResourceSummary {
-            activity: 29,
+            activity: 5,
             active: 1,
             active_banks: 1,
             accesses: 29,
@@ -88,7 +88,7 @@ fn run_dram_power_uses_accesses_when_they_dominate_residency() {
     );
     let record = record_for_target(&records, "memory.dram").expect("DRAM accesses are activity");
 
-    assert_record_values(record, "memory.dram", 0.001_129, 0.010_500, 38.001_129, 29);
+    assert_record_values(record, "memory.dram", 0.001_033, 0.010_500, 38.001_033, 29);
 }
 
 #[test]
