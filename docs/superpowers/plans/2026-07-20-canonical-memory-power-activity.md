@@ -286,8 +286,8 @@ Replace duplicate raw/resource predicates with focused normal-run helpers:
   target-specific `CachePowerCalibration`;
 - `memory_transport_power_record` consumes `Rem6TransportResourceSummary` while
   preserving the existing aggregate transport formula;
-- `FabricPowerActivity::from_resource` retains the existing typed fabric
-  projection; and
+- `fabric_power_record` constructs the existing `FabricPowerActivity` inline
+  from `Rem6FabricResourceSummary`; and
 - `dram_resource_power_record` consumes `Rem6DramResourceSummary` directly.
 
 Do not add parallel cache, transport, or DRAM activity structs; the canonical
