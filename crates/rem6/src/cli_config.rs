@@ -6,7 +6,9 @@ use crate::Rem6CliError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnknownLongFlagMode {
-    ConsumeFollowing,
+    ConsumeFollowingValue,
+    #[allow(dead_code)]
+    Ignore,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +16,28 @@ struct ConfigPrescanProfile {
     bool_flags: &'static [&'static str],
     known_value_flags: &'static [&'static str],
     unknown_long_flag_mode: UnknownLongFlagMode,
+}
+
+impl ConfigPrescanProfile {
+    const fn wildcard(bool_flags: &'static [&'static str]) -> Self {
+        Self {
+            bool_flags,
+            known_value_flags: &[],
+            unknown_long_flag_mode: UnknownLongFlagMode::ConsumeFollowingValue,
+        }
+    }
+
+    #[allow(dead_code)]
+    const fn explicit(
+        known_value_flags: &'static [&'static str],
+        bool_flags: &'static [&'static str],
+    ) -> Self {
+        Self {
+            bool_flags,
+            known_value_flags,
+            unknown_long_flag_mode: UnknownLongFlagMode::Ignore,
+        }
+    }
 }
 
 const RUN_BOOL_FLAGS: &[&str] = &[
@@ -24,158 +48,18 @@ const RUN_BOOL_FLAGS: &[&str] = &[
     "--riscv-sbi",
 ];
 
-const RUN_VALUE_FLAGS: &[&str] = &[
-    "--isa",
-    "--binary",
-    "--resource-config",
-    "--kernel-resource",
-    "--max-tick",
-    "--min-remote-delay",
-    "--memory-route-delay",
-    "--host-event-delay",
-    "--host-checkpoint",
-    "--host-restore-checkpoint",
-    "--host-switch-cpu-mode",
-    "--start-address",
-    "--riscv-boot-a0",
-    "--riscv-boot-a1",
-    "--riscv-sbi-console-input",
-    "--riscv-se-arg",
-    "--riscv-se-env",
-    "--riscv-se-stdin",
-    "--riscv-se-file",
-    "--riscv-pc-count-target",
-    "--riscv-branch-lookahead",
-    "--riscv-o3-scalar-memory-depth",
-    "--riscv-o3-issue-width",
-    "--riscv-o3-writeback-width",
-    "--riscv-branch-predictor",
-    "--riscv-in-order-width",
-    "--riscv-execution-mode",
-    "--riscv-data-translation",
-    "--m5-switch-cpu-mode",
-    "--max-instructions",
-    "--stats-format",
-    "--memory-system",
-    "--dram-memory-profile",
-    "--data-cache-protocol",
-    "--data-cache-l2-protocol",
-    "--data-cache-l3-protocol",
-    "--data-cache-prefetcher",
-    "--instruction-cache-protocol",
-    "--instruction-cache-l2-protocol",
-    "--instruction-cache-l3-protocol",
-    "--instruction-cache-prefetcher",
-    "--fabric-link",
-    "--fabric-bandwidth-bytes-per-tick",
-    "--fabric-request-virtual-network",
-    "--fabric-response-virtual-network",
-    "--fabric-credit-depth",
-    "--fabric-router",
-    "--fabric-router-input-port",
-    "--fabric-router-output-port",
-    "--fabric-router-virtual-channel",
-    "--fabric-request-router-virtual-channel",
-    "--fabric-response-router-virtual-channel",
-    "--fabric-router-latency",
-    "--fabric-qos-queue-policy",
-    "--gdb-listen",
-    "--debug-flags",
-    "--cores",
-    "--parallel-workers",
-    "--dump-memory",
-    "--load-blob",
-    "--readfile",
-    "--output",
-    "--stats-output",
-    "--power-format",
-    "--power-output",
-];
-
-const GUPS_VALUE_FLAGS: &[&str] = &[
-    "--memory-start",
-    "--memory-size",
-    "--updates",
-    "--max-tick",
-    "--min-remote-delay",
-    "--memory-route-delay",
-    "--stats-format",
-    "--rng-state",
-    "--dump-memory",
-    "--output",
-    "--stats-output",
-];
-
-const TRACE_REPLAY_VALUE_FLAGS: &[&str] = &[
-    "--trace",
-    "--resource-config",
-    "--trace-resource",
-    "--route",
-    "--memory-start",
-    "--memory-size",
-    "--max-tick",
-    "--min-remote-delay",
-    "--memory-route-delay",
-    "--tick-frequency",
-    "--line-bytes",
-    "--agent",
-    "--control-partition",
-    "--data-cache-protocol",
-    "--data-cache-dram-memory-profile",
-    "--data-cache-dram-qos-priority-levels",
-    "--data-cache-dram-qos-default-priority",
-    "--fabric-link",
-    "--fabric-bandwidth-bytes-per-tick",
-    "--fabric-request-virtual-network",
-    "--fabric-response-virtual-network",
-    "--fabric-credit-depth",
-    "--fabric-router",
-    "--fabric-router-input-port",
-    "--fabric-router-output-port",
-    "--fabric-router-virtual-channel",
-    "--fabric-router-latency",
-    "--external-adapter-kind",
-    "--external-adapter-endpoint",
-    "--external-adapter-checkpoint-after-events",
-    "--host-checkpoint",
-    "--host-restore-checkpoint",
-    "--stats-format",
-    "--output",
-    "--stats-output",
-    "--power-format",
-    "--power-output",
-];
-
-const RUN_PROFILE: ConfigPrescanProfile = ConfigPrescanProfile {
-    bool_flags: RUN_BOOL_FLAGS,
-    known_value_flags: RUN_VALUE_FLAGS,
-    unknown_long_flag_mode: UnknownLongFlagMode::ConsumeFollowing,
-};
-
-const GUPS_PROFILE: ConfigPrescanProfile = ConfigPrescanProfile {
-    bool_flags: &[],
-    known_value_flags: GUPS_VALUE_FLAGS,
-    unknown_long_flag_mode: UnknownLongFlagMode::ConsumeFollowing,
-};
-
-const TRACE_REPLAY_PROFILE: ConfigPrescanProfile = ConfigPrescanProfile {
-    bool_flags: &[],
-    known_value_flags: TRACE_REPLAY_VALUE_FLAGS,
-    unknown_long_flag_mode: UnknownLongFlagMode::ConsumeFollowing,
-};
-
 pub(crate) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(args, RUN_PROFILE)
+    config_path_from_args(args, ConfigPrescanProfile::wildcard(RUN_BOOL_FLAGS))
 }
 
 pub(crate) fn gups_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(args, GUPS_PROFILE)
+    config_path_from_args(args, ConfigPrescanProfile::wildcard(&[]))
 }
 
 pub(crate) fn trace_replay_file_config_from_args(
     args: &[String],
 ) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(args, TRACE_REPLAY_PROFILE)
+    config_path_from_args(args, ConfigPrescanProfile::wildcard(&[]))
 }
 
 fn config_path_from_args(
@@ -205,7 +89,7 @@ fn config_path_from_args(
             flag if flag.starts_with("--")
                 && matches!(
                     profile.unknown_long_flag_mode,
-                    UnknownLongFlagMode::ConsumeFollowing
+                    UnknownLongFlagMode::ConsumeFollowingValue
                 ) =>
             {
                 index += flag_with_optional_value_width(args, index);
@@ -263,11 +147,7 @@ mod tests {
 
     use super::*;
 
-    const WILDCARD_PROFILE: ConfigPrescanProfile = ConfigPrescanProfile {
-        bool_flags: &[],
-        known_value_flags: &[],
-        unknown_long_flag_mode: UnknownLongFlagMode::ConsumeFollowing,
-    };
+    const WILDCARD_PROFILE: ConfigPrescanProfile = ConfigPrescanProfile::wildcard(&[]);
 
     #[test]
     fn wildcard_unknown_value_flag_suppresses_literal_config_and_last_config_wins() {
@@ -286,6 +166,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(path, Some(PathBuf::from("second-visible.toml")));
+    }
+
+    #[test]
+    fn explicit_profile_consumes_known_value_but_not_unknown_long_config_selector() {
+        let path = config_path_from_args(
+            &strings([
+                "--value",
+                "--config",
+                "--unknown-long",
+                "--config",
+                "visible.toml",
+            ]),
+            ConfigPrescanProfile::explicit(&["--value"], &[]),
+        )
+        .unwrap();
+
+        assert_eq!(path, Some(PathBuf::from("visible.toml")));
     }
 
     #[test]
@@ -347,11 +244,10 @@ mod tests {
             count: u64,
         }
 
-        let temp_dir = unique_temp_dir("read_toml_config_maps_valid_read_and_parse_results");
-        fs::create_dir_all(&temp_dir).unwrap();
-        let valid_path = temp_dir.join("valid.toml");
-        let missing_path = temp_dir.join("missing.toml");
-        let invalid_path = temp_dir.join("invalid.toml");
+        let temp_dir = TempDirGuard::new("read_toml_config_maps_valid_read_and_parse_results");
+        let valid_path = temp_dir.path().join("valid.toml");
+        let missing_path = temp_dir.path().join("missing.toml");
+        let invalid_path = temp_dir.path().join("invalid.toml");
         fs::write(&valid_path, "name = \"sample\"\ncount = 7\n").unwrap();
         fs::write(&invalid_path, "name = [\n").unwrap();
 
@@ -382,22 +278,38 @@ mod tests {
             }
             error => panic!("expected ParseConfig, got {error:?}"),
         }
-
-        fs::remove_dir_all(temp_dir).unwrap();
     }
 
     fn strings(values: impl IntoIterator<Item = &'static str>) -> Vec<String> {
         values.into_iter().map(str::to_string).collect()
     }
 
-    fn unique_temp_dir(test_name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "rem6-cli-config-{test_name}-{}-{nanos}",
-            std::process::id()
-        ))
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(test_name: &str) -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "rem6-cli-config-{test_name}-{}-{nanos}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }
