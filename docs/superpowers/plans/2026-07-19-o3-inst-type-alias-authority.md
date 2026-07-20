@@ -16,7 +16,7 @@
 - Create: `crates/rem6-cpu/tests/o3_runtime_inst_type.rs`
 - Modify: `crates/rem6/tests/source_policy/o3_alias_authority.rs`
 
-- [ ] **Step 1: Add the complete descriptor contract test**
+- [x] **Step 1: Add the complete descriptor contract test**
 
 Create `crates/rem6-cpu/tests/o3_runtime_inst_type.rs`:
 
@@ -231,7 +231,7 @@ fn o3_runtime_inst_type_descriptor_names_are_unique() {
 }
 ```
 
-- [ ] **Step 2: Add the source-policy authority test**
+- [x] **Step 2: Add the source-policy authority test**
 
 Append this test to `crates/rem6/tests/source_policy/o3_alias_authority.rs`:
 
@@ -325,7 +325,7 @@ fn o3_inst_type_aliases_have_one_cpu_descriptor_authority() {
 }
 ```
 
-- [ ] **Step 3: Run the exact RED source-policy test**
+- [x] **Step 3: Run the exact RED source-policy test**
 
 Run:
 
@@ -337,7 +337,7 @@ Expected: FAIL because `O3RuntimeInstTypeDescriptor` and its table do not yet
 exist, consumers still contain local mappers, and the debug suffix file still
 exists.
 
-- [ ] **Step 4: Confirm the typed contract is also RED**
+- [x] **Step 4: Confirm the typed contract is also RED**
 
 Run:
 
@@ -355,7 +355,7 @@ exported.
 - Modify: `crates/rem6-cpu/src/public_api.rs`
 - Test: `crates/rem6-cpu/tests/o3_runtime_inst_type.rs`
 
-- [ ] **Step 1: Add the descriptor type and accessors**
+- [x] **Step 1: Add the descriptor type and accessors**
 
 Immediately after `O3RuntimeFuLatencyClass`, add:
 
@@ -415,7 +415,7 @@ impl O3RuntimeInstTypeDescriptor {
 }
 ```
 
-- [ ] **Step 2: Add the complete ordered table**
+- [x] **Step 2: Add the complete ordered table**
 
 After the descriptor implementation, add the 18 entries exactly as asserted
 in Task 1:
@@ -570,7 +570,7 @@ pub const O3_RUNTIME_INST_TYPE_DESCRIPTORS: [O3RuntimeInstTypeDescriptor;
 ];
 ```
 
-- [ ] **Step 3: Add enum lookup and public exports**
+- [x] **Step 3: Add enum lookup and public exports**
 
 Add this to `impl O3RuntimeFuLatencyClass`:
 
@@ -589,7 +589,7 @@ pub use crate::o3_runtime_trace::{
 };
 ```
 
-- [ ] **Step 4: Run the focused descriptor test GREEN**
+- [x] **Step 4: Run the focused descriptor test GREEN**
 
 Run:
 
@@ -613,7 +613,7 @@ Expected: both descriptor tests PASS.
 - Modify: `crates/rem6/src/debug_output/o3.rs`
 - Delete: `crates/rem6/src/debug_output/o3_event_inst_type_stats.rs`
 
-- [ ] **Step 1: Register system counters from descriptors**
+- [x] **Step 1: Register system counters from descriptors**
 
 Import `O3_RUNTIME_INST_TYPE_DESCRIPTORS` in
 `riscv_o3_runtime_stats/helpers.rs`. Replace each of the four class loops with
@@ -637,7 +637,7 @@ commit paths. Delete `o3_iq_fu_latency_class_stem`,
 `o3_fu_latency_class_inst_type_stem`, and
 `o3_fu_latency_class_inst_type_alias`.
 
-- [ ] **Step 2: Replace canonical-stem helpers in top-level output**
+- [x] **Step 2: Replace canonical-stem helpers in top-level output**
 
 In `core_summary_json.rs`, `stats_output/o3_runtime.rs`,
 `debug_output/o3_summary_json.rs`, and
@@ -650,7 +650,7 @@ class.inst_type_descriptor().source_stem()
 Delete the four local helper definitions. Leave every `class.stat_stem()` use
 for functional-unit latency metrics unchanged.
 
-- [ ] **Step 3: Drive text gem5 aliases from the shared table**
+- [x] **Step 3: Drive text gem5 aliases from the shared table**
 
 Import `O3_RUNTIME_INST_TYPE_DESCRIPTORS` in `stats_output/text_o3.rs`.
 Replace the hard-coded 18-row IQ table with:
@@ -695,7 +695,7 @@ for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS {
 
 Keep the two memory rows unchanged and LSQ-derived.
 
-- [ ] **Step 4: Preserve JSON alias suppression while iterating descriptors**
+- [x] **Step 4: Preserve JSON alias suppression while iterating descriptors**
 
 Import `O3_RUNTIME_INST_TYPE_DESCRIPTORS` in
 `stats_output/json_aliases.rs`. Keep only the four memory source/alias pairs in
@@ -729,7 +729,7 @@ for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS {
 Delete the two hard-coded integer rows and all 32 float/vector rows. Do not
 change `gem5_o3_bucket_alias_suffix` or the alias-copy helper.
 
-- [ ] **Step 5: Delete the debug suffix compatibility helper**
+- [x] **Step 5: Delete the debug suffix compatibility helper**
 
 In `debug_output/o3_trace_totals.rs`, replace the two helper calls with:
 
@@ -750,7 +750,7 @@ stats.push(Rem6O3TraceStat {
 Remove the module declaration and imports from `debug_output/o3.rs`, then
 delete `debug_output/o3_event_inst_type_stats.rs`.
 
-- [ ] **Step 6: Format and run the source-policy test GREEN**
+- [x] **Step 6: Format and run the source-policy test GREEN**
 
 Run:
 
@@ -766,7 +766,7 @@ Expected: PASS, with no obsolete local mapper or debug suffix module.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-19-o3-inst-type-alias-authority.md`
 
-- [ ] **Step 1: Run affected crate tests**
+- [x] **Step 1: Run affected crate tests**
 
 Run:
 
@@ -778,7 +778,7 @@ cargo test -p rem6 --test source_policy o3_alias_authority::o3_inst_type_aliases
 
 Expected: all PASS.
 
-- [ ] **Step 2: Run representative top-level CLI evidence**
+- [x] **Step 2: Run representative top-level CLI evidence**
 
 Run each exact row:
 
@@ -796,7 +796,7 @@ cargo test -p rem6 --test cli_run m5_host_actions::o3::runtime_stats::rem6_run_t
 
 Expected: all PASS. The final row is the required suppression/negative case.
 
-- [ ] **Step 3: Run broad verification**
+- [x] **Step 3: Run broad verification**
 
 Run:
 
@@ -814,7 +814,7 @@ git diff --exit-code -- docs/architecture/gem5-to-rem6-migration.md temp/
 Expected: all commands succeed; the ledger remains exactly 1,200 lines and
 neither the ledger nor temporary files are modified.
 
-- [ ] **Step 4: Run independent read-only review**
+- [x] **Step 4: Run independent read-only review**
 
 Dispatch a fresh `gpt-5.5:xhigh` reviewer with the design, plan, and complete
 diff. Require findings first, explicit checks of the integer stem exception,
@@ -822,7 +822,7 @@ memory alias ownership, zero-extension suppression, static suffix lifetime,
 source-policy strength, and test sufficiency. Apply valid findings and rerun
 the affected verification rows.
 
-- [ ] **Step 5: Close the plan and commit the implementation**
+- [x] **Step 5: Close the plan and commit the implementation**
 
 Mark completed checkboxes in this plan, then run:
 
