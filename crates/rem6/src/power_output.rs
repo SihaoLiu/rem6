@@ -16,6 +16,10 @@ use crate::{
     Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
 };
 
+#[cfg(test)]
+#[path = "power_output/tests.rs"]
+mod tests;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6PowerAnalysisArtifact {
     format: PowerAnalysisFormat,

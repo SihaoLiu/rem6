@@ -4,12 +4,13 @@ const CLI_RUN_DRIVER: &str = "tests/cli_run.rs";
 const CLI_RUN_MODULES: &str = "tests/cli_run";
 const LOAD_ROOT: &str = "tests/cli_run/load.rs";
 const POWER_MATRIX: &str = "tests/cli_run/load/power_activity_matrix.rs";
-const POWER_ACTIVITY_TESTS: [&str; 5] = [
+const POWER_ACTIVITY_TESTS: [&str; 6] = [
     "rem6_run_power_analysis_includes_dram_activity",
     "rem6_run_power_analysis_includes_cache_activity",
     "rem6_run_power_analysis_includes_shared_cache_activity",
     "rem6_run_power_analysis_includes_fabric_activity",
     "rem6_run_power_analysis_includes_transport_activity",
+    "rem6_run_power_activity_matches_canonical_resource_matrix",
 ];
 
 #[test]
@@ -38,7 +39,7 @@ fn run_power_activity_matrix_lives_in_focused_module() {
 
 #[test]
 fn run_power_activity_owner_inventory_counts_only_test_functions() {
-    let test = POWER_ACTIVITY_TESTS[0];
+    let test = "rem6_run_power_activity_matches_canonical_resource_matrix";
     let non_owner = format!(
         r#"
             // fn {test}() {{}}
