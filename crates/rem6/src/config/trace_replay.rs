@@ -6,10 +6,10 @@ use rem6_workload::WorkloadDataCacheProtocol;
 use super::{
     load_trace_replay_file_config,
     parse::{parse_number, parse_positive_u64, required_value},
-    trace_replay_file_config_from_args, CliDramMemoryProfile, PowerAnalysisFormat,
-    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector, TraceReplayHostEventSpec,
+    CliDramMemoryProfile, PowerAnalysisFormat, Rem6TraceReplayConfig, StatsFormat,
+    SuiteResourceSelector, TraceReplayHostEventSpec,
 };
-use crate::Rem6CliError;
+use crate::{cli_config::trace_replay_file_config_from_args, Rem6CliError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraceReplayExternalAdapterKind {

@@ -7,6 +7,9 @@ use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
 
+use crate::cli_config::{
+    gups_file_config_from_args, read_toml_config, resolve_config_path, run_file_config_from_args,
+};
 use crate::execution_mode_lanes::execution_mode_from_name as parse_execution_mode;
 use crate::Rem6CliError;
 
@@ -15,7 +18,6 @@ mod cache;
 mod debug;
 mod dram;
 mod fabric;
-mod file_scan;
 mod guest_host_call;
 mod host_event;
 mod isa;
@@ -40,9 +42,6 @@ pub use dram::{CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming
 pub use fabric::RunFabricConfig;
 pub(crate) use fabric::RunFabricRouterStageConfig;
 use fabric::{run_fabric_config_from_parts, RunFabricConfigParts};
-use file_scan::{
-    gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
-};
 use guest_host_call::parse_guest_host_call_response;
 pub(crate) use guest_host_call::GuestHostCallResponseConfig;
 pub(crate) use host_event::RunHostExecutionModeSwitchSpec;
@@ -297,14 +296,7 @@ struct Rem6RunFileConfig {
 
 impl Rem6RunFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
-        if path.is_relative() {
-            self.config_dir
-                .as_deref()
-                .map(|dir| dir.join(path))
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        }
+        resolve_config_path(self.config_dir.as_deref(), path)
     }
 }
 
@@ -379,16 +371,6 @@ struct Rem6TraceReplayFileConfig {
 impl Rem6TraceReplayFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
         resolve_config_path(self.config_dir.as_deref(), path)
-    }
-}
-
-fn resolve_config_path(config_dir: Option<&Path>, path: &Path) -> PathBuf {
-    if path.is_relative() {
-        config_dir
-            .map(|dir| dir.join(path))
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
     }
 }
 
@@ -1669,30 +1651,25 @@ impl Rem6GupsConfig {
 }
 
 fn load_run_file_config(path: &Path) -> Result<Rem6RunFileConfig, Rem6CliError> {
-    let mut run = load_file_config(path)?.run.unwrap_or_default();
+    let mut run = read_toml_config::<Rem6FileConfig>(path)?
+        .run
+        .unwrap_or_default();
     run.config_dir = path.parent().map(Path::to_path_buf);
     Ok(run)
 }
 
 fn load_gups_file_config(path: &Path) -> Result<Rem6GupsFileConfig, Rem6CliError> {
-    let mut gups = load_file_config(path)?.gups.unwrap_or_default();
+    let mut gups = read_toml_config::<Rem6FileConfig>(path)?
+        .gups
+        .unwrap_or_default();
     gups.config_dir = path.parent().map(Path::to_path_buf);
     Ok(gups)
 }
 
 fn load_trace_replay_file_config(path: &Path) -> Result<Rem6TraceReplayFileConfig, Rem6CliError> {
-    let mut trace_replay = load_file_config(path)?.trace_replay.unwrap_or_default();
+    let mut trace_replay = read_toml_config::<Rem6FileConfig>(path)?
+        .trace_replay
+        .unwrap_or_default();
     trace_replay.config_dir = path.parent().map(Path::to_path_buf);
     Ok(trace_replay)
-}
-
-fn load_file_config(path: &Path) -> Result<Rem6FileConfig, Rem6CliError> {
-    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })?;
-    toml::from_str::<Rem6FileConfig>(&text).map_err(|error| Rem6CliError::ParseConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })
 }

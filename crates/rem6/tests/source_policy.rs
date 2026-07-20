@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "source_policy/checkpoint_total_authority.rs"]
 mod checkpoint_total_authority;
+#[path = "source_policy/cli_config_authority.rs"]
+mod cli_config_authority;
 #[path = "source_policy/coroutine_ownership.rs"]
 mod coroutine_ownership;
 #[path = "source_policy/data_cache_protocol_authority.rs"]

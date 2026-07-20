@@ -30,6 +30,7 @@ use rem6_transport::{
 mod accelerator_cli;
 mod artifact_json;
 mod branch_predictor_summary;
+mod cli_config;
 mod cli_error;
 mod cli_failure;
 mod cli_output;
