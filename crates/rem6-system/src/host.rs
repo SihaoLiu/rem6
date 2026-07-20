@@ -53,9 +53,6 @@ const EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX: &str = "execution-mode-
 pub struct ExecutionModeSwitchStateTransfer {
     manifest_label: String,
     manifest_tick: Tick,
-    component_count: u64,
-    chunk_count: u64,
-    payload_bytes: u64,
     restorable: bool,
     live_data_handoff: bool,
     o3_writeback: Option<RiscvO3WritebackDebugState>,
@@ -82,8 +79,6 @@ pub struct ExecutionModeSwitchCheckerGate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionModeSwitchStateTransferComponent {
     component: String,
-    chunk_count: u64,
-    payload_bytes: u64,
     chunks: Vec<ExecutionModeSwitchStateTransferChunk>,
 }
 
@@ -104,13 +99,19 @@ impl ExecutionModeSwitchStateTransfer {
         self.manifest_tick
     }
     pub const fn component_count(&self) -> u64 {
-        self.component_count
+        self.components.len() as u64
     }
-    pub const fn chunk_count(&self) -> u64 {
-        self.chunk_count
+    pub fn chunk_count(&self) -> u64 {
+        self.components
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::chunk_count)
+            .sum()
     }
-    pub const fn payload_bytes(&self) -> u64 {
-        self.payload_bytes
+    pub fn payload_bytes(&self) -> u64 {
+        self.components
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::payload_bytes)
+            .sum()
     }
     pub fn components(&self) -> &[ExecutionModeSwitchStateTransferComponent] {
         &self.components
@@ -171,11 +172,8 @@ impl ExecutionModeSwitchStateTransferComponent {
             .map(ExecutionModeSwitchStateTransferChunk::from_chunk)
             .collect::<Vec<_>>();
         chunks.sort_by(|left, right| left.name.cmp(&right.name));
-        let payload_bytes = chunks.iter().map(|chunk| chunk.payload_bytes).sum();
         Self {
             component: state.component().as_str().to_string(),
-            chunk_count: chunks.len() as u64,
-            payload_bytes,
             chunks,
         }
     }
@@ -185,11 +183,14 @@ impl ExecutionModeSwitchStateTransferComponent {
     }
 
     pub const fn chunk_count(&self) -> u64 {
-        self.chunk_count
+        self.chunks.len() as u64
     }
 
-    pub const fn payload_bytes(&self) -> u64 {
-        self.payload_bytes
+    pub fn payload_bytes(&self) -> u64 {
+        self.chunks
+            .iter()
+            .map(ExecutionModeSwitchStateTransferChunk::payload_bytes)
+            .sum()
     }
 
     pub fn chunks(&self) -> &[ExecutionModeSwitchStateTransferChunk] {

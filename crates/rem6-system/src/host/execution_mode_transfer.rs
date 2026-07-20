@@ -32,27 +32,32 @@ impl ExecutionModeSwitchStateTransfer {
         checker: Option<crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary>,
         o3_writeback: Option<RiscvO3WritebackDebugState>,
     ) -> Self {
-        let summary = manifest.summary();
         let components = manifest
             .states()
             .iter()
             .map(ExecutionModeSwitchStateTransferComponent::from_state)
-            .collect();
+            .collect::<Vec<_>>();
+        let captured_component_count = components.len() as u64;
+        let captured_chunk_count = components
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::chunk_count)
+            .sum();
+        let captured_payload_bytes = components
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::payload_bytes)
+            .sum();
         Self {
             manifest_label: manifest.label().to_string(),
             manifest_tick: manifest.tick(),
-            component_count: summary.component_count() as u64,
-            chunk_count: summary.chunk_count() as u64,
-            payload_bytes: summary.payload_bytes() as u64,
             restorable: true,
             live_data_handoff: false,
             o3_writeback,
             quiescence_gate: ExecutionModeSwitchQuiescenceGate {
                 validated: true,
                 target: target.clone(),
-                captured_component_count: summary.component_count() as u64,
-                captured_chunk_count: summary.chunk_count() as u64,
-                captured_payload_bytes: summary.payload_bytes() as u64,
+                captured_component_count,
+                captured_chunk_count,
+                captured_payload_bytes,
                 checker: checker.map(ExecutionModeSwitchCheckerGate::from_summary),
             },
             components,

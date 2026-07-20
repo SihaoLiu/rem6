@@ -1982,6 +1982,49 @@ fn execution_mode_switch_transfer_can_be_scheduler_only() {
         } => transfer,
         other => panic!("unexpected outcome: {other:?}"),
     };
+    assert_eq!(
+        transfer.component_count(),
+        transfer.components().len() as u64
+    );
+    assert_eq!(
+        transfer.chunk_count(),
+        transfer
+            .components()
+            .iter()
+            .map(|component| component.chunk_count())
+            .sum::<u64>()
+    );
+    assert_eq!(
+        transfer.payload_bytes(),
+        transfer
+            .components()
+            .iter()
+            .map(|component| component.payload_bytes())
+            .sum::<u64>()
+    );
+    for component in transfer.components() {
+        assert_eq!(component.chunk_count(), component.chunks().len() as u64);
+        assert_eq!(
+            component.payload_bytes(),
+            component
+                .chunks()
+                .iter()
+                .map(|chunk| chunk.payload_bytes())
+                .sum::<u64>()
+        );
+    }
+    assert_eq!(
+        transfer.quiescence_gate().captured_component_count(),
+        transfer.component_count()
+    );
+    assert_eq!(
+        transfer.quiescence_gate().captured_chunk_count(),
+        transfer.chunk_count()
+    );
+    assert_eq!(
+        transfer.quiescence_gate().captured_payload_bytes(),
+        transfer.payload_bytes()
+    );
     let manifest = executor
         .checkpoints()
         .capture(

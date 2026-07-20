@@ -237,6 +237,61 @@ fn host_execution_mode_checkpoint_lives_in_focused_module() {
 }
 
 #[test]
+fn execution_mode_switch_transfers_derive_hierarchy_totals_from_components() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let host = fs::read_to_string(crate_dir.join("src/host.rs")).unwrap();
+    let transfer = struct_body(&host, "ExecutionModeSwitchStateTransfer");
+    let component = struct_body(&host, "ExecutionModeSwitchStateTransferComponent");
+    let host_without_whitespace = without_whitespace(&host);
+
+    for forbidden in ["component_count:", "chunk_count:", "payload_bytes:"] {
+        assert!(!transfer.contains(forbidden), "transfer caches {forbidden}");
+    }
+    for forbidden in ["chunk_count:", "payload_bytes:"] {
+        assert!(
+            !component.contains(forbidden),
+            "component caches {forbidden}"
+        );
+    }
+    assert!(host.contains("self.components.len() as u64"));
+    assert!(host.contains(".map(ExecutionModeSwitchStateTransferComponent::chunk_count)"));
+    assert!(host.contains(".map(ExecutionModeSwitchStateTransferComponent::payload_bytes)"));
+    assert!(host.contains("self.chunks.len() as u64"));
+    assert!(host.contains(".map(ExecutionModeSwitchStateTransferChunk::payload_bytes)"));
+    for required in [
+        "pub const fn component_count(&self) -> u64 {
+            self.components.len() as u64
+        }",
+        "pub const fn chunk_count(&self) -> u64 {
+            self.chunks.len() as u64
+        }",
+    ] {
+        assert!(
+            host_without_whitespace.contains(&without_whitespace(required)),
+            "len-only accessor must stay const-compatible: `{required}`"
+        );
+    }
+
+    let constructor =
+        fs::read_to_string(crate_dir.join("src/host/execution_mode_transfer.rs")).unwrap();
+    let constructor_without_whitespace = without_whitespace(&constructor);
+    for required in [
+        "components.len() as u64",
+        ".map(ExecutionModeSwitchStateTransferComponent::chunk_count).sum()",
+        ".map(ExecutionModeSwitchStateTransferComponent::payload_bytes).sum()",
+    ] {
+        assert!(
+            constructor_without_whitespace.contains(&without_whitespace(required)),
+            "transfer construction must derive projection fragment `{required}` from built components"
+        );
+    }
+    assert!(
+        !constructor_without_whitespace.contains("manifest.summary()"),
+        "transfer construction must not use manifest summary totals as authority"
+    );
+}
+
+#[test]
 fn riscv_syscall_table_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_rs = fs::read_to_string(crate_dir.join("src/riscv_syscall.rs")).unwrap();
@@ -540,6 +595,39 @@ fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
         .split_once(end)
         .unwrap_or_else(|| panic!("missing source section end: {end}"))
         .0
+}
+
+fn struct_body<'a>(source: &'a str, name: &str) -> &'a str {
+    let start = source
+        .find(&format!("pub struct {name}"))
+        .unwrap_or_else(|| panic!("missing struct {name}"));
+    let open_offset = source[start..]
+        .find('{')
+        .unwrap_or_else(|| panic!("missing opening brace for struct {name}"));
+    let body_start = start + open_offset + 1;
+    let mut depth = 1usize;
+
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[body_start..body_start + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+
+    panic!("missing closing brace for struct {name}");
+}
+
+fn without_whitespace(source: &str) -> String {
+    source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
 }
 
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
