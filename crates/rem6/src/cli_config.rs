@@ -277,13 +277,15 @@ mod tests {
                 "--config",
                 "suppressed.toml",
                 "--config",
-                "selected.toml",
+                "first-visible.toml",
+                "--config",
+                "second-visible.toml",
             ]),
             WILDCARD_PROFILE,
         )
         .unwrap();
 
-        assert_eq!(path, Some(PathBuf::from("selected.toml")));
+        assert_eq!(path, Some(PathBuf::from("second-visible.toml")));
     }
 
     #[test]
