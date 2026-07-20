@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::cli_config::{
+    multi_run_file_config_from_args, read_toml_config, required_value, resolve_config_path,
+};
 use crate::cli_output;
 use crate::config::StatsFormat;
 use crate::formatting::json_escape;
@@ -231,14 +234,7 @@ impl Rem6MultiRunConfig {
 
 impl Rem6MultiRunFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
-        if path.is_relative() {
-            self.config_dir
-                .as_deref()
-                .map(|dir| dir.join(path))
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        }
+        resolve_config_path(self.config_dir.as_deref(), path)
     }
 
     fn runs(&self) -> Result<Vec<Rem6MultiRunEntry>, Rem6CliError> {
@@ -822,41 +818,8 @@ fn execution_status(execution: &Rem6ExecutionSummary) -> &'static str {
     }
 }
 
-fn multi_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    let mut path = None;
-    let mut index = 0;
-    while let Some(flag) = args.get(index) {
-        match flag.as_str() {
-            "--config" => {
-                path = Some(PathBuf::from(args.get(index + 1).cloned().ok_or_else(
-                    || Rem6CliError::MissingFlagValue { flag: flag.clone() },
-                )?));
-                index += 2;
-            }
-            "--suite-id" | "--run" | "--stats-format" | "--output" | "--stats-output" => {
-                index += 2;
-            }
-            "--continue-on-failure" => {
-                index += 1;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Ok(path)
-}
-
 fn load_multi_run_file_config(path: &Path) -> Result<Rem6MultiRunFileConfig, Rem6CliError> {
-    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })?;
-    let mut config = toml::from_str::<Rem6MultiRunFileRoot>(&text)
-        .map_err(|error| Rem6CliError::ParseConfig {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?
+    let mut config = read_toml_config::<Rem6MultiRunFileRoot>(path)?
         .multi_run
         .unwrap_or_default();
     config.config_dir = path.parent().map(Path::to_path_buf);
@@ -892,12 +855,6 @@ fn require_unique_run_ids(runs: &[Rem6MultiRunEntry]) -> Result<(), Rem6CliError
         }
     }
     Ok(())
-}
-
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
-    })
 }
 
 fn path_arg(path: &Path) -> String {

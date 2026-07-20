@@ -7,7 +7,6 @@ use crate::Rem6CliError;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnknownLongFlagMode {
     ConsumeFollowingValue,
-    #[allow(dead_code)]
     Ignore,
 }
 
@@ -27,7 +26,6 @@ impl ConfigPrescanProfile {
         }
     }
 
-    #[allow(dead_code)]
     const fn explicit(
         known_value_flags: &'static [&'static str],
         bool_flags: &'static [&'static str],
@@ -48,6 +46,64 @@ const RUN_BOOL_FLAGS: &[&str] = &[
     "--riscv-sbi",
 ];
 
+const GPU_RUN_VALUE_FLAGS: &[&str] = &[
+    "--workgroups",
+    "--compute-units",
+    "--wave-slots-per-compute-unit",
+    "--workgroup-cycles",
+    "--memory-start",
+    "--memory-size",
+    "--max-tick",
+    "--min-remote-delay",
+    "--memory-route-delay",
+    "--stats-format",
+    "--power-format",
+    "--power-output",
+    "--nomali-output",
+    "--dram-memory-profile",
+    "--data-cache-protocol",
+    "--data-cache-prefetcher",
+    "--fabric-link",
+    "--fabric-bandwidth-bytes-per-tick",
+    "--fabric-request-virtual-network",
+    "--fabric-response-virtual-network",
+    "--fabric-credit-depth",
+    "--global-load",
+    "--global-store",
+    "--output",
+    "--stats-output",
+    "--dump-memory",
+];
+const GPU_RUN_BOOL_FLAGS: &[&str] = &["--dram-memory"];
+
+const ACCELERATOR_RUN_VALUE_FLAGS: &[&str] = &[
+    "--engine",
+    "--lanes",
+    "--command-delay",
+    "--npu-inference",
+    "--gpu-kernel",
+    "--stats-format",
+    "--output",
+    "--stats-output",
+];
+
+const MULTI_RUN_VALUE_FLAGS: &[&str] = &[
+    "--suite-id",
+    "--run",
+    "--stats-format",
+    "--output",
+    "--stats-output",
+];
+const MULTI_RUN_BOOL_FLAGS: &[&str] = &["--continue-on-failure"];
+
+const RESOURCE_ACQUIRE_VALUE_FLAGS: &[&str] = &[
+    "--workload-id",
+    "--boot-entry",
+    "--stats-format",
+    "--output",
+    "--stats-output",
+];
+
 pub(crate) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
     config_path_from_args(args, ConfigPrescanProfile::wildcard(RUN_BOOL_FLAGS))
 }
@@ -60,6 +116,42 @@ pub(crate) fn trace_replay_file_config_from_args(
     args: &[String],
 ) -> Result<Option<PathBuf>, Rem6CliError> {
     config_path_from_args(args, ConfigPrescanProfile::wildcard(&[]))
+}
+
+pub(crate) fn gpu_run_file_config_from_args(
+    args: &[String],
+) -> Result<Option<PathBuf>, Rem6CliError> {
+    config_path_from_args(
+        args,
+        ConfigPrescanProfile::explicit(GPU_RUN_VALUE_FLAGS, GPU_RUN_BOOL_FLAGS),
+    )
+}
+
+pub(crate) fn accelerator_run_file_config_from_args(
+    args: &[String],
+) -> Result<Option<PathBuf>, Rem6CliError> {
+    config_path_from_args(
+        args,
+        ConfigPrescanProfile::explicit(ACCELERATOR_RUN_VALUE_FLAGS, &[]),
+    )
+}
+
+pub(crate) fn multi_run_file_config_from_args(
+    args: &[String],
+) -> Result<Option<PathBuf>, Rem6CliError> {
+    config_path_from_args(
+        args,
+        ConfigPrescanProfile::explicit(MULTI_RUN_VALUE_FLAGS, MULTI_RUN_BOOL_FLAGS),
+    )
+}
+
+pub(crate) fn resource_acquire_file_config_from_args(
+    args: &[String],
+) -> Result<Option<PathBuf>, Rem6CliError> {
+    config_path_from_args(
+        args,
+        ConfigPrescanProfile::explicit(RESOURCE_ACQUIRE_VALUE_FLAGS, &[]),
+    )
 }
 
 fn config_path_from_args(
@@ -183,6 +275,72 @@ mod tests {
         .unwrap();
 
         assert_eq!(path, Some(PathBuf::from("visible.toml")));
+    }
+
+    #[test]
+    fn explicit_profile_suppresses_known_values_but_not_unknown_flags() {
+        let known = strings(["--output", "--config", "--config", "gpu.toml"]);
+        assert_eq!(
+            gpu_run_file_config_from_args(&known).unwrap(),
+            Some(PathBuf::from("gpu.toml"))
+        );
+
+        let unknown = strings(["--future-flag", "--config", "gpu.toml"]);
+        assert_eq!(
+            gpu_run_file_config_from_args(&unknown).unwrap(),
+            Some(PathBuf::from("gpu.toml"))
+        );
+    }
+
+    #[test]
+    fn auxiliary_profiles_preserve_value_and_boolean_vocabularies() {
+        assert_eq!(
+            accelerator_run_file_config_from_args(&strings([
+                "--gpu-kernel",
+                "--config",
+                "--config",
+                "accelerator.toml",
+            ]))
+            .unwrap(),
+            Some(PathBuf::from("accelerator.toml"))
+        );
+        assert_eq!(
+            multi_run_file_config_from_args(&strings([
+                "--continue-on-failure",
+                "--config",
+                "multi.toml",
+            ]))
+            .unwrap(),
+            Some(PathBuf::from("multi.toml"))
+        );
+        assert_eq!(
+            resource_acquire_file_config_from_args(&strings([
+                "--output",
+                "--config",
+                "--config",
+                "resources.toml",
+            ]))
+            .unwrap(),
+            Some(PathBuf::from("resources.toml"))
+        );
+    }
+
+    #[test]
+    fn auxiliary_profiles_report_missing_visible_config_values() {
+        let args = strings(["--config"]);
+        for file_config_from_args in [
+            gpu_run_file_config_from_args as fn(&[String]) -> Result<Option<PathBuf>, Rem6CliError>,
+            accelerator_run_file_config_from_args,
+            multi_run_file_config_from_args,
+            resource_acquire_file_config_from_args,
+        ] {
+            assert_eq!(
+                file_config_from_args(&args).expect_err("missing --config value should fail"),
+                Rem6CliError::MissingFlagValue {
+                    flag: "--config".to_string()
+                }
+            );
+        }
     }
 
     #[test]

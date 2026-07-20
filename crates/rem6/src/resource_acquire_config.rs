@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use rem6_workload::{WorkloadResourceAcquisitionKind, WorkloadResourceKind};
 use serde::Deserialize;
 
+use crate::cli_config::{
+    read_toml_config, required_value, resolve_config_path, resource_acquire_file_config_from_args,
+};
 use crate::config::StatsFormat;
 use crate::Rem6CliError;
 
@@ -533,16 +536,6 @@ fn is_sha256_content_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn resolve_config_path(config_dir: Option<&Path>, path: &Path) -> PathBuf {
-    if path.is_relative() {
-        config_dir
-            .map(|dir| dir.join(path))
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    }
-}
-
 fn parse_number(value: &str) -> Option<u64> {
     if let Some(hex) = value
         .strip_prefix("0x")
@@ -581,74 +574,12 @@ fn parse_resource_acquisition_kind(value: &str) -> Option<WorkloadResourceAcquis
     }
 }
 
-fn resource_acquire_file_config_from_args(
-    args: &[String],
-) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(
-        args,
-        &[
-            "--workload-id",
-            "--boot-entry",
-            "--stats-format",
-            "--output",
-            "--stats-output",
-        ],
-        &[],
-    )
-}
-
-fn config_path_from_args(
-    args: &[String],
-    value_flags: &[&str],
-    bool_flags: &[&str],
-) -> Result<Option<PathBuf>, Rem6CliError> {
-    let mut path = None;
-    let mut index = 0;
-    while let Some(flag) = args.get(index) {
-        match flag.as_str() {
-            "--config" => {
-                let value = args
-                    .get(index + 1)
-                    .cloned()
-                    .ok_or_else(|| Rem6CliError::MissingFlagValue { flag: flag.clone() })?;
-                path = Some(PathBuf::from(value));
-                index += 2;
-            }
-            flag if bool_flags.contains(&flag) => {
-                index += 1;
-            }
-            flag if value_flags.contains(&flag) => {
-                index += 2;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Ok(path)
-}
-
 fn load_resource_acquire_file_config(
     path: &Path,
 ) -> Result<Rem6ResourceAcquireFileConfig, Rem6CliError> {
-    let mut resource_acquire = load_file_config(path)?.resource_acquire.unwrap_or_default();
+    let mut resource_acquire = read_toml_config::<Rem6ResourceAcquireToml>(path)?
+        .resource_acquire
+        .unwrap_or_default();
     resource_acquire.config_dir = path.parent().map(Path::to_path_buf);
     Ok(resource_acquire)
-}
-
-fn load_file_config(path: &Path) -> Result<Rem6ResourceAcquireToml, Rem6CliError> {
-    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })?;
-    toml::from_str::<Rem6ResourceAcquireToml>(&text).map_err(|error| Rem6CliError::ParseConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })
-}
-
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
-    })
 }

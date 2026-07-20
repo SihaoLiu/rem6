@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rem6_power::{PowerAnalysisExport, PowerAnalysisRecord, PowerStateKind};
 
+use crate::cli_config::required_value;
 use crate::formatting::json_escape;
 use crate::{cli_output, Rem6CliError, StatsFormat};
 
@@ -100,12 +101,6 @@ pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliE
         StatsFormat::Json,
         &[],
     )
-}
-
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
-    })
 }
 
 fn parse_tick(flag: &str, value: String) -> Result<u64, Rem6CliError> {

@@ -18,6 +18,9 @@ use serde::Deserialize;
 mod fabric;
 mod nomali;
 
+use crate::cli_config::{
+    gpu_run_file_config_from_args, read_toml_config, required_value, resolve_config_path,
+};
 use crate::cli_output;
 use crate::config::{
     CliCachePrefetcher, CliDramLowPowerTiming, CliDramMemoryProfile, CliDramTiming,
@@ -115,14 +118,7 @@ struct Rem6GpuRunFileConfig {
 
 impl Rem6GpuRunFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
-        if path.is_relative() {
-            self.config_dir
-                .as_deref()
-                .map(|dir| dir.join(path))
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        }
+        resolve_config_path(self.config_dir.as_deref(), path)
     }
 }
 
@@ -623,73 +619,8 @@ impl Rem6GpuRunConfig {
     }
 }
 
-fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    const VALUE_FLAGS: &[&str] = &[
-        "--workgroups",
-        "--compute-units",
-        "--wave-slots-per-compute-unit",
-        "--workgroup-cycles",
-        "--memory-start",
-        "--memory-size",
-        "--max-tick",
-        "--min-remote-delay",
-        "--memory-route-delay",
-        "--stats-format",
-        "--power-format",
-        "--power-output",
-        "--nomali-output",
-        "--dram-memory-profile",
-        "--data-cache-protocol",
-        "--data-cache-prefetcher",
-        "--fabric-link",
-        "--fabric-bandwidth-bytes-per-tick",
-        "--fabric-request-virtual-network",
-        "--fabric-response-virtual-network",
-        "--fabric-credit-depth",
-        "--global-load",
-        "--global-store",
-        "--output",
-        "--stats-output",
-        "--dump-memory",
-    ];
-    const BOOL_FLAGS: &[&str] = &["--dram-memory"];
-
-    let mut path = None;
-    let mut index = 0;
-    while let Some(flag) = args.get(index) {
-        match flag.as_str() {
-            "--config" => {
-                path = Some(PathBuf::from(required_value(
-                    flag,
-                    args.get(index + 1).cloned(),
-                )?));
-                index += 2;
-            }
-            flag if VALUE_FLAGS.contains(&flag) => {
-                index += 2;
-            }
-            flag if BOOL_FLAGS.contains(&flag) => {
-                index += 1;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Ok(path)
-}
-
 fn load_gpu_run_file_config(path: &Path) -> Result<Rem6GpuRunFileConfig, Rem6CliError> {
-    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })?;
-    let root = toml::from_str::<Rem6GpuRunRootFileConfig>(&text).map_err(|error| {
-        Rem6CliError::ParseConfig {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        }
-    })?;
+    let root = read_toml_config::<Rem6GpuRunRootFileConfig>(path)?;
     let mut config = root.gpu_run.unwrap_or_default();
     config.config_dir = path.parent().map(Path::to_path_buf);
     Ok(config)
@@ -1548,12 +1479,6 @@ fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
         summary.prefetch_translation_queue_translated,
         summary.prefetch_translation_queue_dropped,
     )
-}
-
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
-    })
 }
 
 fn parse_u64_value(name: &str, value: String) -> Result<u64, Rem6CliError> {

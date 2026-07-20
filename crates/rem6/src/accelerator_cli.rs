@@ -7,6 +7,9 @@ use rem6_accelerator::{
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use serde::Deserialize;
 
+use crate::cli_config::{
+    accelerator_run_file_config_from_args, read_toml_config, required_value, resolve_config_path,
+};
 use crate::cli_output;
 use crate::config::StatsFormat;
 use crate::stats_output::{accelerator_run_stats_output, Rem6AcceleratorRunStatsInputs};
@@ -452,14 +455,7 @@ impl Rem6AcceleratorRunExecutionSummary {
 
 impl Rem6AcceleratorRunFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
-        if path.is_relative() {
-            self.config_dir
-                .as_deref()
-                .map(|dir| dir.join(path))
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        }
+        resolve_config_path(self.config_dir.as_deref(), path)
     }
 
     fn commands(&self) -> Result<Vec<Rem6AcceleratorRunCommand>, Rem6CliError> {
@@ -530,45 +526,10 @@ fn parse_command_fields(flag: &'static str, value: &str) -> Result<[u64; 3], Rem
     ])
 }
 
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
-    })
-}
-
-fn accelerator_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    let mut path = None;
-    let mut index = 0;
-    while let Some(flag) = args.get(index) {
-        match flag.as_str() {
-            "--config" => {
-                path = Some(PathBuf::from(args.get(index + 1).cloned().ok_or_else(
-                    || Rem6CliError::MissingFlagValue { flag: flag.clone() },
-                )?));
-                index += 2;
-            }
-            "--engine" | "--lanes" | "--command-delay" | "--npu-inference" | "--gpu-kernel"
-            | "--stats-format" | "--output" | "--stats-output" => {
-                index += 2;
-            }
-            _ => index += 1,
-        }
-    }
-    Ok(path)
-}
-
 fn load_accelerator_run_file_config(
     path: &Path,
 ) -> Result<Rem6AcceleratorRunFileConfig, Rem6CliError> {
-    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
-        path: path.to_path_buf(),
-        error: error.to_string(),
-    })?;
-    let mut config = toml::from_str::<Rem6AcceleratorRunFileRoot>(&text)
-        .map_err(|error| Rem6CliError::ParseConfig {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?
+    let mut config = read_toml_config::<Rem6AcceleratorRunFileRoot>(path)?
         .accelerator_run
         .unwrap_or_default();
     config.config_dir = path.parent().map(Path::to_path_buf);
